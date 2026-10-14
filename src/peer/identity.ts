@@ -20,9 +20,9 @@
  */
 
 import * as fs from 'fs';
-import * as path from 'path';
 import type { IdentityEntry } from '../types.js';
-import { getDiscoveryDir, getIdentityFile, getHeartbeatFile, getLaunchArgs } from '../config.js';
+import { getIdentityFile, getHeartbeatFile, getLaunchArgs, getPeerName } from '../config.js';
+import { isOriginalHolderAlive, heartbeatMtimeMs } from '../utils/process-liveness.js';
 import { truncateToTokens } from '../utils/token.js';
 import { atomicWrite } from '../utils/atomic-write.js';
 import { withFileLock, FileLockTimeoutError } from '../utils/file-lock.js';
@@ -40,11 +40,14 @@ const MAX_BRIEF_TOKENS = 200;
  */
 const FRESHNESS_WINDOW_MS = 90_000;
 /**
- * Pruning cutoff: on register(), identity entries whose latest heartbeat is
- * older than this are removed from identity.json. This reclaims orphans left
- * by instances that crashed/were SIGKILLed without running peer.stop() →
- * unregister(). Set to the same 1h the `peers` tool uses to hide dead peers,
- * so an entry is pruned exactly when it stops appearing in the listing.
+ * Pruning cutoff: on register(), an identity entry is a prune CANDIDATE once
+ * its latest heartbeat is older than this. Age only proves the peer is
+ * unhealthy, NOT that its process is gone — see {@link pruneStaleEntries},
+ * which additionally requires the recorded holder to be provably dead. This
+ * reclaims orphans left by instances that crashed/were SIGKILLed without
+ * running peer.stop() → unregister(). Set to the same 1h the `peers` tool uses
+ * to hide dead peers, so an entry is pruned exactly when it stops appearing in
+ * the listing.
  */
 const IDENTITY_PRUNE_CUTOFF_MS = 60 * 60 * 1000;
 
@@ -79,6 +82,18 @@ interface HeartbeatData {
   briefs: BriefEntry[];
   /** Recording process's OS PID (so peers can kill the instance). */
   pid?: number;
+  /**
+   * Tombstone: epoch-ms when a stop was REQUESTED for this session. Written by
+   * the stopper (`mycc-stop` / `mycc-compose down`) — after identity is PROVEN,
+   * before the signal — so a peer the signal did NOT reach retires itself on its
+   * next beat. Lives in the heartbeat file (not identity.json) because the live
+   * peer already rewrites this file every beat — see docs/peers/peer-topology.md §6.7.
+   *
+   * PRESERVATION IS LOAD-BEARING: every rewrite of the heartbeat file MUST carry
+   * this field forward (a rewrite that dropped it would lose the tombstone on the
+   * very next beat). `writeHeartbeats` and `writeBrief` therefore both preserve it.
+   */
+  tombstone?: number;
 }
 
 /**
@@ -134,147 +149,8 @@ function withIdentityLock<T>(fn: () => T): T {
 }
 
 // ============================================================================
-// Session ownership lease (atomic pinned-sid claim)
+// Session liveness predicates
 // ============================================================================
-
-/**
- * Path of the per-session ownership LEASE (a lock file). Lives beside the other
- * discovery state so it shares a volume with identity.json/heartbeats and is
- * visible to every instance on the machine:
- *   ~/.mycc-store/discovery/sessions/<sid>.owner
- *
- * CONTENT: JSON `{ pid, sid, time }` — written by the claimant so a later
- * acquirer can tell a live owner from a crashed one.
- */
-export function getSessionOwnerLeaseFile(sessionId: string): string {
-  return path.join(getDiscoveryDir(), 'sessions', `${sessionId}.owner`);
-}
-
-/** Lease payload — the claimant's identity, for liveness-based reclaim. */
-interface SessionOwnerLease {
-  pid?: number;
-  sid?: string;
-  time?: number;
-}
-
-/**
- * Try to atomically CLAIM ownership of a pinned session id.
- *
- * WHY THIS EXISTS (the TOCTOU it closes): `initializeSession()` used to ask
- * "is this sid held?" and then create the session files — two SEPARATE steps.
- * Two `mycc-compose up` runs (or two `mycc --session-id <sid>`) racing the same
- * sid could both pass the check before either registered, then both boot under
- * one sid: same session dir, same heartbeat file, same mailbox, same channel
- * identity — and the last `register()` would win the identity record, so
- * `stopPeer()` could later target only one of the two live processes.
- *
- * The fix is to make CHECK AND CLAIM ONE ATOMIC OPERATION. `open(..., 'wx')`
- * is that operation: the OS guarantees exactly one creator of the lease file.
- * The liveness decision therefore happens AFTER winning the create — we are the
- * creator, so we may inspect the PREVIOUS owner's lease (carried forward by the
- * caller as `previousOwner` is NOT needed: on EEXIST we lost, on success we won
- * and any prior lease was already removed by a dead-owner reclaimer).
- *
- * Flow:
- *   1. `openSync(lease, 'wx')` — the atomic claim.
- *   2. Success → we own it. Write `{pid, sid, time}`. Return 'claimed'.
- *      (Best-effort content write: even if it fails, the file's mere existence
- *      is the claim; a later acquirer treats a content-less lease as stale
- *      after a grace window.)
- *   3. EEXIST → someone holds the lease. Read it:
- *        - owner pid ALIVE  → 'held'   (refuse to start a second instance).
- *        - owner pid DEAD / lease older than the stale window / unreadable →
- *          the holder crashed without releasing; remove the lease and retry
- *          the atomic create ONCE (the retry's `open('wx')` re-races any
- *          concurrent reclaimer, so still exactly one winner).
- *
- * @param sessionId The pinned session id being claimed.
- * @returns 'claimed' when this process now owns the sid; 'held' when a live
- *          process already does. Never throws for ordinary contention; on an
- *          unexpected fs error it returns 'held' (fail closed — refusing to
- *          start is always safer than double-booting a sid).
- */
-export function claimSessionOwnership(sessionId: string): 'claimed' | 'held' {
-  if (!sessionId) return 'held';
-  const lease = getSessionOwnerLeaseFile(sessionId);
-  try {
-    fs.mkdirSync(path.dirname(lease), { recursive: true });
-  } catch {
-    // Directory creation failure → the open below will surface it; fail closed.
-    return 'held';
-  }
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    let fd: number;
-    try {
-      fd = fs.openSync(lease, 'wx');
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code !== 'EEXIST') return 'held';
-      // Lease exists — decide live vs stale.
-      if (!isLeaseStale(lease)) return 'held';
-      // Stale (crashed owner): remove and retry the atomic create once.
-      try {
-        fs.unlinkSync(lease);
-      } catch {
-        // Someone else may have reclaimed it in the same instant — retry.
-      }
-      continue;
-    }
-    // We created the lease → we are the owner.
-    try {
-      fs.writeSync(fd, JSON.stringify({ pid: process.pid, sid: sessionId, time: Date.now() }));
-    } catch {
-      // Content is advisory only; the file's existence is the claim.
-    } finally {
-      fs.closeSync(fd);
-    }
-    return 'claimed';
-  }
-  return 'held';
-}
-
-/**
- * True when a session-lease file names no live owner — its recorded pid is
- * dead, or the lease is older than {@link SESSION_LEASE_STALE_MS} (covers a
- * crash between the atomic create and the content write), or it cannot be read
- * at all.
- */
-function isLeaseStale(lease: string): boolean {
-  try {
-    const raw = fs.readFileSync(lease, 'utf-8');
-    let parsed: SessionOwnerLease = {};
-    try {
-      parsed = JSON.parse(raw) as SessionOwnerLease;
-    } catch {
-      // Unparsable (partial write) — fall through to the mtime check.
-    }
-    if (typeof parsed.pid === 'number') {
-      return !isPidAlive(parsed.pid);
-    }
-    // No pid recorded: use the file's mtime against the stale window.
-    const st = fs.statSync(lease);
-    return Date.now() - st.mtimeMs > SESSION_LEASE_STALE_MS;
-  } catch {
-    // Vanished between exists and read → treat as free (the retry will race it).
-    return true;
-  }
-}
-
-/** Grace before a pid-less lease is considered abandoned. */
-const SESSION_LEASE_STALE_MS = 10_000;
-
-/**
- * Release a session ownership lease (called on clean shutdown). Best-effort:
- * a failure leaves the lease for the stale-reclaim path, never throws.
- */
-export function releaseSessionOwnership(sessionId: string): void {
-  if (!sessionId) return;
-  try {
-    fs.unlinkSync(getSessionOwnerLeaseFile(sessionId));
-  } catch {
-    // Already gone / never held — nothing to do.
-  }
-}
 
 /**
  * True when a session id provably belongs to a LIVE process.
@@ -305,59 +181,18 @@ export function isSessionLive(sessionId: string): boolean {
 }
 
 /**
- * True when a session id is HELD by a still-running process — the stricter
- * sibling of {@link isSessionLive}.
- *
- * {@link isSessionLive} answers "has this sid beaten recently?", which is
- * necessary but NOT sufficient: a process killed within the freshness window
- * (e.g. `mycc-compose sync` restarting a crashed peer) leaves a heartbeat file
- * that is still "fresh" for up to {@link FRESHNESS_WINDOW_MS}. Using that
- * predicate to gate a re-pin would make a just-killed peer refuse its own
- * restart — the exact dead-lock `mycc-compose` hit.
- *
- * Held ⟺ registered AND fresh heartbeat AND the recorded heartbeat `pid` is
- * actually alive. When no pid is recorded (legacy writers, or a beat that
- * predates the field) we fall back to the fresh-heartbeat verdict: we cannot
- * disprove liveness, and must not let two instances share one session dir.
- *
- * Used by the session bootstrap's `--session-id` guard, and mirrored by
- * `mycc-compose`'s `isPeerRunning()`.
- */
-export function isSessionHeld(sessionId: string): boolean {
-  if (!sessionId) return false;
-  if (!isSessionLive(sessionId)) return false;
-  const { pid } = readHeartbeatData(sessionId);
-  if (typeof pid !== 'number') return true; // no pid recorded → trust freshness
-  return isPidAlive(pid);
-}
-
-/**
- * Best-effort "is this OS pid alive?" check. `process.kill(pid, 0)` sends no
- * signal but throws ESRCH when the pid does not exist; EPERM means it exists
- * but is owned by another user (treat as alive).
- */
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException)?.code === 'EPERM';
-  }
-}
-
-/**
  * Remove identity entries for instances whose latest heartbeat is older than
  * {@link IDENTITY_PRUNE_CUTOFF_MS} (1h). This reclaims orphaned entries left
  * by instances that crashed or were SIGKILLed without running unregister() —
  * without this, identity.json grows monotonically with one entry per dead
  * instance forever, bloating every readIdentityMap()/listIdentities() call.
  *
- * Safety: a live instance beats every 30s (HEARTBEAT_INTERVAL_MS), so its
- * latest heartbeat is always within the cutoff and it is never pruned. A
- * freshly-started instance whose heartbeat file does not exist yet (but which
- * is registered in the map) is also preserved — it has had no chance to beat
- * yet, and pruning it would race its own register(). Only entries with a
- * heartbeat file showing a beat older than the cutoff are removed.
+ * Safety: freshness alone is not proof of ownership release. A stale
+ * heartbeat is pruned only when the recorded PID is dead or process-start
+ * evidence proves that PID was recycled. Missing/conflicting PID evidence is
+ * kept conservatively so a stalled-but-live peer remains discoverable and can
+ * still receive a stop tombstone. A freshly-started entry with no heartbeat is
+ * also preserved because it has had no chance to beat yet.
  *
  * Never removes the caller's own sessionId — guard against self-prune in case
  * the caller's heartbeat file is somehow stale during a re-register.
@@ -371,12 +206,33 @@ function pruneStaleEntries(map: Record<string, IdentityEntry>, selfSessionId: st
   let removed = 0;
   for (const sid of Object.keys(map)) {
     if (sid === selfSessionId) continue; // never self-prune
-    const latest = readHeartbeats(sid);
+    const entry = map[sid];
+    const heartbeat = readHeartbeatData(sid);
+    const latest = heartbeat.heartbeats;
     if (latest.length === 0) continue; // no heartbeat file yet → preserve (could be mid-startup)
-    if (now - latest[latest.length - 1] > IDENTITY_PRUNE_CUTOFF_MS) {
-      delete map[sid];
-      removed++;
+    if (now - latest[latest.length - 1] <= IDENTITY_PRUNE_CUTOFF_MS) continue;
+
+    // Heartbeat age proves that the peer is unhealthy, NOT that its process is
+    // gone. Keep the entry unless the recorded holder is provably dead or the
+    // PID is demonstrably recycled; otherwise a stalled live peer would become
+    // undiscoverable and could no longer receive a stop tombstone.
+    const heartbeatPid = typeof heartbeat.pid === 'number' ? heartbeat.pid : undefined;
+    const entryPid = typeof entry?.pid === 'number' ? entry.pid : undefined;
+    if (heartbeatPid !== undefined && entryPid !== undefined && heartbeatPid !== entryPid) {
+      continue; // conflicting ownership evidence → preserve
     }
+    const pid = heartbeatPid ?? entryPid;
+    if (typeof pid !== 'number') continue; // no positive process evidence → preserve
+
+    const evidenceTime = heartbeatPid !== undefined
+      ? heartbeatMtimeMs(getHeartbeatFile(sid))
+      : typeof entry?.startedAt === 'number'
+        ? entry.startedAt
+        : 0;
+    if (isOriginalHolderAlive(pid, evidenceTime)) continue;
+
+    delete map[sid];
+    removed++;
   }
   return removed;
 }
@@ -395,6 +251,8 @@ function readHeartbeatData(sessionId: string): HeartbeatData {
     const parsed = JSON.parse(content) as Record<string, unknown>;
     // pid: read from either schema (older files lack it → undefined).
     const pid = typeof parsed.pid === 'number' ? parsed.pid : undefined;
+    // tombstone: epoch-ms stop request, preserved across rewrites (§6.7).
+    const tombstone = typeof parsed.tombstone === 'number' ? parsed.tombstone : undefined;
     // Legacy schema: { timestamps: number[] }
     const ts = parsed.timestamps;
     if (Array.isArray(ts)) {
@@ -402,6 +260,7 @@ function readHeartbeatData(sessionId: string): HeartbeatData {
         heartbeats: ts as number[],
         briefs: Array.isArray(parsed.briefs) ? (parsed.briefs as BriefEntry[]) : [],
         pid,
+        ...(tombstone !== undefined ? { tombstone } : {}),
       };
     }
     // Current schema: { heartbeats: number[], briefs: BriefEntry[] }
@@ -410,6 +269,7 @@ function readHeartbeatData(sessionId: string): HeartbeatData {
       heartbeats: Array.isArray(hb) ? (hb as number[]) : [],
       briefs: Array.isArray(parsed.briefs) ? (parsed.briefs as BriefEntry[]) : [],
       pid,
+      ...(tombstone !== undefined ? { tombstone } : {}),
     };
   } catch {
     return { heartbeats: [], briefs: [] };
@@ -434,23 +294,28 @@ function readBriefs(sessionId: string): BriefEntry[] {
 
 /**
  * Write a heartbeat file atomically with the current schema
- * `{ heartbeats: [...], briefs: [...], pid }`. Preserves existing briefs.
+ * `{ heartbeats: [...], briefs: [...], pid, tombstone? }`. Preserves existing
+ * briefs AND any existing tombstone (§6.7 — a rewrite that dropped the tombstone
+ * would lose it on the very next beat).
  * `pid` is stamped by the caller ({@link IdentityManager} passes its own
  * `process.pid`), not read back — so a fresh beat always carries the live PID.
  */
 function writeHeartbeats(sessionId: string, heartbeats: number[], pid: number): void {
+  const existing = readHeartbeatData(sessionId);
   const data: HeartbeatData = {
     heartbeats,
-    briefs: readBriefs(sessionId),
+    briefs: existing.briefs,
     pid,
+    ...(existing.tombstone !== undefined ? { tombstone: existing.tombstone } : {}),
   };
   atomicWrite(getHeartbeatFile(sessionId), JSON.stringify(data, null, 2));
 }
 
 /**
- * Append a brief entry to a heartbeat file, preserving existing heartbeats.
- * Truncates content to {@link MAX_BRIEF_TOKENS} estimated tokens (via
- * {@link truncateToTokens}) and trims to last {@link MAX_BRIEFS} entries.
+ * Append a brief entry to a heartbeat file, preserving existing heartbeats AND
+ * any existing tombstone. Truncates content to {@link MAX_BRIEF_TOKENS}
+ * estimated tokens (via {@link truncateToTokens}) and trims to last
+ * {@link MAX_BRIEFS} entries.
  */
 function writeBrief(sessionId: string, entry: BriefEntry): void {
   const data = readHeartbeatData(sessionId);
@@ -461,7 +326,46 @@ function writeBrief(sessionId: string, entry: BriefEntry): void {
   };
   data.briefs.push(truncated);
   data.briefs = data.briefs.slice(-MAX_BRIEFS);
-  atomicWrite(getHeartbeatFile(sessionId), JSON.stringify(data, null, 2));
+  // `data` already carries the preserved tombstone from readHeartbeatData; the
+  // explicit spread below documents the invariant and guards a future refactor.
+  atomicWrite(
+    getHeartbeatFile(sessionId),
+    JSON.stringify({ ...data, ...(data.tombstone !== undefined ? { tombstone: data.tombstone } : {}) }, null, 2),
+  );
+}
+
+/**
+ * Read the tombstone (epoch-ms stop request) recorded in a session's heartbeat
+ * file, or undefined when there is none. The stopper writes it; the peer's beat()
+ * reads it to self-terminate (§6.7).
+ */
+export function readTombstone(sessionId: string): number | undefined {
+  return readHeartbeatData(sessionId).tombstone;
+}
+
+/**
+ * Stamp a tombstone (epoch-ms stop request) into a session's heartbeat file,
+ * preserving its heartbeats/briefs/pid. Called by the stopper (`mycc-stop` /
+ * `mycc-compose down`) — AFTER the peer's identity is PROVEN but BEFORE the
+ * signal — so a peer the signal does NOT reach (or a `still-up` confirm
+ * timeout) self-terminates on its next beat (§6.7). Best-effort: returns false
+ * (never throws) when the file cannot be written — a tombstone is a courtesy,
+ * not a guarantee; the signal path remains the primary mechanism.
+ */
+export function writeTombstone(sessionId: string, when: number = Date.now()): boolean {
+  try {
+    const existing = readHeartbeatData(sessionId);
+    const data: HeartbeatData = {
+      heartbeats: existing.heartbeats,
+      briefs: existing.briefs,
+      ...(existing.pid !== undefined ? { pid: existing.pid } : {}),
+      tombstone: when,
+    };
+    atomicWrite(getHeartbeatFile(sessionId), JSON.stringify(data, null, 2));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -473,7 +377,28 @@ export class IdentityManager {
   private mailboxPath: string;
   private role?: string;
   private daemon?: boolean;
+  /**
+   * Stable peer handle (`<group>:<peer>`), read once at construction from the
+   * `--name` launch flag. `undefined` when the instance was launched without
+   * one (an ordinary interactive/daemon launch). This is the identity a
+   * `mycc-compose` launcher matches on — it replaces the old pinned session id.
+   */
+  private name?: string;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Called when a tombstone is detected in this instance's own heartbeat file
+   * (§6.7). Set by the owner (the Lead, via PeerManager) to run its graceful
+   * teardown — IdentityManager only DETECTS; it never decides to exit the
+   * process itself (that would bypass the owner's ordered cleanup: dismiss
+   * team → kill bg tasks → peer.stop() → stop ServeHub → exit).
+   *
+   * Fires at most once even though beat() runs every 30 s. A tombstone seen by
+   * a beat BEFORE a handler is registered is left PENDING (not consumed) and
+   * dispatched by {@link setOnTombstone} — so a stop requested during startup
+   * is not lost.
+   */
+  private onTombstone?: (when: number) => void;
+  private tombstoneSeen = false;
 
   constructor(sessionId: string, workDir: string, mailboxPath: string, role?: string, daemon?: boolean) {
     this.sessionId = sessionId;
@@ -481,16 +406,59 @@ export class IdentityManager {
     this.mailboxPath = mailboxPath;
     this.role = role;
     this.daemon = daemon;
+    // Read the peer name once (config parses argv once at module load). The
+    // name is published into identity.json below so a mediator can match a live
+    // peer to the requested topology by NAME, not by a churning session id.
+    this.name = getPeerName() ?? undefined;
+  }
+
+  /**
+   * Reject a second live registration for the same durable identity. This is
+   * called INSIDE the identity-file lock immediately before register() writes,
+   * so the duplicate check and claim are one atomic operation. Names are
+   * globally unique, case-insensitive, and Unicode-normalized; workdir is not
+   * part of uniqueness because the qualified name itself is the identity.
+   */
+  private assertNameNotLive(name: string): void {
+    const normalizeName = (value: string): string => value.trim().normalize('NFC').toLowerCase();
+    const normalizedName = normalizeName(name);
+    for (const [sid, entry] of Object.entries(readIdentityMap())) {
+      if (sid === this.sessionId) continue; // self (re-register) is fine
+      if (typeof entry.name !== 'string' || normalizeName(entry.name) !== normalizedName) continue;
+
+      const heartbeat = readHeartbeatData(sid);
+      const beatPid = typeof heartbeat.pid === 'number' ? heartbeat.pid : undefined;
+      const entryPid = typeof entry.pid === 'number' ? entry.pid : undefined;
+      if (beatPid !== undefined && entryPid !== undefined && beatPid !== entryPid) {
+        throw new Error(
+          `[identity] refusing to guess process ownership for peer name "${name}" (session ${sid}: heartbeat PID and identity PID differ)`,
+        );
+      }
+      const pid = beatPid ?? entryPid;
+      // A stale beat means unhealthy, not unowned. Only positive evidence the
+      // original process is gone frees its durable name. Missing PID evidence
+      // fails closed, so launch/retry is an explicit operator decision.
+      if (typeof pid === 'number' &&
+          !isOriginalHolderAlive(pid, heartbeatMtimeMs(getHeartbeatFile(sid)))) {
+        continue;
+      }
+      throw new Error(
+        `[identity] refusing to start: peer name "${name}" is already held or its release cannot be proven ` +
+        `(session ${sid}, pid ${pid ?? 'unknown'}). Inspect the holder, stop it, then retry.`,
+      );
+    }
   }
 
   /**
    * Register (upsert) this instance into identity.json.
    *
-   * As a side effect, also prunes stale entries from other instances: any
-   * identity whose latest heartbeat is older than {@link IDENTITY_PRUNE_CUTOFF_MS}
-   * is removed during the read-merge-write. This reclaims orphans left by
-   * instances that crashed without running unregister(), so identity.json does
-   * not grow unbounded over time.
+   * As a side effect, also prunes stale entries from other instances during
+   * the read-merge-write: an entry is removed only when its latest heartbeat is
+   * older than {@link IDENTITY_PRUNE_CUTOFF_MS} AND its recorded holder is
+   * provably dead (see {@link pruneStaleEntries}). This reclaims orphans left
+   * by instances that crashed without running unregister(), so identity.json
+   * does not grow unbounded over time — without discarding a stalled-but-live
+   * peer that must stay discoverable to receive a stop tombstone.
    *
    * Uses a read-merge-write loop with retries to avoid clobbering a concurrent
    * registration from another instance. Each iteration re-reads the current
@@ -507,6 +475,9 @@ export class IdentityManager {
     // covers a writer that ignored the lock), but the lock is what actually
     // closes the lost-update window the earlier read-verify loop only narrowed.
     withIdentityLock(() => {
+      // Check uniqueness under the SAME lock as the identity write. A check in
+      // the constructor would leave a TOCTOU race between simultaneous launches.
+      if (this.name) this.assertNameNotLive(this.name);
       for (let attempt = 0; attempt < 5; attempt++) {
         const map = readIdentityMap();
         pruneStaleEntries(map, this.sessionId);
@@ -515,10 +486,14 @@ export class IdentityManager {
           workDir: this.workDir,
           mailbox: this.mailboxPath,
           startedAt: Date.now(),
+          // Publish the PID before the first heartbeat so another simultaneous
+          // launch cannot claim this name during the startup window.
+          pid: process.pid,
           // Publish the redacted launch flags so a mediator (mycc-compose) can
           // decide whether a live peer matches the requested topology, instead of
           // tearing down healthy instances on every sync.
           args: getLaunchArgs(),
+          ...(this.name ? { name: this.name } : {}),
           ...(this.role ? { role: this.role } : {}),
           ...(this.daemon ? { daemon: true } : {}),
         };
@@ -584,12 +559,61 @@ export class IdentityManager {
    * Write a single heartbeat: push Date.now(), trim to last 3, write atomically.
    * Stamps `process.pid` into the file so peers can discover a kill target
    * (primarily for daemon mode — the detached Lead has no terminal).
+   *
+   * TOMBSTONE CHECK (§6.7): before beating, read the file for a `tombstone`
+   * stamped by a stopper (`mycc-stop` / `down`). If present, dispatch it via
+   * {@link dispatchTombstone}, which fires {@link onTombstone} ONCE — but only
+   * once a handler exists; a beat before registration leaves it pending. This
+   * closes the case the OS signal path cannot: on Windows a signal maps to
+   * TerminateProcess (no handler), and a missed signal would otherwise leave the
+   * peer running — the tombstone lets it retire itself on its own timer.
    */
   private beat(): void {
-    const timestamps = readHeartbeats(this.sessionId);
+    const existing = readHeartbeatData(this.sessionId);
+    if (existing.tombstone !== undefined) {
+      this.dispatchTombstone(existing.tombstone);
+    }
+    const timestamps = existing.heartbeats;
     timestamps.push(Date.now());
     const trimmed = timestamps.slice(-MAX_HEARTBEATS);
     writeHeartbeats(this.sessionId, trimmed, process.pid);
+  }
+
+  /**
+   * Dispatch a pending tombstone only once a handler exists. A beat during
+   * startup must not consume the request before graceful teardown is wired.
+   * setOnTombstone() also checks the on-disk marker and dispatches it as soon
+   * as the callback becomes available.
+   */
+  private dispatchTombstone(when: number): void {
+    const callback = this.onTombstone;
+    if (this.tombstoneSeen || !callback) return;
+    this.tombstoneSeen = true;
+    try {
+      callback(when);
+    } catch {
+      // Swallow: the owner's handler is best-effort; a throw here must not
+      // break the heartbeat loop.
+    }
+  }
+
+  /**
+   * Register the tombstone reaction (§6.7). Called by the owner (the Lead's
+   * PeerManager) to run its graceful teardown when a stopper marks this
+   * instance. Overwrites any previous handler.
+   */
+  setOnTombstone(callback: (when: number) => void): void {
+    this.onTombstone = callback;
+    const tombstone = readHeartbeatData(this.sessionId).tombstone;
+    if (tombstone !== undefined) this.dispatchTombstone(tombstone);
+  }
+
+  /**
+   * Get the tombstone (epoch-ms) recorded in this instance's own heartbeat
+   * file, or undefined. Exposed mainly for tests and diagnostics.
+   */
+  getTombstone(): number | undefined {
+    return readHeartbeatData(this.sessionId).tombstone;
   }
 
   /**

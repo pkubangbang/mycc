@@ -198,6 +198,7 @@ export function createMockPeer(overrides: Partial<PeerModule> = {}): PeerModule 
     getLatestHeartbeat: vi.fn(() => null),
     getPid: vi.fn(() => null),
     setOnChannelJoin: vi.fn(),
+  setOnTombstone: vi.fn(),
     ...overrides,
   };
 }

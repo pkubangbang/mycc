@@ -9,6 +9,7 @@
     "mdcalc": "./scripts/mdcalc/mdcalc.js",
     "mycc-mail": "./scripts/mycc-mail/mycc-mail.js",
     "mycc-compose": "./scripts/mycc-compose/mycc-compose.js",
+    "mycc-stop": "./scripts/mycc-stop/mycc-stop.js",
     "mycc-pretty-print": "./scripts/pretty-print/pretty-print.js"
   },
   "exports": {

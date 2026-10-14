@@ -195,22 +195,104 @@ trap (`--token-threshold 80000`) cannot occur. A parity unit test asserts
 `match` = same `sessionId` **and** same `workdir` **and** canonical `args`
 equal **and** the process is alive (fresh heartbeat).
 
-### 6.3 `--session-id` is the sole `src/` prerequisite for resuming
+### 6.3 Identity is the durable NAME, not the session id
 
-- `src/config.ts`: add `'session-id'` to the minimist `string` table; add
-  `getPinnedSessionId()`.
-- `src/session/index.ts`: `writeFreshSessionFiles()` uses
-  `getPinnedSessionId() || randomUUID()`; `initializeSession()` validates the
-  UUID and **refuses to start when a live process already holds that sid**
-  (checked via the hoisted `isSessionLive()`).
-- No coordinator plumbing: `src/index.ts` already forwards
-  `process.argv.slice(2)` verbatim to the Lead.
-- **Constraint:** re-pinning reuses an existing session directory, and
-  `cleanupEmptySessions()` deletes sessions whose `first_query` is empty and
-  older than one minute — the live-heartbeat guard only saves it while a
-  process is alive. Therefore `up` **must** launch peers with `--auto` or
-  `--daemon` (which seed `HEADLESS_FIRST_QUERY_MARKER`). Enforced as a hard
-  validation rule (§5 step 0).
+> **Superseded.** An earlier revision of this document made `--session-id` the
+> sole `src/` prerequisite for resuming. That model was **removed**: it
+> conflated a peer's *durable identity* with its *per-run session id* and
+> produced silent re-join / mis-attribution / flag-loss paths. What follows is
+> the current model. (`--session-id` still exists as a boot flag on `mycc` but
+> is now a **silent no-op**; `mycc-stop` has its own `--session-id` TARGET
+> selector — a different binary, a different meaning.)
+
+- A peer is launched with `--name <group>:<peer>` (launcher-injected from
+  `peers[].name`). **That name is the durable identity**, written into
+  `identity.json` and into the channel files' `ownerName`/`peerName`.
+- Each peer mints its **own** fresh session id on every boot
+  (`writeFreshSessionFiles()` → `randomUUID()`). The spec **never** authors a
+  sid (`peers[].sessionId` is rejected at validation); the spec file is
+  byte-identical after every `up`.
+- Resolving a live peer to its current sid is done **by name** (scan
+  `identity.json` for an entry whose `name` matches AND whose `workdir`
+  matches), then requiring it to be RUNNING (fresh heartbeat AND a live
+  recorded pid). This is what lets a restarted peer re-join its channels even
+  though its sid changed.
+- **Constraint (unchanged):** re-pinning/restart must not let
+  `cleanupEmptySessions()` GC the session dir, so `up` launches peers with
+  `--auto` or `--daemon`. Enforced at §5 step 0.
+
+### 6.7 Stop is a dedicated primitive; a tombstone lets the peer terminate itself
+
+Stopping a peer is a five-step chain with **no daemon behind it** (unlike
+docker, nothing holds the live peer set; the launcher's only kill primitive is
+a signal to a **PID**): `address → sid → pid → signal → CONFIRM`. That chain
+lives in ONE module, `scripts/mycc-compose/lib/peers-stop.ts`, and every
+caller (`mycc-compose up`/`down`, the `mycc-stop` bin) goes through it — no
+caller touches a PID, a heartbeat, or a liveness predicate directly.
+
+**Best-effort terminate + tombstone.** `mycc-stop` (and `down`) write a
+**tombstone** into the peer's heartbeat file *before* signaling (after the peer's
+identity is PROVEN), then signal best-effort — so a peer the signal did *not*
+reach will still retire itself:
+
+```
+X = ~/.mycc-store/discovery/heartbeat/<sid>.json   (NOT identity.json)
+field:  { heartbeats: [...], briefs: [...], pid, tombstone?: <epochMs> }
+```
+
+**Why the heartbeat file, not `identity.json`:**
+
+1. **Keyed by the sid the stopper already has.** Step 1 of the chain resolves
+   `address → sid`; the heartbeat file is `<sid>.json`. Writing the tombstone
+   is one `atomicWrite(getHeartbeatFile(sid), …)` with no second lookup.
+   `identity.json` is a session-keyed *map* requiring a lock-guarded
+   read-merge-write — the very lock that can time out.
+2. **The self-terminating peer is already touching this file every 30 s.** The
+   peer's `beat()` (`IdentityManager.beat()`) reads-and-rewrites its OWN
+   heartbeat file on a timer. Checking for a tombstone there is free. The peer
+   never reads `identity.json` on the beat path, so a tombstone there would
+   require a *new* periodic read of the shared map just to notice it is doomed.
+3. **Scoped to one sid — no cross-peer damage.** A heartbeat-file tombstone
+   names exactly the peer being stopped. A tombstone in the shared
+   `identity.json` could be clobbered by a concurrent `register()`, reordered
+   by `pruneStaleEntries()`, or mismatched onto another peer.
+
+**Protocol:**
+
+- **Stopper (`mycc-stop` / `down`).** AFTER identity is PROVEN but BEFORE the
+  signal, write `tombstone: Date.now()` into the peer's heartbeat file
+  (read-modify-write, preserving `heartbeats`/`briefs`/`pid`). Writing it first
+  means even a signal that fails to land, or a `still-up` confirm timeout, still
+  leaves the marker for the peer to observe. If the signal reached the peer, it
+  is already gone and the tombstone is inert (it ages out with the file).
+- **Peer (`IdentityManager.beat()`).** Before rewriting its own heartbeat, if
+  `tombstone` is set → **self-terminate** (the same graceful path a signal
+  triggers). The peer is the authority on its own process; it does not wait to
+  be killed, and it works even when the OS signal path failed.
+- **Pending until a handler exists.** A `beat()` that runs *before* the
+  tombstone reaction is registered (a startup beat) MUST NOT consume the
+  request — the marker stays on disk, and `setOnTombstone()` itself checks the
+  file and dispatches as soon as a callback becomes available. Without this, a
+  stop requested during a peer's startup window would be silently dropped.
+- **Tombstone PRESERVATION (load-bearing).** `beat()` rewrites the heartbeat
+  file every 30 s; `writeHeartbeats()` therefore MUST **carry the existing
+  `tombstone` forward** on every rewrite (exactly as it already preserves
+  `briefs`). If a rewrite dropped the field, the tombstone would survive at
+  most one beat — a silent no-op. `writeBrief()` and any other
+  writeHeartbeatData round-trip must preserve it too.
+
+**Interaction with pruning (§6.4/register).** `pruneStaleEntries()` must NOT
+delete an entry merely because its heartbeat is old: age proves the peer is
+*unhealthy*, not that its process is *gone*. An entry is removed only when the
+recorded PID is provably dead or provably recycled (`isOriginalHolderAlive`);
+missing/conflicting PID evidence is kept. This is what keeps a stalled-but-live
+peer discoverable long enough to receive a stop tombstone — the tombstone lives
+in the heartbeat file, so a prematurely-pruned identity entry would make the
+peer unreachable and its tombstone undeliverable.
+
+The tombstone is an **epoch-ms timestamp** (not a boolean): it records *when*
+the stop was requested, so a reader can reason about staleness and the field
+stays self-describing.
 
 ### 6.4 Identity-repair pass
 
@@ -245,12 +327,14 @@ Freshness is currently derived three ways (`IdentityManager.isFresh`,
 | `src/utils/id-guard.ts` | **new** — `isSafeId` / `sanitizeId`, shared by `config.ts` and `spec.ts` |
 | `src/config.ts` | spread shared tables into `minimist()`; `getLaunchArgs()` delegates; add `session-id` to `string`; `getPinnedSessionId()` |
 | `src/types.ts` | `IdentityEntry.args?: string` |
-| `src/peer/identity.ts` | `register()` publishes `args`; export `isSessionLive()` |
+| `src/peer/identity.ts` | `register()` publishes `args`; export `isSessionLive()`; **heartbeat gains a `tombstone?` field** — `beat()` self-terminates when set (dispatching the reaction once a handler is registered; `setOnTombstone` dispatches a pending marker immediately), `writeHeartbeats()`/`writeBrief()` **preserve** it across rewrites, and `readTombstone()`/`writeTombstone()` are the stopper's read/write half (§6.7); `pruneStaleEntries()` keeps an old entry unless the holder is provably dead (§6.7) |
 | `src/session/index.ts` | pinned id in `writeFreshSessionFiles()`; live-holder guard in `initializeSession()` |
 | `scripts/mycc-compose/mycc-compose.js` | **new** — the CLI entry (registers tsx, imports the `.ts` umbrella, dispatches) |
 | `scripts/mycc-compose/lib/{discovery,spec,channels,peers,cli}.ts` | **new** — the `.ts` lib modules |
+| `scripts/mycc-compose/lib/peers-stop.ts` | **new** — the stop primitive (address→sid→pid→signal→CONFIRM), shared by `up`/`down` + `mycc-stop`; writes the tombstone (§6.7) |
 | `scripts/mycc-compose/lib/cmd-{check,up,down,status}.ts` | **new** — per-subcommand implementations, re-exported from `index.ts` |
 | `scripts/mycc-compose/lib/index.ts` | **new** — the umbrella re-exported by the `.js` entry |
+| `scripts/mycc-stop/mycc-stop.js` | **new** — the `mycc-stop` bin: address / `--session-id=<uuid>` / bare-list forms + `--help` |
 | `package.json` | `bin` gains `mycc-compose` |
 | `skills/mycc-compose/{SKILL.md,schema.md,script.md}` | **new** — progressive-disclosure skill |
 | `docs/peers/peer-topology.md` | this document |

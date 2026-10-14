@@ -6,16 +6,15 @@ description: >
   group", "launch several mycc instances that talk to each other", "set up a
   reproducible multi-instance team", "resume/restart my peer topology", or
   "wire N mycc instances declaratively". `mycc-compose` is the deterministic,
-  no-LLM CLI that materializes the spec: it mints or reuses each peer's
-  session id, launches/renews the processes detached, writes BOTH channel
-  files per link, and reports status. Re-running `sync` is the resume path
-  (cron / `--daemon <skill>` + `service_cron`). This is the AUTOMATION
-  counterpart to the `mediator` skill (which describes the same procedure by
-  hand): use `mycc-compose` when the group must be reproducible and resumable,
-  and the `mediator` skill for one-off/ad-hoc wiring. Do NOT use this for the
-  lead/teammate child-process team inside ONE instance — that is the
-  `coordination` skill.
-keywords: ["mycc-compose", "peer topology", "peer group", "declarative peers", "compose spec", "launch peer group", "resume topology", "restart peers", "multi-instance", "cross-instance", "channel files", "firstQuery", "session-id pin", "--session-id", renew, onMismatch, sync, up, down, status, check, cron resume, service_cron, mediator"]
+  no-LLM CLI that materializes the spec: it launches/renews each peer by its
+  durable `--name`, writes BOTH channel files per link, and reports status.
+  Re-running `sync` is the resume path (cron / `--daemon <skill>` +
+  `service_cron`). This is the AUTOMATION counterpart to the `mediator` skill
+  (which describes the same procedure by hand): use `mycc-compose` when the
+  group must be reproducible and resumable, and the `mediator` skill for
+  one-off/ad-hoc wiring. Do NOT use this for the lead/teammate child-process
+  team inside ONE instance — that is the `coordination` skill.
+keywords: ["mycc-compose", "peer topology", "peer group", "declarative peers", "compose spec", "launch peer group", "resume topology", "restart peers", "multi-instance", "cross-instance", "channel files", "firstQuery", "peer name", "--name", renew, onMismatch, sync, up, down, status, check, cron resume, service_cron, mediator"]
 ---
 
 # mycc-compose: Declarative Peer Groups
@@ -29,6 +28,14 @@ keywords: ["mycc-compose", "peer topology", "peer group", "declarative peers", "
 >   worked examples (peer-review pair, pipeline, fan-out).
 > - `script.md` — the `mycc-compose` subcommands, exit codes, and the cron
 >   wiring for `sync` (the resume path).
+
+## Upgrading an existing topology
+
+Before upgrading from the session-id-based version, run `mycc-compose down
+<old-spec>` using the old CLI while the spec still contains its `sessionId`
+fields. The new CLI rejects those fields and cannot positively identify a
+legacy nameless process. After the old peers are stopped, remove the fields and
+use the new CLI.
 
 ## What it is
 
@@ -44,10 +51,10 @@ the script is the entire mechanism, so the group is **reproducible** and
   "peers": [
     { "name": "leader",   "workdir": "C:/Proj/mycc",
       "args": "--auto --skip-healthcheck --ollama-model glm-5:cloud",
-      "sessionId": null, "renew": "onMismatch" },
+      "renew": "onMismatch" },
     { "name": "reviewer", "workdir": "C:/Proj/mycc",
       "args": "--auto --skip-healthcheck --ollama-model deepseek-v4.1-flash:cloud",
-      "sessionId": null, "renew": "onMismatch" }
+      "renew": "onMismatch" }
   ],
   "channels": [
     { "from": "leader", "to": "reviewer", "label": "review",
@@ -73,24 +80,26 @@ enough.
 
 ## The four moving parts
 
-1. **Session-id pinning.** Each peer is launched with `--session-id <uuid>`, so
-   a restarted peer comes back under the **same** session id and re-joins its
-   channel files (keyed `<sessionId>-<channelId>.json`). A `sessionId: null`
-   peer is minted a UUID on first `up` and **written back into the spec in
-   place** — the spec is the durable record.
+1. **Identity by durable NAME.** Each peer is launched with `--name
+   <group>:<peer>` (injected by the launcher from `peers[].name`); the peer
+   mints its OWN fresh session id on every boot. There is **no `sessionId`
+   field** — the spec never authors one and is byte-identical after every `up`.
+   Identity is resolved from `identity.json` by name, so a restarted peer
+   re-joins its channels regardless of the new sid.
 2. **`renew` policy.** `onMismatch` (default): start only when no *running*
-   peer matches (same sid + workdir + args + alive). `always`: stop then start
-   every time. A "running" peer means **fresh heartbeat AND a live pid** —
-   a just-killed peer is not counted (its stale heartbeat must not block a
-   restart).
+   peer matches (same workdir + args + alive, resolved by NAME). `always`: stop
+   then start every time. A "running" peer means **fresh heartbeat AND a live
+   pid** — a just-killed peer is not counted (its stale heartbeat must not block
+   a restart).
 3. **Channel pairs.** One link `A→B` materializes TWO files
    (`<sidA>-<label>.json`, `<sidB>-<label>.json`) with `channelId = label`,
-   `title = <group>-<label>`, cross-filled `peerSessionId`, `joined:false` /
+   `title = <group>-<label>`, cross-filled `peerSessionId`, and the DATA-ONLY
+   ownership names `ownerName`/`peerName`, `joined:false` /
    `firstQuerySent:false`. The reply contract is appended automatically if the
    prompt lacks one. The peers' 5s poll auto-joins and delivers `firstQuery`.
-4. **Detached launch.** Peers are spawned as `node <bin/mycc.js> --session-id
-   <sid> <args…>` with `detached:true, stdio:'ignore'` — never the npm shim
-   with a shell (which foregrounds the child on Windows).
+4. **Detached launch.** Peers are spawned as `node <bin/mycc.js> --name
+   <group>:<peer> <args…>` with `detached:true, stdio:'ignore'` — never the npm
+   shim with a shell (which foregrounds the child on Windows).
 
 ## The reply discipline (bake it into `prompt`)
 
@@ -111,20 +120,23 @@ Templates support `{{from}}`, `{{to}}`, `{{peer}}`, `{{label}}`. If you omit a
 | Command | Behavior |
 |---|---|
 | `mycc-compose check <file>` | Validate the spec; report match / mismatch / stale. **No mutation.** |
-| `mycc-compose up <file>` | Full pipeline: mint sids, launch/renew peers, repair identity, write channels. |
+| `mycc-compose up <file>` | Full pipeline: launch/renew peers by name, repair identity, write channels. |
 | `mycc-compose sync <file>` | Idempotent reconcile — `up` minus destructive stops. **The cron target.** |
-| `mycc-compose down <file>` | Terminate the peers, then remove the channel pairs (verifies pid is alive + is a mycc process). Always stops the peers — there is no channels-only mode. |
-| `mycc-compose status <file> [--json]` | Deterministic report: peers `{name,sessionId,live,matching,lastBrief}` + channels `{label,bothFilesPresent}`. |
+| `mycc-compose down <file>` | Terminate the peers, then remove the channel pairs (by NAME: R1 name-conjunction + R2 orphan-only legacy sweep). Always stops the peers — there is no channels-only mode. |
+| `mycc-compose status <file> [--json]` | Deterministic report: peers `{name,sessionId,live,matching,lastBrief}` + channels `{label,bothFilesPresent,attribution}`. |
 
 Exit codes: `0` OK, `1` runtime/validation error, `2` usage error.
 Full details, including cron wiring, in `script.md`.
 
 ## Hard rules (from the design)
 
-- `peers[].args` **must** include `--auto` or `--daemon` — without it,
-  `cleanupEmptySessions()` can garbage-collect the re-pinned session dir.
-- Labels (`group`, `peers[].name`) **never** enter a session id — ids stay pure
-  UUIDs. Channel title = `<group>-<label>`; filename suffix = `<label>`.
+- `peers[].args` **must** include `--auto` or `--daemon`.
+- A spec NEVER carries a `sessionId` (a present key, even `null`, is rejected).
+- `peers[].name` is unique (case-insensitive) and is the durable identity,
+  injected as `--name <group>:<peer>`. Channel title = `<group>-<label>`;
+  filename suffix = `<label>`.
+- **`/reload` is FORBIDDEN on a compose peer** (it carries `--name`): reloading
+  would orphan its channels. Renew by re-running `mycc-compose up <spec>`.
 - **Validate everything before mutating anything** — `up` aborts before any
   mutation on a bad spec.
 - Never hand-edit the channel booleans: the peers' poll re-persists in-memory

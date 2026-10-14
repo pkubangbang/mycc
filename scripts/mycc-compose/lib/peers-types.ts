@@ -17,9 +17,17 @@ import type { lastBrief } from './discovery.js';
  * A peer record as produced by validateSpec, or a hand-built fixture. The
  * module reads a SUBSET of the normalized peer shape, so every field is
  * optional except `parsedArgs`, which is the only one `peerArgv()` needs.
+ *
+ * `name` is the spec-local leaf used by channel references and reports.
+ * `identityName` is the durable `<group>:<peer>` handle injected through `--name`.
+ * `sessionId` is the RUNTIME session id resolved from identity.json by name —
+ * it is NOT a spec field any more (peers[].sessionId is rejected at validation),
+ * so this loose shape keeps it only for the runtime consumers that carry a
+ * resolved sid (peers-lifecycle/peers-state).
  */
 export interface Peer {
   name?: string;
+  identityName?: string;
   workdir?: string;
   sessionId?: string | null;
   args?: string;
@@ -43,15 +51,6 @@ export interface PeerStatusRow {
 export const LAUNCH_TIMEOUT_MS = 30_000;
 /** Poll interval while waiting for a launched peer to come up. */
 export const LAUNCH_POLL_MS = 500;
-/**
- * How long `launchPeer` waits for a previous holder of the same session id to
- * die before it refuses to spawn a duplicate (see the renew path in cmdUp:
- * `stopPeer` SIGTERMs, then the replacement starts while the old instance may
- * still be inside its graceful teardown).
- */
-export const HOLDER_RELEASE_TIMEOUT_MS = 5_000;
-/** Poll interval while waiting for a holder to release the session id. */
-export const HOLDER_RELEASE_POLL_MS = 200;
 /** Staged-wave size: launching ~20 at once drops identity registrations (§6.4). */
 export const WAVE_SIZE = 5;
 /** Delay between waves, giving identity.json writes time to settle. */

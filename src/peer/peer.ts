@@ -6,7 +6,7 @@
  */
 
 import type { PeerModule, IdentityEntry, ChannelFile } from '../types.js';
-import { IdentityManager, releaseSessionOwnership } from './identity.js';
+import { IdentityManager } from './identity.js';
 import { ChannelManager } from './channel.js';
 import {
   findBySid,
@@ -121,10 +121,6 @@ export class PeerManager implements PeerModule {
     this.identity.stopHeartbeat();
     this.channel.stopChannelPoll();
     this.identity.unregister();
-    // Release the pinned-sid ownership lease (see claimSessionOwnership).
-    // Best-effort; a crash leaves the lease for the pid-liveness stale-reclaim
-    // path in claimSessionOwnership, so the next launch can still take over.
-    releaseSessionOwnership(this.identity.getSelfSessionId());
   }
 
   getSelfSessionId(): string {
@@ -159,6 +155,16 @@ export class PeerManager implements PeerModule {
   setOnChannelJoin(callback: (channelId: string) => void): void {
     this.channel.setOnChannelJoin(callback);
   }
+
+  /**
+   * Register the tombstone reaction (§6.7). Forwarded to the IdentityManager,
+   * which fires it ONCE when a stopper (`mycc-stop` / `down`) marks this
+   * instance's heartbeat file. Wired once at startup by agent-repl.ts to run the
+   * Lead's graceful teardown (the same path the SIGTERM handler takes).
+   */
+  setOnTombstone(callback: (when: number) => void): void {
+    this.identity.setOnTombstone(callback);
+  }
 }
 
 /**
@@ -186,4 +192,5 @@ export class NoopPeerModule implements PeerModule {
   getLatestHeartbeat(_sessionId: string): number | null { return null; }
   getPid(_sessionId: string): number | null { return null; }
   setOnChannelJoin(_callback: (channelId: string) => void): void { /* no-op: children don't participate in peer discovery */ }
+  setOnTombstone(_callback: (when: number) => void): void { /* no-op: children have no heartbeat to tombstone */ }
 }

@@ -14,6 +14,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const configMock = vi.hoisted(() => ({ getPeerName: vi.fn<() => string | null>(() => null) }));
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -37,6 +39,9 @@ vi.mock('../../config.js', () => ({
   // identity.ts publishes this into identity.json on register(); the mock must
   // provide it or register() throws "No getLaunchArgs export on the mock".
   getLaunchArgs: () => '(none)',
+  // identity.ts reads this at construction (--name); the mock must export it
+  // or IdentityManager construction throws "No getPeerName export on the mock".
+  getPeerName: () => configMock.getPeerName(),
 }));
 
 // Import AFTER mocks are registered.
@@ -67,6 +72,7 @@ function makeMailboxPath(sid: string): string {
 }
 
 beforeEach(() => {
+  configMock.getPeerName.mockReturnValue(null);
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mycc-peer-'));
   for (const d of [discoveryDir(), heartbeatDir(), channelsDir()]) {
     fs.mkdirSync(d, { recursive: true });
@@ -89,6 +95,61 @@ describe('IdentityManager', () => {
     expect(entries[0].mailbox).toContain('unread-lead.jsonl');
   });
 
+  it('rejects a duplicate live qualified name atomically at registration, even across workdirs', () => {
+    configMock.getPeerName.mockReturnValue('group:worker');
+    const first = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    first.register();
+
+    const second = new IdentityManager(SID_B, '/work/b', makeMailboxPath(SID_B));
+    expect(() => second.register()).toThrow(/peer name "group:worker" is already held/);
+    expect(second.listIdentities().map((entry) => entry.sessionId)).toEqual([SID_A]);
+  });
+
+  it('allows restart when an old same-name entry is stale despite its PID being reused', () => {
+    configMock.getPeerName.mockReturnValue('group:worker');
+    const old = Date.now() - 2 * 60 * 60 * 1000;
+    fs.writeFileSync(identityFile(), JSON.stringify({
+      [SID_B]: {
+        sessionId: SID_B,
+        name: 'group:worker',
+        pid: process.pid, // simulates an old PID now reused by this test runner
+        workDir: '/work/old',
+        mailbox: makeMailboxPath(SID_B),
+        startedAt: old,
+      },
+    }, null, 2), 'utf-8');
+    writeHeartbeatRaw(SID_B, [old]);
+    // The recorded PID began after this heartbeat evidence, so the live PID is
+    // unambiguously recycled and must not reserve the old name.
+    fs.utimesSync(heartbeatFile(SID_B), 1, 1);
+
+    const id = new IdentityManager(SID_A, '/work/new', makeMailboxPath(SID_A));
+    expect(() => id.register()).not.toThrow();
+    expect(id.listIdentities().map((entry) => entry.sessionId)).toEqual([SID_A]);
+  });
+
+  it('does not free a durable name merely because its heartbeat is stale while the PID remains plausible', () => {
+    configMock.getPeerName.mockReturnValue('group:worker');
+    const old = Date.now() - 2 * 60 * 60 * 1000;
+    fs.writeFileSync(identityFile(), JSON.stringify({
+      [SID_B]: {
+        sessionId: SID_B,
+        name: 'group:worker',
+        pid: process.pid,
+        workDir: '/work/old',
+        mailbox: makeMailboxPath(SID_B),
+        startedAt: old,
+      },
+    }, null, 2), 'utf-8');
+    // The heartbeat payload is stale, but its file's mtime follows this
+    // already-running PID: the process may be hung, so it still reserves the name.
+    writeHeartbeatRaw(SID_B, [old]);
+
+    const replacement = new IdentityManager(SID_A, '/work/new', makeMailboxPath(SID_A));
+    expect(() => replacement.register()).toThrow(/peer name "group:worker" is already held/);
+    expect(replacement.listIdentities().map((entry) => entry.sessionId)).toEqual([SID_B]);
+  });
+
   it('unregister() removes the entry', () => {
     const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
     id.register();
@@ -102,7 +163,7 @@ describe('IdentityManager', () => {
     // is 2h old — well beyond the 1h prune cutoff.
     const now = Date.now();
     fs.writeFileSync(identityFile(), JSON.stringify({
-      [SID_B]: { sessionId: SID_B, workDir: '/work/b', mailbox: makeMailboxPath(SID_B), startedAt: now - 2 * 60 * 60 * 1000 },
+      [SID_B]: { sessionId: SID_B, workDir: '/work/b', mailbox: makeMailboxPath(SID_B), pid: 99999999, startedAt: now - 2 * 60 * 60 * 1000 },
     }, null, 2), 'utf-8');
     writeHeartbeatRaw(SID_B, [now - 2 * 60 * 60 * 1000, now - 7000 * 1000, now - 7200 * 1000]);
 
@@ -112,6 +173,32 @@ describe('IdentityManager', () => {
     const entries = id.listIdentities();
     expect(entries).toHaveLength(1);
     expect(entries[0].sessionId).toBe(SID_A); // stale SID_B was pruned
+  });
+
+  it('register() does not prune a stale heartbeat while its recorded process is still alive', () => {
+    const now = Date.now();
+    const stale = now - 2 * 60 * 60 * 1000;
+    fs.writeFileSync(identityFile(), JSON.stringify({
+      [SID_B]: {
+        sessionId: SID_B,
+        workDir: '/work/b',
+        mailbox: makeMailboxPath(SID_B),
+        pid: process.pid,
+        startedAt: stale,
+      },
+    }, null, 2), 'utf-8');
+    // The payload says the last beat is old, but its PID and file mtime still
+    // belong to this live process. Staleness must not erase its discoverability.
+    fs.writeFileSync(heartbeatFile(SID_B), JSON.stringify({
+      heartbeats: [stale],
+      briefs: [],
+      pid: process.pid,
+    }), 'utf-8');
+
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.register();
+
+    expect(id.listIdentities().map((entry) => entry.sessionId).sort()).toEqual([SID_A, SID_B]);
   });
 
   it('register() preserves fresh identity entries (heartbeat within 1h)', () => {

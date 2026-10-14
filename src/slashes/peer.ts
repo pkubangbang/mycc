@@ -14,7 +14,24 @@
  *                           don't bloat the listing.
  *   /peer --self         - Include the local instance in the list (marked self).
  *
- * This mirrors the `peers` tool (src/tools/peers.ts) logic exactly:
+ * Layout — FLAT BLOCKS, not a column table:
+ *   The session id is an ACTIONABLE ADDRESS (mail_to(name="<session-id>/lead"),
+ *   peer_disconnect), so it is printed in FULL at column 0 — never truncated —
+ *   and can be copied verbatim. A durable compose NAME (`<group>:<peer>`) is
+ *   shown right after the id when present (magenta) — it is the STABLE handle
+ *   across the per-run session-id churn. Below the id line, the peer's facts
+ *   are shown on lightly-indented (2-space) lines with an 8-char label gutter:
+ *
+ *     6df5729a-3c11-4d8a-9f2b-01234567892f97  ● online  pid 37688
+ *       dir      C:\Proj\mycc
+ *       started  2026-10-14 08:38:14 (5h ago)
+ *       brief    13:46:37 · 9  FIX C done + all gates green: …
+ *
+ *   Earlier revisions used a fixed-width column table; that padded every
+ *   field into a ~42-cell gutter and indented details by 12 columns — wasted
+ *   left margin. The flat block reclaims it and keeps the id pasteable.
+ *
+ * This mirrors the `peers` tool (src/tools/peer_list.ts) logic exactly:
  *   1. Hard cutoff — peers whose latest heartbeat (getLatestHeartbeat) is
  *      older than 1 hour are omitted entirely (even with --all) and counted
  *      as `omitted`. This prevents long-dead instances from bloating the list.
@@ -35,6 +52,7 @@
 
 import type { SlashCommand } from '../types.js';
 import chalk from 'chalk';
+import stringWidth from 'string-width';
 import { formatLocalDateTime } from '../utils/time.js';
 import { listRemotePeers, liveSocketOf } from '../peer/wire-registry.js';
 
@@ -44,6 +62,40 @@ import { listRemotePeers, liveSocketOf } from '../peer/wire-registry.js';
  * unbounded with long-dead instances' briefs. 1 hour.
  */
 const PEER_LISTING_CUTOFF_MS = 60 * 60 * 1000;
+
+/**
+ * Terminal width for clamping free prose. The Lead never owns a TTY directly
+ * (its stdio is piped through the Coordinator), but the Coordinator forwards
+ * the terminal size via the COLUMNS env var / resize IPC, and agent-io keeps
+ * process.env.COLUMNS current. Fall back to 80 when unknown.
+ */
+function terminalWidth(): number {
+  const cols = Number(process.env.COLUMNS ?? process.stdout.columns ?? 0);
+  return Number.isFinite(cols) && cols > 20 ? cols : 80;
+}
+
+/**
+ * Collapse a free-prose string (a brief) to a SINGLE display line no wider
+ * than `max` cells: newlines/tabs become spaces, runs of whitespace collapse,
+ * and an over-long result is cut at a word boundary when possible and given
+ * a trailing ellipsis. Display width is measured with `stringWidth` so CJK
+ * content is clamped by cells, not code units.
+ */
+function clampOneLine(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  if (stringWidth(flat) <= max) return flat;
+  // Slice conservatively by code units, then trim back to the last space so
+  // we cut at a word boundary where one exists near the limit.
+  let cut = flat.slice(0, max - 1);
+  const lastSpace = cut.lastIndexOf(' ');
+  if (lastSpace > max * 0.6) cut = cut.slice(0, lastSpace);
+  return `${cut.trimEnd()}…`;
+}
+
+/** A detail line: 2-space indent + an 8-char gray label gutter + value. */
+function detail(label: string, value: string): string {
+  return `  ${chalk.gray(`${label}       `.slice(0, 8))}${value}`;
+}
 
 export const peerCommand: SlashCommand = {
   name: 'peer',
@@ -64,46 +116,23 @@ export const peerCommand: SlashCommand = {
     // dialed cross-machine peers (no other local instances registered) must
     // still see them in /peer.
     const remotes = listRemotePeers();
-    const remoteRows: string[] = [];
-    let remoteLive = 0;
-    for (const pair of remotes) {
-      const alive = liveSocketOf(pair) !== null;
-      if (alive) remoteLive++;
-      const socketCount = pair.sockets.length;
-      const state = alive
-        ? chalk.green('connected')
-        : socketCount > 0
-          ? chalk.yellow('half-open (closing)')
-          : chalk.gray('connecting/redialing');
-      const dialTag = pair.dialed ? 'dialed' : 'accepted';
-      const meta = pair.sockets[0]?.meta;
-      const daemonTag = meta?.daemon ? `\n    daemon: true` : '';
-      const roleTag = meta?.role ? `\n    role: ${meta.role}` : '';
-      const workDirTag = meta?.workDir ? `\n    workDir: ${meta.workDir}` : '';
-      remoteRows.push(
-        `  ${chalk.bold(pair.sid || '(pending)')} [remote wire]\n` +
-        `    endpoint: ${pair.endpoint}\n` +
-        `    status: ${state}\n` +
-        `    direction: ${dialTag}${daemonTag}${roleTag}${workDirTag}`,
-      );
-    }
-    const remoteSection = remoteRows.length > 0
-      ? `\n${chalk.magenta(`Remote wire peers (${remoteLive}/${remoteRows.length} connected) — cross-machine, via the peer wire (mail_to("<sessionId>/lead") works the same; hang up with peer_disconnect):`)}\n${remoteRows.join('\n')}`
-      : '';
 
-    if (identities.length === 0) {
-      if (remoteRows.length > 0) {
-        // No local peers, but remote wires exist — show the remote section.
-        console.log(chalk.cyan(`Peers (no local peers registered; ${remoteLive}/${remoteRows.length} remote connected):`));
-        console.log(remoteSection);
-        console.log(chalk.gray('Connect to a cross-machine peer via peer_connect, then mail_to(name="<session-id>/lead", ...).'));
-      } else {
-        console.log(chalk.gray('No mycc instances registered for peer discovery. (Run `mycc` in another directory on this machine to register an instance; peer discovery is via ~/.mycc-store/discovery/identity.json + heartbeats.)'));
-      }
-      return;
+    // ── Build the local rows ────────────────────────────────────────────────
+    interface LocalRow {
+      sid: string;
+      isSelf: boolean;
+      fresh: boolean;
+      workDir: string;
+      name?: string;
+      role?: string;
+      daemon: boolean;
+      pid: number | null;
+      age: string;
+      started: string;
+      briefs: Array<{ time: number; content: string; confidence: number }>;
     }
 
-    const rows: string[] = [];
+    const rows: LocalRow[] = [];
     let online = 0;
     let omitted = 0;
     const now = Date.now();
@@ -125,7 +154,6 @@ export const peerCommand: SlashCommand = {
 
       if (fresh) online++;
 
-      const started = formatLocalDateTime(id.startedAt);
       const ageMs = now - id.startedAt;
       const age = ageMs < 60_000
         ? `${Math.round(ageMs / 1000)}s ago`
@@ -133,75 +161,197 @@ export const peerCommand: SlashCommand = {
           ? `${Math.round(ageMs / 60_000)}m ago`
           : `${Math.round(ageMs / PEER_LISTING_CUTOFF_MS)}h ago`;
 
-      const tag = isSelf ? ' (self)' : '';
-      const state = fresh ? chalk.green('online') : chalk.gray('offline');
-      const roleTag = id.role ? `\n    role: ${id.role}` : '';
-      const daemonTag = id.daemon ? `\n    daemon: true` : '';
-      // Surface the OS PID so another MYCC can terminate the instance
-      // (primarily daemons — detached Leads with no terminal). croner's
-      // timer lives inside the Lead's event loop and is unref'd, so killing
-      // this PID stops the cron with no orphaned timer. On Windows use
-      // `taskkill /PID <pid>`; on Unix `kill <pid>`.
-      const peerPid = ctx.peer.getPid(id.sessionId);
-      const pidTag = peerPid !== null
-        ? `\n    pid: ${peerPid} (kill via ${process.platform === 'win32' ? `taskkill /PID ${peerPid}` : `kill ${peerPid}`})`
-        : '';
-      // Surface recent briefs so the lead can monitor peer progress.
-      const briefs = ctx.peer.getBriefs(id.sessionId);
-      const briefLine = briefs.length > 0
-        ? `\n    briefs:\n${briefs.map((b) => {
-            const t = formatLocalDateTime(b.time);
-            return `      - [${t}] (conf ${b.confidence}) ${b.content}`;
-          }).join('\n')}`
-        : '';
-      rows.push(
-        `  ${chalk.bold(id.sessionId)}${tag}\n` +
-        `    workDir: ${id.workDir}\n` +
-        `    status: ${state}\n` +
-        `    started: ${started} (${age})${roleTag}${daemonTag}${pidTag}${briefLine}`,
-      );
+      rows.push({
+        sid: id.sessionId,
+        isSelf,
+        fresh,
+        workDir: id.workDir,
+        // Durable peer NAME (`<group>:<peer>`, mycc-compose) when present — the
+        // STABLE handle across the per-run session-id churn, so such a peer can
+        // be addressed by name. Omitted for ordinary (non-compose) instances.
+        name: id.name,
+        role: id.role,
+        daemon: id.daemon === true,
+        // Surface the OS PID so another MYCC can terminate the instance
+        // (primarily daemons — detached Leads with no terminal). croner's
+        // timer lives inside the Lead's event loop and is unref'd, so killing
+        // this PID stops the cron with no orphaned timer.
+        pid: ctx.peer.getPid(id.sessionId),
+        age,
+        started: formatLocalDateTime(id.startedAt),
+        // Surface recent briefs so the lead can monitor peer progress.
+        briefs: ctx.peer.getBriefs(id.sessionId),
+      });
     }
 
-    // ── Section 2: REMOTE wire peers (built up-front, above, so the no-
-    // local-identities early-return can still surface a remote-only wire
-    // state). Cross-machine peers established via peer_connect (dialed) or
-    // accepted on /peer/ws, read from the in-memory wire registry (process-
-    // lifetime; NOT in discovery files). Distinct section + explicit
-    // [remote wire] marker so the user knows these route through the WIRE
-    // (mail_to works the same as for local peers). Entries with no live
-    // socket (pending/redialing) are listed with status
-    // "connecting/redialing" — mail_to reports "retrying" for them.
+    // ── Build the remote rows ───────────────────────────────────────────────
+    interface RemoteRow {
+      sid: string;
+      endpoint: string;
+      alive: boolean;
+      socketCount: number;
+      dialed: boolean;
+      daemon: boolean;
+      role?: string;
+      workDir?: string;
+    }
 
+    const remoteRows: RemoteRow[] = [];
+    let remoteLive = 0;
+    for (const pair of remotes) {
+      const alive = liveSocketOf(pair) !== null;
+      if (alive) remoteLive++;
+      const meta = pair.sockets[0]?.meta;
+      remoteRows.push({
+        sid: pair.sid || '',
+        endpoint: pair.endpoint,
+        alive,
+        socketCount: pair.sockets.length,
+        dialed: pair.dialed,
+        daemon: meta?.daemon === true,
+        role: meta?.role,
+        workDir: meta?.workDir,
+      });
+    }
+
+    // ── Empty result handling ────────────────────────────────────────────────
     if (rows.length === 0 && remoteRows.length === 0) {
       if (omitted > 0) {
         console.log(chalk.gray(
           includeAll
             ? `No mycc instances listed; ${omitted} registered peer${omitted === 1 ? ' is' : 's are'} older than 1h and omitted.`
-            : `No online mycc instances found; ${omitted} older than 1h omitted. (Use /peer --all to include recent offline/stale instances.)`,
+            : `No online mycc instances found; ${omitted} older than 1h omitted.`,
         ));
+        if (!includeAll) {
+          console.log(chalk.gray('  Use /peer --all to include recent offline/stale instances.'));
+        }
       } else {
         console.log(chalk.gray(
           includeAll
             ? 'No mycc instances registered for peer discovery, and no remote wire peers connected.'
-            : 'No other online mycc instances found. (Use /peer --all to include offline/stale instances; use peer_connect to reach a cross-machine instance.)',
+            : 'No other online mycc instances found.',
         ));
+        if (!includeAll) {
+          console.log(chalk.gray(
+            '  Use /peer --all to include offline/stale instances; '
+            + 'use peer_connect to reach a cross-machine instance.',
+          ));
+        }
       }
       return;
     }
 
-    const summary = `${online} local online, ${rows.length} local listed${includeSelf ? ' (incl. self)' : ''}${omitted > 0 ? `, ${omitted} older than 1h omitted` : ''}${remoteRows.length > 0 ? `, ${remoteLive}/${remoteRows.length} remote connected` : ''}`;
-    if (rows.length === 0) {
-      // Only remote peers — print the remote section alone.
-      console.log(chalk.cyan(`Peers (no local peers listed; ${remoteLive}/${remoteRows.length} remote connected):`));
-    } else {
-      console.log(chalk.cyan(`Peers (${summary}):`));
-      for (const row of rows) {
-        console.log(row);
-      }
+    // ── Render ───────────────────────────────────────────────────────────────
+    if (rows.length > 0) {
+      renderLocal(rows, { online, omitted });
+    } else if (remoteRows.length === 0) {
+      console.log(chalk.gray(`No local peers listed${omitted > 0 ? ` (${omitted} older than 1h omitted)` : ''}.`));
     }
-    if (remoteSection) {
-      console.log(remoteSection);
+
+    if (remoteRows.length > 0) {
+      renderRemote(remoteRows, remoteLive);
     }
-    console.log(chalk.gray('Connect to a peer by creating a channel file pair (see the mediator skill), or mail_to(name="<session-id>/lead", ...). For a cross-machine peer, use peer_connect first.'));
   },
 };
+
+/**
+ * Render the local peers as flat blocks (full id line + indented detail).
+ */
+function renderLocal(
+  rows: Array<{
+    sid: string;
+    isSelf: boolean;
+    fresh: boolean;
+    workDir: string;
+    name?: string;
+    role?: string;
+    daemon: boolean;
+    pid: number | null;
+    age: string;
+    started: string;
+    briefs: Array<{ time: number; content: string; confidence: number }>;
+  }>,
+  meta: { online: number; omitted: number },
+): void {
+  const summary = [
+    `${meta.online} online`,
+    `${rows.length} listed`,
+  ];
+  if (meta.omitted > 0) summary.push(`${meta.omitted} registered >1h hidden`);
+  console.log(`${chalk.cyan.bold('Peers')} ${chalk.gray(`— ${summary.join(', ')}`)}`);
+
+  for (const r of rows) {
+    // Identity line: FULL id (never truncated — it is the mail_to address),
+    // then the durable compose NAME when present, then state, then the
+    // optional control facts that fit inline.
+    const state = r.fresh ? chalk.green('● online') : chalk.gray('○ offline');
+    const name = r.name ? `  ${chalk.magenta(r.name)}` : '';
+    const facts: string[] = [];
+    if (r.pid !== null) facts.push(chalk.cyan(`pid ${r.pid}`));
+    if (r.role) facts.push(chalk.cyan(`role ${r.role}`));
+    if (r.daemon) facts.push(chalk.cyan('daemon'));
+    if (r.isSelf) facts.push(chalk.cyan('self'));
+    // The kill hint is only actionable/purposeful for a detached DAEMON (a
+    // background Lead with no terminal). For an ordinary interactive instance
+    // the operator already owns its terminal, so repeating "kill via …" on
+    // every row is noise that bloats the listing.
+    const kill = r.daemon && r.pid !== null
+      ? chalk.gray(`  (stop: ${process.platform === 'win32' ? `taskkill /PID ${r.pid}` : `kill ${r.pid}`})`)
+      : '';
+
+    console.log();
+    console.log(`${chalk.bold(r.sid)}${name}  ${state}${facts.length > 0 ? `  ${facts.join('  ')}` : ''}${kill}`);
+    console.log(detail('dir', chalk.white(r.workDir)));
+    console.log(detail('started', chalk.gray(`${r.started} (${r.age})`)));
+
+    // Briefs are free prose and can run long; clamp each to ONE line so a
+    // chatty peer can't turn a one-row entry into a wall of wrapped text.
+    // Budget = terminal width minus (2 indent + 8 label + time + conf).
+    const briefBudget = Math.max(40, terminalWidth() - 2 - 8 - 15);
+    for (const b of r.briefs) {
+      const t = formatLocalDateTime(b.time).slice(11); // HH:MM:SS
+      const content = clampOneLine(b.content, briefBudget);
+      console.log(detail('brief', chalk.gray(`${t} · ${b.confidence}  ${content}`)));
+    }
+  }
+}
+
+/**
+ * Render the cross-machine wire peers as flat blocks.
+ */
+function renderRemote(
+  rows: Array<{
+    sid: string;
+    endpoint: string;
+    alive: boolean;
+    socketCount: number;
+    dialed: boolean;
+    daemon: boolean;
+    role?: string;
+    workDir?: string;
+  }>,
+  remoteLive: number,
+): void {
+  console.log(
+    chalk.magenta.bold(`Remote wire peers — ${remoteLive}/${rows.length} connected`),
+  );
+  console.log(
+    chalk.gray('  mail_to("<session-id>/lead") works the same; hang up with peer_disconnect.'),
+  );
+
+  for (const r of rows) {
+    const state = r.alive
+      ? chalk.green('● connected')
+      : r.socketCount > 0
+        ? chalk.yellow('◐ half-open')
+        : chalk.gray('◌ connecting');
+    const dir = r.dialed ? 'dialed' : 'accepted';
+    const sid = r.sid ? chalk.bold(r.sid) : chalk.gray('(pending)');
+
+    console.log();
+    console.log(`${sid}  ${state}  ${chalk.white(dir)}  ${chalk.white(r.endpoint)}`);
+    console.log(detail('dir', r.workDir ? chalk.white(r.workDir) : chalk.gray('(awaiting announce)')));
+    if (r.role) console.log(detail('role', chalk.cyan(r.role)));
+    if (r.daemon) console.log(detail('daemon', chalk.gray('true')));
+  }
+}

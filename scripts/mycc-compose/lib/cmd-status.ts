@@ -4,12 +4,18 @@
 
 import { validateSpec, loadSpec } from './spec.js';
 import { channelStatus } from './channels.js';
-import { peerStatus } from './peers.js';
+import { peerStatus, resolvePeerSid } from './peers.js';
 import { out } from './cli.js';
 import type { BriefEntry } from './discovery.js';
 
 export function cmdStatus(file: string, asJson: boolean): void {
   const spec = validateSpec(loadSpec(file));
+  // Resolve each peer's LIVE sid by durable NAME up front so channelStatus can
+  // read the channel files: a spec never carries a sid, and the channel
+  // materializer keys files on the resolved sid. (peerStatus below re-resolves
+  // idempotently; this explicit pass keeps the ordering independent of the
+  // peers-report loop.)
+  for (const peer of spec.peers) resolvePeerSid(peer);
   const report = {
     group: spec.group,
     // `generatedAt` is intentionally NOT part of the machine-readable report:
@@ -39,6 +45,9 @@ export function cmdStatus(file: string, asJson: boolean): void {
   out(`Topology "${report.group}" @ ${new Date().toISOString()}`);
   out('Peers:');
   for (const p of report.peers) {
+    // The session id is the LIVE instance's sid, resolved from identity.json by
+    // the peer's durable NAME at report time (not a spec-authored id — specs
+    // never carry one). `(none)` means no live instance was found for the name.
     out(`  - ${p.name}: ${p.live ? 'live' : 'down'}${p.live && !p.matching ? ' (args/workdir mismatch)' : ''} [sid=${p.sessionId ?? '(none)'}]`);
     if (p.lastBrief) {
       const when = new Date(p.lastBrief.time).toISOString().replace('T', ' ').slice(0, 19);

@@ -619,6 +619,8 @@ export interface MailModule {
  */
 export interface IdentityEntry {
   sessionId: string;
+  /** OS process owning this entry, published at registration for name uniqueness checks. */
+  pid?: number;
   workDir: string;
   mailbox: string;
   startedAt: number;
@@ -636,6 +638,15 @@ export interface IdentityEntry {
   args?: string;
   /** Daemon mode flag (true when started with --daemon). */
   daemon?: boolean;
+  /**
+   * Optional durable peer NAME (`<group>:<peer>`), launcher-injected via
+   * `--name` (mycc-compose). A stable, human-readable identity for a peer
+   * whose session id is minted fresh on every run — so peers can be addressed
+   * by name across restarts. DATA-ONLY: it lives here (and in channel-file
+   * ownership fields) and is NEVER used as a filename component. Absent for
+   * non-compose instances. See arg-canonical.ts LAUNCHER_FLAGS.
+   */
+  name?: string;
   /** Optional role label: the skill name loaded by --daemon <skill-name>.
    *  Absent when --daemon is bare (no skill) or when not in daemon mode.
    *  Tags the instance so peers can discover it by role. */
@@ -654,6 +665,18 @@ export interface ChannelFile {
   joined: boolean;
   firstQuerySent: boolean;
   createdAt: number;
+  /**
+   * Optional DATA-ONLY ownership NAMES (`<group>:<peer>`), written by
+   * mycc-compose at materialization time. They let compose attribute a channel
+   * file to a topology peer by NAME (which is stable across the per-run
+   * session-id churn) for stale-file cleanup, without reading any spec sid.
+   * The runtime (ChannelManager) neither reads nor writes them — they must
+   * simply SURVIVE the read-modify-write round-trip (readChannelFile returns
+   * the parsed object; writeChannelFile re-serializes it whole). Absent on
+   * pre-name-fielding files (legacy).
+   */
+  ownerName?: string;
+  peerName?: string;
 }
 
 /**
@@ -708,6 +731,21 @@ export interface PeerModule {
    * callback (single listener).
    */
   setOnChannelJoin(callback: (channelId: string) => void): void;
+  /**
+   * Register the TOMBSTONE reaction (§6.7 of docs/peers/peer-topology.md). The
+   * IdentityManager fires this callback ONCE when it detects a `tombstone`
+   * stamped into THIS instance's own heartbeat file by a stopper (`mycc-stop` /
+   * `mycc-compose down`) — i.e. a stop was requested but the OS signal path may
+   * not have reached this process (Windows maps SIGTERM to TerminateProcess, so
+   * no handler runs; a missed signal would otherwise leave the peer running).
+   *
+   * The callback runs the Lead's GRACEFUL teardown — the SAME path the SIGTERM
+   * handler takes (dismiss team → kill bg tasks → peer.stop() → stop ServeHub →
+   * exit). The peer module only DETECTS (it already reads its own heartbeat every
+   * beat); the lifecycle owner decides to die, so ordered cleanup is preserved.
+   * Fires at most once. No-op on the child (NoopPeerModule).
+   */
+  setOnTombstone(callback: (when: number) => void): void;
   /** Start the peer subsystem: register identity + begin heartbeat + start channel poll.
    *  Only the lead process calls this; the child (NoopPeerModule) is a no-op. */
   start(): void;

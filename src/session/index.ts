@@ -13,8 +13,7 @@ import * as os from 'os';
 import chalk from 'chalk';
 import type { Session, SessionDisplay, SessionInit } from './types.js';
 import { prepareRestoration, readDosq, extractFirstQuery } from './restoration.js';
-import { setSessionContext, getSessionArg, getSessionsDir, getPinnedSessionId, shouldSkipInteractiveReview } from '../config.js';
-import { isSessionHeld, claimSessionOwnership } from '../peer/identity.js';
+import { setSessionContext, getSessionArg, getSessionsDir, shouldSkipInteractiveReview } from '../config.js';
 import { clearAll } from '../context/memory-store.js';
 import { agentIO } from '../loop/agent-io.js';
 import { openEditor } from '../utils/open-editor.js';
@@ -150,6 +149,34 @@ export class AmbiguousSessionError extends Error {
 }
 
 /**
+ * Error thrown when a session file already exists and would be overwritten.
+ *
+ * Thrown by {@link createSessionFile}'s EXCLUSIVE-CREATE guard: a bare
+ * `fs.writeFileSync(filePath, …)` silently OVERWRITES an existing
+ * `session-{id}.json`, clobbering the previous session's metadata (id,
+ * triologue paths, teammates, first_query) out from under its owner
+ * process. The same failure mode the lead triologue's `'wx'` guard in
+ * {@link writeFreshSessionFiles} defends against — applied to the session
+ * json itself.
+ *
+ * Callers decide the policy:
+ * - caller-supplied `id` → the error surfaces immediately (never overwrite
+ *   or silently regenerate an explicitly requested id);
+ * - self-minted `id` → the minting loop catches it and regenerates a fresh
+ *   randomUUID (an astronomically rare collision between two same-instant
+ *   starts must regenerate, not throw to the user — see createSessionFile).
+ */
+export class SessionExistsError extends Error {
+  constructor(
+    public readonly sessionId: string,
+    public readonly filePath: string,
+  ) {
+    super(`Session file already exists: ${filePath}`);
+    this.name = 'SessionExistsError';
+  }
+}
+
+/**
  * Get the user sessions directory path (~/.mycc-store/sessions)
  */
 export function getUserSessionsDir(): string {
@@ -178,26 +205,64 @@ export function createSessionFile(lead_triologue: string, id?: string): string {
   ensureDir(sessionsDir);
 
   const now = new Date();
-  const sessionId = id || randomUUID();
-  const sessionDir = path.join(sessionsDir, sessionId);
-  ensureDir(sessionDir);
-  const filename = `session-${sessionId}.json`;
 
-  const session: Session = {
-    version: '2.0',
-    id: sessionId,
-    create_time: now.toISOString(),
-    project_dir: process.cwd(),
-    lead_triologue,
-    child_triologues: [],
-    teammates: [],
-    first_query: '',
-  };
+  // EXCLUSIVE-CREATE COLLISION GUARD: `session-{id}.json` is created with
+  // `'wx'` (atomic exclusive open), so two same-instant starts (or a stale
+  // caller-supplied id) can NEVER silently overwrite each other's session
+  // metadata — the second create fails with EEXIST instead of clobbering the
+  // first (the same failure mode the triologue's `'wx'` guard in
+  // {@link writeFreshSessionFiles} defends; a bare `fs.writeFileSync` here
+  // would truncate/replace an existing session's id, triologue paths,
+  // teammates and first_query out from under its owner process).
+  //
+  // Policy on EEXIST, by id origin:
+  // - self-minted (`id` omitted): regenerate with a FRESH randomUUID and
+  //   retry (bounded) — a collision between two same-instant starts must
+  //   regenerate, not surface to the user;
+  // - caller-supplied: throw {@link SessionExistsError} immediately — an
+  //   explicitly requested id is never silently replaced.
+  const MAX_CREATE_ATTEMPTS = 5;
+  for (let attempt = 0; attempt < MAX_CREATE_ATTEMPTS; attempt++) {
+    const sessionId = id || randomUUID();
+    const sessionDir = path.join(sessionsDir, sessionId);
+    ensureDir(sessionDir);
+    const filename = `session-${sessionId}.json`;
 
-  const filePath = path.join(sessionDir, filename);
-  fs.writeFileSync(filePath, JSON.stringify(session, null, 2), 'utf-8');
+    const session: Session = {
+      version: '2.0',
+      id: sessionId,
+      create_time: now.toISOString(),
+      project_dir: process.cwd(),
+      lead_triologue,
+      child_triologues: [],
+      teammates: [],
+      first_query: '',
+    };
 
-  return filePath;
+    const filePath = path.join(sessionDir, filename);
+    try {
+      // 'wx' — exclusive create: the open itself is the atomic take-the-slot
+      // primitive; a successful open means THIS process owns the file, so
+      // filling it via the open fd (writeFileSync accepts an fd and does not
+      // close it) has no exists→write TOCTOU window at all.
+      const fd = fs.openSync(filePath, 'wx');
+      try {
+        fs.writeFileSync(fd, JSON.stringify(session, null, 2), 'utf-8');
+      } finally {
+        fs.closeSync(fd);
+      }
+      return filePath;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === 'EEXIST') {
+        if (!id && attempt < MAX_CREATE_ATTEMPTS - 1) continue; // self-minted: regenerate
+        throw new SessionExistsError(sessionId, filePath); // caller-supplied: surface, never overwrite
+      }
+      throw err;
+    }
+  }
+  // Unreachable in practice (randomUUID collisions), but the loop must end
+  // in a definitive failure for the type-checker.
+  throw new Error(`could not create a unique session file under ${sessionsDir}`);
 }
 
 /**
@@ -819,54 +884,85 @@ export async function restoreSession(sessionArg: string): Promise<SessionInit> {
  * @returns the new session file path and triologue path.
  */
 function writeFreshSessionFiles(): { sessionFilePath: string; triologuePath: string } {
-  // A pinned id (--session-id) wins over a fresh random one so a mediator
-  // (mycc-compose) can relaunch a peer under the SAME identity, letting its
-  // channel files — keyed <sessionId>-<channelId>.json — be re-joined on boot
-  // instead of being orphaned by a new uuid. The session itself is still
-  // brand-new (empty triologue, no context carried over); only the id is
-  // pinned. initializeSession() has already validated the id and refused when
-  // a live process holds it.
-  const id = getPinnedSessionId() || randomUUID();
-  const sessionDir = path.join(getSessionsDir(), id);
-  ensureDir(sessionDir);
-
-  // TRIALOGUE FILENAME COLLISION GUARD (compose pinning): a pinned session id
-  // is REUSED on relaunch, so `triologue-lead-<same-second>.jsonl` can name a
-  // transcript that already exists — and a bare `writeFileSync(path, '')` would
-  // TRUNCATE it, silently destroying the previous run's append-only record.
+  // Sessions are NEVER reused: every launch mints a FRESH random id. A peer's
+  // stable identity is its `--name <group>:<peer>`, not a pinned session id
+  // (the old `--session-id` pinned an id so a mediator could re-join channel
+  // files — that conflated identity with a per-run id and is deleted).
   //
-  // The file is created with EXCLUSIVE open (`wx`): the create is atomic, so it
-  // either creates a brand-new file or fails with EEXIST. On EEXIST we retry
-  // with a fresh suffix — this is collision-SAFE even for two starts in the
-  // same millisecond and even across processes (no existsSync→write TOCTOU
-  // window, which two same-ms starts could both pass and then the second
-  // writeFileSync would truncate the first). The readable second-precision stem
-  // is kept whenever it is free; the suffix ladder is deterministic
-  // (-<ms>ms, then a counter) so a retry always makes progress.
-  const seconds = Math.floor(Date.now() / 1000);
-  const stem = path.join(sessionDir, `triologue-lead-${seconds}`);
-  let triologuePath = `${stem}.jsonl`;
-  let fd: number | null = null;
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const candidate = attempt === 0 ? triologuePath : `${stem}-${Date.now() % 1000}ms-${attempt}.jsonl`;
+  // PAIR REGENERATION: the id, the triologue AND the session json form one
+  // atomic unit — `session-{id}.json` must live in the SAME dir as the
+  // triologue and point AT it. Both files are EXCLUSIVE-created (`'wx'`): the
+  // triologue via the suffix ladder below, the session json via
+  // createSessionFile's `'wx'` + SessionExistsError. If the session json
+  // turns out to be taken, regenerating the id INSIDE createSessionFile
+  // alone would desync the pair (triologue pointing at a dir the session
+  // json no longer names), so the WHOLE pair is regenerated here with a
+  // fresh id; the abandoned (still empty) triologue file is unlinked first.
+  const MAX_PAIR_ATTEMPTS = 10;
+  let lastCollision: unknown = null;
+  for (let pairAttempt = 0; pairAttempt < MAX_PAIR_ATTEMPTS; pairAttempt++) {
+    const id = randomUUID();
+    const sessionDir = path.join(getSessionsDir(), id);
+    ensureDir(sessionDir);
+
+    // TRIALOGUE FILENAME COLLISION GUARD: two fresh starts in the SAME second
+    // would otherwise both resolve `triologue-lead-<second>.jsonl`, and a bare
+    // `writeFileSync(path, '')` would TRUNCATE the first run's append-only record.
+    //
+    // The file is created with EXCLUSIVE open (`wx`): the create is atomic, so it
+    // either creates a brand-new file or fails with EEXIST. On EEXIST we retry
+    // with a fresh suffix — this is collision-SAFE even for two starts in the
+    // same millisecond and even across processes (no existsSync→write TOCTOU
+    // window, which two same-ms starts could both pass and then the second
+    // writeFileSync would truncate the first). The readable second-precision stem
+    // is kept whenever it is free; the suffix ladder is deterministic
+    // (-<ms>ms, then a counter) so a retry always makes progress.
+    // (Still needed now that the id is always fresh: two DIFFERENT session dirs
+    // never collide, but the guard is harmless and defends the same-second case
+    // if a future change ever co-locates two triologues.)
+    const seconds = Math.floor(Date.now() / 1000);
+    const stem = path.join(sessionDir, `triologue-lead-${seconds}`);
+    let triologuePath = `${stem}.jsonl`;
+    let fd: number | null = null;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const candidate = attempt === 0 ? triologuePath : `${stem}-${Date.now() % 1000}ms-${attempt}.jsonl`;
+      try {
+        fd = fs.openSync(candidate, 'wx');
+        triologuePath = candidate;
+        break;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code === 'EEXIST') continue; // taken — try next suffix
+        throw err;
+      }
+    }
+    if (fd === null) {
+      throw new Error(`could not create a unique triologue file under ${sessionDir}`);
+    }
+    fs.closeSync(fd);
+
+    // Pass the same id so the session file lives in the same dir as the triologue.
     try {
-      fd = fs.openSync(candidate, 'wx');
-      triologuePath = candidate;
-      break;
+      const sessionFilePath = createSessionFile(triologuePath, id);
+      return { sessionFilePath, triologuePath };
     } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code === 'EEXIST') continue; // taken — try next suffix
+      if (err instanceof SessionExistsError) {
+        // The session json slot is taken (caller-supplied-id collision /
+        // same-instant id collision): abandon the pair — remove the EMPTY
+        // triologue we just created and mint a brand-new id on the next
+        // iteration. Never unlink anything we did not create this attempt.
+        try {
+          fs.unlinkSync(triologuePath);
+        } catch {
+          // best-effort: the orphan is harmless (cleanupEmptySessions
+          // garbage-collects empty session dirs anyway)
+        }
+        lastCollision = err;
+        continue;
+      }
       throw err;
     }
   }
-  if (fd === null) {
-    throw new Error(`could not create a unique triologue file under ${sessionDir}`);
-  }
-  fs.closeSync(fd);
-
-  // Pass the same id so the session file lives in the same dir as the triologue
-  const sessionFilePath = createSessionFile(triologuePath, id);
-
-  return { sessionFilePath, triologuePath };
+  throw new Error(`could not create a unique session pair after ${MAX_PAIR_ATTEMPTS} attempts`, { cause: lastCollision });
 }
 
 /**
@@ -891,45 +987,6 @@ export function createNewSession(): SessionInit {
  */
 export async function initializeSession(): Promise<SessionInit> {
   const sessionArg = getSessionArg();
-  const pinnedId = getPinnedSessionId();
-
-  // Step 0: validate the pinned session id before touching the filesystem.
-  //
-  // --session-id is how a mediator relaunches a peer under its old identity.
-  // Two guards make that safe:
-  //   1. shape — it must be a bare UUID, because the id becomes the session
-  //      directory name, the mailbox path segment, and the peer identity that
-  //      mail_to matches against its UUID_RE.
-  //   2. ownership — an ATOMIC lease claim (claimSessionOwnership) so two
-  //      concurrent launches can never both adopt the same id.
-  //
-  // WHY A LEASE, NOT JUST A LIVENESS CHECK: the old guard asked
-  // `isSessionHeld(sid)` and then created the session — two SEPARATE steps.
-  // Two `mycc-compose up` runs (or two `mycc --session-id <sid>`) racing the
-  // same sid could both pass the check before either registered, then both
-  // boot under one sid: same session dir, heartbeat, mailbox, channel identity
-  // — and the last register() wins the identity record. The claim makes
-  // CHECK-AND-ACQUIRE one atomic `open('wx')`: exactly one caller wins, the
-  // loser refuses. A second pre-check would leave the same TOCTOU window.
-  //
-  // --from and --session-id are mutually exclusive: --from branches a NEW
-  // session with a fresh id, so pinning one at the same time is contradictory.
-  if (pinnedId) {
-    if (sessionArg) {
-      throw new Error('--session-id and --from are mutually exclusive: --from always branches a brand-new session id.');
-    }
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pinnedId)) {
-      throw new Error(`--session-id must be a UUID (got ${JSON.stringify(pinnedId)}).`);
-    }
-    // Atomic ownership claim. 'held' → a live process still owns the sid
-    // (belt-and-suspenders with isSessionHeld for a lease-less legacy owner).
-    if (claimSessionOwnership(pinnedId) !== 'claimed' || isSessionHeld(pinnedId)) {
-      throw new Error(
-        `Session ${pinnedId} is held by a live process — refusing to start a second instance under the same id. ` +
-        'Stop it first (see the `peers` tool for its pid), or omit --session-id.',
-      );
-    }
-  }
 
   // Step 1: Get or create session to obtain session ID
   let result: SessionInit;

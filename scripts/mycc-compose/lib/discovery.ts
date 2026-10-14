@@ -2,21 +2,63 @@
  * discovery.ts — readers + liveness predicates over mycc's discovery store.
  *
  * Mirrors the read logic in src/peer/identity.ts. Everything here is
- * read-only EXCEPT writeIdentityMap(), which the identity-repair pass uses.
+ * read-only EXCEPT writeIdentityMap() (the identity-repair pass) and
+ * writeTombstone() (the stopper's marker, §6.7).
  *
  * Liveness has TWO predicates on purpose:
  *   - isSessionLive()  — heartbeat freshness only. Cheap, used for DISPLAY and
  *                        for the "did the launched peer register yet?" poll.
- *   - isPeerRunning()  — freshness AND a live pid. Used for every RESTART /
- *                        mutual-exclusion decision: a peer SIGKILLed within the
- *                        freshness window still has a fresh heartbeat file and
- *                        would otherwise never be restarted (§ pitfall).
+ *   - isPeerRunning()  — freshness AND a live PID that is consistent with the
+ *                        heartbeat file's write time when process-start evidence
+ *                        is available. Used for RESTART / mutual-exclusion
+ *                        decisions, so an OS-recycled PID does not keep a dead
+ *                        peer looking healthy.
  */
 
-import fs from 'fs';
+import * as fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execFileSync } from 'child_process';
+// Liveness helpers are CENTRALIZED in src/utils/process-liveness.ts (the same
+// module the runtime peer subsystem uses) so a restart/duplicate-name decision
+// here can never drift from identity.ts/daemon-init.ts. Re-exported below to
+// keep discovery.ts's public surface unchanged.
+import {
+  isPidAlive,
+  getProcessStartTime,
+  didPidStartAfter,
+  isOriginalHolderAlive,
+} from '../../../src/utils/process-liveness.js';
+
+export { isPidAlive, getProcessStartTime, didPidStartAfter, isOriginalHolderAlive };
+
+/**
+ * Synchronously wait (bounded) for `pid` to stop probing as alive, then return
+ * whether it is finally dead. Used by `mycc-compose down` BEFORE culling an
+ * identity entry: `stopPeer` returns the instant SIGTERM is *delivered*, but on
+ * POSIX signal delivery is asynchronous, so the target may still probe alive
+ * for a few ms — a delete-time `!isPidAlive` check run too early would keep a
+ * perfectly cullable entry and silently no-op the cull.
+ *
+ * Windows is typically immediate (SIGTERM = TerminateProcess), but the loop is
+ * harmless there. Returns false when the pid is still alive at the deadline —
+ * the caller treats that as unproven death and KEEPS the entry.
+ */
+export function waitForPidDeath(pid: number, timeoutMs = 1_000): boolean {
+  if (typeof pid !== 'number') return false;
+  const deadline = Date.now() + timeoutMs;
+  // Busy-wait is acceptable here: this runs once per successfully-stopped peer
+  // in a teardown CLI, and a synchronous sleep would block the event loop the
+  // same way. Sleep in ~10ms slices to stay gentle on the CPU.
+  const sleepSlice = (ms: number): void => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { /* spin */ }
+  };
+  while (Date.now() <= deadline) {
+    if (!isPidAlive(pid)) return true;
+    sleepSlice(10);
+  }
+  return !isPidAlive(pid);
+}
 
 /** Root of the discovery store. Overridable for tests via MYCC_DISCOVERY_DIR. */
 export const DISCOVERY_DIR: string =
@@ -30,7 +72,10 @@ export const FRESHNESS_WINDOW_MS = 90_000;
 
 /** The subset of a peer record discovery needs in order to answer "is it running?". */
 export interface PeerRef {
+  /** Spec-local leaf name. */
   name?: string;
+  /** Fully qualified durable identity (`<group>:<peer>`). */
+  identityName?: string;
   sessionId?: string | null;
   workdir?: string;
 }
@@ -43,6 +88,13 @@ export interface IdentityEntry {
   workDir?: string;
   args?: string;
   updatedAt?: number;
+  /**
+   * Optional durable peer NAME (`<group>:<peer>`), launcher-injected (mycc-compose).
+   * DATA-ONLY identity: the stable handle a peer is addressed by across the
+   * per-run session-id churn (see src/types.ts IdentityEntry.name). Mirrors the
+   * src-side field so compose can resolve a spec peer → its live sid by name.
+   */
+  name?: string;
   /** Anything else the instance may publish; discovery never assumes its shape. */
   [key: string]: unknown;
 }
@@ -68,6 +120,9 @@ export interface ParsedHeartbeat {
   heartbeats: number[];
   briefs: BriefEntry[];
   pid: number | undefined;
+  /** Epoch-ms stop request (the "tombstone", §6.7 of docs/peers/peer-topology.md),
+   * or undefined when none is stamped. Preserved across the peer's own rewrites. */
+  tombstone: number | undefined;
 }
 
 /** Read identity.json into a session-keyed map. {} if missing/malformed. */
@@ -87,24 +142,71 @@ export function readIdentityMap(): Record<string, IdentityEntry> {
  * Returns { heartbeats: [], briefs: [], pid: undefined } if missing/malformed.
  */
 export function readHeartbeatData(sessionId: string): ParsedHeartbeat {
-  const empty: ParsedHeartbeat = { heartbeats: [], briefs: [], pid: undefined };
+  const empty: ParsedHeartbeat = { heartbeats: [], briefs: [], pid: undefined, tombstone: undefined };
   const hbFile = path.join(HEARTBEAT_DIR, `${sessionId}.json`);
   if (!fs.existsSync(hbFile)) return empty;
   try {
     const parsed = JSON.parse(fs.readFileSync(hbFile, 'utf-8'));
     if (!parsed || typeof parsed !== 'object') return empty;
     const pid = typeof parsed.pid === 'number' ? parsed.pid : undefined;
+    const tombstone = typeof parsed.tombstone === 'number' ? parsed.tombstone : undefined;
     if (Array.isArray(parsed.timestamps)) {
-      return { heartbeats: parsed.timestamps, briefs: [], pid };
+      return { heartbeats: parsed.timestamps, briefs: [], pid, tombstone };
     }
     return {
       heartbeats: Array.isArray(parsed.heartbeats) ? parsed.heartbeats : [],
       briefs: Array.isArray(parsed.briefs) ? parsed.briefs : [],
       pid,
+      tombstone,
     };
   } catch {
     return empty;
   }
+}
+
+/**
+ * Stamp a TOMBSTONE (epoch-ms stop request) into a session's heartbeat file,
+ * preserving its heartbeats/briefs/pid. This is the WRITE half of the
+ * self-termination protocol (§6.7 of docs/peers/peer-topology.md): the stop
+ * primitive (`mycc-stop` / `mycc-compose down`) writes this marker — after the
+ * peer's identity is PROVEN, BEFORE it signals — then best-effort SIGTERMs the
+ * peer, so a peer the signal did NOT reach (e.g. on Windows, where SIGTERM maps
+ * to TerminateProcess and no handler runs) retires itself on its next beat.
+ * Mirrors writeTombstone() in src/peer/identity.ts.
+ *
+ * Lives in the heartbeat file (keyed by the sid the stopper already resolved),
+ * NOT identity.json — the live peer owns and rewrites this file every beat, so
+ * detection is free and a rewrite that dropped the field would lose the marker;
+ * discovery's own readHeartbeatData therefore reads it and the peer's writers
+ * preserve it.
+ *
+ * Best-effort: returns false (never throws) when the file cannot be written — a
+ * tombstone is a courtesy, not a guarantee; the signal path stays primary.
+ */
+export function writeTombstone(sessionId: string, when: number = Date.now()): boolean {
+  try {
+    const existing = readHeartbeatData(sessionId);
+    const data: Record<string, unknown> = {
+      heartbeats: existing.heartbeats,
+      briefs: existing.briefs,
+    };
+    if (existing.pid !== undefined) data.pid = existing.pid;
+    data.tombstone = when;
+    const hbFile = path.join(HEARTBEAT_DIR, `${sessionId}.json`);
+    const dir = path.dirname(hbFile);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const tmp = `${hbFile}.mycc-compose.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
+    fs.renameSync(tmp, hbFile);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Read the tombstone (epoch-ms) for a session, or undefined when none. */
+export function readTombstone(sessionId: string): number | undefined {
+  return readHeartbeatData(sessionId).tombstone;
 }
 
 /**
@@ -122,18 +224,6 @@ export function isSessionLive(sessionId: string): boolean {
   const { heartbeats } = readHeartbeatData(sessionId);
   if (heartbeats.length === 0) return false;
   return Date.now() - heartbeats[heartbeats.length - 1] <= FRESHNESS_WINDOW_MS;
-}
-
-/** True when `pid` looks like a live process. Cross-platform-ish. */
-export function isPidAlive(pid: number | undefined | null): boolean {
-  if (!pid || typeof pid !== 'number') return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    // EPERM = alive but not ours to signal → treat as alive.
-    return err instanceof Error && (err as NodeJS.ErrnoException).code === 'EPERM';
-  }
 }
 
 /**
@@ -162,75 +252,10 @@ export function isRecordedPidAlive(sessionId: string): boolean {
  * started AFTER the heartbeat file that names it, whereas the process that
  * wrote a given heartbeat necessarily started BEFORE that file was written.
  *
- * Windows: `wmic process where processid=<pid> get creationdate` (falling back
- * to PowerShell `Get-Process`). Unix: `ps -o lstart=`. Every path returns null
- * on failure — callers must treat null as "unknown" and fall back to other
- * evidence, never as "started at 0".
+ * NOTE: the implementation is CENTRALIZED in src/utils/process-liveness.ts and
+ * re-exported at the top of this file (see the import block) so the compose
+ * launcher and the runtime peer subsystem share ONE liveness decision.
  */
-export function getProcessStartTime(pid: number): number | null {
-  if (!pid || typeof pid !== 'number') return null;
-  try {
-    if (process.platform === 'win32') {
-      // wmic prints `CreationDate` as an ISO-ish compact stamp, e.g.
-      // 20260930120000.000000+120. Try it first (present on Win10/11).
-      try {
-        const out = execFileSync('wmic', ['process', 'where', `processid=${pid}`, 'get', 'creationdate', '/value'], {
-          encoding: 'utf-8',
-          timeout: 5_000,
-          windowsHide: true,
-        });
-        const m = /CreationDate=(\d{14})/.exec(out);
-        if (m) return compactStampToMs(m[1]);
-      } catch {
-        // wmic absent/deprecated → fall through to PowerShell.
-      }
-      const psOut = execFileSync(
-        'powershell',
-        ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid}).StartTime.ToFileTimeUtc()`],
-        { encoding: 'utf-8', timeout: 5_000, windowsHide: true },
-      );
-      const fileTime = Number(psOut.trim());
-      // FILETIME is 100-ns ticks since 1601-01-01; convert to Unix ms.
-      if (Number.isFinite(fileTime) && fileTime > 0) return fileTime / 10_000 - 11_644_473_600_000;
-      return null;
-    }
-    const out = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
-      encoding: 'utf-8',
-      timeout: 5_000,
-    });
-    const ms = Date.parse(out.trim());
-    return Number.isFinite(ms) ? ms : null;
-  } catch {
-    return null;
-  }
-}
-
-/** `YYYYMMDDhhmmss` (local) → ms since epoch, or null. */
-function compactStampToMs(stamp: string): number | null {
-  const y = Number(stamp.slice(0, 4));
-  const mo = Number(stamp.slice(4, 6)) - 1;
-  const d = Number(stamp.slice(6, 8));
-  const h = Number(stamp.slice(8, 10));
-  const mi = Number(stamp.slice(10, 12));
-  const s = Number(stamp.slice(12, 14));
-  const ms = new Date(y, mo, d, h, mi, s).getTime();
-  return Number.isFinite(ms) ? ms : null;
-}
-
-/**
- * True when we can PROVE the process at `pid` started after `notBeforeMs` — a
- * strong indication the pid was recycled (the original owner is gone). Returns
- * false when the start time is unknown, so the caller never refuses to kill a
- * legitimate instance just because introspection failed.
- */
-export function didPidStartAfter(pid: number, notBeforeMs: number): boolean {
-  if (!Number.isFinite(notBeforeMs)) return false;
-  const startedAt = getProcessStartTime(pid);
-  if (startedAt === null) return false;
-  // 2s of slack absorbs coarse clock resolution (wmic stamps are whole
-  // seconds; `ps lstart` likewise) so a genuine owner is never misjudged.
-  return startedAt > notBeforeMs + 2_000;
-}
 
 /** The pid recorded for a session (heartbeat first, then identity entry). */
 export function peerPid(sessionId: string): number | undefined {
@@ -267,17 +292,137 @@ export function heartbeatFileMtimeMs(sessionId: string): number {
  * a peer killed within the freshness window (or a heartbeat left by a crashed
  * process) would otherwise read as "live" and never be restarted by `sync`.
  *
- * Requires: registered AND fresh heartbeat AND the recorded pid is alive.
- * Falls back to the heartbeat-only verdict when the entry carries no pid
- * (legacy writers) — in that case we cannot disprove liveness and must not
- * restart a peer we might be double-starting.
+ * Requires: registered AND fresh heartbeat AND the recorded pid is alive and
+ * not demonstrably newer than its heartbeat file. When process-start evidence
+ * is unavailable, the decision is conservative (treat as alive). Falls back
+ * to the heartbeat-only verdict when no pid is recorded (legacy writers) —
+ * we cannot disprove liveness and must not restart a peer we might be double-starting.
  */
 export function isPeerRunning(peer: PeerRef | null | undefined): boolean {
   if (!peer || !peer.sessionId) return false;
   if (!isSessionLive(peer.sessionId)) return false;
   const pid = peerPid(peer.sessionId);
   if (typeof pid !== 'number') return true; // no pid recorded → trust freshness
-  return isPidAlive(pid);
+  // PID existence alone is insufficient: the recorded process may have exited
+  // and the OS may have recycled its PID. isOriginalHolderAlive checks OS
+  // liveness first, then uses heartbeat mtime when available; an unavailable
+  // mtime preserves the conservative "alive" verdict without overriding a dead PID.
+  return isOriginalHolderAlive(pid, heartbeatFileMtimeMs(peer.sessionId));
+}
+
+/**
+ * Is the original process recorded for this SID demonstrably gone?
+ * A dead PID or positive PID-reuse evidence means yes. Missing or conflicting
+ * evidence means no, so destructive callers must fail fast instead of guessing.
+ */
+export function isSessionHolderDead(sessionId: string): boolean {
+  if (!sessionId) return false;
+  const heartbeat = readHeartbeatData(sessionId);
+  const entry = readIdentityMap()[sessionId];
+  const beatPid = typeof heartbeat.pid === 'number' ? heartbeat.pid : undefined;
+  const entryPid = typeof entry?.pid === 'number' ? entry.pid : undefined;
+
+  if (beatPid !== undefined && entryPid !== undefined && beatPid !== entryPid) return false;
+  const pid = beatPid ?? entryPid;
+  if (typeof pid !== 'number') return false;
+  if (!isPidAlive(pid)) return true;
+
+  const evidenceTime = beatPid !== undefined
+    ? heartbeatFileMtimeMs(sessionId)
+    : typeof entry?.startedAt === 'number'
+      ? entry.startedAt
+      : 0;
+  return !isOriginalHolderAlive(pid, evidenceTime);
+}
+
+/**
+ * Resolve a peer record to the session id of its LIVE instance by scanning
+ * identity.json for an entry whose durable `name` matches AND whose workdir
+ * matches — the name is what is stable across the per-run sid churn, so this
+ * is how the launcher/stopper/dispatcher find "the currently-running instance
+ * of peer X" without the spec ever authoring a sid.
+ *
+ * Matching rules (mirror findMatchingLiveEntry's workdir tolerance):
+ *   - `peer.name` is REQUIRED; a nameless peer resolves to null (compose always
+ *     names its peers, so a missing name is a programming error, not a query).
+ *   - workdir must match (sameWorkdir semantics: separator/trailing-slash/
+ *     case tolerant) — two groups may share a peer leaf name, and a peer
+ *     relaunched in a different workdir is a DIFFERENT instance.
+ *   - the entry must be RUNNING (fresh heartbeat AND alive recorded pid), per
+ *     isPeerRunning's strict predicate — a dead-twin's lingering identity entry
+ *     must never be handed out as "the live sid".
+ *
+ * AMBIGUITY: name uniqueness is enforced at register() time (assertNameNotLive
+ * exits a second live twin), so >1 live match should be impossible. If it
+ * somehow happens (a peer that crashed and was relaunched before its old entry
+ * aged out, leaving two live-looking entries), pick the NEWEST `startedAt`
+ * deterministically and WARN — never return an arbitrary one, so repeated runs
+ * resolve identically.
+ *
+ * Returns the resolved sid, or null when no live instance matches.
+ */
+function normalizePeerName(name: string): string {
+  return name.trim().normalize('NFC').toLowerCase();
+}
+
+export function resolveLivePeer(peer: PeerRef | null | undefined): string | null {
+  if (!peer) return null;
+  const name = peer.identityName ?? peer.name;
+  if (typeof name !== 'string' || name.length === 0) return null;
+  const normalizedName = normalizePeerName(name);
+  const map = readIdentityMap();
+  const matches: Array<{ sid: string; startedAt: number }> = [];
+  for (const [sid, entry] of Object.entries(map)) {
+    if (typeof entry?.name !== 'string' || normalizePeerName(entry.name) !== normalizedName) continue;
+    if (!sameWorkdirRef(entry.workDir ?? entry.workdir, peer.workdir)) continue;
+    if (!isPeerRunning({ sessionId: sid, workdir: peer.workdir })) continue;
+    matches.push({ sid, startedAt: typeof entry.startedAt === 'number' ? entry.startedAt : 0 });
+  }
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0].sid;
+  // Deterministic tiebreak: newest startedAt wins; stable by sid on a tie.
+  matches.sort((a, b) => (b.startedAt - a.startedAt) || a.sid.localeCompare(b.sid));
+  console.warn(
+    `[mycc-compose] WARNING: ${matches.length} live identity entries match peer ` +
+    `name "${peer.name}" — resolving to the newest (${matches[0].sid}). This should ` +
+    `be impossible (name uniqueness is enforced at register); investigate stale entries.`,
+  );
+  return matches[0].sid;
+}
+
+/**
+ * Resolve a peer by durable name for stop/teardown, independent of heartbeat
+ * freshness. Duplicate matches violate the identity invariant; never guess.
+ */
+export function resolvePeerForStop(peer: PeerRef | null | undefined): string | null {
+  if (!peer) return null;
+  const name = peer.identityName ?? peer.name;
+  if (typeof name !== 'string' || name.length === 0) return null;
+  const normalizedName = normalizePeerName(name);
+  const matches = Object.entries(readIdentityMap()).filter(([_, entry]) =>
+    typeof entry?.name === 'string' &&
+    normalizePeerName(entry.name) === normalizedName &&
+    sameWorkdirRef(entry.workDir ?? entry.workdir, peer.workdir),
+  );
+  if (matches.length > 1) {
+    const sids = matches.map(([sid]) => sid).join(', ');
+    throw new Error(
+      `[mycc-compose] refusing to guess which session owns peer "${name}" in ${peer.workdir}: ${sids}`,
+    );
+  }
+  return matches[0]?.[0] ?? null;
+}
+
+/**
+ * Workdir comparison for {@link resolveLivePeer} — tolerant of separators,
+ * trailing slashes and case, mirroring peers-state's sameWorkdir. Duplicated
+ * here (rather than imported) to keep discovery.ts free of a peers-state
+ * dependency cycle; discovery is the lower layer.
+ */
+function sameWorkdirRef(a: unknown, b: unknown): boolean {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const norm = (p: string) => path.resolve(p).replace(/[\\/]+$/, '').toLowerCase();
+  return norm(a) === norm(b);
 }
 
 /** The last brief recorded for a session, or null. */

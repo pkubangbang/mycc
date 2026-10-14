@@ -76,10 +76,47 @@ export function collectReloadLeadArgs(argv: readonly string[]): string[] {
   return argv.slice(2);
 }
 
+/**
+ * True when a PRE-SLICED launch-token list carries the compose-managed `--name`
+ * flag (in either `--name <value>` or `--name=<value>` form).
+ *
+ * The caller passes tokens ALREADY stripped of `node <script>`:
+ *   - the slash site calls it with no arg → defaults to process.argv.slice(2);
+ *   - the coordinator (index.ts reloadLead) passes its `leadArgs`, which is
+ *     itself process.argv.slice(2) — i.e. a pre-sliced list too.
+ *
+ * The default MUST live here (inside the default expression), never as a
+ * body-level slice: an explicit pre-sliced list would otherwise be sliced a
+ * SECOND time, silently dropping a leading `--name` — the exact silent-veto
+ * this guard exists to prevent. Pinned by the double-slice regression test.
+ *
+ * Only the LAUNCHER injects `--name` (mycc-compose's launchPeer spawns
+ * `['--name', peer.name, ...argv]`), so its presence is a reliable marker that
+ * this Lead is compose-managed and must not be /reload-ed.
+ */
+export function hasNameFlag(tokens: readonly string[] = process.argv.slice(2)): boolean {
+  return tokens.some((a) => a === '--name' || a.startsWith('--name='));
+}
+
 export const reloadCommand: SlashCommand = {
   name: 'reload',
   description: 'Restart mycc with fresh code (reuses coordinator, clears context). Web UI auto-reconnects if active.',
   handler: async () => {
+    // This Lead is a mycc-compose–managed peer (launched with `--name
+    // <group>:<peer>`). /reload respawns the Lead WITHOUT the compose launcher's
+    // coordination, orphaning the channel files compose materialized and
+    // desyncing the durable name↔sid mapping compose relies on. Refuse EARLY,
+    // with a visible message, and send NO IPC — the coordinator would otherwise
+    // respawn a lead compose never asked for. Renewal is compose's job.
+    if (hasNameFlag()) {
+      console.log(chalk.yellow(
+        'This instance is managed by mycc-compose (launched with --name). ' +
+        '/reload is disabled here — it would orphan its channels. ' +
+        'Renew it via: mycc-compose up <spec>',
+      ));
+      return;
+    }
+
     // In --daemon mode the Coordinator has already exited (startDaemonLead →
     // child.unref() → process.exit(0)), so there is nothing to reuse. Worse,
     // on Unix the daemon Lead still receives an IPC channel

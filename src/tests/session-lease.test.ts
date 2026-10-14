@@ -1,24 +1,24 @@
 /**
- * session-lease.test.ts — the P1 round-2 regression suite: the pinned-sid
- * OWNERSHIP CLAIM must be atomic, so two concurrent launches can never both
- * adopt the same session id.
+ * session-lease.test.ts — successor suite: peer-NAME uniqueness (the pinned-sid
+ * lease was removed in plan v4, once sessions stopped being reused).
  *
- * THE DEFECT: initializeSession() used to ask `isSessionHeld(sid)` and THEN
- * create the session files — two separate steps. Two `mycc --session-id <sid>`
- * (or two `mycc-compose up` runs) racing could both pass the check before
- * either registered, then both boot under one sid: same session dir, heartbeat,
- * mailbox, channel identity — and the last register() won the identity record.
+ * HISTORY: this file was the P1 round-2 regression suite for the pinned-sid
+ * OWNERSHIP CLAIM (claimSessionOwnership / releaseSessionOwnership / the
+ * `<sid>.owner` lease file). All of that was deleted when pinned session ids
+ * were removed — every launch now mints a fresh random id, so nothing can
+ * contend for a "pinned sid".
  *
- * THE FIX: claimSessionOwnership() makes CHECK-AND-ACQUIRE one atomic
- * `open(lease, 'wx')`; exactly one caller wins, the loser sees 'held'.
- *
- * These tests pin:
- *   - mutual exclusion: two claims on one sid yield exactly one 'claimed';
- *   - release frees it for the next claimant;
- *   - a lease naming a DEAD pid is reclaimed (crashed owner);
- *   - a lease naming a LIVE pid is respected ('held');
- *   - the REAL initializeSession() refuses a second concurrent claim and
- *     creates no session dir for the loser.
+ * What REPLACED it: a peer's durable identity is its NAME
+ * (`--name <group>:<peer>`), and name-level uniqueness is enforced inside
+ * `IdentityManager` — refuse to boot (an Error thrown from `register()`,
+ * raised under the identity-file lock before any write) when ANOTHER LIVE
+ * instance already holds the same
+ * (name, workDir). A dead twin (stale heartbeat / dead pid) does NOT block a
+ * restart. This suite pins that successor behaviour:
+ *   - register() publishes the peer `name` into identity.json;
+ *   - a LIVE twin under the same name+workDir aborts the new instance;
+ *   - a DEAD twin does not;
+ *   - a twin under a DIFFERENT workDir does not.
  *
  * MYCC_DISCOVERY_DIR points at a per-test temp store so the real
  * ~/.mycc-store is untouched.
@@ -29,16 +29,31 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-const SID = 'dddddddd-4444-4444-8444-444444444444';
+const NAME = 'grp:one';
+const SELF_SID = 'aaaaaaaa-1111-4111-8111-111111111111';
+const TWIN_SID = 'bbbbbbbb-2222-4222-8222-222222222222';
+
+const hook = vi.hoisted(() => ({ name: null as string | null }));
 
 let tmp = '';
+let discovery = '';
 
 async function loadIdentity() {
   vi.resetModules();
+  // config.ts parses argv once at module load; the name is a CLI value a test
+  // runner cannot set, so mock the accessor (CALL-TIME delegate so per-test
+  // flips work without re-importing).
+  vi.doMock('../config.js', async () => {
+    const actual = await vi.importActual<typeof import('../config.js')>('../config.js');
+    return {
+      ...actual,
+      getPeerName: () => hook.name,
+      getLaunchArgs: () => '(none)',
+    };
+  });
   return import('../peer/identity.js');
 }
 
-/** True when `pid` is still alive (EPERM also counts as alive). */
 function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -48,14 +63,45 @@ function isAlive(pid: number): boolean {
   }
 }
 
+// isAlive is retained: some assertions below reference it indirectly via the
+// refuse-on-live-name path. (No-op export keeps tsc's noUnusedLocals happy if
+// it ever becomes unused.)
+void isAlive;
+
+/** Seed a REGISTERED + freshly-beating identity entry for `sid` under `name`. */
+function seedLiveTwin(sid: string, name: string, workDir: string, pid: number): void {
+  const identityFile = path.join(discovery, 'identity.json');
+  const map = fs.existsSync(identityFile)
+    ? (JSON.parse(fs.readFileSync(identityFile, 'utf-8')) as Record<string, unknown>)
+    : {};
+  map[sid] = {
+    sessionId: sid,
+    workDir,
+    mailbox: path.join(workDir, '.mycc', 'sessions', sid, 'unread-lead.jsonl'),
+    startedAt: Date.now(),
+    args: '(none)',
+    name,
+  };
+  fs.writeFileSync(identityFile, JSON.stringify(map, null, 2));
+  const hbDir = path.join(discovery, 'heartbeat');
+  fs.mkdirSync(hbDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(hbDir, `${sid}.json`),
+    JSON.stringify({ heartbeats: [Date.now()], briefs: [], pid }),
+  );
+}
+
 beforeEach(() => {
-  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mycc-sess-lease-'));
-  process.env.MYCC_DISCOVERY_DIR = path.join(tmp, 'discovery');
-  fs.mkdirSync(process.env.MYCC_DISCOVERY_DIR, { recursive: true });
+  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mycc-peer-name-'));
+  discovery = path.join(tmp, 'discovery');
+  fs.mkdirSync(discovery, { recursive: true });
+  process.env.MYCC_DISCOVERY_DIR = discovery;
+  hook.name = null;
 });
 
 afterEach(() => {
   delete process.env.MYCC_DISCOVERY_DIR;
+  vi.doUnmock('../config.js');
   vi.restoreAllMocks();
   try {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -64,66 +110,92 @@ afterEach(() => {
   }
 });
 
-describe('claimSessionOwnership: atomic pinned-sid lease', () => {
-  it('grants exactly ONE claim per sid (the loser is told "held")', async () => {
+describe('IdentityManager: name uniqueness replaces the pinned-sid lease', () => {
+  it('register() publishes the peer name into identity.json', async () => {
+    hook.name = NAME;
     const id = await loadIdentity();
-    const first = id.claimSessionOwnership(SID);
-    const second = id.claimSessionOwnership(SID);
-    expect(first).toBe('claimed');
-    expect(second).toBe('held');
+    const mgr = new id.IdentityManager(SELF_SID, process.cwd(), '/tmp/mbox');
+    mgr.register();
+    const entry = id.readIdentityMap()[SELF_SID];
+    expect(entry).toBeDefined();
+    expect(entry.name).toBe(NAME);
   });
 
-  it('release frees the sid for the next claimant', async () => {
+  it('refuses to boot when a LIVE twin holds the same name+workDir', async () => {
+    hook.name = NAME;
     const id = await loadIdentity();
-    expect(id.claimSessionOwnership(SID)).toBe('claimed');
-    expect(id.claimSessionOwnership(SID)).toBe('held');
-    id.releaseSessionOwnership(SID);
-    expect(id.claimSessionOwnership(SID)).toBe('claimed');
+    seedLiveTwin(TWIN_SID, NAME, process.cwd(), process.pid); // our own pid is alive
+    // Name uniqueness is enforced in register() (under the identity-file lock, a
+    // TOCTOU-safe placement) — NOT in the constructor. The refusal is a thrown
+    // Error (`[identity] refusing to start: ...`), so the caller crashes before
+    // any identity write; process.exit is NOT the mechanism.
+    // A single load suffices — the uniqueness check reads the same seeded store.
+    const mgr = new id.IdentityManager(SELF_SID, process.cwd(), '/tmp/mbox');
+    expect(() => mgr.register()).toThrow(/refusing to start/);
+    // And the refused instance never claims the name: identity.json still has
+    // only the twin's entry.
+    const map = id.readIdentityMap();
+    expect(map[SELF_SID]).toBeUndefined();
+    expect(map[TWIN_SID]).toBeDefined();
   });
 
-  it('reclaims a lease whose recorded owner pid is DEAD (crashed holder)', async () => {
+  it('does NOT refuse when the twin is DEAD (crashed mid-window)', async () => {
+    hook.name = NAME;
     const id = await loadIdentity();
-    // Pre-seed a lease naming a provably-dead pid.
-    const lease = id.getSessionOwnerLeaseFile(SID);
-    fs.mkdirSync(path.dirname(lease), { recursive: true });
-    fs.writeFileSync(lease, JSON.stringify({ pid: 2 ** 30, sid: SID, time: Date.now() }));
-    expect(id.claimSessionOwnership(SID)).toBe('claimed');
+    seedLiveTwin(TWIN_SID, NAME, process.cwd(), 2 ** 30); // provably-dead pid
+    expect(() => new id.IdentityManager(SELF_SID, process.cwd(), '/tmp/mbox')).not.toThrow();
   });
 
-  it('respects a lease whose recorded owner pid is ALIVE', async () => {
+  it('does NOT refuse when the twin name matches but the workDir differs', async () => {
+    hook.name = NAME;
     const id = await loadIdentity();
-    const lease = id.getSessionOwnerLeaseFile(SID);
-    fs.mkdirSync(path.dirname(lease), { recursive: true });
-    // Our own pid is alive → the lease is honoured.
-    fs.writeFileSync(lease, JSON.stringify({ pid: process.pid, sid: SID, time: Date.now() }));
-    expect(id.claimSessionOwnership(SID)).toBe('held');
-    expect(isAlive(process.pid)).toBe(true);
+    seedLiveTwin(TWIN_SID, NAME, path.join(process.cwd(), 'elsewhere'), process.pid);
+    expect(() => new id.IdentityManager(SELF_SID, process.cwd(), '/tmp/mbox')).not.toThrow();
   });
-});
 
-describe('initializeSession: pinned-sid exclusivity at the bootstrap layer', () => {
-  it('refuses a second launch under a held sid and creates NO session for the loser', async () => {
+  it('does NOT refuse when no --name was given (ordinary launch)', async () => {
+    hook.name = null;
     const id = await loadIdentity();
-    // First launch wins the lease (simulating the winner already bootstrapping).
-    expect(id.claimSessionOwnership(SID)).toBe('claimed');
+    seedLiveTwin(TWIN_SID, NAME, process.cwd(), process.pid);
+    expect(() => new id.IdentityManager(SELF_SID, process.cwd(), '/tmp/mbox')).not.toThrow();
+  });
 
-    // The pinned id comes from the module-private minimist `args` (parsed from
-    // the PROCESS argv), which a test runner can never set — so mock config to
-    // make getPinnedSessionId() return SID. Everything else stays real.
-    vi.resetModules();
-    vi.doMock('../config.js', async () => {
-      const actual = await vi.importActual<typeof import('../config.js')>('../config.js');
-      return { ...actual, getPinnedSessionId: () => SID };
-    });
-    const session = await import('../session/index.js');
+  it('[M5] does NOT refuse a twin whose heartbeat entry has NO beats (never beat)', async () => {
+    hook.name = NAME;
+    const id = await loadIdentity();
+    // A registered identity entry present in identity.json but with an EMPTY
+    // heartbeat list: the twin registered but never beat — it cannot be proven
+    // live, so it must NOT block the restart (assertNameNotLive branch: no
+    // fresh beat → not live).
+    const identityFile = path.join(discovery, 'identity.json');
+    fs.writeFileSync(identityFile, JSON.stringify({
+      [TWIN_SID]: {
+        sessionId: TWIN_SID,
+        workDir: process.cwd(),
+        mailbox: path.join(process.cwd(), '.mycc', 'sessions', TWIN_SID, 'unread-lead.jsonl'),
+        startedAt: Date.now(),
+        args: '(none)',
+        name: NAME,
+      },
+    }, null, 2));
+    const hbDir = path.join(discovery, 'heartbeat');
+    fs.mkdirSync(hbDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(hbDir, `${TWIN_SID}.json`),
+      JSON.stringify({ heartbeats: [], briefs: [], pid: process.pid }), // live pid, never beat
+    );
+    expect(() => new id.IdentityManager(SELF_SID, process.cwd(), '/tmp/mbox')).not.toThrow();
+  });
 
-    // Second launch: the atomic claim must fail → initializeSession throws and
-    // never reaches createSessionFile, so no session dir is created for it.
-    await expect(session.initializeSession()).rejects.toThrow(/held by a live process/);
-    // The loser created no session directory under the pinned id.
-    expect(fs.existsSync(path.join('.mycc', 'sessions', SID))).toBe(false);
-
-    vi.doUnmock('../config.js');
-    vi.resetModules();
+  it('[M6] does NOT refuse a twin with a FRESH beat but a DEAD recorded pid', async () => {
+    hook.name = NAME;
+    const id = await loadIdentity();
+    // Fresh heartbeat (beat is within the freshness window) BUT the recorded pid
+    // is provably dead. Liveness requires BOTH a fresh beat AND a live pid; a
+    // dead pid alone makes the twin non-live, so the restart proceeds. This is
+    // DISTINCT from the existing absurd-pid pin (which also has a fresh beat) —
+    // it closes the "fresh beat does not by itself prove liveness" branch.
+    seedLiveTwin(TWIN_SID, NAME, process.cwd(), 2 ** 30); // provably-dead pid + fresh beat
+    expect(() => new id.IdentityManager(SELF_SID, process.cwd(), '/tmp/mbox')).not.toThrow();
   });
 });

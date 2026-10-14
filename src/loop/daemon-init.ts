@@ -12,14 +12,42 @@
 import chalk from 'chalk';
 import { Cron } from 'croner';
 import { shouldDaemon, getDaemonSkill } from '../config.js';
+import { isOriginalHolderAlive } from '../utils/process-liveness.js';
 import { autoState } from './auto-state.js';
-import type { AgentContext, Skill } from '../types.js';
+import type { AgentContext, IdentityEntry, Skill } from '../types.js';
 import type { Triologue } from './triologue.js';
 
 /** Minimal structural type for the skill loader dependency (decoupled from the
  *  concrete Loader class — daemon-init only needs getSkill). */
 interface SkillLookup {
   getSkill(name: string): Skill | undefined;
+}
+
+/**
+ * True when the recorded OS pid for a peer identity is a LIVE holder — the
+ * pid-reuse-aware half of the daemon-dedup liveness test.
+ *
+ * The pid is read from the heartbeat file via `ctx.peer.getPid` (the
+ * authoritative, live-refreshed source), falling back to the `entry.pid`
+ * published in identity.json at register() time. A missing pid is treated as
+ * ALIVE so a legacy entry without a recorded pid is never wrongly bypassed
+ * (we refuse to re-launch only when a live process is actually proven).
+ *
+ * PID-REUSE: a bare `process.kill(pid, 0)` cannot tell the ORIGINAL daemon from
+ * an OS-recycled pid — the original may have exited leaving a fresh heartbeat,
+ * and the OS reused its pid for an unrelated process (which would then wrongly
+ * block a legitimate re-launch). `isOriginalHolderAlive` narrows that using the
+ * entry's `startedAt` as a lower bound on when the recorded process began: a pid
+ * that STARTED after the entry was registered cannot be the registrant. When
+ * start-time evidence is unavailable it falls back CONSERVATIVELY to "alive".
+ */
+function isEntryPidAlive(ctx: AgentContext, entry: IdentityEntry): boolean {
+  const pid = ctx.peer.getPid(entry.sessionId) ?? entry.pid;
+  if (typeof pid !== 'number') return true; // no pid → preserve legacy behavior
+  // The registered process necessarily started BEFORE the entry's startedAt;
+  // a pid whose start time is AFTER that bound is a recycled pid, not the holder.
+  const registeredAt = typeof entry.startedAt === 'number' ? entry.startedAt : 0;
+  return isOriginalHolderAlive(pid, registeredAt);
 }
 
 /**
@@ -61,7 +89,17 @@ export function initDaemonMode(
     for (const entry of identities) {
       if (entry.sessionId === selfSessionId) continue; // skip self
       if (entry.role === daemonSkill && entry.workDir === selfWorkDir) {
-        if (ctx.peer.isFresh(entry.sessionId)) {
+        // A fresh heartbeat alone is NOT proof of a live daemon: after
+        // `mycc-compose down`, a stopped peer's identity entry survives (its
+        // own unregister() never runs under a SIGTERM/TerminateProcess), and
+        // its heartbeat file may still look recent. Gating re-up on
+        // `isFresh` (heartbeat freshness only) therefore made a dead-but-fresh
+        // entry block a legitimate re-launch (Stage-7 bug). Require BOTH a
+        // fresh heartbeat AND an alive recorded pid — the same pid-aware
+        // discipline `assertNameNotLive` already applies (identity.ts). A
+        // missing pid is treated as live (legacy behavior) so older entries
+        // are never wrongly bypassed.
+        if (ctx.peer.isFresh(entry.sessionId) && isEntryPidAlive(ctx, entry)) {
           console.error(chalk.red(`A daemon with role '${daemonSkill}' is already running for this workDir.`));
           console.error(chalk.gray(`Existing session: ${entry.sessionId.slice(0, 7)}`));
           // No cron job to stop yet — it is created below, so still null here.

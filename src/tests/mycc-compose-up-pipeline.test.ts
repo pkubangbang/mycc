@@ -46,6 +46,10 @@ const ARGS = '--auto --skip-healthcheck';
 let tempDir = '';
 let specFile = '';
 let SID = '';
+/** The spec-facing leaf name, referenced by channels and printed in reports. */
+const PEER_NAME = 'always-peer';
+/** The fully qualified runtime identity carried by `--name`. */
+const PEER_IDENTITY_NAME = 'grp:always-peer';
 /** The discovery module dynamically imported for the CURRENT test. */
 let d: Discovery | null = null;
 
@@ -64,14 +68,28 @@ let d: Discovery | null = null;
  * graph under the current override.
  */
 let peersMod: typeof import('../../scripts/mycc-compose/lib/peers.js');
+let stopMod: typeof import('../../scripts/mycc-compose/lib/peers-stop.js');
 let launchPeerSpy: ReturnType<typeof vi.fn>;
 let stopPeerSpy: ReturnType<typeof vi.fn>;
+/**
+ * Snapshot of the peer argument as it was AT EACH stopPeer call. cmdUp carries
+ * ONE mutable peer object through stop→cull→relaunch, and the post-stop cull
+ * deliberately nulls `peer.sessionId` on it (Windows: a SIGTERM'd peer never
+ * unregisters, so the stale entry must be culled by the sid we still hold).
+ * Asserting on `stopPeerSpy.mock.calls[0][0]` therefore observes the MUTATED
+ * object, not the value passed in. These snapshots capture the call-time state.
+ */
+let stopPeerArgs: Array<{ name?: string; sessionId?: string | null }>;
 
-/** Seed identity.json with the entry a real registered peer would have. */
+/** Seed identity.json with the entry a real registered peer would have. The
+ * durable NAME is what matching resolves on now (the session id is minted per
+ * run and is not a spec field) — so the entry must publish it, exactly as
+ * IdentityManager.register() does for a `--name`-launched peer. */
 function seedIdentity(): void {
   const map: Record<string, unknown> = {};
   map[SID] = {
     sessionId: SID,
+    name: PEER_IDENTITY_NAME,
     pid: process.pid,
     workDir: tempDir,
     args: ARGS,
@@ -81,20 +99,22 @@ function seedIdentity(): void {
 }
 
 /** Fresh heartbeat at the DISCOVERY-side path (never a re-derived path). */
-function seedHeartbeat(sid: string): void {
+function seedHeartbeat(sid: string, when = Date.now()): void {
   const hbFile = path.join(d!.HEARTBEAT_DIR, `${sid}.json`);
   fs.mkdirSync(path.dirname(hbFile), { recursive: true });
   fs.writeFileSync(
     hbFile,
-    JSON.stringify({ heartbeats: [Date.now()], briefs: [], pid: process.pid }),
+    JSON.stringify({ heartbeats: [when], briefs: [], pid: process.pid }),
   );
 }
 
-/** A minimal valid spec: one pinned peer with the given renew policy. */
+/** A minimal valid spec: one peer with the given renew policy. No `sessionId`
+ * — specs never author one any more (identity is `--name`, resolved at
+ * runtime from identity.json). */
 function writeSpec(renew: 'always' | 'onMismatch'): void {
   fs.writeFileSync(specFile, JSON.stringify({
     group: 'grp',
-    peers: [{ name: 'always-peer', workdir: tempDir, args: ARGS, sessionId: SID, renew }],
+    peers: [{ name: PEER_NAME, workdir: tempDir, args: ARGS, renew }],
     channels: [],
   }, null, 2));
 }
@@ -111,14 +131,18 @@ async function runCmdUpAllowStop(allowStop: boolean): Promise<{ rows: string[]; 
   // freshly re-evaluated graph each time means no stacked spies.
   peersMod = await import('../../scripts/mycc-compose/lib/peers.js');
   launchPeerSpy = vi.spyOn(peersMod, 'launchPeer').mockImplementation(
-    async (peer: { sessionId?: string | null }) => {
+    async (peer: { name?: string; identityName?: string; sessionId?: string | null }) => {
       // The spy registers the fake peer in the identity map exactly as a
       // real launch+register() would, so the post-launch liveness wait
-      // resolves on its first poll.
+      // resolves on its first poll. The entry publishes the durable NAME —
+      // that is what resolvePeerSid scans for — under a fresh sid (the peer
+      // mints its own on boot in production; here the fixture sid stands in).
       const sid = peer.sessionId ?? SID;
+      peer.sessionId = sid;
       const map = d!.readIdentityMap();
       map[sid] = {
         sessionId: sid,
+        name: peer.identityName ?? (peer.name ? 'grp:' + peer.name : PEER_IDENTITY_NAME),
         pid: process.pid,
         workDir: tempDir,
         args: ARGS,
@@ -129,7 +153,31 @@ async function runCmdUpAllowStop(allowStop: boolean): Promise<{ rows: string[]; 
       return { ok: true, pid: process.pid } as never;
     },
   );
-  stopPeerSpy = vi.spyOn(peersMod, 'stopPeer').mockReturnValue('stopped' as never);
+  stopMod = await import('../../scripts/mycc-compose/lib/peers-stop.js');
+  stopPeerSpy = vi.spyOn(stopMod, 'stopPeerByAddress').mockImplementation(
+    (async (address: { cwd: string; group: string; name: string }) => {
+      // Snapshot the address as passed (see stopPeerArgs).
+      stopPeerArgs.push({ name: address.name, sessionId: SID });
+      // Model a REAL successful stop's side effect: the holder process is
+      // terminated, so it stops beating and (on POSIX) unregisters. A stubbed
+      // 'stopped' that leaves the holder ALIVE would make CONFIRM (inside the
+      // primitive) time out — the correct product behavior, but not what this
+      // fixture exercises. Delete the holder's identity entry and heartbeat so
+      // the name no longer resolves to a live instance, exactly as a killed
+      // peer leaves the store.
+      const map = d!.readIdentityMap();
+      for (const [sid, entry] of Object.entries(map)) {
+        const e = entry as { name?: string; sessionId?: string };
+        const wireName = `${address.group}:${address.name}`;
+        const matches = e.name === wireName || (e.sessionId && e.sessionId === sid);
+        if (matches) delete map[sid];
+      }
+      d!.writeIdentityMap(map as never);
+      const hb = path.join(d!.HEARTBEAT_DIR, `${SID}.json`);
+      if (fs.existsSync(hb)) { try { fs.rmSync(hb, { force: true }); } catch { /* best-effort */ } }
+      return { verdict: 'stopped', sessionId: SID } as never;
+    }) as never,
+  );
   // Dynamic import AFTER the env override: every module in this graph —
   // cmd-up, the barrel (already spied), peers-state, discovery — now sees
   // the overridden MYCC_DISCOVERY_DIR at load time.
@@ -137,6 +185,7 @@ async function runCmdUpAllowStop(allowStop: boolean): Promise<{ rows: string[]; 
   const cmdUp = (mod as { cmdUp: (file: string, opts: { allowStop: boolean }) => Promise<void> }).cmdUp;
   const rows: string[] = [];
   let exitCode: unknown = undefined;
+  stopPeerArgs = [];
   vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => {
     rows.push(String(chunk));
     return true;
@@ -209,9 +258,12 @@ describe('cmdUp: sync never recycles renew:always peers (P1-1 regression)', () =
 
     const { rows, exitCode } = await runCmdUpAllowStop(true);
 
-    // The stop ran on the pinned peer, then the relaunch did.
+    // The stop ran on the named peer, then the relaunch did. Assert on the
+    // CALL-TIME snapshot: cmdUp carries one mutable peer object and the
+    // post-stop cull nulls its sessionId, so the live object in mock.calls
+    // would show null even though stopPeer received the real sid.
     expect(stopPeerSpy).toHaveBeenCalledTimes(1);
-    expect((stopPeerSpy.mock.calls[0] as unknown[])[0]).toMatchObject({ name: 'always-peer', sessionId: SID });
+    expect(stopPeerArgs[0]).toMatchObject({ name: PEER_NAME, sessionId: SID });
     expect(launchPeerSpy).toHaveBeenCalledTimes(1);
     // Post-launch liveness resolves: the fake launch registered a beating
     // entry, so no "peers not live" warning and exit 0.
@@ -234,4 +286,53 @@ describe('cmdUp: sync never recycles renew:always peers (P1-1 regression)', () =
     expect(stopPeerSpy).not.toHaveBeenCalled();
     expect(launchPeerSpy).not.toHaveBeenCalled();
   }, 30_000);
+
+  it('sync does not launch a duplicate when the heartbeat is stale but the recorded PID may still own the name', async () => {
+    d = await import('../../scripts/mycc-compose/lib/discovery.js');
+    writeSpec('always');
+    seedIdentity();
+    seedHeartbeat(SID, Date.now() - 120_000);
+
+    const { rows, exitCode } = await runCmdUpAllowStop(false);
+
+    expect(stopPeerSpy).not.toHaveBeenCalled();
+    expect(launchPeerSpy).not.toHaveBeenCalled();
+    expect(rows.join('')).toMatch(/stale\/unhealthy \(sync: possible holder remains, no stop\/start\)/);
+    expect(exitCode).toBe(1);
+  }, 20_000);
+
+  it('S3: never mints or writes a session id back into the spec file', async () => {
+    d = await import('../../scripts/mycc-compose/lib/discovery.js');
+    writeSpec('always');
+    // NO pre-existing live instance: the peer must be launched (not skipped).
+    const beforeSpec = fs.readFileSync(specFile, 'utf-8');
+
+    const { rows, exitCode } = await runCmdUpAllowStop(true);
+
+    // The launch happened (a fresh peer with no live entry).
+    expect(launchPeerSpy).toHaveBeenCalledTimes(1);
+    // The spec file is BYTE-IDENTICAL — Slice 3 removed the mint + write-back,
+    // so no `sessionId` is ever injected into the authored spec.
+    expect(fs.readFileSync(specFile, 'utf-8')).toBe(beforeSpec);
+    const parsed = JSON.parse(fs.readFileSync(specFile, 'utf-8'));
+    expect(parsed.peers[0].sessionId).toBeUndefined();
+    // No "Minted session ids" row is printed.
+    expect(rows.join('')).not.toMatch(/Minted session ids/);
+    expect(exitCode).toBe(0);
+  }, 20_000);
+
+  it('S3: a launch with no pre-existing entry resolves by NAME (fresh sid, no phantom)', async () => {
+    d = await import('../../scripts/mycc-compose/lib/discovery.js');
+    writeSpec('always');
+    // The launch spy registers a FRESH sid (stand-in for the peer's own boot
+    // mint). cmdUp never carried a sid into the launch, so resolution must
+    // come purely from the identity entry the spy wrote by NAME.
+    const { exitCode } = await runCmdUpAllowStop(true);
+    // The launched peer is registered under the durable name; nothing was
+    // resolved from a spec/launcher sid, and the liveness wait succeeded.
+    const map = d.readIdentityMap();
+    const entries = Object.values(map) as Array<{ name?: string }>;
+    expect(entries.some((e) => e.name === PEER_IDENTITY_NAME)).toBe(true);
+    expect(exitCode).toBe(0);
+  }, 20_000);
 });

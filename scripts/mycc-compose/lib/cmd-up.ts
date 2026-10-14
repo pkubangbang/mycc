@@ -5,17 +5,17 @@
  * a mismatched peer running — the cron path is non-destructive.
  */
 
-import { randomUUID } from 'crypto';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import path from 'path';
-import { validateSpec, loadSpec, updateSpecFile, getRemotes } from './spec.js';
+import { validateSpec, loadSpec, getRemotes } from './spec.js';
 import { materializeChannels } from './channels.js';
-import { isPeerRunning } from './discovery.js';
+import { isPeerRunning, isSessionHolderDead, resolvePeerForStop } from './discovery.js';
 import {
   findMatchingLiveEntry,
+  resolvePeerSid,
+  cullStoppedPeers,
   launchPeer,
-  stopPeer,
   repairIdentity,
   sleep,
   WAVE_SIZE,
@@ -23,8 +23,17 @@ import {
   LAUNCH_TIMEOUT_MS,
   LAUNCH_POLL_MS,
 } from './peers.js';
+import { stopPeerByAddress, isRefusal } from './peers-stop.js';
 import { out, warn } from './cli.js';
 import type { NormalizedPeer, NormalizedSpec } from './spec.js';
+
+/**
+ * NOTE: the bounded restart release-wait that used to live here
+ * (`RESTART_RELEASE_TIMEOUT_MS` + a separate `waitForPeerGone` call after
+ * `stopPeer`) is now INSIDE the stop primitive: `stopPeerByAddress` CONFIRMs the
+ * process actually died before returning 'stopped', so a delivered SIGTERM is
+ * never mistaken for a released identity. See peers-stop.ts.
+ */
 
 /**
  * Resolve the absolute path to the mycc-mail CLI script, anchored on THIS
@@ -74,12 +83,15 @@ function deliverRemotes(spec: NormalizedSpec): Array<{ name: string; ok: boolean
   for (const peer of spec.peers) {
     const peerRemotes = getRemotes(peer);
     if (peerRemotes.length === 0) continue;
-    const sid = peer.sessionId;
+    // Resolve the LIVE sid by durable NAME. The sid must be the peer's REAL
+    // one — a launcher-minted phantom would gate `--require-online` on a
+    // heartbeat file that never exists.
+    const sid = resolvePeerSid(peer);
     if (!sid) {
       rows.push({ name: peer.name, ok: false, note: `remotes for ${peer.name} not delivered (peer has no session id)` });
       continue;
     }
-    if (!isPeerRunning(peer)) {
+    if (!isPeerRunning({ sessionId: sid, workdir: peer.workdir })) {
       rows.push({ name: peer.name, ok: false, note: `remotes for ${peer.name} not delivered (peer not live)` });
       continue;
     }
@@ -106,27 +118,58 @@ function deliverRemotes(spec: NormalizedSpec): Array<{ name: string; ok: boolean
 export async function cmdUp(file: string, { allowStop }: { allowStop: boolean }): Promise<void> {
   const spec = validateSpec(loadSpec(file));
 
-  // §5 step 1 — assign UUIDs to sessionId:null peers, write back IN PLACE.
-  const minted: string[] = [];
-  for (const peer of spec.peers) {
-    if (peer.sessionId === null) {
-      peer.sessionId = randomUUID();
-      minted.push(peer.name);
-    }
-  }
-  if (minted.length > 0) {
-    updateSpecFile(file, (raw) => {
-      for (const p of raw.peers as Array<Record<string, unknown>>) {
-        const norm = spec.peers.find((x) => x.name === p.name);
-        if (norm && p.sessionId == null) p.sessionId = norm.sessionId;
-      }
-    });
-    out(`Minted session ids for: ${minted.join(', ')} (written back to ${file}).`);
-  }
+  // Peers no longer carry a spec-authored or launcher-minted session id: a
+  // launched peer mints its OWN fresh sid on boot and registers it under its
+  // durable `--name`. So there is NOTHING to resolve or mint BEFORE launch —
+  // the launch list is simply every peer, and resolution by NAME happens AFTER
+  // launch (see the liveness-wait / deliverRemotes / repairIdentity below).
 
   // §5 step 2 — walk peers in array order, decide skip / stop→start / start.
+  // The restart branches are SEQUENCED: after stopPeer returns 'stopped', we
+  // wait (bounded) for the previous holder to demonstrably release its
+  // identity before queueing the replacement — a successful SIGTERM delivery
+  // is NOT proof of termination. A refusal/kill-failure never queues a launch
+  // (the duplicate-name guard would only reject it); it surfaces as a failure.
   const actions: Array<{ name: string; action: string }> = [];
   const toStart: NormalizedPeer[] = [];
+  const restartFailures: string[] = [];
+  const safetyBlocked = new Set<string>();
+
+  /**
+   * Handle a peer that must be (re)started by stopping the current holder first.
+   * Returns the peers to queue for launch (empty when the stop refused or the
+   * holder did not release in time).
+   */
+  const stopThenQueue = async (peer: NormalizedPeer, reason: string): Promise<boolean> => {
+    // The shared stop-by-address primitive owns the whole
+    // `address → sid → pid → signal → CONFIRM` chain: CONFIRM (wait for the
+    // process to actually die, bounded) subsumes the old, separate
+    // `waitForPeerGone` release-wait. A 'stopped' verdict therefore already
+    // means the previous holder released its identity before we queue the
+    // replacement — a delivered SIGTERM is never mistaken for a terminated peer.
+    // Decision (i): 'refused-not-found' (never started) is not a failure — the
+    // peer simply is not running — so it proceeds straight to launch. Every
+    // OTHER refusal/still-up aborts the restart (fail loud), never a duplicate.
+    const { verdict: stopResult, sessionId } = await stopPeerByAddress({ cwd: peer.workdir, group: spec.group, name: peer.name });
+    if (isRefusal(stopResult) && stopResult !== 'refused-not-found') {
+      actions.push({ name: peer.name, action: `${reason} → stop=${stopResult}, restart ABORTED (refused)` });
+      restartFailures.push(peer.name);
+      return false;
+    }
+    // A stopped old peer may leave identity.json behind on Windows, where
+    // SIGTERM maps to process termination and no unregister handler runs.
+    // The cull is lock-guarded and only removes entries whose original holder
+    // is provably gone (dead PID or positive PID-reuse evidence). Stamp the
+    // primitive-resolved sid first so the cull can key on it.
+    if (sessionId) peer.sessionId = sessionId;
+    if (peer.sessionId) {
+      cullStoppedPeers([peer]);
+      peer.sessionId = null;
+    }
+    actions.push({ name: peer.name, action: `${reason} → stop=${stopResult}, start` });
+    return true;
+  };
+
   for (const peer of spec.peers) {
     const matching = findMatchingLiveEntry(peer);
     if (matching && peer.renew === 'onMismatch') {
@@ -141,22 +184,45 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
         actions.push({ name: peer.name, action: 'renew:always (sync: left running, no stop)' });
         continue;
       }
-      const stopResult = stopPeer(peer);
-      actions.push({ name: peer.name, action: `renew:always → stop=${stopResult}, start` });
-      toStart.push(peer);
+      if (await stopThenQueue(peer, 'renew:always')) toStart.push(peer);
       continue;
     }
     if (isPeerRunning(peer)) {
       // Actually running but args/workdir differ. `up` stops then starts;
       // `sync` leaves it (no destructive stop in the cron path).
       if (allowStop) {
-        const stopResult = stopPeer(peer);
-        actions.push({ name: peer.name, action: `mismatch → stop=${stopResult}, start` });
-        toStart.push(peer);
+        if (await stopThenQueue(peer, 'mismatch')) toStart.push(peer);
       } else {
         actions.push({ name: peer.name, action: 'mismatch (sync: left running, no stop)' });
       }
       continue;
+    }
+    // Health is not ownership: a stale heartbeat can still belong to a hung
+    // process. Resolve exactly one entry by durable name; ambiguity aborts this
+    // peer's operation instead of choosing a potentially unrelated PID.
+    let staleSid: string | null;
+    try {
+      staleSid = resolvePeerForStop(peer);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      actions.push({ name: peer.name, action: `restart ABORTED (ambiguous identity: ${detail})` });
+      restartFailures.push(peer.name);
+      continue;
+    }
+    if (staleSid) peer.sessionId = staleSid;
+    if (staleSid && !isSessionHolderDead(staleSid)) {
+      if (!allowStop) {
+        actions.push({ name: peer.name, action: 'stale/unhealthy (sync: possible holder remains, no stop/start)' });
+        safetyBlocked.add(peer.name);
+        continue;
+      }
+      if (await stopThenQueue(peer, 'stale/unhealthy holder')) toStart.push(peer);
+      continue;
+    }
+    // Remove a stale identity entry only when its original holder is proven gone.
+    if (staleSid) {
+      cullStoppedPeers([peer]);
+      peer.sessionId = null;
     }
     actions.push({ name: peer.name, action: 'start' });
     toStart.push(peer);
@@ -176,13 +242,19 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
   }
 
   // Wait for all peers to be reachable, then repair identity (§5 step 3).
+  // Liveness is judged by RESOLVING THE NAME each tick (the peer minted its own
+  // fresh sid on boot, so only the live instance's sid — stamped onto the peer
+  // by resolvePeerSid — is trustworthy for a slow/failed launch).
   const stillDown: string[] = [];
   for (const peer of spec.peers) {
+    // A sync safety deferral is deliberate, not a slow launch; do not burn the
+    // full launch timeout waiting for a peer we intentionally did not respawn.
+    if (safetyBlocked.has(peer.name) || restartFailures.includes(peer.name)) continue;
     const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
-    while (!isPeerRunning(peer) && Date.now() < deadline) {
+    while (resolvePeerSid(peer) === null && Date.now() < deadline) {
       await sleep(LAUNCH_POLL_MS);
     }
-    if (!isPeerRunning(peer)) stillDown.push(peer.name);
+    if (resolvePeerSid(peer) === null) stillDown.push(peer.name);
   }
   const repaired = repairIdentity(spec.peers);
 
@@ -201,7 +273,14 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
   // spec author can change remotes and re-run `up` to push the new list.
   const remoteRows = allowStop ? deliverRemotes(spec) : [];
 
-  // §5 step 4 — materialize channels.
+  // §5 step 4 — materialize channels only for peers whose durable name still
+  // resolves to a live session. sessionId also carries the last-known sid for
+  // restart detection/status; after a failed launch it may therefore be stale.
+  // Clear that operational field before materialization rather than creating
+  // channel files that point at a session which no longer exists.
+  for (const peer of spec.peers) {
+    if (!resolvePeerSid(peer)) peer.sessionId = null;
+  }
   const channelResults = materializeChannels(spec);
 
   // §5 step 5 — report.
@@ -220,5 +299,16 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
   if (stillDown.length > 0) {
     warn(`Warning: peers not live after ${LAUNCH_TIMEOUT_MS}ms: ${stillDown.join(', ')}`);
   }
-  process.exit(launchResults.some((r) => !r.ok) || stillDown.length > 0 ? 1 : 0);
+  if (restartFailures.length > 0) {
+    warn(`Warning: restart aborted for ${restartFailures.length} peer(s): ${restartFailures.join(', ')}`);
+  }
+  if (safetyBlocked.size > 0) {
+    warn(`Warning: sync did not start ${safetyBlocked.size} peer(s) because a stale identity may still have a live holder: ${[...safetyBlocked].join(', ')}`);
+  }
+  process.exit(
+    launchResults.some((r) => !r.ok) ||
+    stillDown.length > 0 ||
+    restartFailures.length > 0 ||
+    safetyBlocked.size > 0 ? 1 : 0,
+  );
 }

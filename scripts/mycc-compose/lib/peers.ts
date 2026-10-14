@@ -8,10 +8,9 @@
  *   peers-types.ts      — Peer / PeerStatusRow, timing constants, sleep,
  *                         peerArgv, peerIdentityArgs, peerMailboxPath
  *   peers-lifecycle.ts  — launchPeer, buildPeerShellCommand, resolveMyccLauncher,
- *                         stopPeer, isMyccProcess, waitForHolderRelease,
- *                         isSessionHeld
- *   peers-state.ts      — sameWorkdir, findMatchingLiveEntry, repairIdentity,
- *                         peerStatus
+ *                         stopPeer, isMyccProcess
+ *   peers-state.ts      — sameWorkdir, findMatchingLiveEntry, resolvePeerSid,
+ *                         repairIdentity, peerStatus
  *
  * NOTE: this module carries no logic of its own. Add new behaviour to the
  * peers-* module that owns that concern, not here.
@@ -20,8 +19,6 @@
 export {
   LAUNCH_TIMEOUT_MS,
   LAUNCH_POLL_MS,
-  HOLDER_RELEASE_TIMEOUT_MS,
-  HOLDER_RELEASE_POLL_MS,
   WAVE_SIZE,
   WAVE_DELAY_MS,
   sleep,
@@ -39,14 +36,15 @@ export {
   stopPeer,
   isMyccProcess,
   readProcessCommandLine,
-  waitForHolderRelease,
-  isSessionHeld,
 } from './peers-lifecycle.js';
 export type { LaunchResult } from './peers-lifecycle.js';
 
 export {
   sameWorkdir,
   findMatchingLiveEntry,
+  resolvePeerSid,
   repairIdentity,
+  cullStoppedPeers,
+  waitForPeerGone,
   peerStatus,
 } from './peers-state.js';

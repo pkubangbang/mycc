@@ -15,7 +15,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { getUserConfigPath, getProjectConfigPath } from './setup/paths.js';
-import { sanitizeId } from './utils/id-guard.js';
+import { sanitizeId, validatePeerName } from './utils/id-guard.js';
 import {
   BOOLEAN_FLAGS as SHARED_BOOLEAN_FLAGS,
   STRING_FLAGS as SHARED_STRING_FLAGS,
@@ -122,6 +122,18 @@ const args = minimist(process.argv.slice(2), {
   default: SHARED_ARG_DEFAULTS,
 });
 
+// `--session-id` was REMOVED: sessions are NEVER reused — a launch always mints
+// a fresh id, and the stable peer handle is now `--name <group>:<peer>`. The old
+// flag pinned a caller-chosen session id so `mycc-compose` could re-join channel
+// files on relaunch; that conflated identity with a per-run id and is gone.
+//
+// The flag is simply IGNORED if it still appears in argv: it was never a
+// specified arg, nothing reads `args['session-id']`, and it carries no capability
+// that needs blocking. minimist drops it into `args` where it is inert, exactly
+// like any other unknown token — no reader, no effect. Fail-fast would only turn
+// a harmless stale invocation (a leftover alias, script, or supervisor config)
+// into a fatal boot crash, so we deliberately let it pass through.
+
 /**
  * Cmd-args → env-var mapping (and the builder) live in
  * utils/arg-canonical.ts, next to the flag table: they speak the SAME key
@@ -162,25 +174,28 @@ export function getSessionArg(): string | null {
 }
 
 /**
- * Get the pinned session id from the CLI (--session-id flag).
+ * Get the peer NAME from the CLI (--name flag), of the form `<group>:<peer>`.
  *
- * `--session-id <uuid>` makes a FRESH start adopt a caller-chosen session id
- * instead of minting a random one. This is what lets a mediator tool
- * (`mycc-compose`) relaunch a peer under the SAME session id it had before, so
- * its channel files — keyed `<sessionId>-<channelId>.json` — are re-joined on
- * boot instead of being orphaned by a new random uuid.
+ * `--name <group>:<peer>` is the STABLE handle a peer is addressed by. In the
+ * pre-fix design a peer's identity WAS its session id, and `mycc-compose` pinned
+ * one via `--session-id <uuid>` so channel files would be re-joined on relaunch.
+ * That conflated identity with a per-run id and is gone: sessions are never
+ * reused, and a peer's identity is now this name — written into identity.json
+ * and channel-file ownership fields and matched by the launcher/consumers.
  *
- * It is NOT a restore: the session is still brand-new (empty triologue, no
- * context carried over). Only the identity is pinned. `initializeSession()`
- * refuses to start when a live process already holds the id, and validates
- * that the value is a UUID.
- *
- * Reads parsed CLI args directly (not process.env) to avoid inheriting a
- * stale value from a parent process.
+ * Returns null when `--name` was not passed. The value's SHAPE is validated by
+ * `validatePeerName()` (shared with the compose CLI, in src/utils/id-guard.ts);
+ * a malformed name throws here, at boot, rather than confusing a later
+ * filename guard. Reads parsed CLI args directly (not process.env) to avoid
+ * inheriting a stale value from a parent process.
  */
-export function getPinnedSessionId(): string | null {
-  const id = args['session-id'];
-  return typeof id === 'string' && id.length > 0 ? id : null;
+export function getPeerName(): string | null {
+  const name = args.name;
+  if (typeof name !== 'string' || name.length === 0) return null;
+  // Validate the shape eagerly: a malformed name must fail at boot with a clear
+  // message, not surface later as an opaque discovery/channel guard error.
+  validatePeerName(name);
+  return name;
 }
 
 /**
