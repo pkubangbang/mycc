@@ -13,13 +13,35 @@ import chalk from 'chalk';
 import { Cron } from 'croner';
 import { shouldDaemon, getDaemonSkill } from '../config.js';
 import { autoState } from './auto-state.js';
-import type { AgentContext, Skill } from '../types.js';
+import type { AgentContext, IdentityEntry, Skill } from '../types.js';
 import type { Triologue } from './triologue.js';
 
 /** Minimal structural type for the skill loader dependency (decoupled from the
  *  concrete Loader class — daemon-init only needs getSkill). */
 interface SkillLookup {
   getSkill(name: string): Skill | undefined;
+}
+
+/**
+ * True when the recorded OS pid for a peer identity is still alive — the
+ * pid-aware half of the daemon-dedup liveness test.
+ *
+ * The pid is read from the heartbeat file via `ctx.peer.getPid` (the
+ * authoritative, live-refreshed source), falling back to the `entry.pid`
+ * published in identity.json at register() time. A missing pid is treated as
+ * ALIVE so a legacy entry without a recorded pid is never wrongly bypassed
+ * (we refuse to re-launch only when a live process is actually proven).
+ */
+function isEntryPidAlive(ctx: AgentContext, entry: IdentityEntry): boolean {
+  const pid = ctx.peer.getPid(entry.sessionId) ?? entry.pid;
+  if (typeof pid !== 'number') return true; // no pid → preserve legacy behavior
+  try {
+    process.kill(pid, 0); // signal 0: existence probe, sends nothing
+    return true;
+  } catch (err) {
+    // EPERM → the pid exists but is owned by another user → treat as alive.
+    return (err as NodeJS.ErrnoException)?.code === 'EPERM';
+  }
 }
 
 /**
@@ -61,7 +83,17 @@ export function initDaemonMode(
     for (const entry of identities) {
       if (entry.sessionId === selfSessionId) continue; // skip self
       if (entry.role === daemonSkill && entry.workDir === selfWorkDir) {
-        if (ctx.peer.isFresh(entry.sessionId)) {
+        // A fresh heartbeat alone is NOT proof of a live daemon: after
+        // `mycc-compose down`, a stopped peer's identity entry survives (its
+        // own unregister() never runs under a SIGTERM/TerminateProcess), and
+        // its heartbeat file may still look recent. Gating re-up on
+        // `isFresh` (heartbeat freshness only) therefore made a dead-but-fresh
+        // entry block a legitimate re-launch (Stage-7 bug). Require BOTH a
+        // fresh heartbeat AND an alive recorded pid — the same pid-aware
+        // discipline `assertNameNotLive` already applies (identity.ts). A
+        // missing pid is treated as live (legacy behavior) so older entries
+        // are never wrongly bypassed.
+        if (ctx.peer.isFresh(entry.sessionId) && isEntryPidAlive(ctx, entry)) {
           console.error(chalk.red(`A daemon with role '${daemonSkill}' is already running for this workDir.`));
           console.error(chalk.gray(`Existing session: ${entry.sessionId.slice(0, 7)}`));
           // No cron job to stop yet — it is created below, so still null here.

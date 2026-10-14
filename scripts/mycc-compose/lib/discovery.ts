@@ -321,7 +321,8 @@ function normalizePeerName(name: string): string {
 }
 
 export function resolveLivePeer(peer: PeerRef | null | undefined): string | null {
-  const name = peer?.identityName ?? peer?.name;
+  if (!peer) return null;
+  const name = peer.identityName ?? peer.name;
   if (typeof name !== 'string' || name.length === 0) return null;
   const normalizedName = normalizePeerName(name);
   const map = readIdentityMap();

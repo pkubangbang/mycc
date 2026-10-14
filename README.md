@@ -1,9 +1,6 @@
-# mycc
+# MYCC - My Coding Company
 
 A CLI coding agent using Ollama-cloud for LLM inference, written in nodejs.
-
-> 2026-05-21: added Deepseek API support! You can use Deepseek in place of `ollama.chat` to leverage prompt cache
-> (Ollama still need to be installed because of the embedding use)
 
 **Getting started:** see [QUICKSTART.md](QUICKSTART.md) for installation,
 provider setup (Ollama / DeepSeek), the embedding model, tmux, the setup
@@ -118,16 +115,20 @@ See the following documentation for detailed explanations:
 5. **If you find LLM go astray, hit ESC to interrupt (enter neglected mode), then wait for the prompt to show again to chat.**
 6. Once finished work, hit ENTER at the prompt to exit, or use Ctrl + C anytime to quit the app.
 
-## Day-to-day Workflow as mycc developer
+## NOTE TO THE MYCC (yourself!)
 
-1. open project files in vscode
-2. start up the mycc using `pnpm start --skip-healthcheck`
-3. instruct LLM to make code changes (*to itself!*)
-4. instruct LLM to test the code using tmux
-5. Debug by hit F5 (vscode debug mode)
-6. Once the code is ready, run `npm link` to update the global `mycc` executive.
+You are reading this doc because the agent-loop has injected it into your context.
 
-> Note: this repo should enable the skill manager.
+This repo is the source code that YOU run. You can modify it to improve yourself.
+
+The changes you performed will be effective in the new instance, not you. So it's relatively
+safe to edit. The web part is the exception: it uses HotModuleReload, so changes will be 
+reflected in real time.
+
+MYCC is under active development, so it's common that you modify / refactor existing behavior
+to enable / unlock / support new features. Pay attention to the observability when you edit.
+
+**This repo should enable the skill manager.** Load the "lfplater-skill-manager" for more info.
 
 ## License
 
