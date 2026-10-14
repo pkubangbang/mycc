@@ -263,36 +263,67 @@ export class ServeHub implements HubHandler, ServeHubLike {
       const publicDir = path.join(process.cwd(), '.mycc', 'public');
       fs.mkdirSync(publicDir, { recursive: true });
 
+      // Suppress the spurious full-reload Vite emits when the agent writes a
+      // NEW public file. Vite's own onFileAddUnlink (vite dist) mutates its
+      // live `publicFiles` Set via publicFiles.add(path) for files under
+      // publicDir — that mutation is what makes a freshly-added public file
+      // immediately serveable — and THEN runs handleHMRUpdate('create', file).
+      // For a file with no client module-graph entry, handleHMRUpdate's
+      // no-module branch full-reloads the page iff the path ends in `.html`.
+      // Public HTML is never in the module graph, so every `.html` the agent
+      // drops into `.mycc/public` reloads the WebUI (the "flicker"). We still
+      // WANT the publicFiles.add() mutation (it is the fix for the 404); we
+      // only mute the reload.
+      //
+      // Hook choice is load-bearing: use `hotUpdate` (NOT the deprecated
+      // `handleHotUpdate`). handleHMRUpdate only consults `handleHotUpdate`
+      // when `type === 'update'`; a watcher 'add' is dispatched as
+      // type 'create', so a handleHotUpdate hook is SKIPPED entirely for the
+      // exact event we care about. `hotUpdate` runs unconditionally for
+      // create/update/delete. Returning a NON-empty module list makes Vite
+      // skip its `!options.modules.length && file.endsWith('.html')` reload
+      // branch (see hmr() in vite dist) and run updateModules with a
+      // placeholder that resolves to no real client module → no HMR payload
+      // reaches the browser and the page stays put. The publicFiles.add()
+      // mutation is independent of this hook and still runs.
+      const suppressPublicHtmlReload = {
+        name: 'mycc:suppress-public-html-reload',
+        hotUpdate(ctx: { file: string; modules: unknown[] }) {
+          if (ctx.file.startsWith(publicDir) && ctx.file.endsWith('.html')) {
+            return [{}] as never;
+          }
+          return undefined;
+        },
+      };
+
       // Vite in middleware mode — HMR shares the same http server (single port).
       this.viteServer = await createViteServer({
         root: WEB_ROOT,
         publicDir, // serve <cwd>/.mycc/public at root path `/` during dev
-        plugins: [vue()],
+        plugins: [suppressPublicHtmlReload, vue()],
         server: {
           middlewareMode: true,
           hmr: { server: this.httpServer },
-          // Exclude the public dir (and the whole .mycc tree) from Vite's dev
-          // file watcher. Without this, every write the agent makes into
-          // `.mycc/public/` (screenshots, exported DAGs, images) is registered
-          // with the watcher; since those files are NOT in the client module
-          // graph, handleHMRUpdate emits a `full-reload` payload and the
-          // browser reloads the whole page — the "WebUI flickers when the
-          // public folder changes" bug. The public dir is served statically by
-          // Vite's servePublicMiddleware regardless of the watcher, so
-          // excluding it costs nothing and keeps live updates uninterrupted.
-          // NOTE: the key MUST be `ignored` (the chokidar option, NOT
-          // `exclude`). Vite 8 gates its Rolldown bundled-dev watcher (the
-          // only path that forwards `exclude`) behind
-          // `experimental.bundledDev`, which defaults to FALSE
-          // (verified in vite@8.3.0 dist: `experimental: { …, bundledDev:
-          // false }`). This project sets no `bundledDev`, so the DEFAULT
-          // chokidar watcher governs — and chokidar reads `ignored`
-          // (resolveChokidarOptions() destructures `ignored`, builds the
-          // ignored list from it). Keying on `exclude` there is a silent
-          // no-op, which is how the flicker regression slipped back in.
-          // `.mycc/` holds sessions/transcripts/skills — all HMR noise.
-          // Strings are treated as glob patterns by the watcher.
-          watch: { ignored: ['**/.mycc/**'] },
+          // Keep the public dir (.mycc/public) WATCHED — do NOT ignore the
+          // whole .mycc tree. Vite gates static serving on a live `publicFiles`
+          // Set (vite dist checkPublicFile) that is mutated by the watcher's
+          // 'add'/'unlink' events (onFileAddUnlink → publicFiles.add(path)). If
+          // the watcher never sees .mycc/public, that Set is a frozen boot-time
+          // snapshot and any file created AFTER the server started 404s
+          // forever — the "new mini-game 404s, restart required" bug. (A
+          // blanket `**/.mycc/**` ignored matches `.mycc/public/**` too,
+          // muting exactly that.)
+          //
+          // The flicker that motivated the earlier blanket ignore is instead
+          // silenced by suppressPublicHtmlReload above — the only remaining
+          // HMR concern. The REST of the `.mycc` tree (sessions / transcripts /
+          // skills) stays ignored as pure HMR noise; the negation
+          // `!**/.mycc/public/**` re-includes only the public dir (later globs
+          // win in chokidar's ignored list). The key MUST be `ignored`
+          // (chokidar option; `exclude` is only forwarded under
+          // experimental.bundledDev, off by default in vite@8.3.0, so `exclude`
+          // would be a silent no-op).
+          watch: { ignored: ['**/.mycc/**', '!**/.mycc/public/**'] },
         },
         appType: 'custom',
         configFile: false, // inline config only — avoid parent vite.config
