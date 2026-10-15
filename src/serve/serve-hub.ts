@@ -263,71 +263,84 @@ export class ServeHub implements HubHandler, ServeHubLike {
       const publicDir = path.join(process.cwd(), '.mycc', 'public');
       fs.mkdirSync(publicDir, { recursive: true });
 
-      // Suppress the spurious full-reload Vite emits when the agent writes a
-      // NEW public file. Vite's own onFileAddUnlink (vite dist) mutates its
-      // live `publicFiles` Set via publicFiles.add(path) for files under
-      // publicDir — that mutation is what makes a freshly-added public file
-      // immediately serveable — and THEN runs handleHMRUpdate('create', file).
-      // For a file with no client module-graph entry, handleHMRUpdate's
-      // no-module branch full-reloads the page iff the path ends in `.html`.
-      // Public HTML is never in the module graph, so every `.html` the agent
-      // drops into `.mycc/public` reloads the WebUI (the "flicker"). We still
-      // WANT the publicFiles.add() mutation (it is the fix for the 404); we
-      // only mute the reload.
+      // The AGENT public dir (.mycc/public) is served by OUR OWN Express static
+      // middleware below, NOT by Vite. Vite keeps its DEFAULT publicDir (the
+      // bundled `src/web/public`, i.e. `<root>/public`) so mycc can still ship
+      // its own static assets there — we only keep the RUNTIME `.mycc` tree out
+      // of Vite's watcher/HMR below:
       //
-      // Hook choice is load-bearing: use `hotUpdate` (NOT the deprecated
-      // `handleHotUpdate`). handleHMRUpdate only consults `handleHotUpdate`
-      // when `type === 'update'`; a watcher 'add' is dispatched as
-      // type 'create', so a handleHotUpdate hook is SKIPPED entirely for the
-      // exact event we care about. `hotUpdate` runs unconditionally for
-      // create/update/delete. Returning a NON-empty module list makes Vite
-      // skip its `!options.modules.length && file.endsWith('.html')` reload
-      // branch (see hmr() in vite dist) and run updateModules with a
-      // placeholder that resolves to no real client module → no HMR payload
-      // reaches the browser and the page stays put. The publicFiles.add()
-      // mutation is independent of this hook and still runs.
-      const suppressPublicHtmlReload = {
-        name: 'mycc:suppress-public-html-reload',
-        hotUpdate(ctx: { file: string; modules: unknown[] }) {
-          if (ctx.file.startsWith(publicDir) && ctx.file.endsWith('.html')) {
-            return [{}] as never;
-          }
-          return undefined;
-        },
-      };
+      //   - Serving the agent dir ourselves (express.static, registered BEFORE
+      //     viteServer.middlewares) means a file created AFTER boot is served
+      //     immediately — Vite's own public-file serving is gated on a
+      //     `publicFiles` Set mutated only by watcher 'add' events, but we no
+      //     longer route `.mycc/public` through Vite at all. That kills the "new
+      //     mini-game 404s, restart required" bug at the source.
+      //
+      //   - Keeping `.mycc/public` OUT of Vite's module graph also keeps public
+      //     HTML out of Vite's HMR path entirely, which is the ONLY correct way
+      //     to silence the "WebUI flickers when the agent drops a public .html"
+      //     bug. A `hotUpdate` hook CANNOT express "suppress this reload": its
+      //     return value replaces `options.modules`, and every downstream stage
+      //     (hmr() → updateModules() → propagateUpdate()) dereferences real
+      //     ModuleNode fields. hmr() full-reloads when the list is EMPTY and the
+      //     path ends in `.html`, so returning `[]` still reloads; returning a
+      //     placeholder `[{}]` (an earlier attempt) crashes inside
+      //     propagateUpdate at `!node.importers.size` — `Cannot read properties
+      //     of undefined (reading 'size')` — surfacing as the Vite error
+      //     overlay. Ignoring `.mycc` (below) means the reload branch is never
+      //     even reached for agent public files, so no hook is needed.
+      //
+      // The rest of the `.mycc` tree (sessions / transcripts / skills) stays
+      // ignored as pure HMR noise. The key MUST be `ignored` (the chokidar
+      // option; `exclude` is only forwarded under experimental.bundledDev, off
+      // by default in vite@8.3.0, so `exclude` would be a silent no-op).
 
       // Vite in middleware mode — HMR shares the same http server (single port).
       this.viteServer = await createViteServer({
         root: WEB_ROOT,
-        publicDir, // serve <cwd>/.mycc/public at root path `/` during dev
-        plugins: [suppressPublicHtmlReload, vue()],
+        // publicDir: left at Vite's default (<root>/public = src/web/public) so
+        // the app's OWN bundled static assets are still served. The agent's
+        // runtime dir (.mycc/public) is served separately below.
+        plugins: [vue()],
         server: {
           middlewareMode: true,
           hmr: { server: this.httpServer },
-          // Keep the public dir (.mycc/public) WATCHED — do NOT ignore the
-          // whole .mycc tree. Vite gates static serving on a live `publicFiles`
-          // Set (vite dist checkPublicFile) that is mutated by the watcher's
-          // 'add'/'unlink' events (onFileAddUnlink → publicFiles.add(path)). If
-          // the watcher never sees .mycc/public, that Set is a frozen boot-time
-          // snapshot and any file created AFTER the server started 404s
-          // forever — the "new mini-game 404s, restart required" bug. (A
-          // blanket `**/.mycc/**` ignored matches `.mycc/public/**` too,
-          // muting exactly that.)
-          //
-          // The flicker that motivated the earlier blanket ignore is instead
-          // silenced by suppressPublicHtmlReload above — the only remaining
-          // HMR concern. The REST of the `.mycc` tree (sessions / transcripts /
-          // skills) stays ignored as pure HMR noise; the negation
-          // `!**/.mycc/public/**` re-includes only the public dir (later globs
-          // win in chokidar's ignored list). The key MUST be `ignored`
-          // (chokidar option; `exclude` is only forwarded under
-          // experimental.bundledDev, off by default in vite@8.3.0, so `exclude`
-          // would be a silent no-op).
-          watch: { ignored: ['**/.mycc/**', '!**/.mycc/public/**'] },
+          watch: { ignored: ['**/.mycc/**'] },
         },
         appType: 'custom',
         configFile: false, // inline config only — avoid parent vite.config
       });
+
+      // Serve the agent runtime dir <cwd>/.mycc/public at the root path `/`,
+      // BEFORE Vite's middlewares so it wins for agent-produced assets (the
+      // skill `serve-public-dir` contract). Registered after the Vite server
+      // exists only because start() builds it first; ordering vs. the server is
+      // what matters, and this runs before `app.use(vite.middlewares)` below.
+      // `fallthrough: true` lets a miss fall through to Vite (its own publicDir
+      // and HTML entry transform) rather than 404ing here.
+      //
+      // SECURITY — this dir is served to any WebUI client, which may be on the
+      // LAN when bound to 0.0.0.0 (`--host`), so the static mount is a trust
+      // boundary, not an internal detail:
+      //   - Path traversal: `serve-static`→`send` normalizes the URL and rejects
+      //     any `..` segment with 403 (UP_PATH_REGEXP), and an absolute path
+      //     cannot escape `root`. `../` style escapes are blocked by the library.
+      //   - Dotfiles: `dotfiles: 'deny'` makes hidden entries (`.env`, dot-dirs)
+      //     a hard 403 rather than relying on `send`'s implicit `ignore`→404 —
+      //     explicit intent, and it also blocks dotfile access if a future
+      //     `send` default changes. `index: false` disables directory index
+      //     files; there is no directory listing, so a bare directory URL 404s.
+      //   - Symlinks: `send` uses `fs.stat` (follows links) with NO realpath
+      //     containment, so a symlink placed INSIDE this dir could point outside
+      //     it. Accepted by design: the agent already has full write access to
+      //     `.mycc/public` and the whole workdir, so a symlink escapes nothing it
+      //     could not write directly — a realpath guard would only break
+      //     legitimate symlinked artifacts. Do NOT treat this mount as a sandbox.
+      this.expressApp.use(express.static(publicDir, {
+        fallthrough: true,
+        index: false,
+        dotfiles: 'deny',
+      }));
 
       // GET /health — registered BEFORE viteServer.middlewares so it answers
       // while Vite is still compiling (a watchdog polling every 30 s must never
