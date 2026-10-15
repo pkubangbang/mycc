@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Flappy Bird</title>
+<style>
+  :root {
+    --sky: #70c5ce;
+    --sky-dark: #4ec0ca;
+    --pipe: #5ec43f;
+    --pipe-dark: #3f8f2a;
+    --ground: #ded895;
+    --ground-dark: #c9c06a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #222;
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Segoe UI", system-ui, Arial, sans-serif;
+    overflow: hidden;
+    -webkit-user-select: none; user-select: none;
+  }
+  #wrap {
+    position: relative;
+    box-shadow: 0 10px 40px rgba(0,0,0,.6);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  canvas { display: block; width: 360px; height: 640px; image-rendering: auto; }
+  /* Lock the canvas to its intrinsic pixel size so the browser never rescales
+     the bitmap (fractional scaling is what causes shimmer/tearing while the
+     scene scrolls). max-width keeps it responsive on very small screens. */
+  @media (max-height: 680px), (max-width: 400px) {
+    canvas { width: 90vw; height: calc(90vw * 640 / 360); }
+  }
+
+  /* Overlay HUD */
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center;
+    color: #fff;
+    pointer-events: none;
+    text-shadow: 0 2px 4px rgba(0,0,0,.5);
+  }
+  .overlay.hidden { display: none; }
+  .title {
+    font-size: 42px; font-weight: 800; letter-spacing: 2px;
+    color: #fff;
+    text-shadow: 0 0 0 #543847, 3px 3px 0 #543847, -2px -2px 0 #543847, 2px -2px 0 #543847, -2px 2px 0 #543847;
+    margin-bottom: 6px;
+  }
+  .subtitle { font-size: 15px; opacity: .95; margin-bottom: 22px; }
+  .btn {
+    pointer-events: auto;
+    cursor: pointer;
+    background: linear-gradient(#ffd24a,#f5a623);
+    color: #5a3a00;
+    font-weight: 700; font-size: 18px;
+    padding: 12px 34px; border-radius: 999px;
+    border: 3px solid #b8791a;
+    box-shadow: 0 4px 0 #b8791a;
+    transition: transform .06s ease, box-shadow .06s ease;
+  }
+  .btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #b8791a; }
+  .score-big { font-size: 60px; font-weight: 800; color: #fff;
+    text-shadow: 3px 3px 0 #543847, -2px -2px 0 #543847, 2px -2px 0 #543847, -2px 2px 0 #543847; }
+  .best { font-size: 18px; margin: 8px 0 20px; }
+  .hint { font-size: 13px; opacity: .9; margin-top: 16px; }
+  .newbest { color: #ffe15c; font-weight: 800; margin-bottom: 6px; }
+  .autotag {
+    display: inline-block; font-size: 13px; font-weight: 700;
+    padding: 4px 12px; border-radius: 999px; margin-bottom: 14px;
+    background: rgba(255,80,80,.9); color: #fff;
+    box-shadow: 0 0 0 2px rgba(255,255,255,.35), 0 0 14px rgba(255,80,80,.7);
+    animation: pulse 1s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: .65; } 50% { opacity: 1; } }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="360" height="640"></canvas>
+
+  <!-- Autopilot HUD tag -->
+  <div class="autotag" id="autoTag" style="position:absolute; top:14px; left:14px; display:none;">AUTOPILOT</div>
+
+  <!-- Start screen -->
+  <div class="overlay" id="startScreen">
+    <div class="title">FLAPPY BIRD</div>
+    <div class="subtitle">Tap, click, or press Space to fly</div>
+    <button class="btn" id="startBtn">PLAY</button>
+    <div class="hint">Avoid the pipes. Don't hit the ground.<br>
+      <b>M</b> matrix AI · <b>L</b> red-flag AI · <b>T</b> radio autopilot.
+    </div>
+  </div>
+
+  <!-- Game over screen -->
+  <div class="overlay hidden" id="overScreen">
+    <div class="newbest" id="newBest" style="display:none">NEW BEST!</div>
+    <div class="subtitle" style="margin-bottom:4px">GAME OVER</div>
+    <div class="score-big" id="finalScore">0</div>
+    <div class="best">Best: <span id="bestScore">0</span></div>
+    <button class="btn" id="retryBtn">RETRY</button>
+    <div class="hint">Press Space / R to retry</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width;
+  const H = canvas.height;
+
+  const startScreen = document.getElementById("startScreen");
+  const overScreen  = document.getElementById("overScreen");
+  const startBtn    = document.getElementById("startBtn");
+  const retryBtn    = document.getElementById("retryBtn");
+  const finalScoreEl = document.getElementById("finalScore");
+  const bestScoreEl  = document.getElementById("bestScore");
+  const newBestEl    = document.getElementById("newBest");
+  const autoTag      = document.getElementById("autoTag");
+
+  // ----- world constants -----
+  const GRAVITY      = 0.45;
+  const FLAP_VELOCITY = -7.6;
+  const MAX_FALL_V   = 11;
+  const GROUND_H     = 96;
+  const PIPE_W       = 62;
+  const PIPE_GAP     = 150;
+  const PIPE_SPACING = 210;   // horizontal distance between pipes
+  const BASE_SPEED   = 2.4;   // px per frame
+  const SPEED_RAMP   = 0.0009; // speed increase per score
+
+  const STATE = { READY: 0, PLAY: 1, OVER: 2 };
+
+  // ----- trained ML autopilot weights (6 -> 8 -> 1) -----
+  // Injected from autopilot-net.json produced by the evolutionary trainer
+  // (autopilot-ml.cjs). If null, the ML pilot is inert until weights load.
+  const ML_NET_JSON = /*MLNET*/{"w1":[-0.9333852474510786,2.00000463821285,-0.09340017221838935,-0.4709580034561804,0.35914288725267407,-0.07923126678680997,-1.3167839372399612,-0.7514297303010244,-0.5834206674783491,0.17890363170037746,-1.0326828988888883,0.47592943953379285,1.139194733730692,-0.8513949808577309,0.7709143570650485,1.0160883854152054,0.6572203198561328,1.0985437946591992,0.6344124833555542,0.2988686385974871,-1.806117984668526,-0.09181017538066952,-0.011584164844243947,0.8246721073889056,0.6060163071108399,-0.5513797495333711,-0.03974145551503169,0.5097313743110863,1.6903710279596271,0.27491017876251134,0.0398846389254322,0.10179879892675672,-1.4149209213478025,-0.5957900984340813,-0.549586926063348,-0.7522696662045198,-0.21203134092909742,-0.5666799429079401,0.5739907418412621,2.3433209494137555,-0.2720525785244536,-2.0264836148297767,0.04471415441774299,1.07204023218801,-0.4710604472857085,-0.3464649389527039,-0.29683468461647866,1.1453920366062085],"b1":[0.12908073828613847,0.1658957613556413,0.14492959853290815,-0.07679850960819751,0.07760348598880229,0.17643392605212282,-0.44172154599800706,0.21458650668122575],"w2":[-0.11656922829512041,-0.7344633636975775,-0.6305976805649698,0.3563444642655668,0.08617976889043341,0.8437653263076207,-1.0935740897449433,1.9388256365983394],"b2":[0.5935240673087537]}/*MLNET*/;
+
+  // ----- autopilot -----
+  // Two brains are available:
+  //   "off"  : no autopilot
+  //   "ml"   : the machine-learning neural-net pilot (armed with the M key)
+  // At most ONE pilot is active, so the bird can wear at most one helmet.
+  let autopilotMode = "off";
+  let autoFlapCool = 0;        // cooldown frames between auto flaps
+
+  function setAutopilot(mode) {
+    autopilotMode = mode;
+    const on = (mode !== "off");
+    autoTag.style.display = on ? "inline-block" : "none";
+    if (on) {
+      autoTag.textContent = (mode === "ml") ? "ML AUTOPILOT (NN)"
+                           : (mode === "lin") ? "ML AUTOPILOT (LIN)"
+                           : (mode === "heur") ? "CLASSIC AUTOPILOT (T)"
+                           : "AUTOPILOT";      autoTag.style.background = (mode === "ml")
+        ? "rgba(40,200,90,.92)"
+        : (mode === "lin")
+        ? "rgba(220,60,50,.92)"
+        : "rgba(90,140,200,.92)";
+    }
+  }
+  function toggleMLAutopilot() {
+    setAutopilot(autopilotMode === "ml" ? "off" : "ml");
+    if (autopilotMode !== "off" && state === STATE.READY) startGame();
+  }
+  function toggleLinAutopilot() {
+    setAutopilot(autopilotMode === "lin" ? "off" : "lin");
+    if (autopilotMode !== "off" && state === STATE.READY) startGame();
+  }
+  function toggleAutopilot() {
+    setAutopilot(autopilotMode === "heur" ? "off" : "heur");
+    if (autopilotMode !== "off" && state === STATE.READY) startGame();
+  }
+  function isAutopilot() { return autopilotMode !== "off"; }
+
+  // ----- ML pilot: tiny feed-forward neural net (6 -> 8 -> 1) -----
+  // Weights are produced by an evolutionary trainer that runs against the
+  // exact game physics (see autopilot-ml.cjs). Output > 0 => flap.
+  const ML_NIN = 6, ML_NHID = 8;
+  // Populated at load time from the trained network (injected above).
+  let ML_NET = ML_NET_JSON;
+
+  // ----- second ML pilot: linear perceptron (6 -> 1) -----
+  // Learned by population-based hill-climbing (autopilot-lin.cjs) — a different
+  // ML method than the neural net (no hidden layer). Weights are [w0..w5,bias];
+  // the policy flaps iff the weighted sum of the same 6 inputs is > 0.
+  const LIN_W = /*LINW*/[-0.054038824248273665,0.5199309580232087,-1.2387507503290531,0.024245006402853868,0.07103632926009595,6.303514424441351,0.006136236013844609]/*LINW*/;
+  function linPilotFlap(x) {
+    if (!LIN_W) return false;
+    let s = LIN_W[6];
+    for (let i = 0; i < 6; i++) s += LIN_W[i] * x[i];
+    return s > 0;
+  }
+  function mlTanh(x){ return Math.tanh(x); }
+  function mlForward(x) {
+    if (!ML_NET) return -1;
+    const h = new Array(ML_NHID);
+    for (let j = 0; j < ML_NHID; j++) {
+      let s = ML_NET.b1[j];
+      for (let i = 0; i < ML_NIN; i++) s += ML_NET.w1[j * ML_NIN + i] * x[i];
+      h[j] = mlTanh(s);
+    }
+    let o = ML_NET.b2[0];
+    for (let j = 0; j < ML_NHID; j++) o += ML_NET.w2[j] * h[j];
+    return mlTanh(o);
+  }
+  function mlInputs() {
+    const play = H - GROUND_H;
+    // nearest pipe ahead (hold until fully behind the bird)
+    let t = null;
+    for (const p of pipes) { if (p.x + PIPE_W >= bird.x - bird.r) { t = p; break; } }
+    const gapTop = t ? t.topH : play * 0.5;
+    const gapC   = t ? t.topH + PIPE_GAP * 0.5 : play * 0.5;
+    const dist   = t ? Math.min(PIPE_SPACING, (t.x - bird.x)) : PIPE_SPACING;
+    return [
+      bird.vy / MAX_FALL_V,
+      (bird.y - play * 0.5) / (play * 0.5),
+      gapTop / H,
+      gapC / H,
+      dist / PIPE_SPACING,
+      (bird.y - gapC) / H,
+    ];
+  }
+  function mlPilotTick() {
+    if (autoFlapCool > 0) { autoFlapCool--; return; }
+    const out = mlForward(mlInputs());
+    if (out > 0) { doFlap(); autoFlapCool = 2; }
+  }
+  function linPilotTick() {
+    if (autoFlapCool > 0) { autoFlapCool--; return; }
+    if (linPilotFlap(mlInputs())) { doFlap(); autoFlapCool = 2; }
+  }
+
+  // ----- classic heuristic pilot (T) -----
+  // A robust fixed-impulse flapper. The earlier "predictive" version overshot
+  // into the top pipe because it flapped while still rising. The invariant that
+  // keeps this alive: NEVER flap while rising — flap only when already FALLING
+  // (vy > 0) and at/below the target line. Target = the nearest gap's centre,
+  // bias-tuned and clamped inside the gap with a body-radius margin so a flap
+  // peak/dip can't clip a lip. Tuned on a seed battery: flies to avg ~620 pipes
+  // (was ~0), i.e. a "reasonable score", though not as crash-free as the ML nets.
+  const HEUR = { COOL: 5, BIAS: 6, CRUISE: 0.54 };
+  function heurPilotTick() {
+    if (autoFlapCool > 0) { autoFlapCool--; return; }
+    const aimY = computeAimY();
+    if (bird.vy > 0 && bird.y >= aimY) { doFlap(); autoFlapCool = HEUR.COOL; }
+  }
+  function computeAimY() {
+    let target = null;
+    for (const p of pipes) {
+      if (p.x + PIPE_W >= bird.x - bird.r) { target = p; break; }
+    }
+    if (!target) return H * HEUR.CRUISE;
+    const gapTop = target.topH, gapBot = target.topH + PIPE_GAP;
+    let a = target.topH + PIPE_GAP / 2 + HEUR.BIAS;
+    const lo = gapTop + bird.r + 4;      // can't aim above this (would clip top)
+    const hi = gapBot - bird.r - 4;      // can't aim below this (would clip bottom)
+    if (hi >= lo) a = Math.max(lo, Math.min(hi, a));
+    return Math.max(bird.r + 8, Math.min(H - GROUND_H - bird.r - 8, a));
+  }
+
+  // ----- persisted best score -----
+  const BEST_KEY = "flappy_best_v1";
+  let best = 0;
+  try { best = parseInt(localStorage.getItem(BEST_KEY) || "0", 10) || 0; } catch (e) {}
+
+  // ----- game state -----
+  let state = STATE.READY;
+  let score = 0;
+  let frame = 0;
+  let speed = BASE_SPEED;
+  let groundX = 0;
+  let worldX = 0;              // total world scroll (px), drives cloud parallax
+  let pipes = [];
+  let particles = [];
+  let shake = 0;
+
+  // Cloud layers: each has its own horizontal start, vertical band, size,
+  // parallax factor and phase, so they drift independently instead of as a
+  // single rigid row.
+  const CLOUDS = [
+    { start:  60, y:  90, s: 40, par: 0.28, phase:   0 },
+    { start: 220, y: 150, s: 26, par: 0.40, phase: 130 },
+    { start: 380, y:  62, s: 34, par: 0.20, phase: 260 },
+    { start: 520, y: 190, s: 22, par: 0.46, phase:  70 },
+    { start: 660, y: 120, s: 30, par: 0.33, phase: 200 },
+  ];
+
+  const bird = {
+    x: 92,
+    y: H / 2 - 60,
+    vy: 0,
+    r: 16,
+    rot: 0,
+    flapT: 0,     // animation timer for wing flapping
+  };
+
+  function reset() {
+    state = STATE.READY;
+    score = 0;
+    frame = 0;
+    speed = BASE_SPEED;
+    groundX = 0;
+    pipes = [];
+    particles = [];
+    shake = 0;
+    bird.y = H / 2 - 60;
+    bird.vy = 0;
+    bird.rot = 0;
+    bird.flapT = 0;
+    autoFlapCool = 0;
+    spawnInitialPipes();
+  }
+
+  function spawnInitialPipes() {
+    let startX = W + 40;
+    for (let i = 0; i < 4; i++) {
+      addPipe(startX + i * PIPE_SPACING);
+    }
+  }
+
+  function addPipe(x) {
+    const margin = 70;
+    const minTop = margin;
+    const maxTop = H - GROUND_H - PIPE_GAP - margin;
+    const topH = minTop + Math.random() * (maxTop - minTop);
+    pipes.push({ x: x, topH: topH, scored: false });
+  }
+
+  function emitFeathers(x, y, n) {
+    for (let i = 0; i < n; i++) {
+      particles.push({
+        x: x, y: y,
+        vx: (Math.random() - 0.5) * 4,
+        vy: (Math.random() - 0.5) * 4 - 1,
+        life: 1, size: 2 + Math.random() * 3,
+      });
+    }
+  }
+
+  // ----- input -----
+  function flap() {
+    if (state === STATE.READY) {
+      startGame();
+      doFlap();
+    } else if (state === STATE.PLAY) {
+      doFlap();
+    }
+  }
+
+  function doFlap() {
+    bird.vy = FLAP_VELOCITY;
+    bird.flapT = 8;
+    emitFeathers(bird.x - 8, bird.y + 6, 3);
+  }
+
+  function startGame() {
+    state = STATE.PLAY;
+    startScreen.classList.add("hidden");
+    overScreen.classList.add("hidden");
+  }
+
+  function gameOver() {
+    state = STATE.OVER;
+    shake = 12;
+    emitFeathers(bird.x, bird.y, 14);
+
+    const isNewBest = score > best;
+    if (isNewBest) {
+      best = score;
+      try { localStorage.setItem(BEST_KEY, String(best)); } catch (e) {}
+    }
+    finalScoreEl.textContent = String(score);
+    bestScoreEl.textContent = String(best);
+    newBestEl.style.display = isNewBest ? "block" : "none";
+    overScreen.classList.remove("hidden");
+  }
+
+  function retry() {
+    reset();
+    startGame();
+  }
+
+  // ----- autopilot brain -----
+  // The ML pilot (mlPilotTick) is the sole autopilot brain; see the block
+  // above the game state. Its neural-net weights are injected at load time.
+
+  // ----- update -----
+  function update() {
+    frame++;
+    const effSpeed = (state === STATE.PLAY) ? speed : BASE_SPEED * 0.6;
+    groundX = (groundX - effSpeed) % 24;
+    worldX += effSpeed;   // accumulates in every state so clouds always drift
+
+    if (state === STATE.READY) {
+      // gentle bobbing
+      bird.y = H / 2 - 60 + Math.sin(frame / 12) * 6;
+      bird.rot = Math.sin(frame / 12) * 0.12;
+      bird.flapT = (frame % 22 < 11) ? 6 : 0;
+      return;
+    }
+
+    if (state === STATE.PLAY) {
+      speed = BASE_SPEED + score * SPEED_RAMP;
+
+      // autopilot decides to flap before physics is applied
+      if (autopilotMode === "ml") mlPilotTick();
+      else if (autopilotMode === "lin") linPilotTick();
+      else if (autopilotMode === "heur") heurPilotTick();
+
+      // physics
+      bird.vy += GRAVITY;
+      if (bird.vy > MAX_FALL_V) bird.vy = MAX_FALL_V;
+      bird.y += bird.vy;
+
+      // rotation
+      const targetRot = Math.max(-0.5, Math.min(1.3, bird.vy * 0.08));
+      bird.rot += (targetRot - bird.rot) * 0.2;
+      if (bird.flapT > 0) bird.flapT--;
+
+      // ceiling
+      if (bird.y < bird.r) { bird.y = bird.r; bird.vy = 0; }
+
+      // pipes
+      for (const p of pipes) {
+        p.x -= speed;
+        if (!p.scored && p.x + PIPE_W < bird.x) {
+          p.scored = true;
+          score++;
+        }
+      }
+      // recycle & spawn
+      if (pipes.length && pipes[0].x + PIPE_W < -10) {
+        pipes.shift();
+        addPipe(pipes[pipes.length - 1].x + PIPE_SPACING);
+      }
+
+      // collision
+      if (collides()) {
+        gameOver();
+      }
+
+      // ground
+      if (bird.y + bird.r >= H - GROUND_H) {
+        bird.y = H - GROUND_H - bird.r;
+        gameOver();
+      }
+    }
+
+    // particles
+    for (const pt of particles) {
+      pt.x += pt.vx; pt.y += pt.vy; pt.vy += 0.15;
+      pt.life -= 0.03;
+    }
+    particles = particles.filter(p => p.life > 0);
+
+    if (shake > 0) shake *= 0.85;
+  }
+
+  function collides() {
+    // circle vs pipe rectangles
+    for (const p of pipes) {
+      if (p.x > bird.x + bird.r || p.x + PIPE_W < bird.x - bird.r) continue;
+      // top pipe: y 0..topH
+      if (circleRect(bird.x, bird.y, bird.r - 2, p.x, 0, PIPE_W, p.topH)) return true;
+      // bottom pipe
+      const by = p.topH + PIPE_GAP;
+      if (circleRect(bird.x, bird.y, bird.r - 2, p.x, by, PIPE_W, H - GROUND_H - by)) return true;
+    }
+    return false;
+  }
+
+  function circleRect(cx, cy, r, rx, ry, rw, rh) {
+    const nx = Math.max(rx, Math.min(cx, rx + rw));
+    const ny = Math.max(ry, Math.min(cy, ry + rh));
+    const dx = cx - nx, dy = cy - ny;
+    return dx * dx + dy * dy < r * r;
+  }
+
+  // ----- draw -----
+  function draw() {
+    ctx.save();
+    if (shake > 0.4) {
+      // round to whole pixels — fractional translate makes straight edges
+      // shimmer/tear as the scene animates
+      ctx.translate(Math.round((Math.random() - 0.5) * shake),
+                    Math.round((Math.random() - 0.5) * shake));
+    }
+
+    drawSky();
+    drawPipes();
+    drawGround();
+    drawParticles();
+    drawBird();
+    drawScore();
+
+    ctx.restore();
+  }
+
+  function drawSky() {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, "#8fd7e0");
+    g.addColorStop(0.7, "#d6f0f3");
+    g.addColorStop(1, "#eaf7f8");
+    ctx.fillStyle = g;
+    ctx.fillRect(-20, -20, W + 40, H + 40);
+
+    // clouds (layered parallax): each cloud drifts at its OWN speed with its own
+    // phase, so they don't move as one rigid row. Offset is driven by the world
+    // scroll (worldX) so clouds keep drifting on the start/over screens too.
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    for (let i = 0; i < CLOUDS.length; i++) {
+      const c = CLOUDS[i];
+      const span = W + 200;
+      let cx = c.start - (worldX * c.par) - c.phase;
+      cx = ((cx % span) + span) % span - 100;   // wrap smoothly across the sky
+      drawCloud(cx, c.y, c.s);
+    }
+
+    // distant buildings — seamless A-B-A-B skyline tile (same technique as the
+    // ground: draw the tile pattern repeatedly, then shift by worldX mod TILE).
+    ctx.fillStyle = "rgba(140,200,120,0.35)";
+    const B_TILE = 240;              // skyline tile period (A + B)
+    const bShift = ((worldX * 0.15 % B_TILE) + B_TILE) % B_TILE;
+    const bStart = -B_TILE - bShift;
+    for (let x = bStart; x < W + B_TILE; x += B_TILE) {
+      for (let j = 0; j < 2; j++) {       // A (j=0) then B (j=1)
+        const ox = x + j * 120;
+        for (let i = 0; i < 2; i++) {
+          const bx = ox + i * 60;
+          const bh = 40 + ((i + j) % 3) * 30;
+          ctx.fillRect(bx, H - GROUND_H - bh, 50, bh);
+        }
+      }
+    }
+  }
+
+  function drawCloud(x, y, s) {
+    ctx.beginPath();
+    ctx.arc(x, y, s, 0, Math.PI * 2);
+    ctx.arc(x + s, y + 6, s * 0.8, 0, Math.PI * 2);
+    ctx.arc(x - s, y + 8, s * 0.7, 0, Math.PI * 2);
+    ctx.arc(x + s * 0.3, y - s * 0.5, s * 0.7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawPipes() {
+    for (const p of pipes) {
+      const bottomY = p.topH + PIPE_GAP;
+
+      // top pipe
+      drawPipeBody(p.x, 0, PIPE_W, p.topH, true);
+      // bottom pipe
+      drawPipeBody(p.x, bottomY, PIPE_W, H - GROUND_H - bottomY, false);
+    }
+  }
+
+  function drawPipeBody(x, y, w, h, isTop) {
+    if (h <= 0) return;
+    const grad = ctx.createLinearGradient(x, 0, x + w, 0);
+    grad.addColorStop(0, "#4aa832");
+    grad.addColorStop(0.25, "#7ed957");
+    grad.addColorStop(0.5, "#5ec43f");
+    grad.addColorStop(0.75, "#4aa832");
+    grad.addColorStop(1, "#357a24");
+    ctx.fillStyle = grad;
+    ctx.fillRect(x, y, w, h);
+
+    // dark outline edges
+    ctx.strokeStyle = "rgba(35,80,20,0.6)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+
+    // rim/lip
+    const lipH = 26;
+    const lipY = isTop ? (y + h - lipH) : y;
+    const lipW = w + 8;
+    const lipX = x - 4;
+    const lg = ctx.createLinearGradient(lipX, 0, lipX + lipW, 0);
+    lg.addColorStop(0, "#4aa832");
+    lg.addColorStop(0.25, "#8be65e");
+    lg.addColorStop(0.5, "#6bd247");
+    lg.addColorStop(0.75, "#4aa832");
+    lg.addColorStop(1, "#357a24");
+    ctx.fillStyle = lg;
+    ctx.fillRect(lipX, lipY, lipW, lipH);
+    ctx.strokeStyle = "rgba(35,80,20,0.7)";
+    ctx.strokeRect(lipX + 1, lipY + 1, lipW - 2, lipH - 2);
+  }
+
+  function drawGround() {
+    const gy = H - GROUND_H;
+    ctx.fillStyle = "#ded895";
+    ctx.fillRect(0, gy, W, GROUND_H);
+
+    // grass strip
+    ctx.fillStyle = "#7ec850";
+    ctx.fillRect(0, gy, W, 12);
+
+    // ---- seamless A-B-A-B rotating loop ----
+    // The ground texture is built from a repeating tile of period TILE. We draw
+    // it as A-B-A-B-A... spanning the whole width, then shift the strip left by
+    // (worldX mod TILE). Because the pattern repeats with period TILE, the
+    // shifted strip always lines up with its own copy — an infinite, seamless
+    // scroll with no seam or jump (A and B are the two halves of the tile).
+    const TILE = 48;                 // 2 x 24px halves (A, B)
+    const shift = ((worldX % TILE) + TILE) % TILE;
+    const startX = -TILE + (-shift);
+    for (let x = startX; x < W + TILE; x += TILE) {
+      // half A
+      ctx.fillStyle = "#5faa38";
+      ctx.fillRect(x, gy, 12, 6);
+      ctx.fillStyle = "rgba(200,190,120,0.7)";
+      ctx.fillRect(x + 4, gy + 22, 10, 4);
+      ctx.fillStyle = "rgba(180,170,100,0.5)";
+      ctx.fillRect(x + 14, gy + 44, 8, 4);
+      // half B (phase-shifted copy)
+      ctx.fillStyle = "#5faa38";
+      ctx.fillRect(x + 24, gy, 12, 6);
+      ctx.fillStyle = "rgba(200,190,120,0.7)";
+      ctx.fillRect(x + 24 + 4, gy + 22, 10, 4);
+      ctx.fillStyle = "rgba(180,170,100,0.5)";
+      ctx.fillRect(x + 24 + 14, gy + 44, 8, 4);
+    }
+  }
+
+  function drawParticles() {
+    for (const p of particles) {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = "#fff7c0";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawBird() {
+    ctx.save();
+    ctx.translate(bird.x, bird.y);
+    ctx.rotate(bird.rot);
+
+    // body
+    const grad = ctx.createRadialGradient(-4, -4, 2, 0, 0, bird.r + 6);
+    grad.addColorStop(0, "#ffe873");
+    grad.addColorStop(1, "#f5c518");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, bird.r, bird.r * 0.86, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#c99a00";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // wing (flaps)
+    const flap = bird.flapT > 0 ? -1 : 1;
+    ctx.save();
+    ctx.translate(-4, 2);
+    ctx.rotate(flap * 0.5);
+    ctx.fillStyle = "#fff3b0";
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 8, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#d9b400";
+    ctx.stroke();
+    ctx.restore();
+
+    // eye
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(6, -5, 5.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#c99a00";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = "#222";
+    ctx.beginPath();
+    ctx.arc(8, -5, 2.6, 0, Math.PI * 2);
+    ctx.fill();
+
+    // beak upper (orange)
+    ctx.fillStyle = "#ff8c2b";
+    ctx.beginPath();
+    ctx.moveTo(12, 0);
+    ctx.lineTo(24, 3);
+    ctx.lineTo(12, 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#d96b12";
+    ctx.stroke();
+    // beak lower
+    ctx.fillStyle = "#f5751a";
+    ctx.beginPath();
+    ctx.moveTo(12, 6);
+    ctx.lineTo(23, 5.5);
+    ctx.lineTo(12, 9);
+    ctx.closePath();
+    ctx.fill();
+
+    // helmet depends on the pilot: T=radio, M=matrix, L=red-flag.
+    // Exactly one is drawn (autopilotMode is a single value).
+    if (autopilotMode === "heur") drawRadioHelmet();
+    else if (autopilotMode === "ml") drawMatrixHelmet();
+    else if (autopilotMode === "lin") drawFlagHelmet();
+
+    ctx.restore();
+  }
+
+  // Radio helmet (T / classic pilot): metallic dome, ear cup, chin strap,
+  // antenna with a red blinking signal lamp and cyan radio-wave arcs.
+  function drawRadioHelmet() {
+    // Dome shell covering the top/back of the head.
+    const shell = ctx.createLinearGradient(-10, -20, 6, 2);
+    shell.addColorStop(0, "#9aa4ad");
+    shell.addColorStop(0.5, "#6b7580");
+    shell.addColorStop(1, "#3f474f");
+    ctx.fillStyle = shell;
+    ctx.beginPath();
+    ctx.ellipse(-1, -6, 15, 13, 0, Math.PI * 1.02, Math.PI * 2.0);
+    ctx.lineTo(10, -4);
+    ctx.lineTo(-12, -4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#2b3138";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Ear cup over the side of the head.
+    ctx.fillStyle = "#4a525b";
+    ctx.beginPath();
+    ctx.arc(-9, -3, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#2b3138";
+    ctx.stroke();
+    ctx.fillStyle = "#333a41";
+    ctx.beginPath();
+    ctx.arc(-9, -3, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Chin strap.
+    ctx.strokeStyle = "#3a4149";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(-13, 0);
+    ctx.quadraticCurveTo(-8, 9, 2, 8);
+    ctx.stroke();
+
+    // Antenna mast with a blinking red signal light.
+    ctx.strokeStyle = "#2b3138";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-6, -17);
+    ctx.lineTo(-9, -30);
+    ctx.stroke();
+
+    const blink = (Math.floor(frame / 18) % 2 === 0);
+    if (blink) {
+      const glow = ctx.createRadialGradient(-9, -32, 0, -9, -32, 9);
+      glow.addColorStop(0, "rgba(255,80,80,0.9)");
+      glow.addColorStop(1, "rgba(255,80,80,0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(-9, -32, 9, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = blink ? "#ff4d4d" : "#7a1f1f";
+    ctx.beginPath();
+    ctx.arc(-9, -32, 3.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#2b3138";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Radio wave arcs behind the antenna.
+    ctx.strokeStyle = "rgba(120,220,255,0.85)";
+    ctx.lineWidth = 1.6;
+    for (let i = 1; i <= 2; i++) {
+      ctx.beginPath();
+      ctx.arc(-11, -32, 5 + i * 4, Math.PI * 0.85, Math.PI * 1.4);
+      ctx.stroke();
+    }
+  }
+
+  // Red-flag helmet (L / linear pilot): dark dome with a small red flag on a
+  // short pole, waving gently.
+  function drawFlagHelmet() {
+    // Dome shell covering the top/back of the head.
+    const shell = ctx.createLinearGradient(-10, -20, 6, 2);
+    shell.addColorStop(0, "#8a8f96");
+    shell.addColorStop(0.5, "#5a6068");
+    shell.addColorStop(1, "#343a40");
+    ctx.fillStyle = shell;
+    ctx.beginPath();
+    ctx.ellipse(-1, -6, 15, 13, 0, Math.PI * 1.02, Math.PI * 2.0);
+    ctx.lineTo(10, -4);
+    ctx.lineTo(-12, -4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#20252a";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Ear cup.
+    ctx.fillStyle = "#454b52";
+    ctx.beginPath();
+    ctx.arc(-9, -3, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#20252a";
+    ctx.stroke();
+
+    // Flag pole.
+    ctx.strokeStyle = "#2a2f34";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-4, -16);
+    ctx.lineTo(-4, -31);
+    ctx.stroke();
+
+    // Red flag, gently waving (quadratic edges animated by frame).
+    const wave = Math.sin(frame / 8) * 2.2;
+    ctx.fillStyle = "#e23b2e";
+    ctx.beginPath();
+    ctx.moveTo(-4, -31);
+    ctx.quadraticCurveTo(6, -30 + wave, 12, -29 - wave * 0.5);
+    ctx.lineTo(12, -22 - wave * 0.5);
+    ctx.quadraticCurveTo(6, -23 - wave, -4, -22);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#a3221a";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // A tiny bright star on the flag (echoes the "reg flag").
+    ctx.fillStyle = "#ffe15c";
+    ctx.beginPath();
+    ctx.arc(3, -26.5, 1.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Matrix helmet worn by the bird while the ML autopilot is flying.
+  // Green "digital rain" visor + antenna lamp; only ONE helmet is ever drawn
+  // (the guard in drawBird ensures this).
+  function drawMatrixHelmet() {
+    // Dome shell covering the top/back of the head.
+    const shell = ctx.createLinearGradient(-10, -20, 6, 2);
+    shell.addColorStop(0, "#2b3a2f");
+    shell.addColorStop(0.5, "#1c2a20");
+    shell.addColorStop(1, "#0d1510");
+    ctx.fillStyle = shell;
+    ctx.beginPath();
+    ctx.ellipse(-1, -6, 15, 13, 0, Math.PI * 1.02, Math.PI * 2.0);
+    ctx.lineTo(10, -4);
+    ctx.lineTo(-12, -4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#0a0f0b";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Green digital-rain visor band across the front of the helmet.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(-13, -9, 26, 8);
+    ctx.clip();
+    ctx.fillStyle = "#04160a";
+    ctx.fillRect(-13, -9, 26, 8);
+    ctx.font = "7px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    // several falling glyph columns animated by frame
+    const cols = [-9, -4, 1, 6, 10];
+    for (let c = 0; c < cols.length; c++) {
+      const speed = 0.35 + c * 0.13;
+      const yo = (frame * speed) % 16;
+      for (let k = 0; k < 3; k++) {
+        const yy = -14 + ((yo + k * 5) % 16);
+        const ch = String.fromCharCode(0x30a0 + ((frame + c * 3 + k * 7) % 0x40));
+        ctx.fillStyle = k === 0 ? "#d8ffe0" : "#33ff66";
+        ctx.fillText(ch, cols[c], yy);
+      }
+    }
+    ctx.restore();
+    // visor glow line
+    ctx.strokeStyle = "rgba(60,255,120,0.85)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(-13, -9, 26, 8);
+
+    // Antenna mast with a blinking signal light.
+    ctx.strokeStyle = "#0a0f0b";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-6, -17);
+    ctx.lineTo(-9, -30);
+    ctx.stroke();
+
+    const blink = (Math.floor(frame / 18) % 2 === 0);
+    if (blink) {
+      const glow = ctx.createRadialGradient(-9, -32, 0, -9, -32, 9);
+      glow.addColorStop(0, "rgba(60,255,120,0.9)");
+      glow.addColorStop(1, "rgba(60,255,120,0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(-9, -32, 9, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = blink ? "#5cff8a" : "#1f5f33";
+    ctx.beginPath();
+    ctx.arc(-9, -32, 3.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#0a0f0b";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  function drawScore() {
+    if (state === STATE.READY) return;
+    const txt = String(score);
+    ctx.save();
+    ctx.font = "800 46px 'Segoe UI', Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = "#543847";
+    ctx.strokeText(txt, W / 2, 70);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(txt, W / 2, 70);
+    ctx.restore();
+  }
+
+  // ----- main loop -----
+  let lastTime = 0;
+  let acc = 0;
+  const STEP = 1000 / 60;
+
+  function loop(t) {
+    if (!lastTime) lastTime = t;
+    acc += t - lastTime;
+    lastTime = t;
+
+    let steps = 0;
+    while (acc >= STEP && steps < 5) {
+      update();
+      acc -= STEP;
+      steps++;
+    }
+    if (steps === 5) acc = 0; // avoid spiral of death
+
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // ----- event wiring -----
+  // Keyboard
+  window.addEventListener("keydown", function (e) {
+    if (e.code === "Space" || e.key === " " || e.code === "ArrowUp" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (state === STATE.OVER) retry();
+      else flap();
+    } else if (e.key === "r" || e.key === "R") {
+      if (state === STATE.OVER) retry();
+    } else if (e.key === "t" || e.key === "T") {
+      e.preventDefault();
+      toggleAutopilot();
+    } else if (e.key === "m" || e.key === "M") {
+      e.preventDefault();
+      toggleMLAutopilot();
+    } else if (e.key === "l" || e.key === "L") {
+      e.preventDefault();
+      toggleLinAutopilot();
+    }
+  });
+
+  // Pointer / touch anywhere on canvas
+  canvas.addEventListener("pointerdown", function (e) {
+    e.preventDefault();
+    if (state === STATE.OVER) return; // buttons handle retry
+    flap();
+  });
+
+  // Buttons
+  startBtn.addEventListener("click", function (e) { e.stopPropagation(); startGame(); });
+  retryBtn.addEventListener("click", function (e) { e.stopPropagation(); retry(); });
+
+  // Kick off
+  reset();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

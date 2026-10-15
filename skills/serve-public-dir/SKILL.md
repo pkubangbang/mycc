@@ -144,6 +144,39 @@ it with a root-absolute markdown URL.
 - **Data export** — write a CSV/JSON to `.mycc/public/exports/data.csv`,
   reply with `[Download data.csv](/exports/data.csv)`.
 
+## Bundled Demo — Flappy Bird (`demo/flappy/`)
+
+This skill ships a runnable demo that exercises the whole pattern end-to-end:
+a **self-contained HTML/canvas game** (Flappy Bird with three ML/heuristic
+autopilots) plus its trainers, nets and a headless test.
+
+The demo's **source of truth** is `skills/serve-public-dir/demo/flappy/` (it is
+tracked with the skill — *not* served from there). To serve it, copy it into
+the public dir:
+
+```powershell
+# from the project root
+New-Item -ItemType Directory -Force .mycc/public/flappy | Out-Null
+Copy-Item skills/serve-public-dir/demo/flappy/* .mycc/public/flappy/ -Force
+```
+
+Then reply to the user with the root-absolute link:
+
+```markdown
+Play it here: [/flappy/index.html](/flappy/index.html)
+```
+
+The game is served at `/flappy/index.html`. Contents: `index.html` (the game),
+`autopilot-ml.cjs` / `autopilot-lin.cjs` (trainers for the two ML pilots),
+`train-net.json` / `lin-net.json` (trained weights, already embedded inline in
+`index.html`), `flappy-runtime-test.cjs` (headless flying test), and a
+`README.md`.
+
+Keys in-game: **M** = neural-net pilot (matrix helmet), **L** = linear pilot
+(red-flag helmet), **T** = classic heuristic (radio helmet). Copying is
+disposable — the served copy under `.mycc/public/` is git-ignored, so re-copy
+from `demo/flappy/` whenever you want to (re)serve it.
+
 ## Notes & Pitfalls
 
 - **Root-absolute only.** `/.mycc/public/foo.png` and `./public/foo.png` will
@@ -157,6 +190,9 @@ it with a root-absolute markdown URL.
   `start()`, so a web UI restart keeps the public dir.
 - **Subfolders are fine.** `.mycc/public/charts/q3.svg` is served at
   `/charts/q3.svg` — mirror the subfolder structure in the URL.
+- **No directory index.** A bare folder request (`/flappy/`) **404s** — the
+  static server does not auto-resolve `index.html`. Always reference the
+  explicit file: `/flappy/index.html`, not `/flappy/`.
 - **WebUI only.** This is meaningful in `--serve` mode. In the terminal TUI
   the markdown is shown as text, so prefer describing the file path instead.
 - **File size.** There is no special upload limit for files *you* place on
