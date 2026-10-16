@@ -549,6 +549,55 @@ export interface CrossroadResult {
   continuation: string;
   /** All candidate continuations (for the crossroad record file) */
   candidates: string[];
+  /** Index of the selected continuation within `candidates` (-1 if unknown) */
+  selectedIndex: number;
+}
+
+/**
+ * Build the "best-of-three" candidate brief block as markdown, for display
+ * BETWEEN the prefix and the resolved outcome.
+ *
+ * Kept here (not in hook.ts) so the direction names stay co-located with
+ * GENERATION_DIRECTIONS — the label for candidate i is the i-th direction's
+ * name, and that pairing is an invariant of this module. hook.ts calls this
+ * after showing the prefix and before showing the outcome, preserving the
+ * intended 3-part reading order: prefix → candidates → outcome.
+ *
+ * Renders cleanly in BOTH the terminal (plain text is readable) and the Web
+ * UI (markdown rendered for labeled `log` messages — see MessageItem.vue).
+ * Avoids chalk/box-drawing characters: they leak ANSI codes into the Web UI
+ * and a box breaks on narrow viewports.
+ *
+ * LAYOUT (refined for readability):
+ *  - A single inline bold title line (NOT a `###` heading — the block is a
+ *    status note, not a document section), stating how many directions were
+ *    drafted and which number was chosen. "chose #N" ties directly to the
+ *    numbered rows below, so no separate "selected" tag is needed.
+ *  - A NUMBERED list (1./2./3.) in GENERATION ORDER (go forward / go backward
+ *    / synthesize at a high level) — the order is an invariant and MUST NOT be
+ *    reordered; the winning row is the only one visually marked.
+ *  - The selected row carries a ✅ marker; the others a muted ⬜. This is the
+ *    ONE "which won" signal — the old redundant `_(selected)_` suffix and the
+ *    "selected N of M" parenthetical are gone.
+ *  - `—` separates the bold direction name from the preview (reads cleaner
+ *    than `:` followed by another colon-bearing sentence).
+ */
+export function buildCandidatesBrief(candidates: string[], selectedIndex: number): string {
+  const lines: string[] = [];
+  lines.push('');
+  const chosen = selectedIndex >= 0 ? ` — chose #${selectedIndex + 1}` : '';
+  lines.push(`**🚦 Crossroad** — drafted ${candidates.length} directions${chosen}:`);
+  for (let i = 0; i < candidates.length; i++) {
+    const isSelected = i === selectedIndex;
+    const directionName = GENERATION_DIRECTIONS[i]?.name ?? `option ${i + 1}`;
+    const marker = isSelected ? '✅' : '⬜';
+    const preview = candidates[i].length > 100
+      ? `${candidates[i].slice(0, 100)}…`
+      : candidates[i];
+    const namePart = isSelected ? `**${directionName}**` : directionName;
+    lines.push(`${i + 1}. ${marker} ${namePart} — ${preview}`);
+  }
+  return lines.join('\n');
 }
 
 /**
@@ -623,32 +672,19 @@ export async function handleCrossroad(
 
     selectedIndex = continuations.indexOf(best);
     agentIO.verbose('crossroad', `Selected continuation #${selectedIndex + 1}: ${best.slice(0, 150)}...`);
-    result = { truncated: prefix, continuation: best, candidates: continuations };
+    result = { truncated: prefix, continuation: best, candidates: continuations, selectedIndex };
     return result;
   } finally {
     stopSpinner();
-    // Log all alternatives and which was chosen (after spinner stops for clean output)
-    if (result && continuations.length > 1) {
-      // Emit a markdown block so it renders cleanly in BOTH the terminal
-      // (plain text is readable) and the Web UI (markdown rendered for
-      // labeled `log` messages — see MessageItem.vue). Avoid chalk/box-drawing
-      // characters: they leak ANSI codes into the Web UI and the box breaks
-      // on narrow viewports. A markdown list with ✅/⬜ emoji markers keeps
-      // the selected option visually distinct and bolds its direction name.
-      const lines: string[] = [];
-      lines.push('');
-      lines.push(`### 🚦 Crossroad (selected ${selectedIndex + 1} of ${continuations.length})`);
-      for (let i = 0; i < continuations.length; i++) {
-        const isSelected = i === selectedIndex;
-        const directionName = GENERATION_DIRECTIONS[i]?.name ?? `option ${i + 1}`;
-        const marker = isSelected ? '✅' : '⬜';
-        const preview = continuations[i].length > 100
-          ? `${continuations[i].slice(0, 100)}…`
-          : continuations[i];
-        const namePart = isSelected ? `**${directionName}**` : directionName;
-        lines.push(`- ${marker} **${namePart}**: ${preview}${isSelected ? '  _(selected)_' : ''}`);
-      }
-      agentIO.brief('info', 'crossroad', lines.join('\n'));
+    // NOTE: the "best-of-three" candidate brief is NOT emitted here anymore.
+    // Emitting it in this finally (during the LLM stage) put it BEFORE the
+    // prefix, which is displayed later in the HOOK stage — the summary banner
+    // appeared above the very content it summarized. The brief is now built by
+    // buildCandidatesBrief() and emitted by hook.ts in the correct 3-part
+    // order: prefix → candidates → outcome. The spinner stop stays here.
+    if (result) {
+      agentIO.verbose('crossroad',
+        `Crossroad resolved: selected ${selectedIndex + 1} of ${continuations.length}`);
     }
   }
 }

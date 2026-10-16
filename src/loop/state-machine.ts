@@ -113,6 +113,12 @@ export interface ChatData {
   hookResult: ProcessToolCallsResult | null;
   /** If crossroad was triggered, the best continuation text (injected in hook.ts) */
   crossroadContinuation?: string;
+  /** If crossroad was triggered, the candidate continuations (generation order)
+   *  and the selected index — carried here so hook.ts can render the
+   *  best-of-three brief BETWEEN the prefix and the outcome (the intended
+   *  3-part order). Not persisted; cleared alongside crossroadContinuation. */
+  crossroadCandidates?: string[];
+  crossroadSelectedIndex?: number;
   /** If crossroad was triggered, the path to the crossroad record JSON file
    *  (written to the session dir by llm.ts, injected into the brief tool result
    *  by hook.ts so the LLM knows where the full decision record lives). */

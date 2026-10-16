@@ -33,6 +33,7 @@ import { applyPatchAction } from '../../mindmap/patch.js';
 import { appendPatch, getPatchPath } from '../../mindmap/patch-jsonl.js';
 import { loopEvents } from '../loop-events.js';
 import { stripInternalMarkup } from '../../utils/letter-box.js';
+import { buildCandidatesBrief } from '../crossroad.js';
 
 /**
  * Display the assistant's text content mid-loop via brief, stripping internal
@@ -471,12 +472,22 @@ export async function handleHook(
         : 'OK';
       triologue.tool('brief', briefResult, briefCallId);
 
-      // Two-output display: first show the prefix (the content before the
-      // turning word — it was never displayed because streaming content is
-      // collected, not printed live, and this branch returns before the
-      // normal assistant brief at the bottom of the handler). Then show the
-      // resolved continuation (the new direction).
+      // Three-part display, in reading order:
+      //   1. prefix  — the content before the turning word (never shown live,
+      //      because streaming content is collected, not printed, and this
+      //      branch returns before the normal assistant brief at the bottom of
+      //      the handler).
+      //   2. best-of-three briefs — the candidate list (generation order, NOT
+      //      reordered), with the selected one marked.
+      //   3. outcome — the resolved continuation (the new direction).
+      // The brief was previously emitted inside handleCrossroad's finally
+      // (LLM stage), which put part 2 BEFORE part 1; building it here restores
+      // the intended order.
       briefAssistantContent(ctx, chat.assistantContent);
+      if (chat.crossroadCandidates && chat.crossroadCandidates.length > 1) {
+        ctx.core.brief('info', 'crossroad',
+          buildCandidatesBrief(chat.crossroadCandidates, chat.crossroadSelectedIndex ?? -1));
+      }
       ctx.core.brief('info', 'crossroad', `Resolved: ${chat.crossroadContinuation}`);
 
       // Inject deferred hook messages so the LLM sees them in the next round.
@@ -487,6 +498,8 @@ export async function handleHook(
 
       chat.crossroadContinuation = undefined;
       chat.crossroadFilePath = undefined;
+      chat.crossroadCandidates = undefined;
+      chat.crossroadSelectedIndex = undefined;
       return AgentState.COLLECT;
     }
 

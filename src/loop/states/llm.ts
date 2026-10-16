@@ -233,6 +233,13 @@ export async function handleLlm(
             // Replace content with truncated prefix + continuation will be injected in hook.ts
             chat.assistantContent = crossroadResult.truncated;
             chat.crossroadContinuation = crossroadResult.continuation;
+            // Carry the candidate list + selected index so hook.ts can render
+            // the best-of-three brief in the correct 3-part order (prefix →
+            // candidates → outcome). Previously the brief was emitted here in
+            // the LLM stage, which placed it BEFORE the prefix displayed later
+            // in HOOK — the summary appeared above the content it summarized.
+            chat.crossroadCandidates = crossroadResult.candidates;
+            chat.crossroadSelectedIndex = crossroadResult.selectedIndex;
             // Discard original tool calls — LLM will regenerate them after
             // crossroad. (The brief-only case never reaches here: it was
             // exempted by the guard above.)
@@ -321,6 +328,8 @@ export async function handleLlm(
         // starts clean. (crossroadFilePath is cleared too for symmetry.)
         chat.crossroadContinuation = undefined;
         chat.crossroadFilePath = undefined;
+        chat.crossroadCandidates = undefined;
+        chat.crossroadSelectedIndex = undefined;
 
         if (emptyRetries > MAX_EMPTY_RETRIES) {
           // Context is likely unrecoverable on its own — give control back to
