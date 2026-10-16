@@ -25,7 +25,7 @@ Spec (schema v2):
     "peers": [
       { "name": "leader", "workdir": "C:/Proj/mycc",
         "args": "--auto --skip-healthcheck --ollama-model glm-5:cloud",
-        "sessionId": null, "renew": "onMismatch" }
+        "renew": "onMismatch" }
     ],
     "channels": [
       { "from": "leader", "to": "reviewer", "label": "review",
@@ -33,9 +33,17 @@ Spec (schema v2):
     ]
   }
 
+  - peers[].name is the durable identity (unique, case-insensitive); the
+    launcher injects it as --name <group>:<peer>. The peer mints its OWN
+    session id on boot, so the spec NEVER carries a sessionId (a present
+    "sessionId" key, even null, is REJECTED).
   - peers[].args is ONE whitespace-split string; it MUST include --auto or
     --daemon (else cleanupEmptySessions() can GC a re-pinned session dir).
-  - peers[].sessionId: null → the tool mints a UUID and writes it back IN PLACE.
+  - HEADLESS / AUTOMATED CALLERS: a peer WITHOUT --daemon is launched in a
+    VISIBLE terminal window, which requires an interactive desktop session.
+    An agent, service, cron job, CI runner, or SSH session with no display
+    has none, so the launch fails. For any automated bring-up, put --daemon
+    in peers[].args so the peer is spawned detached with no window.
   - peers[].renew: "onMismatch" (default) | "always".
   - channels[].label becomes the channelId and the filename suffix; the title
     is "<group>-<label>". Templates support {{from}} {{to}} {{peer}} {{label}}.

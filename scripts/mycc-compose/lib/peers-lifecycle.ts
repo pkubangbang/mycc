@@ -468,7 +468,30 @@ export function launchPeer(
           // failed) so the cause stays observable.
           // (openTerminal is one-shot fire-and-forget — its return is NOT the
           // peer's exit; liveness is the name-resolution poll below.)
-          openTerminal(buildPeerShellCommand(launchCommand, launchArgs, cwd));
+          //
+          // HEADLESS GUIDANCE: the windowed opener REQUIRES a desktop session
+          // (a GUI terminal binary on PATH + a display). An automated caller
+          // (an agent, a service, cron, CI, an SSH session with no X) has none,
+          // so the opener throws — and this default branch is exactly what such
+          // a caller hits, because it is the branch every non-`--daemon` peer
+          // takes. The raw opener diagnostic says *what* failed but not *what to
+          // do*, so we APPEND the actionable remedy: put `--daemon` in the
+          // peer's spec `args` to take the headless spawnDetached path (no
+          // window, ever). Appending (never replacing) preserves the opener's
+          // cause — observability over availability still holds.
+          try {
+            openTerminal(buildPeerShellCommand(launchCommand, launchArgs, cwd));
+          } catch (err) {
+            const cause = err instanceof Error ? err.message : String(err);
+            done(reject, new Error(
+              `spawn failed for "${peer.name}": ${cause}\n` +
+              `Hint: peer "${peer.name}" is not launched with --daemon, so compose ` +
+              `tried to open a VISIBLE terminal window — which needs an interactive ` +
+              `desktop session and is unavailable to an automated/headless caller. ` +
+              `Add "--daemon" to peers[].args in the spec to launch it headless.`,
+            ));
+            return;
+          }
         }
       } catch (err) {
         done(reject, new Error(`spawn failed for "${peer.name}": ${(err as Error).message}`));
@@ -488,9 +511,21 @@ export function launchPeer(
           return;
         }
         if (Date.now() > deadline) {
+          // A peer that never beats most often means the launch never took
+          // effect. When this peer was NOT `--daemon`, the launch went through
+          // the windowed terminal opener, which silently does nothing under a
+          // non-interactive console (no window, so the command never runs) —
+          // exactly an automated caller's situation. Append the same remedy the
+          // opener-throw branch gives, so the timeout is actionable too.
+          const headlessHint = peer.parsedArgs?.daemon === undefined
+            ? `\nHint: this peer is not launched with --daemon, so it was started ` +
+              `via a VISIBLE terminal window; under a headless/non-interactive ` +
+              `session no window opens and the command never runs. Add "--daemon" ` +
+              `to peers[].args in the spec to launch it headless.`
+            : '';
           done(reject, new Error(
             `peer "${peer.name}" did not come up within ` +
-            `${opts.timeoutMs ?? LAUNCH_TIMEOUT_MS}ms (spawned at ${spawnAt}).`,
+            `${opts.timeoutMs ?? LAUNCH_TIMEOUT_MS}ms (spawned at ${spawnAt}).${headlessHint}`,
           ));
         }
       }, LAUNCH_POLL_MS);
