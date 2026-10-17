@@ -37,7 +37,8 @@ export const briefTool: ToolDefinition = {
     }
 
     if (typeof confidence !== 'number' || confidence < 0 || confidence > 10) {
-      return 'Error: confidence parameter is required and must be a number between 0 and 10';
+      return 'Error: confidence parameter is required and must be a number between 0 and 10. ' +
+        'Provide all required args in one call, e.g. brief(message="<status>", confidence=7).';
     }
 
     // Update confusion index based on confidence

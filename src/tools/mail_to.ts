@@ -39,27 +39,49 @@ export const mailToTool: ToolDefinition = {
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
-    const name = args.name as string;
+    let name = args.name as string;
     const title = args.title as string;
     const content = args.content as string;
     const eta = args.eta as number | undefined;
 
-    // Validate required parameters
+    const senderName = ctx.core.getName();
+    const isChildSender = senderName !== 'lead';
+
+    // Collect ALL missing/invalid required args in one shot, instead of
+    // failing on the first one. A single prescriptive error that names every
+    // missing field AND shows the exact corrected call lets the LLM repair
+    // the call in one retry. The previous first-failure bare string ("name
+    // parameter is required…") gave the model no repair guidance, so it
+    // frequently re-emitted the same malformed shape and then produced an
+    // EMPTY assistant turn — which on a child teammate ends the phase with the
+    // deliverable undelivered (observed: sim-b dropped 5 mail_to reports).
+    const missing: string[] = [];
+    if (!title || typeof title !== 'string') missing.push('title');
+    if (!content || typeof content !== 'string') missing.push('content');
     if (!name || typeof name !== 'string') {
-      ctx.core.brief('error', 'mail_to', 'Missing or invalid name parameter');
-      return 'Error: name parameter is required and must be a string';
-    }
-    if (!title || typeof title !== 'string') {
-      ctx.core.brief('error', 'mail_to', 'Missing or invalid title parameter');
-      return 'Error: title parameter is required and must be a string';
-    }
-    if (!content || typeof content !== 'string') {
-      ctx.core.brief('error', 'mail_to', 'Missing or invalid content parameter');
-      return 'Error: content parameter is required and must be a string';
+      // Child→lead default: a child teammate's report is almost always a reply
+      // to the lead, and dropping it for a missing recipient loses the whole
+      // deliverable. Default `name="lead"` for a child sender and continue
+      // (brief-noted), rather than rejecting the mail.
+      if (isChildSender) {
+        name = 'lead';
+        ctx.core.brief('warn', 'mail_to', 'name parameter missing — defaulted to "lead" for child sender');
+      } else {
+        missing.push('name');
+      }
     }
 
-    const senderName = ctx.core.getName();
-    const isTeammateToLead = name === 'lead' && senderName !== 'lead';
+    if (missing.length > 0) {
+      const list = missing.join(', ');
+      ctx.core.brief('error', 'mail_to', `Missing or invalid ${list} parameter(s)`);
+      const example = missing.includes('name')
+        ? 'mail_to(name="lead", title="<subject>", content="<body>")'
+        : `mail_to(name="${name}", title="<subject>", content="<body>")`;
+      return `Error: missing required argument(s): ${list}. A call to mail_to needs name, title, content. ` +
+        `Corrected example: ${example}`;
+    }
+
+    const isTeammateToLead = name === 'lead' && isChildSender;
 
     // UUID format: 8 hex - 4 hex - 4 hex - 4 hex - 12 hex (case-insensitive).
     // Shared by the peer-routing block and the fail-fast recipient validation.

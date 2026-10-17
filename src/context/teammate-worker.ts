@@ -301,6 +301,20 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
   const MAX_CONSECUTIVE_FAILURES = 3;
   const MAX_LOOP_BACKOFF_MS = 10_000;
 
+  // === Empty-turn guard ===
+  // An assistant turn with NEITHER content NOR tool calls is not "task done" —
+  // it is the LLM having emitted nothing (typically right after a failed tool
+  // call, e.g. a malformed mail_to). Previously that empty turn was treated as
+  // "no open todos → likely done": the worker auto-mailed an EMPTY-content
+  // "Teammate phase completed" to the lead and went idle, silently dropping the
+  // undelivered deliverable (observed: sim-b's 7 empty turns and its lost ROOT C
+  // report). Now an empty turn re-prompts via the existing REMINDER, bounded by
+  // emptyTurnRetries so it can never spin forever; only a CONTENTFUL text-only
+  // turn can declare the phase complete. Reset to 0 whenever the LLM produces
+  // tool calls (forward progress).
+  let emptyTurnRetries = 0;
+  const MAX_EMPTY_TURN_RETRIES = 3;
+
   // Check if tool result indicates error
   function isErrorResult(result: string): boolean {
     if (!result) return false;
@@ -495,16 +509,52 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
       // ---- No tools: re-prompt or enter idle ----
       if (!toolCalls || toolCalls.length === 0) {
+        const hasContent = !!(assistantMessage.content && assistantMessage.content.trim());
+
         // Register the assistant message (no tool calls to track)
         triologue.agent(assistantMessage.content || '', undefined, reasoningContent);
 
         nextBriefNudge = 5;
+
+        // Empty turn guard (see MAX_EMPTY_TURN_RETRIES): an assistant turn with
+        // neither content nor tool calls is a non-response, NOT task completion.
+        // Do NOT mail "Teammate phase completed" — that would tell the lead the
+        // phase is done while the deliverable is still unsent. Re-prompt instead,
+        // bounded so a persistently-silent LLM can't spin forever.
+        if (!hasContent && budgetSent && !ctx.todo.hasOpenTodo()) {
+          emptyTurnRetries++;
+          if (emptyTurnRetries > MAX_EMPTY_TURN_RETRIES) {
+            // The LLM keeps returning empty even after re-prompts. Surface it
+            // to the lead rather than silently going idle with no report.
+            notifyLeadInBestEffort(
+              `WARNING: ${teammateName} produced no output`,
+              `Teammate "${teammateName}" returned ${MAX_EMPTY_TURN_RETRIES} consecutive EMPTY responses ` +
+              `(no content, no tool calls) and is entering idle. The phase is NOT complete — no deliverable ` +
+              `was sent. Consider sending mail with explicit instructions, or tm_remove.`);
+            triologue.note('SYSTEM',
+              `Produced ${MAX_EMPTY_TURN_RETRIES} consecutive empty responses (no content, no tool calls). ` +
+              `The lead has been notified that the phase is NOT complete. Entering idle to resume mail polling.`);
+            emptyTurnRetries = 0;
+            const result = await enterIdleState(triologue);
+            if (result === 'shutdown') {
+              process.exit(0);
+            }
+            continue;
+          }
+          triologue.note('REMINDER',
+            'Your previous response was EMPTY (no content and no tool calls) — that is not a completion. ' +
+            'If you have a deliverable, send it now via mail_to(name="lead", eta=<seconds>, title="<subject>", content="<your report>"). ' +
+            'Otherwise call the tool that advances the next step.');
+          continue;
+        }
+
         if (!budgetSent) {
           triologue.note('REMINDER',
             'Request a time budget from lead via mail_to(name="lead", eta=<seconds>, title="<subject>", content="<details>").');
         } else if (!ctx.todo.hasOpenTodo()) {
-          // No open todos and LLM produced no tool calls — likely done
-          // Auto-mail the assistant message to lead
+          // No open todos and the LLM produced a CONTENTFUL text-only turn —
+          // likely done. Auto-mail that content to lead (never empty; the
+          // empty case was handled above).
           ctx.team.mailTo('lead', 'Teammate phase completed', assistantMessage.content || '');
           const result = await enterIdleState(triologue);
           if (result === 'shutdown') {
@@ -517,6 +567,9 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         }
         continue;
       }
+
+      // Tool calls present — this is forward progress; clear the empty-turn streak.
+      emptyTurnRetries = 0;
 
       // There are tool calls — register assistant message with pending tool calls
       triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);

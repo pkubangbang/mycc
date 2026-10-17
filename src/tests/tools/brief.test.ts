@@ -73,7 +73,9 @@ describe('briefTool', () => {
     it('should return error for missing confidence parameter', () => {
       const result = briefTool.handler(ctx, { message: 'test' });
 
-      expect(result).toBe('Error: confidence parameter is required and must be a number between 0 and 10');
+      expect(result).toContain('Error: confidence parameter is required and must be a number between 0 and 10');
+      // The prescriptive tail tells the LLM how to repair the call in one retry.
+      expect(result).toContain('brief(message="<status>", confidence=7)');
       expect(ctx.core.brief).not.toHaveBeenCalled();
     });
 

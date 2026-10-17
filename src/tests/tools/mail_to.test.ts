@@ -278,18 +278,35 @@ describe('mailToTool — validation', () => {
     vi.clearAllMocks();
   });
 
-  it('returns an error for a missing name', async () => {
+  it('returns an error naming the missing name for a lead sender', async () => {
     const result = await mailToTool.handler(ctx, { title: 't', content: 'b' });
-    expect(result).toBe('Error: name parameter is required and must be a string');
+    expect(result).toContain('missing required argument(s): name');
+    expect(result).toContain('Corrected example:');
+    expect(result).toContain('mail_to(name="lead"');
+  });
+
+  it('defaults name to "lead" for a child sender and does not reject', async () => {
+    (ctx.core.getName as ReturnType<typeof vi.fn>).mockReturnValue('sim-b');
+    const result = await mailToTool.handler(ctx, { title: 'ROOT C report', content: 'findings…', eta: 0 });
+    expect(result).not.toContain('Error');
+    // The default routed the mail to the lead.
+    expect(ctx.team.mailTo).toHaveBeenCalledWith('lead', 'ROOT C report', 'findings…', undefined, 0);
   });
 
   it('returns an error for a missing title', async () => {
     const result = await mailToTool.handler(ctx, { name: `${PEER_SID}/lead`, content: 'b' });
-    expect(result).toBe('Error: title parameter is required and must be a string');
+    expect(result).toContain('missing required argument(s): title');
+    expect(result).toContain('Corrected example:');
   });
 
   it('returns an error for missing content', async () => {
     const result = await mailToTool.handler(ctx, { name: `${PEER_SID}/lead`, title: 't' });
-    expect(result).toBe('Error: content parameter is required and must be a string');
+    expect(result).toContain('missing required argument(s): content');
+    expect(result).toContain('Corrected example:');
+  });
+
+  it('reports ALL missing args in one message', async () => {
+    const result = await mailToTool.handler(ctx, {});
+    expect(result).toContain('missing required argument(s): title, content, name');
   });
 });
