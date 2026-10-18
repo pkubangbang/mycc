@@ -31,6 +31,10 @@ import * as path from 'path';
 const SID_A = 'aaaaaaaa-1111-4111-8111-111111111111';
 const SID_B = 'bbbbbbbb-2222-4222-8222-222222222222';
 
+/** Absolute on THIS host: validateSpec uses Node's platform-native
+ *  path.isAbsolute(), so a hardcoded `C:/Proj/mycc` is rejected on POSIX. */
+const FIXTURE_WORKDIR = process.platform === 'win32' ? 'C:/Proj/mycc' : '/proj/mycc';
+
 let tmp = '';
 let specFile = '';
 let discoveryDir = '';
@@ -56,8 +60,8 @@ function writeSpec(): void {
     JSON.stringify({
       group: 'g',
       peers: [
-        { name: 'p1', workdir: 'C:/Proj/mycc', args: '--auto' },
-        { name: 'p2', workdir: 'C:/Proj/mycc', args: '--auto' },
+        { name: 'p1', workdir: FIXTURE_WORKDIR, args: '--auto' },
+        { name: 'p2', workdir: FIXTURE_WORKDIR, args: '--auto' },
       ],
       channels: [{ from: 'p1', to: 'p2', label: 'review', prompt: 'ping {{to}}' }],
     }),
@@ -177,7 +181,7 @@ function seedNamedPeer(name: string, sid: string): void {
     sessionId: sid,
     name,
     pid: process.pid,
-    workDir: 'C:/Proj/mycc',
+    workDir: FIXTURE_WORKDIR,
     args: '--auto',
     startedAt: Date.now(),
   };

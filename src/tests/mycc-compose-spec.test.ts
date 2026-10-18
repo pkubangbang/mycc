@@ -19,12 +19,21 @@ import path from 'path';
 import { validateSpec, loadSpec, updateSpecFile, validatePeerName } from '../../scripts/mycc-compose/lib/spec.js';
 import { parseArgString, formatLaunchArgs, LAUNCHER_FLAGS } from '../../src/utils/arg-canonical.js';
 
+/**
+ * A workdir that is absolute ON THIS HOST. validateSpec checks with Node's
+ * path.isAbsolute(), which is platform-native — a hardcoded `C:/Proj/mycc`
+ * is rejected on POSIX (and a `/proj/mycc` rejected on Windows). The fixture
+ * must therefore be derived, not written down, or the whole suite becomes
+ * green-on-one-OS-only and silently dead everywhere else.
+ */
+const FIXTURE_WORKDIR = process.platform === 'win32' ? 'C:/Proj/mycc' : '/proj/mycc';
+
 /** A minimal VALID spec; spread + override per test. */
 function baseSpec(overrides: Record<string, unknown> = {}) {
   return {
     group: 'smoke',
     peers: [
-      { name: 'leader', workdir: 'C:/Proj/mycc', args: '--auto --skip-healthcheck' },
+      { name: 'leader', workdir: FIXTURE_WORKDIR, args: '--auto --skip-healthcheck' },
     ],
     channels: [],
     ...overrides,
@@ -39,7 +48,7 @@ function baseSpec(overrides: Record<string, unknown> = {}) {
 function mkPeer(overrides: Record<string, unknown> = {}) {
   return {
     name: 'p',
-    workdir: 'C:/Proj/mycc',
+    workdir: FIXTURE_WORKDIR,
     args: '--auto',
     ...overrides,
   };

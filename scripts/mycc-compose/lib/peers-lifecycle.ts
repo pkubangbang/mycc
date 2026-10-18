@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { spawn, execFileSync, type SpawnOptions, type ChildProcess } from 'child_process';
 
 import { formatLaunchArgsForSpawn } from '../../../src/utils/arg-canonical.js';
+import { runPs } from '../../../src/utils/process-liveness.js';
 import {
   isPidAlive,
   isSessionHolderDead,
@@ -126,10 +127,12 @@ export function readProcessCommandLine(pid: number): string | null {
       ).trim();
       return out.length > 0 ? out : null;
     }
-    const out = execFileSync('ps', ['-p', String(pid), '-o', 'args='], {
-      encoding: 'utf-8',
-      timeout: 5_000,
-    }).trim();
+    // `-ww` disables ps's terminal-width truncation of `args`. Without it the
+    // command line is cut at `COLUMNS` (100 here), so a long argv loses its
+    // trailing `--name <peer>` and isMyccProcess's exact-name match fails —
+    // stopPeer then refuses a process it launched itself ('refused-not-mycc').
+    // Pin the MEASUREMENT (full argv); never weaken the identity threshold.
+    const out = runPs(['-ww', '-p', String(pid), '-o', 'args=']).trim();
     return out.length > 0 ? out : null;
   } catch {
     return null;

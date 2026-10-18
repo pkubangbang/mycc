@@ -22,6 +22,29 @@ import fs from 'fs';
 import { execFileSync } from 'child_process';
 
 /**
+ * Run `ps` with a PINNED C locale. Every `ps` call in mycc goes through here.
+ *
+ * WHY: `ps` output is locale-sensitive. With `LANG=zh_CN.UTF-8` (and `LC_ALL`
+ * unset) `ps -o lstart=` prints `日 10月 18 22:50:52 2026`, which
+ * `Date.parse()` cannot read → NaN → "start time unknown". Downstream that is
+ * NOT a harmless unknown: `didPidStartAfter()` returns false and the caller
+ * concludes the ORIGINAL pid holder is still alive — a silently recycled pid
+ * reads as live. The failure is invisible whenever the developer's own locale
+ * happens to be C/UTF-8-English, which is why it survives testing.
+ *
+ * Fixing it here rather than at the call site is deliberate: inheriting the
+ * caller's env would relocate the dependency instead of removing it, and every
+ * future `ps` call would have to remember to repeat the incantation.
+ */
+export function runPs(args: string[]): string {
+  return execFileSync('ps', args, {
+    encoding: 'utf-8',
+    timeout: 5_000,
+    env: { ...process.env, LC_ALL: 'C', LANG: 'C' },
+  });
+}
+
+/**
  * True when `pid` looks like a live process. `process.kill(pid, 0)` sends no
  * signal but throws ESRCH when the pid does not exist; EPERM means it exists
  * but is owned by another user (treat as alive).
@@ -43,8 +66,10 @@ export function isPidAlive(pid: number | undefined | null): boolean {
  * heartbeat necessarily started BEFORE that file was written.
  *
  * Windows: `wmic process where processid=<pid> get creationdate` (falling back
- * to PowerShell `Get-Process`). Unix: `ps -o lstart=`. Every path returns null
- * on failure — callers must treat null as "unknown".
+ * to PowerShell `Get-Process`). Unix: `ps -o lstart=`, run through
+ * {@link runPs} so the locale is pinned to C (see that function for why a
+ * locale-dependent `ps` silently reads a recycled pid as alive). Every path
+ * returns null on failure — callers must treat null as "unknown".
  */
 export function getProcessStartTime(pid: number): number | null {
   if (!pid || typeof pid !== 'number') return null;
@@ -71,10 +96,7 @@ export function getProcessStartTime(pid: number): number | null {
       if (Number.isFinite(fileTime) && fileTime > 0) return fileTime / 10_000 - 11_644_473_600_000;
       return null;
     }
-    const out = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
-      encoding: 'utf-8',
-      timeout: 5_000,
-    });
+    const out = runPs(['-p', String(pid), '-o', 'lstart=']);
     const ms = Date.parse(out.trim());
     return Number.isFinite(ms) ? ms : null;
   } catch {

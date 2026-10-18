@@ -277,7 +277,14 @@ export const gitCommitTool: ToolDefinition = {
       // Use spawn directly to avoid cmd.exe quote issues
       const proc = spawn('git', args, { cwd: commitCwd });
 
-      // Write commit message to stdin
+      // Write the message to stdin, tolerating a child that has already gone.
+      // `git commit` can fail before it ever reads stdin (not a repo, index
+      // lock, hooks path misconfigured). When it exits, its stdin pipe closes
+      // and a write raises EPIPE as an UNHANDLED 'error' event — which aborts
+      // the caller even though the exit code path below already reports the
+      // real failure ("not a git repository"). Swallow write errors here: the
+      // child's exit code and stderr are the authoritative outcome.
+      proc.stdin?.on('error', () => { /* see comment above */ });
       proc.stdin?.write(commitMessage, 'utf-8');
       proc.stdin?.end();
 
