@@ -267,20 +267,22 @@ async function runTodoNudge(env: MachineEnv, turn: TurnVars): Promise<void> {
   // Look up each peer's workDir from the identity registry (ChannelFile does
   // not carry workDir; it lives on IdentityEntry). Falls back to '?' if the
   // peer unregistered between listChannels() and now (shouldn't happen for a
-  // fresh peer, but be defensive).
+  // fresh peer, but be defensive). Malformed identity entries never reach here:
+  // readIdentityMap() drops them at the parse boundary.
   const peerWorkDirs = new Map<string, string>();
   for (const id of ctx.peer.listIdentities()) {
-    peerWorkDirs.set(id.sessionId, id.workDir);
+    peerWorkDirs.set(id.sessionId, id.workDir ?? '?');
   }
   const channelLine = (ch: typeof activeChannels[number]): string => {
-    const workDir = peerWorkDirs.get(ch.peerSessionId!) ?? '?';
+    const peerSid = ch.peerSessionId ?? '(unknown)';
+    const workDir = peerWorkDirs.get(peerSid) ?? '?';
     // `topic` is the channel's static `title` theme; mail_to routes a peer
     // reply by name="<peerSessionId>/lead". The `title=` value convention is
     // "<topic>:<subject>" so the recipient sees which channel the reply is on.
-    return `- peer=${ch.peerSessionId}\n` +
+    return `- peer=${peerSid}\n` +
       `  workdir=${workDir}\n` +
       `  channel=${ch.channelId}, topic=${ch.title ?? '(none)'}\n` +
-      `  use mail_to(name="${ch.peerSessionId}/lead", title="${ch.title ?? ''}:<subject>") to communicate`;
+      `  use mail_to(name="${peerSid}/lead", title="${ch.title ?? ''}:<subject>") to communicate`;
   };
   if (ctx.todo.hasOpenTodo() || activeChannels.length > 0) {
     const currentTodoState = ctx.todo.printTodoList();

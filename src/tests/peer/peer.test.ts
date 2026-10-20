@@ -150,6 +150,36 @@ describe('IdentityManager', () => {
     expect(replacement.listIdentities().map((entry) => entry.sessionId)).toEqual([SID_B]);
   });
 
+  it('readIdentityMap() drops corrupt entries at the parse boundary', () => {
+    // Regression for a COLLECT crash ("Cannot read properties of null (reading
+    // 'sessionId')" in runTodoNudge): identity.json held null values under
+    // synthetic keys. The guard lives at the PARSE stage, so every consumer —
+    // prune, name claims, listIdentities (→ the loop's todo nudge), isFresh,
+    // getRemoteMailbox — sees only well-formed entries.
+    const now = Date.now();
+    fs.writeFileSync(identityFile(), JSON.stringify({
+      [SID_A]: {
+        sessionId: SID_A, workDir: '/work/a', mailbox: makeMailboxPath(SID_A),
+        startedAt: now, pid: process.pid,
+      },
+      'null-entry': null,
+      'string-entry': 'not-an-object',
+      'array-entry': [],
+      'missing-session-id': { workDir: '/work/x', mailbox: '/tmp/x' },
+      'missing-mailbox': { sessionId: 'no-mailbox-sid', workDir: '/work/y' },
+    }, null, 2), 'utf-8');
+
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    // Only the well-formed entry survives, and nothing throws.
+    expect(id.listIdentities().map((entry) => entry.sessionId)).toEqual([SID_A]);
+    expect(id.getRemoteMailbox('null-entry')).toBeNull();
+    expect(id.isFresh('null-entry')).toBe(false);
+
+    // register() prunes/rewrites without tripping over the corrupt values.
+    expect(() => id.register()).not.toThrow();
+    expect(id.listIdentities().map((entry) => entry.sessionId)).toEqual([SID_A]);
+  });
+
   it('unregister() removes the entry', () => {
     const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
     id.register();

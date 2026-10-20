@@ -108,12 +108,31 @@ interface HeartbeatData {
 export function readIdentityMap(): Record<string, IdentityEntry> {
   const identityFile = getIdentityFile();
   if (!fs.existsSync(identityFile)) return {};
+  let parsed: unknown;
   try {
     const content = fs.readFileSync(identityFile, 'utf-8');
-    return JSON.parse(content) as Record<string, IdentityEntry>;
+    parsed = JSON.parse(content);
   } catch {
     return {};
   }
+  // Normalize HERE, once, at the parse boundary — every consumer of this map
+  // (prune, assertNameNotLive, listIdentities, isFresh, getRemoteMailbox, and
+  // the loop's todo nudge reading entry.sessionId) then sees only well-formed
+  // entries and needs no per-call null guards. An entry is kept only when its
+  // value is an object whose `sessionId` is a non-empty string and whose
+  // `mailbox` is a string (the two fields every reader dereferences); anything
+  // else is corrupt state (hand-edited file, crashed concurrent writer, or a
+  // synthetic test fixture) and is dropped instead of crashing a live session.
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const map: Record<string, IdentityEntry> = {};
+  for (const [sid, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const entry = value as Partial<IdentityEntry>;
+    if (typeof entry.sessionId !== 'string' || entry.sessionId === '') continue;
+    if (typeof entry.mailbox !== 'string') continue;
+    map[sid] = entry as IdentityEntry;
+  }
+  return map;
 }
 
 /**
@@ -527,10 +546,12 @@ export class IdentityManager {
 
   /**
    * List all registered identities.
+   *
+   * readIdentityMap() already normalizes corrupt values away at the parse
+   * boundary, so no filtering is needed here.
    */
   listIdentities(): IdentityEntry[] {
-    const map = readIdentityMap();
-    return Object.values(map);
+    return Object.values(readIdentityMap());
   }
 
   /**
