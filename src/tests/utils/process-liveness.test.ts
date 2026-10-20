@@ -107,7 +107,12 @@ function spawnNamedChild(padding: number): Promise<{ pid: number; kill: () => vo
 }
 
 describe('runPs — the single ps invocation primitive', () => {
-  it('ignores a non-C locale: `lstart` comes back in a form Date.parse can read', () => {
+  // `ps` does not exist on Windows (spawnSync ENOENT). getProcessStartTime has
+  // a separate wmic → PowerShell branch there, so these two tests assert a
+  // POSIX-only contract; they are skipped rather than deleted.
+  const itPosix = process.platform === 'win32' ? it.skip : it;
+
+  itPosix('ignores a non-C locale: `lstart` comes back in a form Date.parse can read', () => {
     // The raw ps, WITHOUT the pinned locale, in the hostile env.
     const raw = execFileSync('ps', ['-p', String(process.pid), '-o', 'lstart='], {
       encoding: 'utf-8',
@@ -125,7 +130,7 @@ describe('runPs — the single ps invocation primitive', () => {
     expect(Number.isFinite(Date.parse(pinned))).toBe(true);
   });
 
-  it('does not truncate the command line to COLUMNS', async () => {
+  itPosix('does not truncate the command line to COLUMNS', async () => {
     const PADDING = 200; // far beyond COLUMNS=20
     const child = await spawnNamedChild(PADDING);
     try {

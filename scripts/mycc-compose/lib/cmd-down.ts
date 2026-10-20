@@ -27,10 +27,9 @@
  */
 
 import { validateSpec, loadSpec } from './spec.js';
-import { removeChannels, ownedChannelFiles } from './channels.js';
+import { removeChannels, channelFileNames } from './channels.js';
 import { resolvePeerSid } from './peers.js';
 import { cullStoppedPeers } from './peers-state.js';
-import { isSessionHolderDead } from './discovery.js';
 import { stopPeerByAddress } from './peers-stop.js';
 import { out } from './cli.js';
 
@@ -94,31 +93,53 @@ export async function cmdDown(file: string): Promise<void> {
   const culled = cullStoppedPeers(spec.peers);
   out(`  culled ${culled} stale identity entr${culled === 1 ? 'y' : 'ies'}`);
 
-  // Remove exactly the files this spec OWNS — judged by NAME (R1 conjunction:
-  // label ∈ spec labels AND ownerName/peerName ∈ the spec's <group>:<peer>
-  // name-set), plus an orphan-only legacy sweep (R2: a pre-v3 nameless file is
-  // deletable ONLY when BOTH embedded sids are dead; ambiguity → kept +
-  // reported). This replaces the old sid-keyed channelFileNames(): a channel
-  // file's identity now survives the per-run sid churn by NAME, so cleanup no
-  // longer depends on resolving today's sids.
+  // Channel cleanup — NAME → SID → FILENAME, then best-effort unlinking.
   //
-  // isSidDead requires positive evidence that the original holder is gone:
-  // either its PID no longer exists or process-start evidence proves the PID was
-  // reused. A stale/missing heartbeat alone is not proof of death; unknown or
-  // conflicting PID evidence fails closed.
-  const isSidDead = (sid: string): boolean => isSessionHolderDead(sid);
-  const { deletable, keptAmbiguous } = ownedChannelFiles(spec, isSidDead);
-  const removed = removeChannels(deletable);
+  // The filename is the ONLY ownership key: a channel file is
+  // `<sid>-<label>.json`, so the files this spec owns are exactly one name per
+  // (peer, channel) pair, where the sid comes from the peer's resolved live
+  // instance (step 1 above) — falling back to the sid the stop primitive
+  // resolved (`peer.sessionId`, stamped above), then to whatever sid the peer
+  // record already carries from a previous `up`.
+  //
+  // The FILE CONTENT is never read, compared or used to decide ownership: names
+  // (ownerName/peerName) are persistent and CAN coincide across topologies that
+  // share a group name, which made the old content-based "either name matches"
+  // rule delete another topology's file (audit finding AC-5). A sid is unique
+  // per run, so the filename is unambiguous by construction.
+  //
+  // Best-effort: unlink failures (a peer still holding the handle on Windows, a
+  // permissions error) are reported and do not change the exit code or abort the
+  // teardown — the peers are already stopped by this point.
+  const ownedFiles = channelFileNames(spec);
+  const { removed, failed } = removeChannels(ownedFiles);
   out(`mycc-compose down: removed ${removed} channel file(s).`);
-  if (keptAmbiguous.length > 0) {
-    // Half-matches are NOT deletable evidence — they are investigation
-    // material. A legacy (nameless) file still claimable by a live/unsettled
-    // sid is left in place and surfaced here.
+  if (failed.length > 0) {
+    out(`  could not remove ${failed.length} channel file(s) (best-effort, ignored): ${failed.join(', ')}`);
+  }
+
+  // EXIT CONTRACT (owner decision) — `down` distinguishes COMPLETE from PARTIAL
+  // teardown:
+  //   0 = fully done: every peer located+stopped AND every declared channel
+  //       pair accounted for (expected === actual).
+  //   1 = partial: the peers were found and closed, but actual < expected —
+  //       some channel file the spec says exists could not be named or could
+  //       not be unlinked. The teardown is NOT complete even though the stop
+  //       half succeeded (finding N1).
+  //
+  // `expected` is derived from the SPEC (two files per declared channel), not
+  // from `ownedFiles` — an empty filename set must not self-certify as success.
+  const expected = spec.channels.length * 2;
+  const actual = ownedFiles.length;
+  const incomplete = actual < expected || failed.length > 0;
+
+  if (incomplete) {
     out(
-      `  kept ${keptAmbiguous.length} legacy channel file(s) with a live or ` +
-      `unestablished sid (ambiguous ownership): ${keptAmbiguous.join(', ')}`,
+      `  INCOMPLETE: expected ${expected} channel file(s) from the spec, ` +
+      `could account for ${actual}${failed.length > 0 ? ` (${failed.length} unlink failure(s))` : ''}. ` +
+      `Some peers did not resolve to a session, so their files were left in place.`,
     );
   }
 
-  process.exit(stopFailures > 0 ? 1 : 0);
+  process.exit(stopFailures > 0 || incomplete ? 1 : 0);
 }

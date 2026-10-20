@@ -305,10 +305,21 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
   if (safetyBlocked.size > 0) {
     warn(`Warning: sync did not start ${safetyBlocked.size} peer(s) because a stale identity may still have a live holder: ${[...safetyBlocked].join(', ')}`);
   }
+  // SUCCESS CONTRACT (owner decision): `up` succeeds only when BOTH halves
+  // landed — every peer is live AND every declared channel pair was written.
+  // A channel that was SKIPPED (e.g. its endpoint never registered, finding
+  // F6) used to leave the exit code at 0, so a caller could not tell a
+  // complete bring-up from a half-built one. Channel failures count the same
+  // as peer failures now.
+  const channelsSkipped = channelResults.filter((c) => !c.ok);
+  if (channelsSkipped.length > 0) {
+    warn(`Warning: ${channelsSkipped.length} channel(s) not materialized: ${channelsSkipped.map((c) => c.label).join(', ')}`);
+  }
   process.exit(
     launchResults.some((r) => !r.ok) ||
     stillDown.length > 0 ||
     restartFailures.length > 0 ||
-    safetyBlocked.size > 0 ? 1 : 0,
+    safetyBlocked.size > 0 ||
+    channelsSkipped.length > 0 ? 1 : 0,
   );
 }

@@ -128,26 +128,33 @@ carried in `peers[].args`.
 Each channel file additionally records the durable ownership NAMES —
 `ownerName` and `peerName` (each `<group>:<peer>`) — written by
 `mycc-compose` at materialization time. The runtime (`ChannelManager`) neither
-reads nor writes them; they exist so compose can attribute a file to a topology
-peer BY NAME for cleanup, without reading any spec sid.
+reads nor writes them; they are DIAGNOSTIC metadata only (naming the owner when
+a human inspects a file). Cleanup and status decide ownership from the
+`<sid>-<label>.json` FILENAME, never from these fields.
 
 ### Cleanup semantics (down)
 
-`mycc-compose down` removes the channel files a spec OWNS, judged by NAME, with
-two rules:
+`mycc-compose down` first resolves each peer's runtime session id by durable
+NAME (`<group>:<peer>` → `identity.json`), stopping the peer where it still
+runs. It then removes — **best-effort** — exactly the files it can NAME:
 
-- **R1 (name conjunction).** A channel file is OURS iff its `channelId` is one
-  of the spec's labels AND its `ownerName` OR `peerName` is in the spec's full
-  `<group>:<peer>` name-set. Such a file is deleted.
-- **R2 (orphan-only legacy sweep).** A pre-v3 file carries NO ownership names
-  (it predates them). Such a file is deleted ONLY when BOTH of its embedded
-  session ids are provably DEAD (the `isPeerRunning`-level predicate: not a
-  fresh beat with a live pid). If EITHER embedded sid is still live — or cannot
-  be established — the file is KEPT and reported: a half-match is NOT deletable
-  evidence, it is investigation material. Ambiguity always resolves to keep.
+- **Ownership is the FILENAME.** A channel file is `<sid>-<label>.json`, so the
+  files a spec owns are one name per (peer, channel) pair:
+  `<resolved-sid>-<label>.json`. That list is unlinked one by one; a file that
+  cannot be removed (a peer still holding the handle on Windows, a permissions
+  error) is REPORTED and ignored — it never aborts the teardown or changes the
+  exit code.
+- **The file's CONTENT is never consulted.** `ownerName`/`peerName` are
+  persistent and CAN coincide across two topologies that share a group name;
+  an earlier content-based "either name matches" rule therefore deleted another
+  topology's files. A sid is unique per run, so the filename is unambiguous by
+  construction — no project prefix and no startup-time conflict check is needed.
+- A same-label file under a sid that is not one of THIS spec's resolved peers
+  (a previous generation's leftover, a sibling topology) is not named for
+  deletion and survives.
 
-A file whose names are present but none are in the spec's name-set is FOREIGN
-and is never touched.
+`status` applies the same rule: a channel row is `present` only when BOTH
+`<resolved-sid>-<label>.json` files exist, `absent` otherwise.
 
 ### The reply contract
 
@@ -236,16 +243,51 @@ auto-create the reverse link's own pair.
 - `peers[].name` non-empty and unique (case-insensitive).
 - `peers[].workdir` non-empty and **absolute**.
 - `peers[].args` is a string and contains `--auto` or `--daemon`.
+- `peers[].args` contains **ONLY flags** — a positional token (`--auto stray`)
+  is rejected: it would be dropped at spawn, so accepting it would be a lie.
+- `peers[].args` contains **ONLY known flags** (the shared `BOOLEAN_FLAGS` /
+  `STRING_FLAGS` tables, plus `--serve` which minimist auto-detects). An
+  unknown/typo flag is rejected instead of silently passed through: the spec
+  parser and the launch parser are different parsers, and a flag they disagree
+  on makes a peer mismatch forever (`renew:onMismatch` then relaunches it on
+  every `up`/`sync`). `--name` is launcher-injected and `--session-id` no
+  longer exists; both are rejected with their own message.
+- Every **STRING** flag must carry a real value: bare `--editor` (and
+  `--editor=`) is rejected. Bare string flags parse to `true` here but to `''`
+  in the launch parser, whose render step drops empty values — the published
+  args then never match the spec. **`--daemon` is the single exception**: bare
+  `--daemon` is a supported passive-daemon shape and is accepted;
+  `--daemon=` (empty) and a flag-looking value (`--daemon=--auto`) are rejected.
 - `peers[].sessionId` MUST be ABSENT (a present key, even `null`, is rejected).
 - `peers[].renew` is `always` or `onMismatch`.
 - `channels[].from` / `.to` name declared peers and differ.
 - `channels[].label` non-empty and unique across channels.
 - `channels[].prompt` is a string (may be empty).
 
+> Compose validation is deliberately **stricter than CLI-startup validation**.
+> `mycc` itself must stay tolerant of hand-typed argv; a declarative topology
+> file is authored once and read many times, so a hard error at `check` time is
+> far cheaper than a silent divergence at `up` time.
+
+## Exit-code contract
+
+| Command | `0` | non-zero |
+|---|---|---|
+| `check` / `status` / `down` / `up` (bad usage) | — | `2` (unknown command, missing arg, unreadable spec) |
+| `check` | spec valid | `1` (validation error, message on stderr) |
+| `up` / `sync` | every peer LIVE **and** every `channels[]` pair written | `1` — launch failure, peer not live, restart aborted, sync safety-block, **or a channel SKIPPED** |
+| `down` | every peer found+stopped **and** every channel file the spec implies was accounted for (`actual >= spec.channels.length * 2`) | `1` — a stop failed/refused, **or** the teardown was incomplete (`INCOMPLETE: expected N … actual M`), **or** an unlink failed |
+
+`up`'s "success" therefore means the whole declared topology exists, not just
+"the processes started". `down`'s `expected` count comes from the SPEC, not
+from the files it happened to resolve — an empty resolved set must never
+self-certify as success.
+
 ## Migration for existing specs
 
 Delete every `peers[].sessionId` key. Nothing else changes for users: the
 launcher now injects `--name <group>:<peer>` in place of `--session-id`, peers
-mint their own sids on boot, and channel cleanup/status attribute by name. An
-un-migrated store with pre-v3 (nameless) channel files is still cleaned up by
-the R2 orphan-only sweep.
+mint their own sids on boot, and channel cleanup/status key on each peer's
+RESOLVED SID and the resulting `<sid>-<label>.json` filename (never on file
+content). A leftover file under a sid that no current peer resolves to is not
+this spec's to delete, so leave it (or remove it by hand).

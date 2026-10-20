@@ -65,45 +65,6 @@ function peerNameForFile(peer: { name: string; identityName?: string; [key: stri
   return typeof name === 'string' && name !== '' ? name : null;
 }
 
-/** Case-fold a peer NAME for set membership, matching spec.dupKey's semantics
- * (name uniqueness is enforced case-insensitively at register/validation). */
-function normName(s: unknown): string {
-  return typeof s === 'string' ? s.trim().normalize('NFC').toLowerCase() : '';
-}
-
-/** How a channel file on disk relates to a spec — the attribution verdict. */
-export type ChannelFileAttribution =
-  /** Carries ownerName/peerName and at least one of them is in the spec's
-   * name-set → provably OURS (R1). */
-  | { kind: 'by-name'; matchedName: string }
-  /** No ownership names (pre-v3 file): ownership can only be judged by the
-   * embedded sids, which the caller must test for liveness (R2). */
-  | { kind: 'legacy' }
-  /** Carries names but NEITHER is in the spec's name-set → provably FOREIGN. */
-  | { kind: 'foreign' };
-
-/**
- * Attribute a channel FILE (already parsed) to a spec by NAME.
- *
- * R1 conjunction (Slice 4): a file is OURS-by-name iff its `channelId` is one
- * of the spec's labels AND at least one of its ownership names
- * (`ownerName`/`peerName`) is in the spec's `<group>:<peer>` name-set. The
- * caller enforces the label half; this helper enforces the name half and
- * classifies pre-v3 (nameless) files as `legacy` so the caller can apply the
- * orphan-only sid sweep (R2) instead of trusting the names.
- */
-export function attributeChannelFile(
-  file: Partial<ChannelFile>,
-  nameSet: ReadonlySet<string>,
-): ChannelFileAttribution {
-  const owner = normName(file.ownerName);
-  const peer = normName(file.peerName);
-  if (owner === '' && peer === '') return { kind: 'legacy' };
-  if (owner !== '' && nameSet.has(owner)) return { kind: 'by-name', matchedName: owner };
-  if (peer !== '' && nameSet.has(peer)) return { kind: 'by-name', matchedName: peer };
-  return { kind: 'foreign' };
-}
-
 /**
  * Append the reciprocal reply contract to a firstQuery, unless the author
  * already wrote a mail_to reply instruction. This is the rule the mediator
@@ -288,93 +249,41 @@ export function materializeChannels(spec: ChannelSpecInput): MaterializeResult[]
 
 /**
  * Remove exactly the channel files named in `files` (a FILENAME LIST, as
- * produced by {@link channelFileNames}). Returns the number removed.
+ * produced by {@link channelFileNames}). BEST-EFFORT by contract: an unlink that
+ * fails (a peer still holding the handle on Windows, a permissions error) is
+ * collected and reported by the caller, never thrown — the peers are already
+ * stopped when this runs, so a stubborn file must not abort the teardown or
+ * change its exit code.
+ *
+ * Returns the number removed plus the filenames that could not be removed.
  */
-export function removeChannels(files: string[]): number {
-  if (!fs.existsSync(CHANNELS_DIR)) return 0;
+export function removeChannels(files: string[]): { removed: number; failed: string[] } {
+  if (!fs.existsSync(CHANNELS_DIR)) return { removed: 0, failed: [] };
   let removed = 0;
+  const failed: string[] = [];
   for (const name of files) {
     const full = path.join(CHANNELS_DIR, name);
-    if (fs.existsSync(full)) {
+    if (!fs.existsSync(full)) continue;
+    try {
       fs.rmSync(full);
       removed++;
+    } catch {
+      failed.push(name);
     }
   }
-  return removed;
-}
-
-/**
- * The channel filenames a spec OWNS, judged by NAME (R1) with an orphan-only
- * legacy sweep (R2) — the Slice-4 replacement for {@link channelFileNames} in
- * the `down` path. Scans the channels dir and, for every file whose label is
- * one of the spec's labels:
- *
- *   - `by-name` (ownerName/peerName ∈ the spec's name-set) → OURS (R1): delete.
- *   - `legacy` (no ownership names, pre-v3) → OURS only if BOTH embedded sids
- *     are provably DEAD (R2 orphan-only sweep). If either embedded sid is live
- *     the file is NOT deletable evidence — it is kept and reported (ambiguity →
- *     keep; half-matches are investigation material, never deletion evidence).
- *   - `foreign` (names present but none ours) → never ours: kept silently.
- *
- * `isSidDead(sid)` is the LIVENESS predicate injected by the caller — it must
- * be the isPeerRunning-level test (fresh beat AND dead recorded pid), NOT bare
- * heartbeat freshness. Injecting it keeps this module free of resolution, the
- * same boundary `peerSidForFile` respects.
- *
- * Returns the deletable FILENAMES plus the kept-ambiguous filenames (for the
- * operator report). A missing channels dir yields two empty lists.
- */
-export function ownedChannelFiles(
-  spec: ChannelSpecInput,
-  isSidDead: (sid: string) => boolean,
-): { deletable: string[]; keptAmbiguous: string[] } {
-  const deletable: string[] = [];
-  const keptAmbiguous: string[] = [];
-  if (!fs.existsSync(CHANNELS_DIR)) return { deletable, keptAmbiguous };
-
-  const labels = new Set(spec.channels.map((ch) => dupKey(ch.label)));
-  const nameSet = new Set(spec.peers.map((p) => normName(p.identityName ?? p.name)));
-
-  for (const entry of fs.readdirSync(CHANNELS_DIR)) {
-    if (!entry.endsWith('.json') || entry.endsWith('.tmp')) continue;
-    // Do NOT parse the label out of the filename: the name is `<sid>-<label>.json`
-    // and the sid is a UUID that itself contains dashes, so a naive split is
-    // wrong. Read the file and match its `channelId` FIELD (written and
-    // read-back-verified by buildChannelFile) against the spec's labels; the
-    // filename is used only as the delete token.
-    const parsed = readChannelFile(path.join(CHANNELS_DIR, entry));
-    if (!parsed) continue; // unreadable → not evidence of ownership → keep
-    if (typeof parsed.channelId !== 'string' || !labels.has(dupKey(parsed.channelId))) continue;
-
-    const verdict = attributeChannelFile(parsed, nameSet);
-    if (verdict.kind === 'by-name') {
-      deletable.push(entry); // R1: provably ours
-      continue;
-    }
-    if (verdict.kind === 'foreign') continue; // provably not ours → keep silently
-
-    // R2 legacy: no names. Delete ONLY when BOTH embedded sids are dead; a live
-    // (or unestablished) sid means the file is still claimable → keep + report.
-    const sids = [parsed.ownerSessionId, parsed.peerSessionId].filter(
-      (s): s is string => typeof s === 'string' && s !== '',
-    );
-    // Missing/invalid endpoint IDs are uncertainty, not evidence of ownership.
-    if (sids.length === 2 && sids.every((sid) => isSidDead(sid))) {
-      deletable.push(entry);
-    } else {
-      keptAmbiguous.push(entry);
-    }
-  }
-  return { deletable, keptAmbiguous };
+  return { removed, failed };
 }
 
 /**
  * The exact set of channel filenames a spec owns: `<sid>-<label>.json` per
- * channel endpoint. Peers without a session id contribute nothing.
- *
- * NOTE (Slice 4): this SID-KEYED enumeration is retained only as a fallback for
- * callers that have NOT yet migrated to name attribution — `down` now uses
- * {@link ownedChannelFiles} (name conjunction + orphan-only legacy sweep).
+ * channel endpoint. Peers without a RESOLVED session id contribute nothing —
+ * the caller (cmd-down) resolves each peer's sid from identity.json by NAME
+ * BEFORE calling this, which is the whole ownership model: the sid is unique per
+ * run, so the filename alone identifies the file. The file's CONTENT
+ * (ownerName/peerName/channelId) is never consulted — names are persistent and
+ * can coincide across two specs that share a group name, which is exactly how
+ * the old content-based "either name matches" rule deleted another topology's
+ * file (audit finding AC-5).
  */
 export function channelFileNames(spec: ChannelSpecInput): string[] {
   const byName = new Map(spec.peers.map((p) => [dupKey(p.name), p]));
@@ -391,88 +300,45 @@ export function channelFileNames(spec: ChannelSpecInput): string[] {
   return names;
 }
 
-/** Per-channel status row. `attribution` is 'by-name' when at least one of the
- * channel's files was located by its ownership NAMES (R1), or 'legacy' when
- * both were located by the embedded-session-id fallback (pre-v3 files). It is
- * 'absent' when neither file exists. */
+/** Per-channel status row. `attribution` is 'present' when BOTH endpoint files
+ * `<sid>-<label>.json` exist for the peers' resolved sids, 'absent' otherwise
+ * (see {@link channelStatus}). */
 export interface ChannelStatusRow {
   label: string;
   bothFilesPresent: boolean;
-  attribution: 'by-name' | 'legacy' | 'absent';
+  attribution: 'present' | 'absent';
 }
 
 /**
- * Report whether both files of each channel pair exist, attributing each pair
- * BY NAME where the files carry ownership names, and falling back to the
- * embedded session ids only for pre-v3 (nameless) files.
+ * Report whether both files of each channel pair exist, located by NAME → SID →
+ * FILENAME: the caller (cmd-status) resolves each peer's live sid from
+ * identity.json by durable NAME before calling this, so each endpoint's file is
+ * exactly `<sid>-<label>.json`.
  *
- * Name attribution is the durable path: a channel file's `ownerName`/
- * `peerName` survive the per-run sid churn, so a pair is "intact" when both
- * endpoint files exist under ANY sid — matched by name. The sid fallback
- * covers files written before names existed (a spec-authoring era), so
- * `status` stays useful against an un-migrated store.
+ * This mirrors the DELETION rule in {@link channelFileNames} — the same
+ * filename-based ownership model, never the file's CONTENT. The earlier
+ * content-based name attribution reported "both files present" from a sibling
+ * topology's file (persistent names can coincide across specs sharing a group
+ * name), and from a stale-generation file left behind by a previous run
+ * (audit finding AC-1).
  *
- * DETERMINISM: the result depends only on the spec + the store contents, never
+ * DETERMINISM: the result depends only on the spec + the resolved sids, never
  * on wall-clock — `--json` stays byte-identical across identical invocations.
  */
 export function channelStatus(spec: ChannelSpecInput): ChannelStatusRow[] {
   const byName = new Map(spec.peers.map((p) => [dupKey(p.name), p]));
-  const nameSet = new Set(spec.peers.map((p) => normName(p.identityName ?? p.name)));
-  // Index every channel file in the store ONCE by its parsed `channelId` FIELD
-  // (the filename is `<sid>-<label>.json` where the sid's own dashes make a
-  // filename-derived label unreliable). Name-attributed lookup then does not
-  // depend on any sid.
-  const byLabel = new Map<string, Array<{ file: string; data: ChannelFile }>>();
-  if (fs.existsSync(CHANNELS_DIR)) {
-    for (const entry of fs.readdirSync(CHANNELS_DIR)) {
-      if (!entry.endsWith('.json') || entry.endsWith('.tmp')) continue;
-      const data = readChannelFile(path.join(CHANNELS_DIR, entry));
-      if (!data || typeof data.channelId !== 'string') continue;
-      const label = dupKey(data.channelId);
-      const list = byLabel.get(label) ?? [];
-      list.push({ file: entry, data });
-      byLabel.set(label, list);
-    }
-  }
-
   return spec.channels.map((ch) => {
-    const label = dupKey(ch.label);
     const a = byName.get(dupKey(ch.from));
     const b = byName.get(dupKey(ch.to));
-    const candidates = byLabel.get(label) ?? [];
-
-    // SID fallback for pre-v3 files (no names): a pair is intact when the two
-    // endpoint files exist under the peers' resolved sids.
-    let bothBySid = false;
-    if (a && b) {
-      const aSid = peerSidForFile(a);
-      const bSid = peerSidForFile(b);
-      if (aSid && bSid) {
-        const fileA = `${aSid}-${ch.label}.json`;
-        const fileB = `${bSid}-${ch.label}.json`;
-        bothBySid = candidates.some((c) => c.file === fileA) && candidates.some((c) => c.file === fileB);
-      }
+    const sids: string[] = [];
+    for (const p of [a, b]) {
+      const sid = p ? peerSidForFile(p) : null;
+      if (sid) sids.push(sid);
     }
-
-    // NAME attribution (R1): a file is ours-by-name when at least one of its
-    // ownership names is in the spec's name-set. A pair is intact when both
-    // endpoints (from-name and to-name) are present across the label's files.
-    let bothByName = false;
-    if (a && b) {
-      const fromName = normName(a.identityName ?? a.name);
-      const toName = normName(b.identityName ?? b.name);
-      const named = candidates
-        .map((c) => attributeChannelFile(c.data, nameSet))
-        .filter((v): v is { kind: 'by-name'; matchedName: string } => v.kind === 'by-name');
-      const seen = new Set(named.map((v) => v.matchedName));
-      bothByName = fromName !== '' && toName !== '' && seen.has(fromName) && seen.has(toName);
-    }
-
-    const attribution: ChannelStatusRow['attribution'] = bothByName
-      ? 'by-name'
-      : bothBySid
-        ? 'legacy'
-        : 'absent';
-    return { label: ch.label, bothFilesPresent: bothByName || bothBySid, attribution };
+    // Both endpoints must be RESOLVED and their exact files present; an
+    // unresolved endpoint is 'absent', never guessed from another sid's file.
+    const present = sids.length === 2 &&
+      sids.every((sid) => fs.existsSync(path.join(CHANNELS_DIR, `${sid}-${ch.label}.json`)));
+    return { label: ch.label, bothFilesPresent: present, attribution: present ? 'present' : 'absent' };
   });
 }

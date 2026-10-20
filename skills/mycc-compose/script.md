@@ -11,7 +11,7 @@ logic lives in `.ts` modules under `scripts/mycc-compose/lib/`:
 | `lib/index.ts` | Umbrella: re-exports the subcommands + cli helpers. |
 | `lib/discovery.ts` | identity.json / heartbeat readers + the two liveness predicates (`isSessionLive` = freshness only; `isPeerRunning` = freshness **and** live pid). |
 | `lib/spec.ts` | `loadSpec` / `validateSpec` (pure, unit-tested). |
-| `lib/channels.ts` | channel-file materialization, name attribution (R1/R2), removal, status. |
+| `lib/channels.ts` | channel-file materialization, filename-based (`<sid>-<label>`) removal + status, reply contract. |
 | `lib/peers.ts` | launch / stop / match / identity-repair. |
 | `lib/cli.ts` | usage text, arg parsing, exit helpers. |
 | `lib/cmd-check.ts` / `cmd-up.ts` / `cmd-down.ts` / `cmd-status.ts` | the four subcommand implementations. |
@@ -71,13 +71,15 @@ down a live instance. **This is the cron target.**
 Terminates each peer — but only after verifying its heartbeat `pid` is
 **alive** AND (best-effort) a `mycc`/node process. Refuses otherwise and
 reports why (`stopped`, `already-stopped`, `no-session`, `heartbeat-fresh-but-pid-dead`,
-`refused-not-mycc`, ...). Then removes the channel files the spec OWNS, judged
-BY NAME: **R1** — a file is ours iff its `channelId` is one of the spec's labels
-AND its `ownerName` OR `peerName` is in the spec's `<group>:<peer>` name-set;
-**R2** — a pre-v3 file with no ownership names is removed ONLY when BOTH of its
-embedded sids are dead (ambiguity → kept + reported). **`down` always stops the
-peers**: removing the channel files alone has no meaning, so there is no
-channels-only mode and no `--stop` flag.
+`refused-not-mycc`, ...). Then resolves each peer's session id by durable NAME
+and removes — best-effort — the channel files the spec OWNS, judged by
+FILENAME: exactly `<resolved-sid>-<label>.json`. The file CONTENT is never
+consulted (persistent `ownerName`/`peerName` can coincide across topologies
+that share a group name, so "either name matches" deleted another topology's
+files); a sid is unique per run, so the filename is unambiguous. A file that
+cannot be unlinked is reported and ignored — it never changes the exit code.
+**`down` always stops the peers**: removing the channel files alone has no
+meaning, so there is no channels-only mode and no `--stop` flag.
 
 ### `status`
 Deterministic, **no LLM**:
@@ -85,13 +87,14 @@ Deterministic, **no LLM**:
 {
   "group": "pr26",
   "peers":   [ { "name": "a", "sessionId": "…", "live": true, "matching": true, "lastBrief": null } ],
-  "channels":[ { "label": "review", "bothFilesPresent": true, "attribution": "by-name" } ]
+  "channels":[ { "label": "review", "bothFilesPresent": true, "attribution": "present" } ]
 }
 ```
 `live` = running (fresh heartbeat **and** a live pid), resolved by NAME.
-`attribution` is `by-name` when the channel's files were located by their
-ownership names, `legacy` when located by the embedded-session-id fallback
-(pre-v3 files), or `absent`. `lastBrief` is the peer's most recent brief
+`bothFilesPresent` is true only when BOTH `<resolved-sid>-<label>.json` files
+exist (the same filename rule `down` uses), and `attribution` is `present` in
+that case, `absent` otherwise — content-based attribution is gone.
+`lastBrief` is the peer's most recent brief
 (`{time, content, confidence}`) or `null`. CLI, GUI, and cron all read the same
 JSON.
 

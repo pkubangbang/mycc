@@ -18,7 +18,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { parseArgString, LAUNCHER_FLAGS } from '../../../src/utils/arg-canonical.js';
+import { parseArgString, LAUNCHER_FLAGS, BOOLEAN_FLAGS, STRING_FLAGS, canonicalFlagName as canonicalFlagNameInSpec } from '../../../src/utils/arg-canonical.js';
 import { sanitizeId, validatePeerName as validatePeerNameValue } from '../../../src/utils/id-guard.js';
 
 // validatePeerName lives in src/utils/id-guard.ts (the single implementation
@@ -335,7 +335,80 @@ export function validateSpec(spec: unknown): NormalizedSpec {
       throw new Error(`${at}.args must be a string of CLI flags (got ${typeof p.args})`);
     }
     const parsedArgs = parseArgString(p.args as string);
-    // A spec must never author a launcher-managed flag: the launcher injects
+    // ── STRICT ARGS VALIDATION (F4-CLASS) ──────────────────────────────────
+    // The spec parser (parseArgString) is whitespace-split and PERMISSIVE: it
+    // auto-detects unknown flags, keeps positionals in `_`, and records a
+    // trailing bare string-flag as `true`. The INSTANCE side (minimist in
+    // src/config.ts) is a different parser with different edge behaviour, so
+    // any input the two disagree on publishes one args string and spawns
+    // another — the peer then mismatches forever and a `renew:onMismatch`
+    // peer is relaunched on EVERY up/sync.
+    //
+    // The rule is therefore: REJECT anything we do not fully understand,
+    // never silently skip it. A spec is authored by a human once and read
+    // many times, so a hard error at `check` time is cheap; a silent
+    // divergence at `up` time is not. This makes compose strictness strictly
+    // HIGHER than CLI-startup validation, which is intentional: `mycc`
+    // itself must stay tolerant of hand-typed argv, while a declarative
+    // topology file must be exact.
+    //
+    // 1. No positional arguments. They are dropped at spawn, so accepting
+    //    them would give the author a false sense that they take effect.
+    const positionals = parsedArgs._;
+    if (Array.isArray(positionals) && positionals.length > 0) {
+      throw new Error(
+        `${at}.args must contain ONLY flags: positional argument(s) ` +
+        `${JSON.stringify(positionals)} would be dropped at spawn. Got: "${p.args}"`,
+      );
+    }
+
+    // 2. Build the known-flag vocabulary from the SHARED table — the same one
+    //    config.ts spreads into minimist — so the two sides can never drift.
+    //    Anything outside it is rejected instead of being auto-detected.
+    //
+    //    EXCEPTION: `serve` is deliberately absent from both tables in
+    //    arg-canonical.ts (minimist auto-detects it so that bare `--serve`,
+    //    `--serve 9000` and `--serve=9000` all work — see config.ts). It is a
+    //    legitimate, spec-reachable flag (a compose peer that serves a Web UI),
+    //    so it is allow-listed here as a VALUE-CARRYING flag. `--port` / `--host`
+    //    are already in STRING_FLAGS.
+    const knownBool = new Set(BOOLEAN_FLAGS.map(canonicalFlagNameInSpec));
+    const knownString = new Set([...STRING_FLAGS, 'serve'].map(canonicalFlagNameInSpec));
+    for (const rawKey of Object.keys(parsedArgs)) {
+      if (rawKey === '_') continue;
+      const key = canonicalFlagNameInSpec(rawKey);
+      if (knownBool.has(key) || knownString.has(key)) continue;
+      if (key === 'session-id') continue; // reported by its own explicit check below
+      throw new Error(
+        `${at}.args contains unknown flag --${rawKey}: refusing to pass through a flag ` +
+        `the launch parser may interpret differently. Known flags are ` +
+        `--${[...knownBool, ...knownString].sort().join(', --')}. Got: "${p.args}"`,
+      );
+    }
+
+    // 3. Every STRING flag must carry a real value. A bare trailing
+    //    `--editor` parses here as `true` while minimist yields '' — the two
+    //    sides disagree permanently (F4-CLASS). Reject both the `true` form
+    //    and the empty-string form (`--editor=`).
+    for (const rawKey of Object.keys(parsedArgs)) {
+      if (rawKey === '_') continue;
+      const key = canonicalFlagNameInSpec(rawKey);
+      if (!knownString.has(key)) continue;
+      // `daemon` is the ONE string flag with a legal bare form: `--daemon`
+      // (no value) is a supported runtime shape — shouldDaemon() keys off
+      // `args.daemon !== undefined` and getDaemonSkill() then returns
+      // undefined (passive auto daemon). It gets its own check below.
+      if (key === 'daemon') continue;
+      const value = parsedArgs[rawKey];
+      if (value === true || value === '') {
+        throw new Error(
+          `${at}.args has --${key} without a value: a bare string flag is not reproducible ` +
+          `across the spec parser and the launch parser (it would match-forever-false). ` +
+          `Write --${key} <value>. Got: "${p.args}"`,
+        );
+      }
+    }
+
     // `--name <group>:<peer>` itself, so an authored one would double the flag
     // and drift the peer's identity from the launcher's. (The launcher-managed
     // set is now exactly `--name`; `--session-id` is removed entirely and is
@@ -361,11 +434,29 @@ export function validateSpec(spec: unknown): NormalizedSpec {
         `addressed by --name <group>:<peer> (injected by the launcher). Got: "${p.args}"`,
       );
     }
-    // Bare --daemon diverges from minimist's unset string representation.
-    // `--daemon=` parses to '' (not `true`) yet renders to spawn as NO daemon
-    // flag at all — functionally bare — so treat the empty string as bare too.
-    if (parsedArgs.daemon === true || parsedArgs.daemon === '') {
-      throw new Error(`${at}.args must use --daemon <skill>; bare --daemon is not supported.`);
+    // --daemon: bare is CORRECT, `--daemon=` (empty string) is NOT.
+    // `--daemon` (no value) is a supported runtime shape: shouldDaemon() keys
+    // off `args.daemon !== undefined`, and getDaemonSkill() returns undefined
+    // for the bare form (passive auto daemon). minimist yields '' for a bare
+    // string flag while parseArgString yields `true` — so the two parsers
+    // agree on the flag being PRESENT, and only the value shape differs.
+    // We therefore ACCEPT `true` and REJECT the empty string: `--daemon=`
+    // renders to spawn as no daemon flag at all (funcationally bare) which is
+    // a spelling we refuse to bless. A value starting with `-` is rejected too
+    // (M2): `--daemon=--auto` used to spawn `--daemon --auto`, collapsing to a
+    // bare `--daemon` and silently dropping the skill name.
+    if ('daemon' in parsedArgs) {
+      const v = parsedArgs.daemon;
+      if (v === '') {
+        throw new Error(
+          `${at}.args has --daemon= (empty value): write bare --daemon or --daemon <skill>. Got: "${p.args}"`,
+        );
+      }
+      if (typeof v === 'string' && v.startsWith('-')) {
+        throw new Error(
+          `${at}.args has --daemon with a flag-looking value "${v}": write --daemon <skill>. Got: "${p.args}"`,
+        );
+      }
     }
     if (parsedArgs.auto !== true && !('daemon' in parsedArgs)) {
       throw new Error(

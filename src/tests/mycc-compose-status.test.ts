@@ -1,7 +1,7 @@
 /**
  * mycc-compose-status.test.ts — `status --json` must be DETERMINISTIC, and the
- * channel rows must carry the 3-way attribution verdict (by-name / legacy /
- * absent) added in Slice 4 (R1 name attribution + R2 legacy sid fallback).
+ * channel rows must carry a 2-way presence verdict (present / absent) keyed on
+ * the FILENAME `<sid>-<label>.json` (AC-1 / AC-5).
  *
  * The command and docs/peers/peer-topology.md both call the JSON report
  * deterministic: two identical invocations against the same on-disk state must
@@ -10,12 +10,13 @@
  * machine-readable report carries NO timestamp, and two consecutive runs are
  * byte-identical; the human-readable form may still print a timestamp.
  *
- * Attribution (Slice 4 / M7): each channel row is
+ * Attribution (AC-1 / AC-5): each channel row is
  *   { label, bothFilesPresent, attribution }
- * where `attribution` is 'by-name' when both endpoint files were located by
- * their DATA-ONLY ownership names, 'legacy' when located purely by the
- * pre-v3 embedded session ids, and 'absent' when at least one side is missing.
- * The three verdicts are pinned with one fixture each.
+ * where `attribution` is 'present' when BOTH endpoint files
+ * `<sid>-<label>.json` exist for the peers' resolved sids, and 'absent'
+ * otherwise. Ownership is the FILENAME only — the file's CONTENT
+ * (ownerName/peerName) is diagnostic metadata and is never consulted.
+ * The two verdicts are pinned with one fixture each.
  *
  * Seams: cmd-status reads the spec file (validateSpec(loadSpec(file))) and the
  * discovery store, so we write a real spec into a temp dir and point
@@ -126,8 +127,10 @@ describe('cmdStatus --json: deterministic', () => {
   });
 });
 
-describe('cmdStatus --json: channel attribution 3-way (Slice 4 / M7)', () => {
-  it("'by-name': both endpoint files carry the spec's ownership names", async () => {
+describe('cmdStatus --json: channel presence, keyed on the FILENAME (AC-1 / AC-5)', () => {
+  it("'present': both endpoint files exist under the resolved sids", async () => {
+    // Presence is keyed on NAME → SID → FILENAME, so the peers must RESOLVE:
+    // seed live identity entries (fresh heartbeat + alive pid) for g:p1/g:p2.
     plantChannel(SID_A, 'review', {
       channelId: 'review', ownerSessionId: SID_A, peerSessionId: SID_B,
       ownerName: 'g:p1', peerName: 'g:p2',
@@ -136,13 +139,28 @@ describe('cmdStatus --json: channel attribution 3-way (Slice 4 / M7)', () => {
       channelId: 'review', ownerSessionId: SID_B, peerSessionId: SID_A,
       ownerName: 'g:p2', peerName: 'g:p1',
     });
+    seedNamedPeer('g:p1', SID_A);
+    seedNamedPeer('g:p2', SID_B);
     const { parsed } = await runJson();
     expect(parsed.channels).toEqual([
-      { label: 'review', bothFilesPresent: true, attribution: 'by-name' },
+      { label: 'review', bothFilesPresent: true, attribution: 'present' },
     ]);
   });
 
-  it("'legacy': pre-v3 files (no names) located purely by embedded sid", async () => {
+  it("content names are IGNORED: a foreign-sid file with our names is not 'present'", async () => {
+    // The old by-name rule reported present from a sibling topology's file
+    // (persistent names coincide across specs). Ownership is the FILENAME only.
+    plantChannel(SID_A, 'review', {
+      channelId: 'review', ownerSessionId: SID_A, peerSessionId: SID_B,
+      ownerName: 'g:p1', peerName: 'g:p2',
+    });
+    const { parsed } = await runJson();
+    expect(parsed.channels).toEqual([
+      { label: 'review', bothFilesPresent: false, attribution: 'absent' },
+    ]);
+  });
+
+  it("'present' for pre-v3 files with NO ownership names (filename is enough)", async () => {
     // For the sid fallback the spec peers must resolve to SID_A / SID_B. No live
     // identity exists in the empty store, so seed identity entries that the
     // status resolution adopts by name.
@@ -156,7 +174,7 @@ describe('cmdStatus --json: channel attribution 3-way (Slice 4 / M7)', () => {
     seedNamedPeer('g:p2', SID_B);
     const { parsed } = await runJson();
     expect(parsed.channels).toEqual([
-      { label: 'review', bothFilesPresent: true, attribution: 'legacy' },
+      { label: 'review', bothFilesPresent: true, attribution: 'present' },
     ]);
   });
 

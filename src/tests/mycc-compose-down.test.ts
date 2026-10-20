@@ -245,42 +245,6 @@ describe('cmdDown: always-stop + stop-before-delete + honest exit code (P2-b)', 
     // The stop happened BEFORE deletion and actually terminated the owner.
     expect(await waitForDead(child.pid as number)).toBe(true);
   }, 15_000);
-
-  it('[M3] removes a STALE by-name-owned file (embedded sids from a previous, now-dead run) that the old sid-keyed path could never see', async () => {
-    d = await import('../../scripts/mycc-compose/lib/discovery.js');
-    channelsMod = await import('../../scripts/mycc-compose/lib/channels.js');
-    writeSpec(true);
-    // The CURRENT peers have NOT materialized channels yet — as if `up` ran,
-    // the peers beat, then the process was torn down and relaunched under the
-    // SAME names but FRESH sids. The channel files left on disk carry the OLD
-    // run's sids (both now dead), but the NEW owners' NAMES (p1/p2).
-    const OLD_SID_1 = randomUUID();
-    const OLD_SID_2 = randomUUID();
-    const dir = path.join(d!.CHANNELS_DIR);
-    fs.mkdirSync(dir, { recursive: true });
-    const stale1 = path.join(dir, `${OLD_SID_1}-review.json`);
-    const stale2 = path.join(dir, `${OLD_SID_2}-review.json`);
-    fs.writeFileSync(stale1, JSON.stringify({
-      channelId: 'review', ownerSessionId: OLD_SID_1, peerSessionId: OLD_SID_2,
-      ownerName: 'grp:p1', peerName: 'grp:p2',
-    }));
-    fs.writeFileSync(stale2, JSON.stringify({
-      channelId: 'review', ownerSessionId: OLD_SID_2, peerSessionId: OLD_SID_1,
-      ownerName: 'grp:p2', peerName: 'grp:p1',
-    }));
-    // No identity/heartbeat for the old sids → they are dead.
-    seedBothLive();
-
-    const { rows } = await runDown();
-
-    // The stale files are attributed BY NAME to p1/p2 and removed — the old
-    // sid-keyed channelFileNames() would have looked for `<today's-sid>-review`
-    // and seen nothing.
-    expect(fs.existsSync(stale1)).toBe(false);
-    expect(fs.existsSync(stale2)).toBe(false);
-    expect(rows.join('')).toMatch(/removed 2 channel file/);
-  }, 15_000);
-
   it('[M3] a LIVE FOREIGN same-label file SURVIVES down (name attribution spares it)', async () => {
     d = await import('../../scripts/mycc-compose/lib/discovery.js');
     channelsMod = await import('../../scripts/mycc-compose/lib/channels.js');

@@ -392,7 +392,25 @@ export function resolveLivePeer(peer: PeerRef | null | undefined): string | null
 
 /**
  * Resolve a peer by durable name for stop/teardown, independent of heartbeat
- * freshness. Duplicate matches violate the identity invariant; never guess.
+ * freshness. Duplicate LIVE matches violate the identity invariant; never guess.
+ *
+ * DEAD-TWIN FILTER (F1): a lingering identity entry whose recorded holder is
+ * provably gone is NOT a competing owner — it is residue. On Windows a peer
+ * stopped by SIGTERM is TerminateProcess'd, so its own unregister() never runs
+ * and its entry survives `down`/`up`; the next launch registers a SECOND entry
+ * under the same durable name. Counting both as owners made every subsequent
+ * stop throw `refused-ambiguous-identity`, and the only code that removes the
+ * dead entry (cullStoppedPeers) runs AFTER a successful stop — a self-locking
+ * state that could only be cleared by hand-editing identity.json.
+ *
+ * So filter dead holders FIRST (the same predicate resolveLivePeer uses), and
+ * refuse only when more than one entry still has a live/provable holder. When
+ * the filter leaves exactly one, that entry IS the peer's owner.
+ *
+ * When the filter leaves NONE (every entry is dead), fall through to the
+ * unfiltered answer: a single dead entry is returned so the stop path can report
+ * `already-stopped` and cull it; two or more dead entries are still ambiguous
+ * (which dead sid should the cull key on?) and refuse.
  */
 export function resolvePeerForStop(peer: PeerRef | null | undefined): string | null {
   if (!peer) return null;
@@ -404,13 +422,26 @@ export function resolvePeerForStop(peer: PeerRef | null | undefined): string | n
     normalizePeerName(entry.name) === normalizedName &&
     sameWorkdirRef(entry.workDir ?? entry.workdir, peer.workdir),
   );
-  if (matches.length > 1) {
+  if (matches.length <= 1) return matches[0]?.[0] ?? null;
+
+  // >1 entry: prefer the ones whose holder is not provably dead.
+  const liveOwners = matches.filter(([sid]) => !isSessionHolderDead(sid));
+  if (liveOwners.length === 1) return liveOwners[0][0];
+  if (liveOwners.length === 0) {
+    // Every entry is provably dead. One survivor is still a decidable answer
+    // (the caller will report already-stopped and cull it); several are not.
+    if (matches.length === 1) return matches[0][0];
     const sids = matches.map(([sid]) => sid).join(', ');
     throw new Error(
-      `[mycc-compose] refusing to guess which session owns peer "${name}" in ${peer.workdir}: ${sids}`,
+      `[mycc-compose] refusing to guess which session owns peer "${name}" in ${peer.workdir}: ` +
+      `${sids} (all recorded holders are gone, so there is no live owner to pick)`,
     );
   }
-  return matches[0]?.[0] ?? null;
+  const sids = liveOwners.map(([sid]) => sid).join(', ');
+  throw new Error(
+    `[mycc-compose] refusing to guess which session owns peer "${name}" in ${peer.workdir}: ` +
+    `${sids} (more than one entry has a live or unprovable holder)`,
+  );
 }
 
 /**

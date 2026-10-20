@@ -122,7 +122,7 @@ Templates support `{{from}}`, `{{to}}`, `{{peer}}`, `{{label}}`. If you omit a
 | `mycc-compose check <file>` | Validate the spec; report match / mismatch / stale. **No mutation.** |
 | `mycc-compose up <file>` | Full pipeline: launch/renew peers by name, repair identity, write channels. |
 | `mycc-compose sync <file>` | Idempotent reconcile — `up` minus destructive stops. **The cron target.** |
-| `mycc-compose down <file>` | Terminate the peers, then remove the channel pairs (by NAME: R1 name-conjunction + R2 orphan-only legacy sweep). Always stops the peers — there is no channels-only mode. |
+| `mycc-compose down <file>` | Terminate the peers, then remove its channel files by FILENAME (`<resolved-sid>-<label>.json`, best-effort). Always stops the peers — there is no channels-only mode. |
 | `mycc-compose status <file> [--json]` | Deterministic report: peers `{name,sessionId,live,matching,lastBrief}` + channels `{label,bothFilesPresent,attribution}`. |
 
 Exit codes: `0` OK, `1` runtime/validation error, `2` usage error.

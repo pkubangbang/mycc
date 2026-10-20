@@ -128,9 +128,14 @@ describe('validateSpec: rejects malformed specs', () => {
 
   it('args MUST include --auto or --daemon', () => {
     rejects(baseSpec({ peers: [mkPeer({ args: '--skip-healthcheck' })] }), /MUST include --auto or --daemon/);
-    // ...but either of them is accepted.
+    // ...but either of them is accepted. BARE `--daemon` is a supported
+    // runtime shape (shouldDaemon() keys off presence; getDaemonSkill() then
+    // returns undefined → passive auto daemon), so it MUST validate.
     expect(() => validateSpec(baseSpec({ peers: [mkPeer({ args: '--daemon skill-manager' })] }))).not.toThrow();
-    rejects(baseSpec({ peers: [mkPeer({ args: '--daemon' })] }), /must use --daemon <skill>/);
+    expect(() => validateSpec(baseSpec({ peers: [mkPeer({ args: '--daemon' })] }))).not.toThrow();
+    // The EMPTY-VALUE spelling `--daemon=` is the wrong one: it renders to
+    // spawn as no daemon flag at all, so it is rejected explicitly.
+    rejects(baseSpec({ peers: [mkPeer({ args: '--daemon=' })] }), /--daemon= \(empty value\)/);
   });
 
   // v5 no-tolerance rule: peer identity is `--name <group>:<peer>`, injected by
@@ -280,10 +285,12 @@ describe('validateSpec: rejects malformed specs', () => {
       baseSpec({ peers: [mkPeer({ args: '--auto --name proj:alpha' })] }),
       /must not set --name/,
     );
-    // Bare, value-less form reaches parsedArgs as a key too → caught.
+    // Bare, value-less `--name` is rejected too — by the earlier STRING-flag
+    // "without a value" rule, which runs BEFORE the launcher-flag loop, so the
+    // message names the missing value rather than launcher injection.
     rejects(
       baseSpec({ peers: [mkPeer({ args: '--auto --name' })] }),
-      /must not set --name/,
+      /has --name without a value/,
     );
     expect(() => validateSpec(baseSpec({ peers: [mkPeer({ args: '--auto' })] }))).not.toThrow();
   });
@@ -312,24 +319,23 @@ describe('validateSpec: rejects malformed specs', () => {
 
   // B-M1: `--daemon` is a STRING_FLAG with no default; bare use must parse to
   // `true` (not ''), so the rendered argv round-trips as plain `--daemon`.
-  // The SPEC layer still rejects bare `--daemon` (schema mandates
-  // `--daemon <skill>`); that is asserted in the "args MUST include" test
-  // above. What we pin HERE is the parser contract the spec relies on: the
-  // bare flag reaches parsedArgs as `true` (which is exactly why the spec's
-  // `parsedArgs.daemon === true` guard can fire).
+  // CONTRACT (owner ruling): bare `--daemon` is CORRECT and validates;
+  // `--daemon=` (empty value) is WRONG and is rejected; a flag-looking value
+  // (`--daemon=--auto`) is rejected too — it used to collapse to a bare daemon
+  // and silently drop the skill name (M2).
   it('parses a bare string-flag as true, not empty string', () => {
     expect(parseArgString('--daemon').daemon).toBe(true);
     expect(parseArgString('--daemon skill-manager').daemon).toBe('skill-manager');
-    // Migrated from the old "bare --daemon is accepted" contract: the spec now
-    // REJECTS it (schema requires a skill), while the raw parser still yields
-    // `true` — pin both halves so a future loosening of either is a failure.
-    expect(() => validateSpec(baseSpec({ peers: [mkPeer({ args: '--daemon' })] }))).toThrow(
-      /must use --daemon <skill>/,
-    );
-    // `--daemon=` parses to '' and renders to spawn as NO daemon flag — a
-    // functionally bare daemon that must be rejected the same way.
+    expect(() => validateSpec(baseSpec({ peers: [mkPeer({ args: '--daemon' })] }))).not.toThrow();
     expect(() => validateSpec(baseSpec({ peers: [mkPeer({ args: '--daemon=' })] }))).toThrow(
-      /must use --daemon <skill>/,
+      /--daemon= \(empty value\)/,
+    );
+    expect(() => validateSpec(baseSpec({ peers: [mkPeer({ args: '--daemon=--auto' })] }))).toThrow(
+      /--daemon with a flag-looking value/,
+    );
+    // ...while ANY other bare string flag stays rejected (permanent mismatch).
+    expect(() => validateSpec(baseSpec({ peers: [mkPeer({ args: '--auto --editor' })] }))).toThrow(
+      /has --editor without a value/,
     );
   });
 });
