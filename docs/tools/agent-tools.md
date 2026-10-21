@@ -4,6 +4,8 @@ changelog:
   - "2026-10-13: Refined against src — fixed renamed/nonexistent peer tools (`peers` → `peer_list` + `peer_connect` + `peer_disconnect`); tool count 48 → 50"
   - "2026-08-13: Updated tool count from 45 to 48, version from v0.7.0 to v0.10.1"
   - "2026-08-13: Removed nonexistent tools: wt_create, wt_remove, wt_enter, wt_leave, wt_print, todo_write, order, time"
+  - "2026-10-21: `brief` description no longer teaches recap (teammates share its schema and cannot call recap); the contract moved to the lead-only `## Briefs and Recap` prompt section + the recap description."
+  - "2026-10-21: `checkpoint` removed — every `brief` is now a rewind anchor and `recap` collapses back to the last one (see docs/loop/brief-and-recap-rewind.md). Recap args are now `description` / `abandon` / `comment`."
   - "2026-08-13: Added missing tools: grep, read_read, todo_create, todo_update, todo_pinning, issue_publish, issue_list, peers, checkpoint, recap, mycc_title, skill_search"
   - "2026-08-13: Fixed scopes: question (child-only), git_commit (main+child), skill_compile (main+child), tm_print (main+child)"
   - "2026-08-13: Fixed bash params (added intent, timeout), ToolDefinition interface (JSONSchema7, signal), summary table"
@@ -46,7 +48,7 @@ interface ToolDefinition {
 
 **Summary:**
 - **Lead (main)**: All 50 built-in tools except `question` (child-only)
-- **Teammate (child)**: Cannot use `broadcast`, `tm_create`, `tm_remove`, `tm_await`, `hand_over`, `plan_on`, `plan_off`, `checkpoint`, `recap`, `peer_list`, `peer_connect`, `peer_disconnect`, `todo_pinning`, `git_commit` (main+child). `question` is child-only.
+- **Teammate (child)**: Cannot use `broadcast`, `tm_create`, `tm_remove`, `tm_await`, `hand_over`, `plan_on`, `plan_off`, `recap`, `peer_list`, `peer_connect`, `peer_disconnect`, `todo_pinning`, `git_commit` (main+child). `question` is child-only.
 
 ---
 
@@ -206,7 +208,9 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence parameter (0-10).
+**Description**: Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence parameter (0-10). State the conclusion first, then the evidence. Must be called alone (no other tools in the same turn).
+
+> The description deliberately says nothing about `recap` or rewind anchors: `brief` is `['main', 'child']`, so the same description reaches teammates, who cannot call `recap`. The recap contract lives in the `recap` description (lead-only) and in the lead's `## Briefs and Recap` system-prompt section (`buildBriefRecapSection()` in `src/loop/prompts/common.ts`); `src/tests/loop/prompts/brief-recap-scope.test.ts` guards the split.
 
 **Parameters**:
 | Name | Type | Required | Description |
@@ -217,6 +221,17 @@ interface ToolDefinition {
 **Behavior**:
 - Displays message prominently in terminal
 - Used for progress reporting during long tasks
+- **Isolation**: `brief` must be called ALONE (`validateBriefIsolation` in
+  `src/loop/triologue/brief.ts`, enforced as HOOK step 2 before hook
+  processing). A turn that co-batches `brief` with any other tool is rejected
+  wholesale — every call in it is answered with
+  `Brief must be called alone. Other tools cannot be used in the same turn.`,
+  nothing executes, and the loop returns to COLLECT so the LLM re-emits the
+  work without the brief. A brief-only turn keeps a recap rewind anchor
+  unambiguous for the lead (a child's briefs are never rewound, but the rule
+  is enforced uniformly). Synthetic briefs (recovery, crossroad, compact floor, TP
+  recovery) are sole calls and bypass the guard.
+- Also emits a `[brief] blocked: ...` yellow log line when rejected
 - Also recorded into the peer discovery heartbeat (lead only) so other instances can see progress
 
 **Example**:
@@ -1084,25 +1099,7 @@ interface ToolDefinition {
 
 ---
 
-## Checkpoint & Recap Tools
-
-### checkpoint
-
-**File**: `src/tools/checkpoint.ts`
-
-**Scope**: `['main']`
-
-**Description**: Create a checkpoint marker for context management. Use before exploration or investigation tasks that generate many messages. Must be called alone (no other tools in same turn).
-
-**Parameters**:
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| description | string | yes | What the subtask will accomplish |
-| if_abandoned | string | yes | Declare original direction; injected into abandon note if later abandoned |
-
-**Note**: Meta-tool — actual execution happens in the state machine (`hook.ts`), not the handler.
-
----
+## Recap Tool
 
 ### recap
 
@@ -1110,16 +1107,16 @@ interface ToolDefinition {
 
 **Scope**: `['main']`
 
-**Description**: Close a checkpoint and compress its messages into a summary. Must be called alone.
+**Description**: Collapse the conversation back to the newest `brief` the conversation has moved past — the rewind anchor (a brief anchors once at least one message follows its round-trip; another `brief` counts) — replacing everything after the brief's round-trip. The span summary is written into the BRIEF'S OWN TOOL RESULT, in place: `OK Note, a recap has reset the conversation here with summary: …` (the `[RECAP]` header quotes the brief). No summary turn is appended. Repeatable — after a rewind the anchor's round-trip is last, so the next call rewinds to the brief before; new activity (even one more brief) after a rewind re-arms that anchor and a recap there overwrites its result (a pure overwrite, never a stack). Cannot rewind past a context compaction. Must be called alone.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| checkpoint_id | string | yes | The checkpoint ID (8-character hash) |
-| abandon | boolean | no | If true, discard without summarizing |
-| comment | string | yes | REQUIRED. Directive determining the direction of the next turn |
+| description | string | yes | Short label for this collapse; quoted in the note header |
+| abandon | boolean | no | If true, collapse without summarizing (discards the span) |
+| comment | string | yes (unless `abandon`) | REQUIRED. Directive determining the direction of the next turn; placed last in the note |
 
-**Note**: Meta-tool — actual execution happens in the state machine (`hook.ts`), not the handler.
+**Note**: Meta-tool — actual execution happens in the state machine (`hook.ts`), not the handler. The rewind itself is `Triologue.rewindToLastBrief()` (truncate after the anchor's tool result, then rewrite that result); the note's marker lives in `src/loop/triologue/recap-note.ts`. See `docs/loop/brief-and-recap-rewind.md`.
 
 ---
 
@@ -1256,7 +1253,7 @@ All three are `['main']` (lead only — child processes use NoopPeerModule). Rea
 | git_commit | main, child | Git Operations |
 | plan_on | main | Mode Control |
 | plan_off | main | Mode Control |
-| checkpoint | main | Checkpoint & Recap |
+
 | recap | main | Checkpoint & Recap |
 | recall | main, child | Knowledge Discovery |
 | web_search | main, child | Web Access |

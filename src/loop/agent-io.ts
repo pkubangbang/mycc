@@ -493,7 +493,7 @@ class AgentIO {
     // Mirror to web UI (serve mode) — send the clean message text once,
     // carrying the tool label so the web UI can render the same
     // [HH:MM:SS] [tool] header as the terminal. `synthetic` marks machine-
-    // originated briefs (hook engine, debug evaluator, checkpoint bookkeeping)
+    // originated briefs (hook engine, debug evaluator, recap bookkeeping)
     // so the WebUI can hide them from the chat log (terminal keeps them).
     if (this.outputCallback) {
       const method: 'log' | 'warn' | 'error' = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log';

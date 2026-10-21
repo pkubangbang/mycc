@@ -17,15 +17,15 @@ import { TpAutoFixer } from './triologue/tp-fix.js';
 import { loopEvents } from './loop-events.js';
 import type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } from './triologue/types.js';
 import { type PieceKind } from './triologue/transcript.js';
+import { readBriefConfidence, readBriefMessage } from './triologue/brief.js';
+import { noteWithSummary } from './triologue/recap-note.js';
 
-export type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions, CheckpointInfo } from './triologue/types.js';
-export { CheckpointManager } from './triologue/checkpoint.js';
+export type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } from './triologue/types.js';
 
 import { MessageStore } from './triologue/store.js';
 import { estimateTokensForMessages, estimateToolSchemaTokens } from '../utils/token.js';
 import { PendingToolLedger } from './triologue/pending-tools.js';
 import { runAutoCompact as doRunAutoCompact } from './triologue/compact.js';
-import { CheckpointManager } from './triologue/checkpoint.js';
 import { WrapUpManager } from './triologue/wrap-up.js';
 
 /**
@@ -40,6 +40,28 @@ import { WrapUpManager } from './triologue/wrap-up.js';
 type DeferredInput =
   | { kind: 'user'; text: string }
   | { kind: 'note'; category: NoteCategory; hookName?: string; text: string };
+
+/**
+ * Assemble the note BODY a recap writes into the anchor brief's tool result:
+ * the `[RECAP] header` (label + quoted anchor brief) followed by the
+ * summarizer's body.
+ *
+ * The marker ("OK Note, a recap has reset the conversation here with summary:")
+ * is added by recap-note.ts noteWithSummary(); this function builds only what
+ * follows it, and its return value is exactly what `recapNoteSize` measures.
+ *
+ * SINGLE SOURCE OF TRUTH — both `rewindToLastBrief` (which appends it) and
+ * `Triologue.recapNoteSize` (which sizes it) call this, so a caller's
+ * size pre-check can never measure a different string than the one `tool()`
+ * will accept or reject.
+ */
+function buildRecapNote(description: string, anchorMessage: string, additionalMessage: string): string {
+  const header = [
+    `[RECAP] ${description}`,
+    anchorMessage ? `Rewound past the brief: "${anchorMessage}"` : '',
+  ].filter(Boolean).join('\n');
+  return [header, additionalMessage].filter(Boolean).join('\n\n');
+}
 
 export class Triologue {
   private store: MessageStore = new MessageStore();
@@ -117,13 +139,6 @@ export class Triologue {
    * message-side operations (append WRAP_UP message, truncate store).
    */
   private wrapUp: WrapUpManager = new WrapUpManager();
-
-  /**
-   * Checkpoint feature domain delegate (see triologue/checkpoint.ts).
-   * Created lazily via getCheckpointManager(); bound to the live message
-   * store so callers always see the current history.
-   */
-  private checkpointManager: CheckpointManager | null = null;
 
   /**
    * TP-recovery delegate (see triologue/tp-fix.ts). Owns both the recovery
@@ -568,8 +583,28 @@ export class Triologue {
 
   /**
    * Add an assistant message
+   *
+   * Positional args stay `(content, toolCalls)`: those two ARE the message.
+   * Everything else is optional metadata and travels in `opts`, so adding a
+   * third piece of metadata is never a breaking arity change.
+   *
+   * @param opts.reasoningContent - The model's reasoning/thinking text for
+   *   this turn, forwarded to the provider as `reasoning_content`.
+   * @param opts.synthetic - The message was injected by INFRASTRUCTURE, not
+   *   produced by the model (llm.ts empty-output recovery, hook.ts crossroad).
+   *   Set here, at creation, because provenance is a property of the
+   *   message (types.ts Message.synthetic) — never a flag inside `arguments`
+   *   (model-authored, unvalidated here → forgeable) and never a call-id
+   *   convention. Only an in-memory marker: the store strips it from the
+   *   provider payload (MessageStore.toProviderMessage), so it can neither
+   *   reach the LLM nor be echoed back.
    */
-  agent(content: string, toolCalls?: ToolCall[], reasoningContent?: string): void {
+  agent(
+    content: string,
+    toolCalls?: ToolCall[],
+    opts?: { reasoningContent?: string; synthetic?: boolean },
+  ): void {
+    const reasoningContent = opts?.reasoningContent;
     const lastRole = this.getLastRole();
 
     // Reject invalid transitions
@@ -589,6 +624,7 @@ export class Triologue {
       content: content || '',
       tool_calls: toolCalls,
       ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+      ...(opts?.synthetic ? { synthetic: true } : {}),
     });
 
     // Track pending tool calls in order
@@ -709,7 +745,7 @@ export class Triologue {
     // pointing at the pre-compact length, e.g. 50) would let a later
     // rollbackWrapUp() do `this.messages.length = 50` on the now-2-element
     // array, stretching it with undefined sparse holes that crash the next
-    // raw reader (minifyMessages in runAutoCompact, or checkpoint iteration)
+    // raw reader (minifyMessages in runAutoCompact, or recap iteration)
     // with "Cannot read properties of undefined (reading 'role')".
     this.wrapUp.reset();
     // Refresh dynamic project context (README, mindmap, hooks) at the compact
@@ -856,7 +892,7 @@ export class Triologue {
    * slipped into `messages` (e.g. via sparse-array length manipulation from
    * wrap-up rollback, TP auto-fixer injection, session restoration, or recap
    * slicing). Without this, unguarded raw consumers (hint-round, minifier,
-   * checkpoint-recap) that read `.role` / `.content` directly would throw
+   * recap-rewind) that read `.role` / `.content` directly would throw
    * "Cannot read properties of undefined (reading 'role'/'content')" — an
    * intermittent error surfaced most often in the COLLECT state because that
    * is where hint-round runs. Mirrors the guard already present in
@@ -962,29 +998,237 @@ export class Triologue {
     return { total, system, projectContext, conversation, tools: toolsTokens };
   }
 
-  // === Feature Domain Delegates ===
+  // === Rewind (recap) ===
 
   /**
-   * Get the checkpoint feature-domain delegate (see triologue/checkpoint.ts).
-   *
-   * Checkpoint is an isolated feature domain: instead of the facade offering
-   * individual passthrough methods (findOpenCheckpoint/findCheckpointById/
-   * findAllCheckpoints/generateCheckpointId/recapMessages), callers obtain
-   * this delegate ONCE and interact with it directly for all checkpoint
-   * concerns (queries, id generation, and the recap span truncation).
-   *
-   * The manager is bound to the live message store, so it always reflects
-   * the current history (including compact/clear/restore swaps). It is
-   * memoized — repeated calls return the same instance.
+   * Identity of the anchor, safe to carry across an await. NOT an array index,
+   * so it survives appends: rewindToLastBrief() re-derives the anchor and
+   * refuses to truncate when the identity differs (see the TOCTOU note there).
+   * Derived from content that never changes once written — the anchor's store
+   * index, its brief message, and the brief call's raw arguments — because
+   * `ToolCall.id` is not part of the Ollama tool-call shape.
    */
-  getCheckpointManager(): CheckpointManager {
-    if (!this.checkpointManager) {
-      this.checkpointManager = new CheckpointManager({
-        getMessages: () => this.store.getRaw(),
-        onRecap: (startIndex: number) => this.truncateAndRecount(startIndex),
-      });
+  anchorIdentity(index: number, call: { function: { name: string; arguments?: unknown } }): string {
+    const args = typeof call.function.arguments === 'string'
+      ? call.function.arguments
+      : JSON.stringify(call.function.arguments ?? {});
+    return `${index}:${call.function.name}:${args}`;
+  }
+
+  /**
+   * The CURRENT anchor: the brief the next recap would rewind to.
+   *
+   * THE RULE — a brief is an anchor IFF
+   *   1. it is NOT synthetic (llm.ts recovery, hook.ts crossroad — boilerplate
+   *      messages that would preserve infrastructure noise), and
+   *   2. at least one message follows its round-trip (the assistant brief call
+   *      AND the tool result answering it).
+   *
+   * Rule 2 is what makes a lone brief a NON-anchor: the newest brief in a live
+   * conversation is where that conversation currently stands — the work under
+   * way to its result — so there is nothing after it yet to collapse. The
+   * moment ANYTHING lands after it — a tool call, a query, or even another
+   * brief — it becomes history and anchors. There is deliberately no separate
+   * "consumed" marker: a recap leaves the anchor's round-trip last, so rule 2
+   * alone makes repeated recaps walk backwards.
+   *
+   * Consequences (the sequences a real session produces; `t` = any tool):
+   *
+   *   b1 → t → b2 → t → recap                   → b2
+   *   … → recap → recap                         → b1 (the recap left b1's
+   *                                               round-trip last, so b2 — now
+   *                                               the newest — has nothing
+   *                                               after it)
+   *   … → recap → t → recap                     → b2 (the tool re-arms b2)
+   *   … → recap → b3 → recap                    → b2 (a lone b3 is not yet an
+   *                                               anchor, and the b3 message
+   *                                               itself is what b2 needs after
+   *                                               it)
+   */
+  private currentAnchorIndex(): number {
+    // Non-synthetic brief calls, in message order (store.briefIndices).
+    const indices = this.store.briefIndices();
+    // Newest first; the structural test is the WHOLE rule (rule 2 above), so
+    // there is no drop-last shortcut — a newest brief with activity after it
+    // must win.
+    for (let i = indices.length - 1; i >= 0; i--) {
+      if (this.hasMessagesAfterBrief(indices[i])) return indices[i];
     }
-    return this.checkpointManager;
+    return -1;
+  }
+
+  /** True when any non-hole message follows the brief round-trip at `index`. */
+  private hasMessagesAfterBrief(index: number): boolean {
+    const call = (this.store.at(index)?.tool_calls as ToolCall[] | undefined)?.find((tc) => tc.function?.name === 'brief');
+    const resultIdx = this.store.findToolResultIndex(call?.id, index);
+    const after = this.store.firstMessageIndexAfter(resultIdx >= 0 ? resultIdx : index);
+    return after < this.store.length;
+  }
+
+  /**
+   * Resolve the rewind anchor ONCE for every caller.
+   *
+   * getLastBrief(), rewindToLastBrief() and recapNoteSize() must agree on four
+   * rules — which brief is "last" (the synthetic predicate lives in the store),
+   * which tool_calls entry counts (name === 'brief'), which brief owns the
+   * call (the FIRST one, if a message batches several), and how its message is
+   * read. Three hand-copied versions of that sequence is one edit away from the
+   * size pre-check measuring a string the append never produces — which is
+   * exactly the round-2 bug in a new costume. Returns null when there is no
+   * anchor, or when `expectedAnchorId` no longer matches it.
+   *
+   * Private: the index is a truncation detail that must not leave the facade.
+   */
+  private resolveAnchor(expectedAnchorId?: string): { index: number; call: ToolCall; anchorMessage: string } | null {
+    const index = this.currentAnchorIndex();
+    if (index < 0) return null;
+
+    const anchor = this.store.at(index);
+    // The store decides eligibility at the MESSAGE level (Message.synthetic),
+    // so a message reaching us is already a real anchor: quote its first brief
+    // call. Keeping a per-call filter here would be a second, divergent rule.
+    const call = (anchor?.tool_calls as ToolCall[] | undefined)?.find((tc) => tc.function?.name === 'brief');
+    if (!call) return null; // defensive: anchor vanished between scan and read
+
+    // TOCTOU guard: the caller peeked, then awaited the forks (10-60s of LLM
+    // time) during which a new brief may have landed. The re-scan above always
+    // yields a VALID current index, but it cannot tell whether that is still the
+    // anchor the caller summarized. If it moved, truncating would delete a span
+    // that was never summarized — refuse, having modified nothing.
+    if (expectedAnchorId !== undefined && this.anchorIdentity(index, call) !== expectedAnchorId) {
+      return null;
+    }
+
+    return { index, call, anchorMessage: readBriefMessage(call) };
+  }
+
+  /**
+   * Peek at the rewind anchor: the newest REAL `brief` that the conversation
+   * has already moved past (see currentAnchorIndex for the exact rule).
+   *
+   * Every REAL brief marks a point the conversation can collapse back to, so its
+   * `message` is what survives a recap. A brief is eligible only once
+   * something follows its round-trip — the newest brief is where the
+   * conversation currently stands, so it is not yet a boundary. Incidental
+   * infrastructure briefs (empty-output recovery, crossroad) are skipped —
+   * see MessageStore.briefIndices. Returns null when the history holds no
+   * eligible brief (a fresh session, a lone trailing brief, or a transcript
+   * restored mid-span).
+   *
+   * The array index is NOT returned. `id` is an opaque fingerprint that a
+   * caller may carry across an await and hand back to rewindToLastBrief, which
+   * re-derives the anchor and refuses to truncate if it moved.
+   *
+   * `span` is a copy of the messages from just after the brief round-trip
+   * (assistant call + its tool result) to the end — exactly the region a
+   * rewind deletes, and therefore the only region worth summarizing.
+   */
+  getLastBrief(): {
+    message: string;
+    confidence?: number;
+    /** Opaque anchor fingerprint — see anchorIdentity(). */
+    id: string;
+    span: Message[];
+  } | null {
+    const resolved = this.resolveAnchor();
+    if (!resolved) return null;
+    const { index, call, anchorMessage: message } = resolved;
+
+    // Anchor pair = assistant brief call + the tool result answering it.
+    // Skip the result too, so `span` never starts with a stranded tool msg.
+    let start = index + 1;
+    if (start < this.store.length && this.store.at(start)?.role === 'tool') start++;
+
+    const confidence = readBriefConfidence(call);
+
+    // Slice the TRUE array, not getRaw(): `start` is a true-array index, and
+    // getRaw() filters sparse holes, so its indices shift left by the number
+    // of holes before the anchor. Slicing the filtered copy would either
+    // include the anchor's own brief pair or (with enough holes) yield an
+    // empty span and a bogus "already at the compaction boundary" refusal.
+    // sliceFrom keeps the same hole-safety for consumers.
+    const span = this.store.sliceFrom(start);
+
+    return { message, confidence, id: this.anchorIdentity(index, call), span };
+  }
+
+  /**
+   * Collapse the conversation back to the last `brief` (the rewind primitive
+   * behind recap).
+   *
+   * Steps, in order:
+   *   1. re-scan for the anchor — never accept an index from the caller
+   *   2. capture the anchor's `message` BEFORE truncation (its pair is deleted)
+   *   3. truncate at the anchor's assistant message (truncateAndRecount: keeps
+   *      the ledger/journal/token accounting in one place)
+   *   4. reset the wrap-up mark — a stale mark greater than the new length
+   *      would make a later rollback do `messages.length = mark` and EXTEND
+   *      the array with holes
+   *   5. rewrite the anchor's tool RESULT in place with the note (pure
+   *      overwrite — a previous note is dropped), recounting tokens
+   *
+   * The summary does NOT get a turn of its own:
+   *
+   *   assistant('', [brief("BRIEF TWO", 7)]) → tool('brief', "OK")        BEFORE
+   *   assistant('', [brief("BRIEF TWO", 7)]) → tool('brief', "OK Note, a recap
+   *       has reset the conversation here with summary: …")              AFTER
+   *
+   * so the history still ends on role:'tool' — the anchor's own result — the
+   * same TP-parity handoff to the next real agent() as before.
+   *
+   * REWIND-BY-BRIEF: the rewind leaves the anchor's round-trip last, and the
+   * last brief of any kind is never an anchor, so the next recap moves to the
+   * brief before — unless new activity lands after the anchor, which re-arms it.
+   *
+   * Returns null when there is no brief to rewind to (nothing is modified).
+   */
+  rewindToLastBrief(
+    description: string,
+    additionalMessage: string,
+    expectedAnchorId?: string,
+  ): { anchorMessage: string; tokensBefore: number; tokensAfter: number } | null {
+    // One resolution for every caller (see resolveAnchor) — including the
+    // TOCTOU refusal and the message read that tolerates a string-shaped
+    // `arguments`.
+    const resolved = this.resolveAnchor(expectedAnchorId);
+    if (!resolved) return null;
+    const { call, anchorMessage } = resolved;
+    const tokensBefore = this.store.tokenCount;
+
+    const resultIndex = this.store.findToolResultIndex(call.id);
+    // Without an answer to the call there is no place for the summary (and
+    // truncating would strand the assistant's tool_calls) — refuse untouched.
+    if (resultIndex < 0) return null;
+
+    this.truncateAndRecount(resultIndex + 1, 'recap');
+    this.wrapUp.reset();
+
+    const rewritten = this.store.rewriteToolResult(
+      call.id,
+      noteWithSummary(buildRecapNote(description, anchorMessage, additionalMessage)),
+    );
+    if (!rewritten) return null; // defensive: the result vanished in truncation
+    this.store.recomputeTokenCount();
+
+    return { anchorMessage, tokensBefore, tokensAfter: this.store.tokenCount };
+  }
+
+  /**
+   * The exact length `rewindToLastBrief` writes into the anchor's tool result —
+   * the note BODY (the caller passes the body it intends to hand over; the
+   * marker/header framing is fixed-size and negligible).
+   *
+   * Exported so a caller CAN size-check BEFORE mutating anything. Checking the
+   * bare summary under-measures by the header (description + quoted anchor) and
+   * by any comment/query text the caller folded in — and since the rewrite
+   * happens AFTER the truncation, an under-measure loses the span with the note
+   * unrecorded.
+   */
+  recapNoteSize(description: string, additionalMessage: string, expectedAnchorId?: string): number | null {
+    // null when the anchor moved — the rewind will refuse for the same reason.
+    const resolved = this.resolveAnchor(expectedAnchorId);
+    if (!resolved) return null;
+    return buildRecapNote(description, resolved.anchorMessage, additionalMessage).length;
   }
 
   // === Private Helpers ===
@@ -1007,6 +1251,17 @@ export class Triologue {
     // be gone — drop it rather than replay into a truncated context.
     this.dropDeferredInputs(`truncateAndRecount(${event})`);
     this.emitControl(event);
+  }
+
+  /**
+   * The character limit above which `tool()` refuses a result and dumps it to
+   * a longtext file instead. Exposed so a caller that is ABOUT to hand over a
+   * large result can refuse it before mutating anything — `tool()` throws
+   * after its ledger bookkeeping, so "append then catch" cannot roll back
+   * cleanly. See handleRecapCall.
+   */
+  getResultThreshold(): number {
+    return this.options.resultThreshold;
   }
 
   /**

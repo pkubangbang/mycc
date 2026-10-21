@@ -1207,22 +1207,30 @@ it('should NOT trigger hint generation when message count < 6', async () => {
 
 #### A7: `src/tests/loop/states/hook-esc-recap.test.ts`
 
-**Branch**: `handleHook` — ESC during recap LLM call (hook.ts:268-275)
+**Branch**: `handleHook` — ESC during the recap forks
 
-**Code path under test**:
+**Code path under test** (current `handleRecapCall` — summary forks run through
+`handleRecapSpan`, which wraps BOTH forks in one spinner):
 ```typescript
-// hook.ts:245-275 (inside handleRecapCall)
-const summary = await handleRecap(fullMessages, allTools, checkpoint.description, escAware, comment, lastQueryForRecap, checkpointResult);
+const { summary, patch, patchError } = await handleRecapSpan(
+  fullMessages, anchor.span, allTools, description, mindmap, escAware, comment, lastQueryForRecap,
+);
 
-// Check for ESC cancellation
+// Check for ESC cancellation — the triologue is still untouched at this point.
 if (summary.startsWith('[RECAP] Cancelled:')) {
-  triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
+  // Answer the recap call so the assistant→tool pair stays complete. The NOTE
+  // still lands in the recap call's own result here: nothing was rewound, so
+  // there is no anchor brief result to rewrite.
+  triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
+    reasoningContent: chat.assistantReasoningContent,
+  });
   triologue.tool('recap', summary, call.id);
   ctx.core.brief('warn', 'recap', summary);
-  // ESC pressed during recap - return to PROMPT immediately
+  // ESC pressed during recap - return STOP for centralized wrap-up
+  // (stop.ts handles startWrapUp + auto-off + setNeglectedMode).
+  // Neglected mode is NOT cleared here.
   if (agentIO.isNeglectedMode()) {
-    agentIO.setNeglectedMode(false);
-    return AgentState.PROMPT;
+    return AgentState.STOP;
   }
   turn.isFirstRound = false;
   return AgentState.COLLECT;

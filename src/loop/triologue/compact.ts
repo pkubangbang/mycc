@@ -16,6 +16,8 @@ import { retryChat, MODEL, forkChat } from '../../engine/chat-provider.js';
 import type { Message, Tool, ToolCall } from '../../types.js';
 import { minifyMessages } from '../../utils/llm-chat-minifier.js';
 import { getSessionContext, getSessionDir } from '../../config.js';
+import { briefToolCall, newBriefCallId } from './brief.js';
+import { PRISTINE_BRIEF_RESULT } from './recap-note.js';
 
 export interface CompactDeps {
   /** Raw (defensively filtered) conversation messages for transcript + minification. */
@@ -190,10 +192,6 @@ export async function runAutoCompact(deps: CompactDeps, focus?: string, signal?:
 
   const summaryPrefix = `[Conversation compressed. ${focusPrefix}Transcript: ${transcriptPath}]\n\n`;
 
-  // Resume instruction appended to the user summary so the agent re-engages
-  // with the unfinished work recorded there rather than blandly affirming.
-  const reorientInstruction =
-    '\n\n--- Resume: review "Current State" and "Recent Working Memory" above to re-orient on the in-flight task and decide the next step.';
 
   // The post-compact sequence is a 3-message brief tool-call round-trip:
   //
@@ -218,33 +216,96 @@ export async function runAutoCompact(deps: CompactDeps, focus?: string, signal?:
   // handoff to the next real assistant turn. The model's next response is
   // then a genuine reaction to its own brief + the summary, not a
   // continuation of a fabricated assertion.
-  const briefCallId = `compact_resume_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  // The call itself is built by the shared writer (triologue/brief.ts), the
+  // same one llm.ts recovery and hook.ts crossroad use, so this producer's
+  // shape cannot drift from theirs.
+  // A SYNTHESIZED call id, minted like every other synthetic producer (no
+  // hand-invented id scheme): opaque and unique is all it must be — recap reads
+  // the anchor's message, never its id.
+  const briefCall = briefToolCall(
+    COMPACT_RESUME_BRIEF_MESSAGE,
+    7,
+    newBriefCallId('compact_resume'),
+  );
+  return buildResumeRoundTrip({
+    briefCall,
+    summaryPrefix,
+    summary,
+    focusSection,
+    userQueryNote,
+  });
+}
+
+/**
+ * The resume instruction appended to the summary so the agent re-engages with
+ * the unfinished work recorded there rather than blandly affirming.
+ */
+export const COMPACT_RESUME_INSTRUCTION =
+  '\n\n--- Resume: review "Current State" and "Recent Working Memory" above to re-orient on the in-flight task and decide the next step.';
+
+export const COMPACT_RESUME_BRIEF_MESSAGE =
+  'Re-orienting on the compacted summary to resume the in-flight task.';
+
+/**
+ * Build the post-compact 3-message round-trip that `replaceAll` installs.
+ *
+ * Extracted from runAutoCompact so tests can exercise the REAL producer. This
+ * brief is the recap FLOOR: compact() replaces the entire conversation with
+ * this round-trip, making it the ONLY brief left, so anything that made it
+ * ineligible as an anchor would leave recap with no anchor at all after every
+ * compaction — a hand-built fixture cannot catch that; it silently tests a
+ * shape production no longer produces (exactly the P1 this extraction exists
+ * to prevent recurring).
+ *
+ * THE RULE: `MessageStore.briefIndices` / `Triologue.currentAnchorIndex` skip assistant messages marked
+ * `synthetic: true` (types.ts Message.synthetic). Those are the INCIDENTAL
+ * briefs — llm.ts empty-output recovery and hook.ts crossroad — whose text is
+ * boilerplate the model should not be rewound to. This floor brief is
+ * deliberately left UNMARKED: no marker means "anchors", which is exactly what
+ * the floor needs. Never set `synthetic` on this message.
+ *
+ * The function OWNS the user-message assembly (prefix, body, focus, query note
+ * and the resume instruction) rather than taking a pre-joined string: an
+ * earlier signature took `userContent` from the caller, which let the
+ * extraction itself drop the resume instruction and still type-check — the
+ * invariant it exists to protect, lost to the refactor that created it. It
+ * also owns WHERE the brief call lands (the assistant message's `tool_calls`
+ * and the matching tool result's `tool_call_id`) so the two can never
+ * disagree about the id.
+ */
+export function buildResumeRoundTrip(args: {
+  briefCall: ToolCall;
+  summaryPrefix: string;
+  summary: string;
+  focusSection: string;
+  userQueryNote: string;
+}): Message[] {
+  const { briefCall, summaryPrefix, summary, focusSection, userQueryNote } = args;
   return [
     {
       role: 'user',
-      content: `${summaryPrefix}${summary}${focusSection}${userQueryNote}${reorientInstruction}`,
+      content: `${summaryPrefix}${summary}${focusSection}${userQueryNote}${COMPACT_RESUME_INSTRUCTION}`,
     },
     {
       role: 'assistant',
       content: '',
-      tool_calls: [
-        {
-          id: briefCallId,
-          function: {
-            name: 'brief',
-            arguments: {
-              message: 'Re-orienting on the compacted summary to resume the in-flight task.',
-              confidence: 7,
-            },
-          },
-        },
-      ] as ToolCall[],
+      // NOTE: this assistant message carries NO `synthetic` marker —
+      // deliberately. `synthetic: true` marks an INCIDENTAL brief (llm.ts
+      // empty-output recovery, hook.ts crossroad) that recap must skip,
+      // because its text is boilerplate. This one is the FLOOR: after a
+      // compaction it is the only brief left, so marking it would leave recap
+      // with no anchor at all. The call id is an opaque unique id and carries
+      // no meaning.
+      tool_calls: [briefCall],
     },
     {
       role: 'tool',
       tool_name: 'brief',
-      content: 'OK',
-      tool_call_id: briefCallId,
+      // The PRISTINE success result — the single literal lives in
+      // triologue/recap-note.ts. recap REWRITES this in place with the span
+      // summary, which is what marks this floor brief as consumed.
+      content: PRISTINE_BRIEF_RESULT,
+      tool_call_id: briefCall.id,
     },
   ];
 }

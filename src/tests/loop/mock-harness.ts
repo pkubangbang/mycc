@@ -10,7 +10,7 @@
  * | Symbol | LLM Response        | Path                                        |
  * |--------|---------------------|---------------------------------------------|
  * | T      | tool_calls (bash)   | HOOK→TOOL→COLLECT (normal tool round)       |
- * | H      | tool_calls (ckpt)   | HOOK→COLLECT (checkpoint/recap/blocked/etc) |
+ * | H      | tool_calls (recap)  | HOOK→COLLECT (recap/blocked/etc)             |
  * | W      | text-only           | HOOK→STOP→COLLECT (interactive: awaitTeammates holds a teammate question) |
  * | E      | throw Error         | LLM→PROMPT (ESC/empty-exhausted/error-decl) |
  * | X      | text-only           | HOOK→PROMPT (recap ESC / catch error)       |
@@ -166,7 +166,7 @@ export class MockHarness {
     }));
 
     // --- chat-helpers ---
-    // startSpinner included because hook.ts → checkpoint-recap.ts now starts
+    // startSpinner included because hook.ts → recap-rewind.ts now starts
     // the recap spinner from this (transitive) import chain; a mock that omits
     // it fails with "No 'startSpinner' export is defined on the mock".
     vi.mock('../../../engine/chat-helpers.js', () => ({
@@ -205,13 +205,8 @@ export class MockHarness {
         skipPendingTools = vi.fn();
         getTokenCount = vi.fn(() => 0);
         getTokenThreshold = vi.fn(() => 8000);
-        getCheckpointManager = vi.fn(() => ({
-          findOpen: vi.fn(() => null),
-          findById: vi.fn(() => null),
-          findAll: vi.fn(() => []),
-          generateId: vi.fn(() => 'deadbeef'),
-          recap: vi.fn(),
-        }));
+        getLastBrief = vi.fn(() => null);
+        rewindToLastBrief = vi.fn(() => null);
         generateHintRound = vi.fn(async () => 'hint');
       }
       return { Triologue: TriologueStub };
@@ -246,7 +241,7 @@ export class MockHarness {
    *
    * Symbol → Response:
    *  - T: tool_calls (bash) — HOOK returns TOOL, TOOL returns COLLECT
-   *  - H: tool_calls (checkpoint) — HOOK returns COLLECT (meta-tool path)
+   *  - H: tool_calls (recap) — HOOK returns COLLECT (meta-tool path)
    *  - W: text-only — HOOK returns STOP, STOP awaitTeammates returns COLLECT
    *  - E: throw Error — simulates ESC/empty-exhausted/error-declined (LLM→PROMPT)
    *  - X: text-only — HOOK catch error fires, HOOK→PROMPT
@@ -270,11 +265,12 @@ export class MockHarness {
         });
 
       case 'H':
-        // Hook-blocked / checkpoint / recap / crossroad / compact path:
-        // LLM produces a checkpoint meta-tool call, which HOOK intercepts
-        // and returns COLLECT (meta-tool handler returns COLLECT).
+        // Hook-blocked / recap / crossroad / compact path:
+        // LLM produces a recap meta-tool call, which HOOK intercepts.
+        // The stub triologue has no anchor brief (getLastBrief → null), so
+        // handleRecapCall fails gracefully and returns COLLECT.
         return createMockChatResponse({
-          toolCalls: [createMockToolCall('checkpoint', { description: 'test' })],
+          toolCalls: [createMockToolCall('recap', { description: 'test', comment: 'continue' })],
         });
 
       case 'W':

@@ -170,7 +170,7 @@ const commonAxes = [
 
 /**
  * Lead agent-memory section. Adds lead-only coordination (teammates, peers,
- * checkpoint/recap context compression) and communication channels on top of
+ * recap rewind context compression) and communication channels on top of
  * the shared axes. The lead reaches the user through the `agent >>` prompt,
  * NOT via a tool — so `question` is absent here (it is child-only).
  */
@@ -179,8 +179,39 @@ export function buildLeadAgentMemorySection(): string {
     '## Agent Memory',
     'You have structured capability modules beyond basic file I/O. They organize along a few conceptual axes:',
     ...commonAxes,
-    'You also coordinate: spawn/await teammates, broadcast, discover peer instances, and compress exploration via checkpoint/recap (lead-only).',
+    'You also coordinate: spawn/await teammates, broadcast, discover peer instances, and rewind your own exploration (see "Briefs and Recap" below).',
     'Communication is async (mail_to), status (brief), or topic-shift (mycc_title).',
+    '',
+    buildBriefRecapSection(),
+  ].join('\n');
+}
+
+// ============================================================================
+// Briefs and Recap Section (lead-only — teammates must never see it)
+// ============================================================================
+
+/**
+ * The recap contract, stated ONLY here and in the recap tool's description
+ * (`scope: ['main']`). It must never go into `brief`'s tool description:
+ * `brief` is `scope: ['main', 'child']`, so every teammate receives that
+ * description, and teammates are not allowed to call recap. Teaching a child
+ * about a rewind it cannot perform is a pure distraction — and the rewind
+ * rule would invite child briefs written for an audience that will never
+ * rewind to them.
+ *
+ * Lead-only by construction: this builder is called from
+ * buildLeadAgentMemorySection() only. The teammate prompt assembles
+ * buildTeammateAgentMemorySection() + buildCommonSections(), neither of which
+ * reaches it (src/tests/loop/prompts/brief-recap-scope.test.ts guards this).
+ */
+export function buildBriefRecapSection(): string {
+  return [
+    '## Briefs and Recap',
+    'Every `brief` is a recap anchor — but only YOU (the lead) can call `recap`; teammates cannot.',
+    '- A brief anchors once at least one message follows its round-trip (another brief counts), and must be the sole call of its turn.',
+    '- `recap` rewinds to that brief and rewrites its tool result in place: `OK Note, a recap has reset the conversation here with summary: …`.',
+    '- It is repeatable: each call rewinds one brief further back, and new activity re-arms the same anchor (the note is overwritten, never stacked).',
+    '- So write briefs as the record you would want to survive the rewind — conclusion first, then the evidence.',
   ].join('\n');
 }
 

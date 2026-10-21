@@ -6,7 +6,7 @@
  * layer (store / compact / pending-tools / tp-fix) but omits the lead-only
  * feature domains:
  *   - wrap-up lifecycle (ESC interrupt paths are main-process only)
- *   - checkpoint manager (checkpoint/recap is a lead-loop concern)
+ *   - recap rewind (recap is a lead-loop concern)
  *   - hint round (children request guidance via mail_to instead)
  *   - result-threshold longtext dump (teammates accept large tool results as-is)
  *   - loadRestoration / clear (teammate transcripts are write-only JSONL)
@@ -285,8 +285,14 @@ export class TriologueLite {
     // Resolve toolCallId if not provided
     let resolvedId = toolCallId;
     if (!resolvedId) {
-      // Find the next pending tool call matching this function name
+      // Prefer a name match, but a provider/model can omit the ID and return
+      // a mismatched function name. Still close the oldest pending slot so the
+      // ledger cannot remain wedged forever (parity with the lead facade's
+      // tool() in triologue.ts); validateAlignment records the mismatch.
       resolvedId = this.ledger.findByName(functionName);
+      if (!resolvedId) {
+        resolvedId = this.ledger.getOrder()[0];
+      }
     }
 
     // Validate alignment
@@ -308,8 +314,17 @@ export class TriologueLite {
 
   /**
    * Add an assistant message
+   *
+   * Signature mirrors the lead facade's `Triologue.agent` (triologue.ts): the
+   * message itself is positional, all optional metadata travels in `opts`, so
+   * the two classes stay interchangeable at their shared call sites.
    */
-  agent(content: string, toolCalls?: ToolCall[], reasoningContent?: string): void {
+  agent(
+    content: string,
+    toolCalls?: ToolCall[],
+    opts?: { reasoningContent?: string; synthetic?: boolean },
+  ): void {
+    const reasoningContent = opts?.reasoningContent;
     const lastRole = this.getLastRole();
 
     // Reject invalid transitions

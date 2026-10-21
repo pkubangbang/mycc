@@ -199,7 +199,7 @@ export const pathGenerator = {
  * Since MockHarness mocks state-machine.js (including AgentStateMachine),
  * we cannot use the real AgentStateMachine.run(). The real state handlers
  * also import many modules NOT mocked by MockHarness (autoState, config,
- * hook-preprocessor, checkpoint-recap, skill-dedup, worktree-store, etc.),
+ * hook-preprocessor, recap-rewind, skill-dedup, worktree-store, etc.),
  * so calling them directly would throw on unmocked dependencies.
  *
  * Instead, drivePath simulates the state machine loop: it walks through the

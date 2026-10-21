@@ -1,63 +1,22 @@
 /**
- * checkpoint-recap.ts - Shared checkpoint and recap logic
+ * recap-rewind.ts - Recap span summarization + mindmap patch decision
  *
- * Used by both lead agent (hook.ts) and teammate agents (teammate-worker.ts).
- * These are meta-tools that need triologue access for message management.
+ * recap is a META-TOOL: its tool definition exists for LLM visibility, but the
+ * real work happens in the state machine (hook.ts) because it needs triologue
+ * access, which is not part of AgentContext.
+ *
+ * The rewind itself (truncate at the last brief + append the merge note) lives
+ * in the triologue facade — see Triologue.getLastBrief() / rewindToLastBrief().
+ * This module only produces the TEXT that goes into that note, plus the
+ * concurrent mindmap patch decision.
  */
 
-import chalk from 'chalk';
-import type { Message, TodoModule, Tool } from '../types.js';
+import type { Message, Tool } from '../types.js';
 import type { Mindmap, MindmapPatchAction, Node } from '../mindmap/types.js';
 import { get_node } from '../mindmap/get-node.js';
-import type { Triologue } from './triologue.js';
 import { forkChat } from '../engine/chat-provider.js';
+import { StreamAbortedError } from '../engine/chat-helpers.js';
 import { startSpinner, stopSpinner } from '../engine/chat-helpers.js';
-
-/**
- * Core module interface (common between AgentContext and ChildContext)
- */
-interface CoreModule {
-  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean }): void;
-}
-
-/**
- * Context interface for checkpoint/recap handlers
- */
-export interface CheckpointContext {
-  core: CoreModule;
-  triologue: Triologue;
-  todo: TodoModule;
-}
-
-/**
- * Result from checkpoint creation
- */
-export interface CheckpointResult {
-  success: boolean;
-  result: string;
-  id: string;
-  description: string;
-  ifAbandoned: string;
-}
-
-/**
- * Validate that checkpoint is called alone (no other tools in same turn)
- */
-export function validateCheckpointIsolation(toolCalls: Array<{ function: { name: string } }>): { valid: boolean; message?: string } {
-  const hasCheckpoint = toolCalls.some(c => c.function.name === 'checkpoint');
-  if (!hasCheckpoint) {
-    return { valid: true };
-  }
-  
-  if (toolCalls.length > 1) {
-    return {
-      valid: false,
-      message: 'Checkpoint must be called alone. Other tools cannot be used in the same turn.',
-    };
-  }
-  
-  return { valid: true };
-}
 
 /**
  * Validate that recap is called alone (no other tools in same turn)
@@ -76,122 +35,6 @@ export function validateRecapIsolation(toolCalls: Array<{ function: { name: stri
   }
   
   return { valid: true };
-}
-
-/**
- * Handle checkpoint meta-tool
- * Creates a checkpoint marker in the message history.
- * NOTE: Does NOT add the checkpoint marker - that's done by the caller after tool response.
- */
-export function handleCheckpoint(
-  args: Record<string, unknown>,
-  ctx: CheckpointContext
-): CheckpointResult {
-  const triologue = ctx.triologue;
-  const description = args.description as string;
-  const ifAbandoned = args.if_abandoned as string;
-
-  if (!description || typeof description !== 'string' || description.trim() === '') {
-    return { 
-      success: false, 
-      result: 'Error: description is required and must be a non-empty string.', 
-      id: '', 
-      description: '',
-      ifAbandoned: '',
-    };
-  }
-
-  if (!ifAbandoned || typeof ifAbandoned !== 'string' || ifAbandoned.trim() === '') {
-    return {
-      success: false,
-      result: 'Error: if_abandoned is required and must be a non-empty string. Declare your original direction so recap-abandon has continuity context.',
-      id: '',
-      description: '',
-      ifAbandoned: '',
-    };
-  }
-
-  // Check for existing open checkpoint
-  const checkpoints = triologue.getCheckpointManager();
-  const existingCheckpoint = checkpoints.findOpen();
-  if (existingCheckpoint) {
-    return { 
-      success: false,
-      result: `Error: Checkpoint already exists: ${existingCheckpoint.id} "${existingCheckpoint.description}". Call recap first to close it, or remove it if abandoned.`, 
-      id: '', 
-      description: '',
-      ifAbandoned: '',
-    };
-  }
-
-  // Generate checkpoint ID
-  const id = checkpoints.generateId();
-
-  // Auto-create a todo item tracking this checkpoint
-  ctx.todo.createTodo(`Checkpoint: ${description}`, id);
-
-  // Get context length at checkpoint creation
-  const tokenCount = triologue.getTokenCount();
-  const tokenThreshold = triologue.getTokenThreshold();
-  const usagePercent = Math.round((tokenCount / tokenThreshold) * 100);
-
-  // Capture "before" state: last user query and recent assistant context
-  const lastUserQuery = triologue.getLastUserQuery();
-  const rawMessages = triologue.getMessagesRaw();
-  let recentAssistantContext = '';
-  // Scan backwards from the end to find the last assistant message with content
-  for (let i = rawMessages.length - 1; i >= 0; i--) {
-    const msg = rawMessages[i];
-    if (msg.role === 'assistant' && msg.content && msg.content.trim()) {
-      // Take up to 200 chars of the last assistant response for context
-      const truncated = msg.content.length > 200
-        ? `${msg.content.slice(0, 200)}...`
-        : msg.content;
-      recentAssistantContext = truncated;
-      break;
-    }
-  }
-
-  // Build the "before state" section
-  const beforeStateParts: string[] = [];
-  beforeStateParts.push('### Current State (at checkpoint creation)');
-  if (lastUserQuery) {
-    beforeStateParts.push(`**Last user instruction**: "${lastUserQuery}"`);
-  }
-  if (recentAssistantContext) {
-    beforeStateParts.push(`**Recent context**: ${recentAssistantContext}`);
-  }
-  beforeStateParts.push('');
-  beforeStateParts.push(`**Exploration Goal**: ${description}`);
-  const beforeStateSection = beforeStateParts.join('\n');
-
-  // Brief the user (simple, colorized)
-  const coloredId = chalk.cyan.bold(id);
-  const coloredTokens = chalk.yellow(`${tokenCount.toLocaleString()}`);
-  const coloredThreshold = chalk.gray(`${tokenThreshold.toLocaleString()}`);
-  ctx.core.brief('info', 'checkpoint',
-    `${description} (${coloredTokens}/${coloredThreshold} tokens)`,
-    `id: ${coloredId}`,
-    { synthetic: true }
-  );
-
-  return {
-    success: true,
-    result: `Checkpoint created: ${id}
-
-Description: ${description}
-Original direction: ${ifAbandoned}
-Context: ${tokenCount} / ${tokenThreshold} tokens (${usagePercent}%)
-
-${beforeStateSection}
-
-Next steps:
-1. Perform your subtask (read files, run commands, etc.)
-2. When done, call recap({ checkpoint_id: "${id}" }) to compress messages into a summary`,
-    id,
-    description,
-    ifAbandoned,
-  };
 }
 
 /**
@@ -214,26 +57,19 @@ Next steps:
  * constrained to text-only at the API level. The prompt still forbids tool
  * use in prose as a belt-and-suspenders measure.
  */
-function buildRecapPrompt(description: string, lastUserQuery?: string, comment?: string, checkpointResult?: string): string {
+function buildRecapPrompt(description: string, spanLength: number, lastUserQuery?: string, comment?: string): string {
   const topicLine = lastUserQuery
-    ? `\n- **User's latest query**: "${lastUserQuery}" — compare with the checkpoint description; if they diverge, flag a topic change.`
+    ? `\n- **User's latest query**: "${lastUserQuery}" — compare with the recap description; if they diverge, flag a topic change.`
     : '';
 
-  // Extract the "before state" section from the checkpoint result if available
-  let beforeStateSection = '';
-  if (checkpointResult) {
-    const beforeMatch = checkpointResult.match(/### Current State \(at checkpoint creation\)[\s\S]*?(?=\n\nNext steps:|$)/);
-    if (beforeMatch) {
-      beforeStateSection = `\n### Before State (captured at checkpoint creation)\n${beforeMatch[0].trim()}\n\nCompare this "before" state with what was actually found during exploration. Did the exploration stay on track? Were there any topic changes or unexpected discoveries?\n`;
-    }
-  }
+  return `[RECAP] Collapse the conversation back to the brief that opens the last ${spanLength} message(s). Label: "${description}".
 
-  return `[RECAP] Close the checkpoint "${description}". You have access to the full conversation history above.
+You have access to the FULL conversation history above. Only the messages AFTER that brief are about to be deleted and replaced by your summary — the brief itself and everything before it stays in context, so summarize that span alone and use the earlier messages strictly as background.
 
-Review everything from when the checkpoint was created up to this recap call. Produce a concise structured note covering:
+Produce a concise structured note covering:
 
 ### Exploration Coverage
-For EVERY file examined during this checkpoint span:
+For EVERY file examined after the brief:
 - path → one-line key takeaway (what was learned, found, or decided)
 - Mark files that were ruled out as irrelevant with "(irrelevant)"
 This section serves as a "do not re-read" list for subsequent turns.
@@ -242,12 +78,12 @@ This section serves as a "do not re-read" list for subsequent turns.
 Concrete findings with specificity: function names, line numbers, patterns identified, bugs found. Avoid vague descriptions.
 
 ### Current State
-What the agent now knows that it did NOT know before the checkpoint. This MUST be detailed enough that subsequent turns do NOT need to re-verify or re-investigate any findings already made. Think of this as the agent's updated "mental model" after the exploration.
+What the agent now knows that it did NOT know before. This MUST be detailed enough that subsequent turns do NOT need to re-verify or re-investigate any findings already made. Think of this as the agent's updated "mental model" after the work.
 
 ### Next Steps
 What still needs to be done, ordered by priority.${topicLine}
 ${comment ? `\n**Direction comment (provided, will be placed last as the steering directive):** "${comment}" — make the Next Steps consistent with this direction.` : ''}
-${beforeStateSection}
+
 **CRITICAL RULES:**
 - The Exploration Coverage section is a "do not re-read" list — include every file
 - The Current State section is a "do not re-verify" record — be specific
@@ -266,31 +102,33 @@ ${beforeStateSection}
  * sampling parameter, not part of the cached token sequence). See the CACHE
  * INVARIANT on buildRecapPrompt for the full rationale.
  *
- * @param fullMessages - Full triologue messages before truncation
+ * @param fullMessages - Full triologue messages before truncation (cache prefix)
+ * @param span - The messages the rewind will delete; the summary covers ONLY these
  * @param allTools - All tools for prompt cache preservation
- * @param description - Checkpoint description (focus for summarization)
+ * @param description - Recap label (focus for summarization)
  * @param escAware - Optional ESC-aware wrapper for lead agent
  * @param comment - REQUIRED for non-abandon recaps. The agent's directive that
  *                   determines the direction of the next turn; placed LAST in the
  *                   assembled note so it is the final steering instruction.
  * @param lastUserQuery - The user's most recent query, embedded as context
  *                         (not a steering directive) between summary and comment.
- * @param checkpointResult - The original checkpoint tool result (for "before state" context)
+ * @returns the `additionalMessage` half of the recap note — the triologue
+ *          prepends the [RECAP] header and the quoted anchor brief.
  */
 export async function handleRecap(
   fullMessages: Message[],
+  span: Message[],
   allTools: Tool[],
   description: string,
   escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>,
   comment?: string,
   lastUserQuery?: string,
-  checkpointResult?: string,
 ): Promise<string> {
   if (fullMessages.length === 0) {
     return '[RECAP] No messages to summarize.';
   }
 
-  const recapPrompt = buildRecapPrompt(description, lastUserQuery, comment, checkpointResult);
+  const recapPrompt = buildRecapPrompt(description, span.length, lastUserQuery, comment);
 
   let summary: string;
   if (escAware) {
@@ -305,7 +143,7 @@ export async function handleRecap(
       () => null as string | null
     );
     if (result === null) {
-      return `[RECAP] Cancelled: ESC pressed during summarization. Checkpoint "${description}" remains open.`;
+      return `[RECAP] Cancelled: ESC pressed during summarization. Nothing was collapsed — the span is still in context.`;
     }
     summary = result;
   } else {
@@ -316,10 +154,12 @@ export async function handleRecap(
 
   summary = summary || '(no summary)';
 
-  // Build the compact note that replaces the entire checkpoint span.
+  // Assemble the `additionalMessage` half of the recap note.
   // ORDERING (matters for LLM direction-following):
-  //   1. checkpoint-desc  — which checkpoint closed (anchor)
-  //   2. recap-summary    — the structured summary body (what was found)
+  // The [RECAP] header + quoted anchor brief are prepended by
+  // Triologue.rewindToLastBrief() (it captures the anchor text BEFORE the
+  // truncation deletes the brief's own round-trip).
+  //   1. recap-summary    — the structured summary body (what was found)
   //   3. last-user-query  — context note: the user's most recent instruction
   //                         (background, not the steering directive)
   //   4. recap-comment    — the agent's directive, placed LAST so it is the
@@ -327,8 +167,6 @@ export async function handleRecap(
   //                         This is the most important field: it decides the
   //                         direction of the next turn.
   const parts: string[] = [];
-  parts.push(`[RECAP] Checkpoint "${description}" closed.`);
-  parts.push('');
   parts.push('Some actions have been performed before this recap but the details have been omitted. Here is the summary:');
   parts.push('');
   parts.push(summary);
@@ -344,14 +182,11 @@ export async function handleRecap(
   return parts.join('\n');
 }
 
-// addCheckpointMarker removed — checkpoint is now identified via tool message
-// (see isCheckpointMessage in triologue.ts)
-
 // ============================================================================
 // MINDMAP PATCH: forkChat #2 — concurrent patch decision
 //
 // Each recap launches TWO concurrent forkChat calls via Promise.all (see
-// handleRecapWithPatch). forkChat #1 (handleRecap, unchanged) produces the
+// handleRecapSpan). forkChat #1 (handleRecap, unchanged) produces the
 // recap summary. forkChat #2 (generatePatchAction, below) independently
 // decides whether ONE mindmap node should be added/updated/deleted.
 //
@@ -416,19 +251,19 @@ function generateTreeOutline(node: Node): string {
  * should be changed. It does NOT mix in summarization (that's forkChat #1's
  * job). Output is either "none" or a single JSON object.
  *
- * @param description - The checkpoint description (focus context)
+ * @param description - The recap label (focus context)
  * @param treeOutline - The path-only tree outline (from generateTreeOutline)
  * @param feedback - Optional validation error feedback from a prior invalid response
  * @returns The assembled prompt string
  */
 function buildPatchPrompt(description: string, treeOutline: string, feedback: string): string {
-  return `[MINDMAP PATCH] You just completed a checkpoint: "${description}".
-Review the conversation history from when the checkpoint was created up to now.
+  return `[MINDMAP PATCH] You just completed a recap: "${description}".
+Review the conversation history since the brief that opened this recap.
 
 Here is the current mindmap tree (paths only, [M] = MYCC.md-sourced, [P] = patch-added):
 ${treeOutline}
 
-Based on what was learned during this checkpoint, decide if ONE mindmap node should be changed.
+Based on what was learned during this recap span, decide if ONE mindmap node should be changed.
 You may choose ONE of:
 - ADD: add a child node to an existing parent (provide path=parent_path, title, text)
 - UPDATE: update an existing node's text (provide path=target_path, text)
@@ -470,13 +305,11 @@ interface ParsedPatchResponse {
  *
  * @param response - The raw LLM response text
  * @param mindmap - The current mindmap (for path validation)
- * @param checkpointId - The checkpoint id to record in the patch
  * @returns ParsedPatchResponse with either a valid patch, null (none), or an error
  */
 export function parsePatchResponse(
   response: string,
   mindmap: Mindmap,
-  checkpointId: string,
 ): ParsedPatchResponse {
   const trimmed = response.trim();
 
@@ -527,7 +360,7 @@ export function parsePatchResponse(
         title,
         text,
         timestamp: new Date().toISOString(),
-        checkpoint_id: checkpointId,
+        checkpoint_id: '', // legacy field — checkpoints are gone; kept for old jsonl
         reason,
         mindmap_hash: mindmap.hash,
       },
@@ -554,7 +387,7 @@ export function parsePatchResponse(
         path,
         text,
         timestamp: new Date().toISOString(),
-        checkpoint_id: checkpointId,
+        checkpoint_id: '', // legacy field — checkpoints are gone; kept for old jsonl
         reason,
         mindmap_hash: mindmap.hash,
       },
@@ -568,7 +401,7 @@ export function parsePatchResponse(
       action: 'delete',
       path,
       timestamp: new Date().toISOString(),
-      checkpoint_id: checkpointId,
+      checkpoint_id: '', // legacy field — checkpoints are gone; kept for old jsonl
       reason,
       mindmap_hash: mindmap.hash,
     },
@@ -588,9 +421,8 @@ export function parsePatchResponse(
  *
  * @param fullMessages - Full triologue messages before truncation (shared with #1)
  * @param allTools - All tools for prompt cache preservation (shared with #1)
- * @param description - Checkpoint description (focus context)
+ * @param description - Recap label (focus context)
  * @param mindmap - Current mindmap (for tree outline + path validation)
- * @param checkpointId - The checkpoint id being closed
  * @param escAware - Optional ESC-aware wrapper (lead agent); teammates omit it
  * @returns A validated MindmapPatchAction, or null if none/invalid/ESC
  */
@@ -599,7 +431,6 @@ export async function generatePatchAction(
   allTools: Tool[],
   description: string,
   mindmap: Mindmap,
-  checkpointId: string,
   escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>,
 ): Promise<MindmapPatchAction | null> {
   let feedback = '';
@@ -620,7 +451,7 @@ export async function generatePatchAction(
       response = await forkChat(fullMessages, allTools, prompt, undefined, 'none');
     }
 
-    const parsed = parsePatchResponse(response, mindmap, checkpointId);
+    const parsed = parsePatchResponse(response, mindmap);
     if (!parsed.error) {
       return parsed.patch;  // valid (including null = "none")
     }
@@ -637,10 +468,21 @@ export async function generatePatchAction(
  * Result of handleRecapWithPatch: the recap summary + optional patch action.
  */
 export interface RecapWithPatchResult {
-  /** The structured recap summary note (from forkChat #1) */
+  /** The recap summary body produced by forkChat #1. Doubles as the
+   *  `additionalMessage` the caller hands to Triologue.rewindToLastBrief()
+   *  (the facade prepends the [RECAP] header + quoted anchor brief). */
   summary: string;
   /** A validated patch action, or null if none was produced (from forkChat #2) */
   patch: MindmapPatchAction | null;
+  /**
+   * Non-null when the mindmap-patch fork failed. The patch is best-effort, so
+   * this never fails the recap — but it must not vanish silently either: the
+   * jsonl-validation failure is reported via `brief('warn', 'mindmap-patch')`,
+   * so a dropped patch deserves the same visibility. Reported by the CALLER
+   * (hook.ts), not from here: agentIO is process-wide and this module is also
+   * used by teammate recaps.
+   */
+  patchError: string | null;
 }
 
 /**
@@ -658,27 +500,25 @@ export interface RecapWithPatchResult {
  * already completed. This is acceptable because retries are rare (the patch
  * prompt is simple) and the summary is already available for the caller.
  *
- * @param fullMessages - Full triologue messages before truncation
+ * @param fullMessages - Full triologue messages before truncation (cache prefix)
+ * @param span - The messages the rewind will delete; the ONLY region to summarize
  * @param allTools - All tools for prompt cache preservation
- * @param description - Checkpoint description
+ * @param description - Recap label (what this collapse is about)
  * @param mindmap - Current mindmap (for patch decision); if absent, skip patch
- * @param checkpointId - The checkpoint id being closed
  * @param escAware - Optional ESC-aware wrapper (lead agent)
  * @param comment - REQUIRED for non-abandon recaps (steering directive)
  * @param lastUserQuery - The user's most recent query (context, not directive)
- * @param checkpointResult - The original checkpoint tool result (before-state)
- * @returns { summary, patch } — summary always present, patch may be null
+ * @returns { additionalMessage, patch } — additionalMessage always present, patch may be null
  */
-export async function handleRecapWithPatch(
+export async function handleRecapSpan(
   fullMessages: Message[],
+  span: Message[],
   allTools: Tool[],
   description: string,
   mindmap: Mindmap | null | undefined,
-  checkpointId: string,
   escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>,
   comment?: string,
   lastUserQuery?: string,
-  checkpointResult?: string,
 ): Promise<RecapWithPatchResult> {
   // ── SPINNER: the caller owns the wait indicator ──
   // forkChat is permanently noSpinner (see its header), so retryChat paints
@@ -699,24 +539,59 @@ export async function handleRecapWithPatch(
   // finally{} guarantees the line is cleared on success, on ESC (escAware
   // resolves null — it only logs verbosely, so the spinner never hides an ESC
   // hint) and on a thrown error.
-  startSpinner('Recapping checkpoint');
+  startSpinner('Recapping context');
   let summary: string;
   let patch: MindmapPatchAction | null;
+  // Set by the patch fork's catch — surfaced to the caller, never fatal.
+  let patchError: string | null = null;
   try {
     // ── Launch both forkChats concurrently via Promise.all ──
     // Both fork from the same triologue messages — neither depends on the other's output.
-    [summary, patch] = await Promise.all([
-      // forkChat #1: Recap Summary (unchanged from current handleRecap)
-      handleRecap(fullMessages, allTools, description, escAware, comment, lastUserQuery, checkpointResult),
-      // forkChat #2: Patch Decision (independent, concurrent) — skip if no mindmap
-      mindmap
-        ? generatePatchAction(fullMessages, allTools, description, mindmap, checkpointId, escAware)
-        : Promise.resolve(null),
-    ]);
+    //
+    // forkChat only receives an AbortSignal via escAware (ESC), so a provider
+    // error on one fork does not cancel the other. We deliberately do NOT
+    // drain the abandoned sibling: awaiting it would block the finally — and
+    // therefore stopSpinner — for unbounded time if it never settles.
+    //
+    // REJECTION POLICY — the two forks are not equal:
+    //   • summary fork  — REQUIRED. Its rejection must reach the caller (it
+    //     becomes a failed recap), so it is awaited untouched.
+    //   • patch fork    — BEST-EFFORT. A mindmap patch is a nicety; letting it
+    //     reject would have Promise.all throw away the already-paid summary
+    //     and dump the turn to PROMPT. It is neutralised to `null` and only
+    //     logged. Neutralise means `.catch` returns a value, NOT that it
+    //     merely logs — a logging-only handler still leaves the rejection to
+    //     propagate through Promise.all.
+    const summaryFork = handleRecap(fullMessages, span, allTools, description, escAware, comment, lastUserQuery);
+    const patchFork: Promise<MindmapPatchAction | null> = mindmap
+      ? generatePatchAction(fullMessages, allTools, description, mindmap, escAware).catch((err: unknown) => {
+          // REACHABILITY: this branch is live but NARROW. escAware races
+          // forkChat against an ESC resolver (parent/core.ts:747); abort() fires
+          // synchronously (:724) while the sentinel resolves only after
+          // `await onCleanUp()` (:725), so forkChat usually rejects FIRST and
+          // the summary fork's rejection reaches the caller instead of the
+          // "[RECAP] Cancelled:" sentinel. The race is per-fork, so
+          // "summary resolves with the sentinel, patch rejects" is reachable —
+          // that interleaving is this handler's only entry point.
+          //
+          // StreamAbortedError does NOT mean "the recap is cancelled": any
+          // aborted stream raises it, including the teammate watchdog
+          // (context/teammate-worker.ts). So it is reported like any other
+          // patch failure, only shorter.
+          patchError = err instanceof StreamAbortedError
+            ? 'mindmap-patch fork aborted'
+            : `mindmap-patch fork failed: ${String(err)}`;
+          return null;
+        })
+      : Promise.resolve(null);
+    [summary, patch] = await Promise.all([summaryFork, patchFork]);
   } finally {
+    // Cleared on success, on ESC, and on a thrown error. A still-running
+    // sibling keeps streaming into a stopped spinner, which is harmless
+    // (startSpinner is non-refcounted; stopSpinner only clears the line).
     stopSpinner();
   }
 
-  return { summary, patch };
+  return { summary, patch, patchError };
 }
 

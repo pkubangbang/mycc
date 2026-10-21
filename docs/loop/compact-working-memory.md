@@ -84,6 +84,34 @@ Three messages ending in `tool`, so `getLastRole()` is `'tool'` after compact. T
 
 This replaces the previous 2-message `[summary, ack-assistant]` shape, where the synthetic assistant left `getLastRole() === 'assistant'`, so the next real `agent()` tripped `duplicate_assistant` and normal control flow depended on structural-violation recovery. The focus is a **section inside the existing user message**, not a fourth message.
 
+### 3.2b Interaction with recap (rewind)
+
+A non-synthetic `brief` is a **rewind anchor** once at least one message
+follows its round-trip; `recap` truncates at that anchor and rewrites its own
+tool result with the note (see `brief-and-recap-rewind.md`). Compaction and
+rewind compose as follows:
+
+- **Compaction is the floor.** `compact()` does `store.replaceAll(...)`, so it
+  destroys the whole conversation and with it every rewind anchor. `recap` can
+  never rewind past the most recent compaction — the history is gone.
+- **The resume brief is the floor anchor**: after a compaction it is the only
+  brief left, and `compact.ts` deliberately does NOT mark it `synthetic: true`
+  (that mark is reserved for the INCIDENTAL briefs from llm.ts empty-output
+  recovery and hook.ts crossroad, whose text is boilerplate). Because the
+  anchor rule needs activity AFTER the brief's round-trip, the
+  `compact_resume_*` pair does not anchor until something lands after it; once
+  it does, a `recap` at that point finds the floor pair with an empty span and
+  the handler declines (`[RECAP] Nothing to collapse — there is no new activity
+  past your last brief.`) rather than consuming it for nothing.
+- **The summary survives.** The compaction summary lives in the `user` message
+  *before* the resume brief, so a rewind at the floor keeps it
+  (`user(summary) → assistant(brief) → tool(result rewritten with the note)`).
+- **`lastUserQuery` survives both.** It is written only by `user()`; neither
+  `replaceAll` nor `truncateTo` touches it, so the recap note's
+  `**User's last query (context)**` line stays truthful.
+- **A recap note is ordinary content to compaction**: it sits in the store, so a
+  later `compact()` summarizes it like any other message.
+
 ### 3.3 Two concurrent LLM calls
 
 | Call | Engine | Input | Tools | Cache | Purpose |

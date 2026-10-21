@@ -1,42 +1,47 @@
 /**
- * recap.ts - Compress checkpoint messages into a summary
+ * recap.ts - Collapse the conversation back to the last brief
  *
  * Scope: ['main'] - Available to lead agent only
  *
  * NOTE: This is a META-TOOL. The tool definition is for LLM visibility,
- * but the actual execution happens in the state machine (hook.ts for lead,
- * teammate-worker.ts for child) because it needs access to triologue
- * which is not in AgentContext.
+ * but the actual execution happens in the state machine (hook.ts) because
+ * it needs access to triologue, which is not in AgentContext.
  *
- * Finds the checkpoint by ID and summarizes all messages from that point
- * into a concise summary, replacing the messages with the summary.
- * Does NOT add tool call/result messages to history (unlike regular tools).
+ * Every `brief` is a rewind anchor. recap truncates the conversation at the
+ * LAST (not-yet-consumed) brief and writes one note into that brief's own tool
+ * RESULT — replacing everything after it:
+ *
+ *   tool('brief', "OK Note, a recap has reset the conversation here with summary: \"…\"")
+ *
+ * so the brief's text and the summary of the deleted span both survive as a
+ * tool result. Calling recap again rewinds further back, to the brief before,
+ * and overwrites THAT brief's result with the new summary.
  */
 
 import type { ToolDefinition } from '../types.js';
 
 export const recapTool: ToolDefinition = {
   name: 'recap',
-  description: `Close a checkpoint and compress its messages into a summary. Set abandon=true to discard without summarizing (the checkpoint's if_abandoned direction is injected into the abandon note). Must be called alone (no other tools in same turn).
+  description: `Collapse the conversation back to your last \`brief\`, replacing everything after it with a short note. Use it when exploration has produced many messages that are no longer worth carrying. A brief becomes the rewind anchor once the conversation has moved past it (at least one message after its round-trip — another brief counts): its tool result is rewritten to "OK Note, a recap has reset the conversation here with summary: ..." so its text and the summary both survive, so keep briefs meaningful — they are what survives. Calling recap repeatedly rewinds progressively further — after a rewind the anchor's round-trip is last, so the next call rewinds to the brief before; new activity (even one more brief) re-arms that anchor, and a recap there overwrites its result with the new summary. It cannot rewind past a context compaction. Must be called alone (no other tools in the same turn).
 
-comment is REQUIRED and determines the direction of the next turn: write a clear, actionable directive for what should happen next based on what was discovered. It is placed at the END of the recap note — the last thing the conversation sees — so treat it as the steering instruction for subsequent work.`,
+Set abandon=true to collapse the span WITHOUT summarizing it (the work is discarded). comment is REQUIRED unless abandon, and determines the direction of the next turn: write a clear, actionable directive stating what should happen next. It is placed at the END of the note — the last thing the conversation sees — so treat it as the steering instruction for subsequent work.`,
   input_schema: {
     type: 'object',
     properties: {
-      checkpoint_id: {
+      description: {
         type: 'string',
-        description: 'The checkpoint ID returned by the checkpoint tool (8-character hash).',
+        description: 'REQUIRED. A short label for this collapse — what this stretch of work was about. Quoted in the note header.',
       },
       abandon: {
         type: 'boolean',
-        description: 'If true, discard messages without summarizing.',
+        description: 'If true, collapse without summarizing: the messages after the brief are discarded.',
       },
       comment: {
         type: 'string',
-        description: 'REQUIRED. A directive that determines the direction of the next turn: state what was concluded and what should happen next. Placed last in the recap note, so be specific and actionable — not a vague log entry.',
+        description: 'REQUIRED unless abandon. A directive that determines the direction of the next turn: state what was concluded and what should happen next. Placed last in the recap note, so be specific and actionable — not a vague log entry.',
       },
     },
-    required: ['checkpoint_id', 'comment'],
+    required: ['description'],
   },
   scope: ['main'],
   handler: () => {

@@ -1,5 +1,5 @@
 /**
- * checkpoint-recap-spinner.test.ts — the recap wait indicator.
+ * recap-rewind-spinner.test.ts — the recap wait indicator.
  *
  * Regression test for the "mycc looks stuck during recap" bug:
  *   forkChat hard-codes `noSpinner: true` (src/engine/chat-provider.ts), and
@@ -10,7 +10,7 @@
  *   running normally.
  *
  * The fix puts the spinner at the ORCHESTRATOR boundary instead of inside
- * forkChat: handleRecapWithPatch() owns ONE startSpinner/stopSpinner pair
+ * forkChat: handleRecapSpan() owns ONE startSpinner/stopSpinner pair
  * around its concurrent Promise.all. One pair (not one per fork) because the
  * spinner is a non-refcounted module-global: the first fork to settle would
  * otherwise stopSpinner() while the other is still streaming.
@@ -47,13 +47,19 @@ vi.mock('../../engine/chat-helpers.js', () => ({
 
 import { forkChat } from '../../engine/chat-provider.js';
 import { startSpinner, stopSpinner } from '../../engine/chat-helpers.js';
-import { handleRecapWithPatch } from '../../loop/checkpoint-recap.js';
+import { handleRecapSpan } from '../../loop/recap-rewind.js';
 import type { Mindmap } from '../../mindmap/types.js';
 import type { Message, Tool } from '../../types.js';
 
 // --- Fixtures ---------------------------------------------------------------
 
 const MESSAGES: Message[] = [
+  { role: 'user', content: 'do the thing' },
+  { role: 'assistant', content: 'working on it' },
+];
+
+/** The messages a rewind would delete — the region the summary covers. */
+const SPAN: Message[] = [
   { role: 'user', content: 'do the thing' },
   { role: 'assistant', content: 'working on it' },
 ];
@@ -88,7 +94,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-describe('handleRecapWithPatch — recap wait indicator (spinner)', () => {
+describe('handleRecapSpan — recap wait indicator (spinner)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -97,12 +103,12 @@ describe('handleRecapWithPatch — recap wait indicator (spinner)', () => {
     const gate = deferred<string>();
     vi.mocked(forkChat).mockImplementation(async () => gate.promise);
 
-    const pending = handleRecapWithPatch(
+    const pending = handleRecapSpan(
       MESSAGES,
+      SPAN,
       TOOLS,
       'explore the parser',
       null, // no mindmap → single fork
-      'abc12345',
     );
 
     // Let the startSpinner() + Promise.all setup run to the first await.
@@ -125,7 +131,7 @@ describe('handleRecapWithPatch — recap wait indicator (spinner)', () => {
     vi.mocked(forkChat).mockRejectedValue(new Error('network down'));
 
     await expect(
-      handleRecapWithPatch(MESSAGES, TOOLS, 'explore the parser', null, 'abc12345'),
+      handleRecapSpan(MESSAGES, SPAN, TOOLS, 'explore the parser', null),
     ).rejects.toThrow('network down');
 
     // A leaked spinner would leave the terminal line painted forever after a
@@ -138,12 +144,12 @@ describe('handleRecapWithPatch — recap wait indicator (spinner)', () => {
     // Summary fork returns prose; patch fork returns "none" (no patch warranted).
     vi.mocked(forkChat).mockResolvedValue('none');
 
-    await handleRecapWithPatch(
+    await handleRecapSpan(
       MESSAGES,
+      SPAN,
       TOOLS,
       'explore the parser',
       MINDMAP,
-      'abc12345',
     );
 
     // Both forks ran (summary + patch decision)...
@@ -163,12 +169,12 @@ describe('handleRecapWithPatch — recap wait indicator (spinner)', () => {
       cleanup: () => T,
     ): Promise<T> => cleanup();
 
-    const result = await handleRecapWithPatch(
+    const result = await handleRecapSpan(
       MESSAGES,
+      SPAN,
       TOOLS,
       'explore the parser',
       MINDMAP,
-      'abc12345',
       escAware,
     );
 

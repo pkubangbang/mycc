@@ -7,10 +7,22 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { PRISTINE_BRIEF_RESULT } from '../loop/triologue/recap-note.js';
 
+/**
+ * `brief` is shared by the lead AND teammates (`scope: ['main', 'child']`), so
+ * its description is visible to agents that can never call `recap`. It must
+ * therefore say nothing about recap or rewind anchors — that contract lives in
+ * the recap tool's own description (lead-only) and in the lead's system prompt
+ * (buildLeadAgentMemorySection). Do not re-add it here.
+ *
+ * `Must be called alone` STAYS: validateBriefIsolation rejects the whole turn
+ * for every caller, so a teammate batching brief with another tool must know
+ * the rule even though it is the lead who rewinds to these anchors.
+ */
 export const briefTool: ToolDefinition = {
   name: 'brief',
-  description: 'Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence score (0-10) indicating your certainty about the current state.',
+  description: 'Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence score (0-10) indicating your certainty about the current state. State the conclusion first, then the evidence. Must be called alone (no other tools in the same turn).',
   input_schema: {
     type: 'object',
     properties: {
@@ -59,6 +71,10 @@ export const briefTool: ToolDefinition = {
 
     // Use core.brief to send the message via IPC to parent
     ctx.core.brief('info', 'brief', message, `confidence: ${confidence * 10}%`);
-    return 'OK';
+    // The PRISTINE result (triologue/recap-note.ts): recap rewrites exactly
+    // this content in place with the span summary, so it must stay the single
+    // literal — a different string here would make the brief look consumed and
+    // quietly drop it as a rewind anchor.
+    return PRISTINE_BRIEF_RESULT;
   },
 };

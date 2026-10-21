@@ -17,13 +17,13 @@ Once the task is marked done, it will stay in the list for an extra week after a
 
 When updating the changelog, use the following procedure:
 
-1. **Create a checkpoint** using `checkpoint` tool to focus on the task.
+1. **Brief first** — call `brief` to state what you are about to do. The brief becomes a recap anchor, so write it as a conclusion, not a greeting.
 2. **Get git commits** for the target date range using `git log --since="YYYY-MM-DD" --until="YYYY-MM-DD" --pretty=format:"%h %ad %s" --date=short`.
 3. **Group commits by date** and summarize each day's changes into meaningful categories (e.g., "New Tools", "Fixes", "Refactoring", "Documentation").
 4. **Write category-style summaries** similar to the existing format (e.g., "- **feature name**: description").
 5. **Update the changelog file** by adding new date sections or appending to existing ones.
 6. **Clean up todo items** that appear in the changelog and are older than one week.
-7. **Call recap tool** to close the checkpoint and compress context.
+7. **Call `recap`** to collapse the work back to that brief and compress context. There is no checkpoint to close — `recap` alone rewinds to your last `brief`.
 
 # Change Log
 
@@ -113,6 +113,9 @@ When updating the changelog, use the following procedure:
 ### Tests
 - **Loop**: Cover deferred compact and bounded hint retries; cover the summary prompt contract.
 - **Prompt**: Preserve steering added during synthesis; import the synthesis provider in the steering race test.
+
+### Fixes
+- **Recap**: Provenance of an infrastructure-injected `brief` is now a property of the MESSAGE (`Message.synthetic`, marked at creation by `Triologue.agent(..., { synthetic: true })` in the `llm.ts` empty-output recovery and `hook.ts` crossroad paths) instead of a registry or a call-id convention — `MessageStore.findLastBriefAnchor` skips marked messages, so `recap` never rewinds to boilerplate. The marker is stripped on egress by `MessageStore.getFullMessages()`, so it can never reach a provider (and therefore never be echoed back as model output). The compaction resume brief stays UNMARKED — it is the floor.
 
 ## 2026-10-12
 ### Refactoring

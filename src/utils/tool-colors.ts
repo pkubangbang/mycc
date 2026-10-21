@@ -143,7 +143,6 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
   autoCompact: chalk.gray,
   eta_update: chalk.gray,
   config: chalk.gray,
-  checkpoint: chalk.gray,
   recap: chalk.gray,
   crossroad: chalk.gray,
   stop: chalk.gray,

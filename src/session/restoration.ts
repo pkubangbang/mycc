@@ -60,6 +60,10 @@ function readTriologue(filePath: string): Message[] {
     if (raw.reasoning_content !== undefined) msg.reasoning_content = raw.reasoning_content as string;
     if (raw.tool_call_id !== undefined) msg.tool_call_id = raw.tool_call_id as string;
     if (raw.hook_name !== undefined) msg.hook_name = raw.hook_name as string;
+    // Carry the provenance marker (types.ts Message.synthetic). collateMessages
+    // already preserved it on the spread; dropping it here would silently turn a
+    // restored infrastructure brief back into a recap anchor.
+    if (raw.synthetic !== undefined) msg.synthetic = raw.synthetic as boolean;
     messages.push(msg);
   }
 

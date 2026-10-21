@@ -13,7 +13,7 @@
  * injector, the wiki module, and optional duplication callbacks, so it always
  * sees the current message history (including compact/clear/restore swaps).
  *
- * Pattern mirrors triologue/checkpoint.ts: a deps interface (HintRoundManagerDeps)
+ * Pattern mirrors triologue/wrap-up.ts: a deps interface (HintRoundManagerDeps)
  * is bound to the facade's live store via closures resolved lazily at call time.
  */
 
@@ -90,7 +90,7 @@ CRITICAL INSTRUCTIONS:
    - GUESSING IS CORRECT BEHAVIOR. You do not need to know the exact answer — your job is to describe what knowledge is missing so a semantic search can find it. A rough but relevant query is always better than an empty string.
    - Even when there are no blockers, fill wiki_query with keywords describing the current task so the search can surface relevant how-to knowledge.
 5. In the conversation context, tool calls tagged as ti[hook-name]|tool-name|args were injected by a hookish skill, NOT chosen by the agent. When diagnosing confusion, consider whether a hook is misbehaving — injecting the wrong tool, blocking spuriously, replacing incorrectly, or firing when it shouldn't. If a hook is the blocker, name the hook skill in the blocker field and describe what it is doing wrong.
-6. Cautious moves: if you notice the agent is making repeated single-tool-call turns where it could have batched independent calls (e.g. reading files one at a time, pinning todos one by one, creating issues one per turn), this is not a blocker but an efficiency gap. In that case set blocker to "no blockers" and put a concrete batch encouragement in next_step — tell the agent to emit all independent, dependency-free tool calls in a single response. Do NOT encourage batching when one call's arguments depend on another's result (e.g. creating a todo then pinning it by id, reading a file then editing it) or for checkpoint/recap which must be called alone.
+6. Cautious moves: if you notice the agent is making repeated single-tool-call turns where it could have batched independent calls (e.g. reading files one at a time, pinning todos one by one, creating issues one per turn), this is not a blocker but an efficiency gap. In that case set blocker to "no blockers" and put a concrete batch encouragement in next_step — tell the agent to emit all independent, dependency-free tool calls in a single response. Do NOT encourage batching when one call's arguments depend on another's result (e.g. creating a todo then pinning it by id, reading a file then editing it) or for brief and recap, which must each be called alone.
 7. Reply with ONLY a JSON object. No commentary, no markdown fences.
 8. should_compact decides whether to trigger a context compaction (summarise the history to restore focus). Set it true ONLY for a genuine DEAD-LOOP — the agent is repeating the same failed actions or cycling the same tool calls without making progress (e.g. the same error 3+ times, the same edit attempted repeatedly, the same file read over and over), and a hint alone will not break the loop because the stale context keeps biasing the agent the same way.
    Do NOT set should_compact for long conversations, scattered attention, low-confidence moves, or losing track of the goal. Those are NOT dead-loops — a token-based compaction handles context length on a separate, objective path, and for scattered attention a HINT is the better intervention (it re-states the goal and next step WITHOUT discarding the working memory the agent just built). Setting should_compact on a long-but-progressing conversation throws away useful context.
@@ -111,7 +111,7 @@ EXAMPLE C — no real blocker (describe the remaining task; do NOT frame this as
 {"blocker":"no blockers","next_step":"The remaining work is completing test coverage for the compact module","focus_on":"completing test coverage","should_compact":false}
 
 EXAMPLE D — cautious moves (single-tool turns, encourage batching):
-{"blocker":"no blockers","next_step":"You are making one tool call per turn. Batch independent calls — emit all the read_file / todo_pinning / issue_create calls with no data dependency on each other in a single response to save round-trips. Do not batch calls where one needs another's result, and keep checkpoint/recap alone.","focus_on":"batching independent tool calls","should_compact":false}
+{"blocker":"no blockers","next_step":"You are making one tool call per turn. Batch independent calls — emit all the read_file / todo_pinning / issue_create calls with no data dependency on each other in a single response to save round-trips. Do not batch calls where one needs another's result, and keep brief and recap alone.","focus_on":"batching independent tool calls","should_compact":false}
 
 EXAMPLE E — dead-loop (same failed edit attempted repeatedly):
 {"blocker":"Agent has attempted the same edit_file 4 times and hit the same 'old_text not found' error each time","next_step":"Re-read the target file fresh to see its current content, then rebuild old_text from that","focus_on":"stale old_text vs current file content","should_compact":true}`;
@@ -129,7 +129,7 @@ interface HintData {
 /**
  * Dependencies the HintRoundManager needs from the facade's private state.
  *
- * Mirrors CheckpointManagerDeps: arrow closures over the facade's live store
+ * Mirrors WrapUpManager's deps pattern: arrow closures over the facade's live store
  * and options, resolved lazily at call time so the manager always reflects the
  * current history (including compact/clear/restore swaps).
  */

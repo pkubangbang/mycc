@@ -21,7 +21,7 @@ export interface LogEntry {
   label?: string;
   /** Tool intent/description (e.g. "RUN USER TO list files"). Outlined in the bubble. */
   detail?: string;
-  /** Machine-originated brief (hook engine, debug evaluator, checkpoint
+  /** Machine-originated brief (hook engine, debug evaluator, recap
    *  bookkeeping). The WebUI hides these from the chat log; the terminal
    *  keeps printing them. Omitted for normal messages. */
   synthetic?: boolean;

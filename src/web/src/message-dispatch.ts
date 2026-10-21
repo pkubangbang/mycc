@@ -273,7 +273,7 @@ export function applyServerMessage(
     }
   }
   // Synthetic messages (machine-originated briefs: hook engine, debug
-  // evaluator, checkpoint bookkeeping) update the phase (a hook brief still
+  // evaluator, recap bookkeeping) update the phase (a hook brief still
   // proves the agent is working) but are NOT pushed into the chat log —
   // they are routine machinery output, not LLM/user content. The /history
   // path filters them identically in main.ts fetchHistory().

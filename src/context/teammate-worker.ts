@@ -154,7 +154,7 @@ function notifyLeadInBestEffort(title: string, text: string): boolean {
  * Create a triologue that persists messages to disk.
  * Uses TriologueLite — the teammate-only simplified facade over the shared
  * triologue submodules (store/compact/pending-tools/tp-fix). Teammates don't
- * need the lead-only features (wrap-up, checkpoint, hint round, longtext dump).
+ * need the lead-only features (wrap-up, recap, hint round, longtext dump).
  *
  * @param name - Teammate name (for fallback path generation)
  * @param assignedPath - Pre-assigned path from parent (optional)
@@ -512,7 +512,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         const hasContent = !!(assistantMessage.content && assistantMessage.content.trim());
 
         // Register the assistant message (no tool calls to track)
-        triologue.agent(assistantMessage.content || '', undefined, reasoningContent);
+        triologue.agent(assistantMessage.content || '', undefined, { reasoningContent });
 
         nextBriefNudge = 5;
 
@@ -572,7 +572,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       emptyTurnRetries = 0;
 
       // There are tool calls — register assistant message with pending tool calls
-      triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
+      triologue.agent(assistantMessage.content || '', toolCalls, { reasoningContent });
 
       // 5. Execute tools
       for (const tc of toolCalls) {

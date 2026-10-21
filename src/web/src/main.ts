@@ -261,7 +261,7 @@ async function fetchHistory(): Promise<boolean> {
     // remain visible. Also drop steer-echo/steer-flush entries — those belong
     // in the buffer bar (restored separately below), not the chat log.
     // Synthetic messages (machine-originated briefs: hook engine, debug
-    // evaluator, checkpoint bookkeeping) are dropped too — the live WS path
+    // evaluator, recap bookkeeping) are dropped too — the live WS path
     // filters them in applyServerMessage; this mirrors that for /history.
     const visible = data.messages.filter(
       m => !(m.type === 'prompt' && !m.content)

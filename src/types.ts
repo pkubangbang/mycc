@@ -33,13 +33,12 @@ export interface ToolCall extends OllamaToolCall {
  * baked directly into message content, bypassing note(). They are kept here as
  * a reference so readers don't mistake them for missing categories:
  *   - `[WRAP_UP]`   — triologue.beginWrapUp() (triologue.ts)
- *   - `[RECAP]`     — checkpoint-recap.ts recap summaries; hook.ts abandon note
- *   - `[CHECKPOINT]`— checkpoint tool results (role:'tool', tool_name='checkpoint')
+ *   - `[RECAP]`     — recap-rewind.ts summaries; Triologue.rewindToLastBrief header
  *   - `[Hook: <name>]` — hook block messages (hook-executor.ts, sequence.ts)
  *   - `[Project Context - ...]`, `[Hooks Pending]`, `[System]`, `[DUMPED TOOL RESULT]`
  *                   — project-context injection + longtext dump headers (triologue.ts)
  * These intentionally stay as raw strings because they carry dynamic payload
- * (skill names, file paths, checkpoint IDs) or live on role:'tool' messages,
+ * (skill names, file paths, tool names) or live on role:'tool' messages,
  * neither of which fits the static note() category model.
  */
 export type NoteCategory =
@@ -65,6 +64,23 @@ export interface Message extends OllamaMessage {
   reasoning_content?: string;
   tool_call_id?: string;
   hook_name?: string;
+  /**
+   * Infrastructure-injected message, not model-authored.
+   *
+   * Same idea as the `synthetic` flag agentIO.brief carries: it marks provenance
+   * as a property OF THE MESSAGE, set by the producer that created it. It is
+   * deliberately NOT a field inside `arguments` — arguments are model-authored
+   * and this runtime never validates them against `input_schema`, so a model
+   * echoing such a flag would disqualify its own brief as a recap anchor — and
+   * it is not inferred from a call-id convention either, which would be an
+   * invented string that drifts.
+   *
+   * Recap reads this on the assistant message carrying the `brief` call: a
+   * synthetic brief round-trip (llm.ts empty-output recovery, hook.ts crossroad)
+   * is never a rewind anchor. The compaction resume brief is NOT marked — it is
+   * the FLOOR and must always anchor.
+   */
+  synthetic?: boolean;
 }
 
 // ============================================================================
@@ -573,10 +589,6 @@ export interface TodoModule {
   hasOpenTodo(): boolean;
   clear(): void;
   getItems(): TodoItem[];
-  /** Find the todo item auto-created for a checkpoint (by note=checkpointId). Returns null if not found or already done. */
-  findCheckpointTodo(checkpointId: string): TodoItem | null;
-  /** Close the todo item auto-created for a checkpoint. Best-effort, no error if not found. */
-  closeCheckpointTodo(checkpointId: string): void;
   /**
    * Pin or unpin a todo item, optionally setting a natural-language
    * reactivation condition. Requires the current hash (anti-hallusion).
