@@ -553,9 +553,11 @@ describe('M1 — anchor identity', () => {
     const result = t.rewindToLastBrief('collapse second span', 'SECOND SUMMARY');
     expect(result?.anchorMessage).toBe('SECOND');
     const messages = t.getMessages();
-    expect(messages).toHaveLength(4);
+    // Preserved prefix: brief#1 round-trip + its work, then brief#2 round-trip
+    // with the first span (the second brief's own work) collapsed away.
+    expect(messages).toHaveLength(5);
     expect(messages[1].content).toBe('OK FIRST');
-    expect(messages[3].content).toContain('SECOND SUMMARY');
+    expect(messages[4].content).toContain('SECOND SUMMARY');
   });
 
   it('differentiates two briefs that reuse the same call id', () => {
