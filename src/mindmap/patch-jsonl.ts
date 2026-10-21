@@ -233,7 +233,6 @@ export function rebuildPatches(
         title: node.title,
         text: node.text,
         timestamp: now,
-        checkpoint_id: '',
         reason: 'Rebuilt from in-memory state',
         mindmap_hash: mindmapHash,
       });
@@ -255,7 +254,6 @@ export function rebuildPatches(
           title: node.title,
           text: node.text,
           timestamp: now,
-          checkpoint_id: '',
           reason: 'Preserved from MYCC.md deletion',
           mindmap_hash: mindmapHash,
         });
@@ -267,7 +265,6 @@ export function rebuildPatches(
         path: node.id,
         text: node.text,
         timestamp: now,
-        checkpoint_id: '',
         reason: 'Rebuilt from in-memory state',
         mindmap_hash: mindmapHash,
       });

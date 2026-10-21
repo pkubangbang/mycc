@@ -56,6 +56,36 @@ function briefAssistantContent(
 }
 
 /**
+ * The minimum meaningful recap summary length (characters after trimming).
+ *
+ * A one-word "summary" ("ok", "done", "n/a") still records nothing: the whole
+ * point of a recap is that the deleted span remains recoverable from the note,
+ * so a note shorter than this is treated as "the fork produced no usable text"
+ * rather than folded into the history as a successful collapse.
+ */
+const MIN_RECAP_SUMMARY_CHARS = 40;
+
+/**
+ * True when `summary` is real text a rewind may delete a span in favour of.
+ *
+ * Rejects the sentinels the fork can return or the caller can substitute:
+ *   - '' / whitespace-only
+ *   - '[RECAP] …' protocol lines ('No messages to summarize.', 'Cancelled: …')
+ *     — the ESC one is handled upstream, but a future producer returning a
+ *     protocol line must never be mistaken for content
+ *   - the '(no summary)' placeholder recap-rewind.ts used to substitute for an
+ *     empty fork (guarded there too, so an old call path cannot slip past)
+ *   - anything below MIN_RECAP_SUMMARY_CHARS
+ */
+function hasUsableSummary(summary: string | undefined | null): boolean {
+  const text = (summary ?? '').trim();
+  if (text.length < MIN_RECAP_SUMMARY_CHARS) return false;
+  if (text.startsWith('[RECAP]')) return false;
+  if (text.toLowerCase() === '(no summary)') return false;
+  return true;
+}
+
+/**
  * Handle a recap tool call.
  *
  * Recap collapses the conversation back to the LAST un-consumed brief (the
@@ -93,6 +123,11 @@ async function handleRecapCall(
     ? recapArgs.comment.trim()
     : undefined;
 
+  // A refusal answers the call with a TOOL-CALL ERROR and COLLAPSES NOTHING:
+  // the triologue is left byte-identical to before the attempt, and nothing is
+  // written into any earlier brief's result. It needs no marking — anchor
+  // scanning already knows the recap tool never produces activity (see
+  // Triologue.hasMessagesAfterBrief).
   const fail = (message: string): HandlerResult => {
     triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
       reasoningContent: chat.assistantReasoningContent,
@@ -205,6 +240,18 @@ async function handleRecapCall(
     }
     turn.isFirstRound = false;
     return AgentState.COLLECT;
+  }
+
+  // ── SUMMARY FLOOR: an empty summary must not truncate ──
+  // The upper-bound check below exists because an over-size note loses the span
+  // without recording it. The mirror-image failure loses the span AND the
+  // knowledge: a fork that returns '' (provider hiccup, refusal, truncated
+  // stream) would still delete everything after the anchor and leave a note
+  // holding nothing but the header. Refuse — nothing truncated — and let the
+  // model retry.
+  if (!hasUsableSummary(summary)) {
+    ctx.core.brief('warn', 'recap', 'Recap summary was empty — nothing was collapsed.');
+    return fail('[RECAP] The summarization produced no usable text, so nothing was collapsed. Run recap again.');
   }
 
   // ── SIZE PRE-CHECK: refuse an oversized note BEFORE touching the triologue ──

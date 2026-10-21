@@ -497,6 +497,10 @@ export class Triologue {
    * @param functionName - The name of the tool that was called (becomes tool_name)
    * @param result - The result/output from the tool call (becomes content)
    * @param toolCallId - Optional ID from model's tool_calls (resolved from pending if not provided)
+   *
+   * A FAILED meta-tool call needs no special marking: a recap refusal is just a
+   * tool result whose `tool_name` is 'recap' (see hasMessagesAfterBrief — the
+   * recap tool never produces activity).
    */
   tool(functionName: string, result: string, toolCallId?: string): void {
     // Check for missing assistant with tool_calls
@@ -1001,18 +1005,27 @@ export class Triologue {
   // === Rewind (recap) ===
 
   /**
-   * Identity of the anchor, safe to carry across an await. NOT an array index,
-   * so it survives appends: rewindToLastBrief() re-derives the anchor and
-   * refuses to truncate when the identity differs (see the TOCTOU note there).
-   * Derived from content that never changes once written — the anchor's store
-   * index, its brief message, and the brief call's raw arguments — because
-   * `ToolCall.id` is not part of the Ollama tool-call shape.
+   * Identity of the anchor, safe to carry across an await.
+   *
+   * Built from the brief call's OWN id plus its raw arguments:
+   *
+   *   - NOT the store array index (the old form `${index}:${name}:${args}`):
+   *     a rollback/replay that rebuilds the conversation could put an unrelated
+   *     brief at the same index with the same arguments, and the fingerprint
+   *     would collide.
+   *   - NOT the `tool_call_id` alone either (an earlier revision of this
+   *     comment claimed call ids are unique — they are only unique *within* a
+   *     turn, and a model replaying a turn can re-send one), so the arguments
+   *     are folded in as the discriminator.
+   *
+   * rewindToLastBrief() re-derives the anchor and refuses to truncate when the
+   * identity differs (see the TOCTOU note there).
    */
-  anchorIdentity(index: number, call: { function: { name: string; arguments?: unknown } }): string {
+  anchorIdentity(call: { id?: string; function: { name: string; arguments?: unknown } }): string {
     const args = typeof call.function.arguments === 'string'
       ? call.function.arguments
       : JSON.stringify(call.function.arguments ?? {});
-    return `${index}:${call.function.name}:${args}`;
+    return `${call.id ?? ''}:${call.function.name}:${args}`;
   }
 
   /**
@@ -1023,6 +1036,11 @@ export class Triologue {
    *      messages that would preserve infrastructure noise), and
    *   2. at least one message follows its round-trip (the assistant brief call
    *      AND the tool result answering it).
+   *
+   *   Rule 2 counts ACTIVITY only: a `recap` round-trip is never activity (the
+   *   recap tool either collapses successfully — leaving its anchor's round-trip
+   *   last — or fails, producing a plain tool-call error). So a failure
+   *   neither arms the previous brief nor joins the next span.
    *
    * Rule 2 is what makes a lone brief a NON-anchor: the newest brief in a live
    * conversation is where that conversation currently stands — the work under
@@ -1057,12 +1075,40 @@ export class Triologue {
     return -1;
   }
 
-  /** True when any non-hole message follows the brief round-trip at `index`. */
+  /**
+   * True when any message that counts as ACTIVITY follows the brief round-trip
+   * at `index`.
+   *
+   * The recap tool NEVER produces activity. A recap either collapses (its step
+   * 3 truncates everything after the anchor's round-trip and rewrites the
+   * anchor's result, so the anchor IS the last thing in the history) or fails
+   * (it answers the call with a plain tool-call error and changes nothing).
+   * So a `recap` round-trip — the assistant call and the tool result answering
+   * it — is the recap machinery talking to itself, never "the conversation
+   * moved on".
+   *
+   * Counting it would let a FAILED recap arm the previous brief as an anchor
+   * that the next recap then folds — deleting the user's still-unserved query
+   * along with the failure. Skipping it keeps one rule for both outcomes: after
+   * a successful recap, rule 3 is satisfied only by real work; after a failed
+   * one, the previous anchor state is exactly as it was before the attempt.
+   */
   private hasMessagesAfterBrief(index: number): boolean {
     const call = (this.store.at(index)?.tool_calls as ToolCall[] | undefined)?.find((tc) => tc.function?.name === 'brief');
     const resultIdx = this.store.findToolResultIndex(call?.id, index);
     const after = this.store.firstMessageIndexAfter(resultIdx >= 0 ? resultIdx : index);
-    return after < this.store.length;
+    if (after >= this.store.length) return false;
+
+    const first = this.store.at(after);
+    const recapCall = (first?.tool_calls as ToolCall[] | undefined)?.find((tc) => tc.function?.name === 'recap');
+    if (first?.role === 'assistant' && recapCall) {
+      // Resume after the recap's own round-trip: the assistant call and the
+      // tool result answering IT (whatever it says — success or error).
+      const ownResult = this.store.findToolResultIndex(recapCall.id, after);
+      const next = this.store.firstMessageIndexAfter(ownResult >= 0 ? ownResult : after);
+      return next < this.store.length;
+    }
+    return true;
   }
 
   /**
@@ -1079,7 +1125,28 @@ export class Triologue {
    *
    * Private: the index is a truncation detail that must not leave the facade.
    */
-  private resolveAnchor(expectedAnchorId?: string): { index: number; call: ToolCall; anchorMessage: string } | null {
+  /**
+   * Resolve the rewind anchor ONCE for every caller and snapshot it.
+   *
+   * Everything downstream reads from THIS snapshot: the caller sizes the note
+   * with `recapNoteSize(…)` and then rewinds with `rewindToLastBrief(…)`, and
+   * both must describe the same anchor the span was sliced from. Re-deriving
+   * the anchor independently in each call is how a span and a truncation point
+   * can disagree (the span starts after the anchor's round-trip, the truncation
+   * keeps up to the anchor's tool result — two hand-copied answers to "where
+   * does the round-trip end").
+   *
+   * Returns null when there is no anchor, when the anchor has no tool result
+   * answering it (an orphan brief cannot be rewound — a recap has nowhere to
+   * write its note; it is reported as "no anchor" here so the caller refuses
+   * before spending two LLM forks), or when `expectedAnchorId` no longer
+   * matches it.
+   *
+   * Private: the indexes are truncation details that must not leave the facade.
+   */
+  private resolveAnchor(
+    expectedAnchorId?: string,
+  ): { index: number; resultIndex: number; call: ToolCall; anchorMessage: string; id: string } | null {
     const index = this.currentAnchorIndex();
     if (index < 0) return null;
 
@@ -1090,16 +1157,26 @@ export class Triologue {
     const call = (anchor?.tool_calls as ToolCall[] | undefined)?.find((tc) => tc.function?.name === 'brief');
     if (!call) return null; // defensive: anchor vanished between scan and read
 
+    // The tool result answering THIS call, searched from the anchor on (not
+    // from index 0 — a replayed call id must not bind the anchor to an older
+    // answer in the span).
+    const resultIndex = this.store.findToolResultIndex(call.id, index + 1);
+    // An orphan brief (no result) is not a legal anchor: there is no message to
+    // write the note into, and truncating would strand the assistant's
+    // tool_calls. Refuse here, once, before any work is done.
+    if (resultIndex < 0) return null;
+
     // TOCTOU guard: the caller peeked, then awaited the forks (10-60s of LLM
     // time) during which a new brief may have landed. The re-scan above always
     // yields a VALID current index, but it cannot tell whether that is still the
     // anchor the caller summarized. If it moved, truncating would delete a span
     // that was never summarized — refuse, having modified nothing.
-    if (expectedAnchorId !== undefined && this.anchorIdentity(index, call) !== expectedAnchorId) {
+    const id = this.anchorIdentity(call);
+    if (expectedAnchorId !== undefined && id !== expectedAnchorId) {
       return null;
     }
 
-    return { index, call, anchorMessage: readBriefMessage(call) };
+    return { index, resultIndex, call, anchorMessage: readBriefMessage(call), id };
   }
 
   /**
@@ -1132,12 +1209,15 @@ export class Triologue {
   } | null {
     const resolved = this.resolveAnchor();
     if (!resolved) return null;
-    const { index, call, anchorMessage: message } = resolved;
+    const { call, anchorMessage: message, resultIndex, id } = resolved;
 
     // Anchor pair = assistant brief call + the tool result answering it.
-    // Skip the result too, so `span` never starts with a stranded tool msg.
-    let start = index + 1;
-    if (start < this.store.length && this.store.at(start)?.role === 'tool') start++;
+    // Start after the RESULT — identified by its call id, not by "the next
+    // message happens to be a tool", which would swallow an unrelated tool
+    // result that legitimately sits right after the brief. `resultIndex` comes
+    // from the same resolution rewindToLastBrief uses, so the span's start and
+    // the truncation point cannot disagree.
+    const start = resultIndex + 1;
 
     const confidence = readBriefConfidence(call);
 
@@ -1149,7 +1229,7 @@ export class Triologue {
     // sliceFrom keeps the same hole-safety for consumers.
     const span = this.store.sliceFrom(start);
 
-    return { message, confidence, id: this.anchorIdentity(index, call), span };
+    return { message, confidence, id, span };
   }
 
   /**
@@ -1188,17 +1268,13 @@ export class Triologue {
     expectedAnchorId?: string,
   ): { anchorMessage: string; tokensBefore: number; tokensAfter: number } | null {
     // One resolution for every caller (see resolveAnchor) — including the
-    // TOCTOU refusal and the message read that tolerates a string-shaped
-    // `arguments`.
+    // TOCTOU refusal, the message read that tolerates a string-shaped
+    // `arguments`, and the tool-result index. Nothing below re-derives either
+    // the anchor or its result index independently.
     const resolved = this.resolveAnchor(expectedAnchorId);
     if (!resolved) return null;
-    const { call, anchorMessage } = resolved;
+    const { call, anchorMessage, resultIndex } = resolved;
     const tokensBefore = this.store.tokenCount;
-
-    const resultIndex = this.store.findToolResultIndex(call.id);
-    // Without an answer to the call there is no place for the summary (and
-    // truncating would strand the assistant's tool_calls) — refuse untouched.
-    if (resultIndex < 0) return null;
 
     this.truncateAndRecount(resultIndex + 1, 'recap');
     this.wrapUp.reset();
