@@ -1095,20 +1095,36 @@ export class Triologue {
    */
   private hasMessagesAfterBrief(index: number): boolean {
     const call = (this.store.at(index)?.tool_calls as ToolCall[] | undefined)?.find((tc) => tc.function?.name === 'brief');
-    const resultIdx = this.store.findToolResultIndex(call?.id, index);
-    const after = this.store.firstMessageIndexAfter(resultIdx >= 0 ? resultIdx : index);
-    if (after >= this.store.length) return false;
+    if (!call) return false; // defensive: a message in briefIndices always has one
 
-    const first = this.store.at(after);
-    const recapCall = (first?.tool_calls as ToolCall[] | undefined)?.find((tc) => tc.function?.name === 'recap');
-    if (first?.role === 'assistant' && recapCall) {
-      // Resume after the recap's own round-trip: the assistant call and the
-      // tool result answering IT (whatever it says — success or error).
-      const ownResult = this.store.findToolResultIndex(recapCall.id, after);
-      const next = this.store.firstMessageIndexAfter(ownResult >= 0 ? ownResult : after);
-      return next < this.store.length;
+    // An orphan brief cannot anchor anything: besides having nowhere to write
+    // the recap note, it must not shadow an earlier valid anchor. The result
+    // must answer THIS call by id AND tool name — provider call ids are unique
+    // only within a turn, so a reused id could otherwise bind the brief to an
+    // unrelated tool's result.
+    const resultIdx = this.store.findToolResultIndex(call.id, index + 1, 'brief');
+    if (resultIdx < 0) return false;
+
+    // Skip every consecutive recap round-trip, not just the first. A model may
+    // retry after a refusal, producing recap(error) → recap(error) with no real
+    // work between them; none of those attempts is activity. If a recap call
+    // has no result yet, fail closed rather than treating the pending call as
+    // activity.
+    let after = this.store.firstMessageIndexAfter(resultIdx);
+    while (after < this.store.length) {
+      const message = this.store.at(after);
+      const recapCall = message?.role === 'assistant'
+        ? (message.tool_calls as ToolCall[] | undefined)?.find((tc) => tc.function?.name === 'recap')
+        : undefined;
+      if (!recapCall) return true;
+
+      // The recap's own result: same id AND tool name (whatever it says —
+      // success or error).
+      const ownResult = this.store.findToolResultIndex(recapCall.id, after + 1, 'recap');
+      if (ownResult < 0) return false;
+      after = this.store.firstMessageIndexAfter(ownResult);
     }
-    return true;
+    return false;
   }
 
   /**
@@ -1282,6 +1298,7 @@ export class Triologue {
     const rewritten = this.store.rewriteToolResultAt(
       resultIndex,
       call.id,
+      'brief',
       noteWithSummary(buildRecapNote(description, anchorMessage, additionalMessage)),
     );
     if (!rewritten) return null; // defensive: the result vanished in truncation

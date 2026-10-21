@@ -27,7 +27,7 @@ import type { Message, ToolCall } from '../../types.js';
 
 // agent-io writes to the terminal; keep the test output clean.
 vi.mock('../../loop/agent-io.js', () => ({
-  agentIO: { verbose: vi.fn(), log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  agentIO: { verbose: vi.fn(), log: vi.fn(), warn: vi.fn(), error: vi.fn(), brief: vi.fn() },
 }));
 
 let seq = 0;
@@ -578,6 +578,17 @@ describe('M1 — anchor identity', () => {
  * come from the same tool-result index, and an orphan brief is never an anchor.
  */
 describe('M2 — single anchor resolution', () => {
+  it('does not mistake another tool result with a reused call id for the brief result', () => {
+    const t = new Triologue();
+    t.agent('', [{ id: 'reused_across_tools', function: { name: 'brief', arguments: { message: 'ORPHAN' } } }]);
+    // A malformed/restored history can reuse IDs across turns. The tool name
+    // must match too; a bash result is not the answer to this brief call.
+    t.tool('bash', 'unrelated result', 'reused_across_tools');
+    t.user('later activity');
+    expect(t.getLastBrief()).toBeNull();
+    expect(t.rewindToLastBrief('collapse', 'note')).toBeNull();
+  });
+
   it('an orphan brief (no tool result) is not an anchor', () => {
     const t = new Triologue();
     t.agent('', [{ id: 'brief_orphan', function: { name: 'brief', arguments: { message: 'ORPHAN' } } }]);

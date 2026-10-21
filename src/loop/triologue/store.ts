@@ -141,12 +141,12 @@ export class MessageStore {
     return result;
   }
 
-  /** Index of the tool result answering call `id` (searching from `fromIndex`), or -1. */
-  findToolResultIndex(id: string | undefined, fromIndex = 0): number {
+  /** Index of the tool result answering call `id` (and optionally `toolName`), or -1. */
+  findToolResultIndex(id: string | undefined, fromIndex = 0, toolName?: string): number {
     if (!id) return -1;
     for (let i = Math.max(0, fromIndex); i < this.messages.length; i++) {
       const m = this.messages[i];
-      if (m && m.role === 'tool' && m.tool_call_id === id) return i;
+      if (m && m.role === 'tool' && m.tool_call_id === id && (!toolName || m.tool_name === toolName)) return i;
     }
     return -1;
   }
@@ -166,11 +166,11 @@ export class MessageStore {
    * Tool-call IDs are only unique within one assistant turn and can be reused
    * by a replay. Recap has already resolved the exact result index; searching
    * globally by ID here could rewrite an older result after the new span has
-   * been truncated. Validate both position and ID, and otherwise modify nothing.
+   * been truncated. Validate position, ID, and tool name, and otherwise modify nothing.
    */
-  rewriteToolResultAt(index: number, id: string | undefined, content: string): boolean {
+  rewriteToolResultAt(index: number, id: string | undefined, toolName: string, content: string): boolean {
     const message = this.messages[index];
-    if (!id || !message || message.role !== 'tool' || message.tool_call_id !== id) return false;
+    if (!id || !message || message.role !== 'tool' || message.tool_call_id !== id || message.tool_name !== toolName) return false;
     message.content = content;
     return true;
   }
