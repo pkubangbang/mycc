@@ -443,6 +443,21 @@ describe('H1 — a failed recap leaves no activity behind', () => {
     t.tool('recap', message, id);
   }
 
+  it('consecutive failed recap retries are all skipped, not just the first', () => {
+    const t = new Triologue();
+    pushBrief(t, 'ONLY BRIEF');
+    failRecap(t, 'recap_1', 'Error: no usable summary');
+    failRecap(t, 'recap_2', 'Error: no usable summary');
+
+    // Neither refusal is activity: the brief has nothing after its round-trip.
+    expect(t.getLastBrief()).toBeNull();
+    expect(t.rewindToLastBrief('collapse', 'note')).toBeNull();
+
+    // Real work after the retries still activates the brief.
+    t.user('actual work');
+    expect(t.getLastBrief()!.message).toBe('ONLY BRIEF');
+  });
+
   it('a lone brief + a failed recap is NOT an anchor', () => {
     const t = new Triologue();
     pushBrief(t, 'ONLY BRIEF');
