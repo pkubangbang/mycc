@@ -441,11 +441,11 @@ describe('TriologueLite', () => {
   });
 
   describe('lead-only features are absent', () => {
-    it('does not expose wrap-up / checkpoint / hint-round / restoration / clear', () => {
+    it('does not expose wrap-up / recap rewind / hint-round / restoration / clear', () => {
       const proto = Object.getOwnPropertyNames(Object.getPrototypeOf(t));
       for (const absent of [
         'beginWrapUp', 'finishWrapUp', 'commitWrapUp', 'rollbackWrapUp',
-        'hasActiveWrapUp', 'getCheckpointManager', 'generateHintRound',
+        'hasActiveWrapUp', 'getLastBrief', 'rewindToLastBrief', 'generateHintRound',
         'loadRestoration', 'clear', 'skipPendingTools',
       ]) {
         expect(proto).not.toContain(absent);

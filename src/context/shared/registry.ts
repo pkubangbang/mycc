@@ -52,7 +52,6 @@ import { skillSearchTool } from '../../tools/skill_search.js';
 import { planOnTool } from '../../tools/plan_on.js';
 import { recallTool } from '../../tools/recall.js';
 import { planOffTool } from '../../tools/plan_off.js';
-import { checkpointTool } from '../../tools/checkpoint.js';
 import { recapTool } from '../../tools/recap.js';
 import { peersTool } from '../../tools/peer_list.js';
 import { peerConnectTool } from '../../tools/peer_connect.js';
@@ -108,7 +107,6 @@ export const builtInTools: ToolDefinition[] = [
   planOnTool,
   planOffTool,
   recallTool,
-  checkpointTool,
   recapTool,
   peersTool,
   peerConnectTool,

@@ -93,14 +93,6 @@ describe('Todo', () => {
     expect(b.id).toBe(1);
   });
 
-  it('should find and close checkpoint todos', () => {
-    const todo = new Todo();
-    todo.createTodo('checkpoint: abc12345', 'abc12345');
-    expect(todo.findCheckpointTodo('abc12345')).not.toBeNull();
-    todo.closeCheckpointTodo('abc12345');
-    expect(todo.findCheckpointTodo('abc12345')).toBeNull();
-  });
-
   // ── Pinned todos & reactivation ────────────────────────────────────────
 
   it('should NOT auto-clear pinned items when all todos are done', () => {
@@ -310,22 +302,4 @@ describe('Todo', () => {
     expect(result).toBeNull();
   });
 
-  it('closeCheckpointTodo should push the old hash into the lineage ring', () => {
-    const todo = new Todo();
-    const cp = todo.createTodo('checkpoint: abc12345', 'abc12345');
-    // Companion open non-checkpoint item so closing the checkpoint does NOT
-    // auto-clear it away (auto-clear only fires once EVERY non-pinned item is
-    // done; the companion stays open).
-    todo.createTodo('Companion open task');
-    const oldHash = cp.hash;
-    todo.closeCheckpointTodo('abc12345');
-    const stored = todo.getItems().find((i) => i.note === 'abc12345')!;
-    expect(stored.done).toBe(true);
-    expect(stored.hash).not.toBe(oldHash);
-    expect(stored.previousHashes).toEqual([oldHash]);
-    // And the stale hash resolves to the (now done) current item
-    const resolved = todo.findByPreviousHash(oldHash);
-    expect(resolved).not.toBeNull();
-    expect(resolved!.done).toBe(true);
-  });
 });

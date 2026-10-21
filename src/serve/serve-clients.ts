@@ -93,7 +93,7 @@ export class ClientRegistry {
     log?: MessageLogHolder,
   ): void {
     const cleanContent = stripAnsi(content);
-    // detail (e.g. the `id:` line on a checkpoint brief) also carries chalk
+    // detail also carries chalk
     // color codes from the caller — strip it too so no field leaks ANSI into
     // the Web UI. Mirrors the cleanContent treatment above.
     const cleanDetail = detail ? stripAnsi(detail) : detail;
@@ -103,7 +103,7 @@ export class ClientRegistry {
       if (label) entry.label = label;
       if (cleanDetail) entry.detail = cleanDetail;
       // `synthetic` marks machine-originated briefs (hook engine, debug
-      // evaluator, checkpoint bookkeeping) that the WebUI hides from the
+      // evaluator, recap bookkeeping) that the WebUI hides from the
       // chat log. Omitted when falsy so the wire format and /history replay
       // stay unchanged for all normal messages.
       if (synthetic) entry.synthetic = true;

@@ -10,7 +10,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const briefTool: ToolDefinition = {
   name: 'brief',
-  description: 'Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence score (0-10) indicating your certainty about the current state.',
+  description: 'Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence score (0-10) indicating your certainty about the current state. Your briefs are rewind anchors: recap collapses the conversation back to your last brief and preserves its text, so write briefs you would want to keep as your only surviving record of this stretch of work — state the conclusion first, then the evidence.',
   input_schema: {
     type: 'object',
     properties: {

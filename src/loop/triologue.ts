@@ -18,14 +18,12 @@ import { loopEvents } from './loop-events.js';
 import type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } from './triologue/types.js';
 import { type PieceKind } from './triologue/transcript.js';
 
-export type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions, CheckpointInfo } from './triologue/types.js';
-export { CheckpointManager } from './triologue/checkpoint.js';
+export type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } from './triologue/types.js';
 
 import { MessageStore } from './triologue/store.js';
 import { estimateTokensForMessages, estimateToolSchemaTokens } from '../utils/token.js';
 import { PendingToolLedger } from './triologue/pending-tools.js';
 import { runAutoCompact as doRunAutoCompact } from './triologue/compact.js';
-import { CheckpointManager } from './triologue/checkpoint.js';
 import { WrapUpManager } from './triologue/wrap-up.js';
 
 /**
@@ -117,13 +115,6 @@ export class Triologue {
    * message-side operations (append WRAP_UP message, truncate store).
    */
   private wrapUp: WrapUpManager = new WrapUpManager();
-
-  /**
-   * Checkpoint feature domain delegate (see triologue/checkpoint.ts).
-   * Created lazily via getCheckpointManager(); bound to the live message
-   * store so callers always see the current history.
-   */
-  private checkpointManager: CheckpointManager | null = null;
 
   /**
    * TP-recovery delegate (see triologue/tp-fix.ts). Owns both the recovery
@@ -709,7 +700,7 @@ export class Triologue {
     // pointing at the pre-compact length, e.g. 50) would let a later
     // rollbackWrapUp() do `this.messages.length = 50` on the now-2-element
     // array, stretching it with undefined sparse holes that crash the next
-    // raw reader (minifyMessages in runAutoCompact, or checkpoint iteration)
+    // raw reader (minifyMessages in runAutoCompact, or recap iteration)
     // with "Cannot read properties of undefined (reading 'role')".
     this.wrapUp.reset();
     // Refresh dynamic project context (README, mindmap, hooks) at the compact
@@ -856,7 +847,7 @@ export class Triologue {
    * slipped into `messages` (e.g. via sparse-array length manipulation from
    * wrap-up rollback, TP auto-fixer injection, session restoration, or recap
    * slicing). Without this, unguarded raw consumers (hint-round, minifier,
-   * checkpoint-recap) that read `.role` / `.content` directly would throw
+   * recap-rewind) that read `.role` / `.content` directly would throw
    * "Cannot read properties of undefined (reading 'role'/'content')" — an
    * intermittent error surfaced most often in the COLLECT state because that
    * is where hint-round runs. Mirrors the guard already present in
@@ -962,29 +953,97 @@ export class Triologue {
     return { total, system, projectContext, conversation, tools: toolsTokens };
   }
 
-  // === Feature Domain Delegates ===
+  // === Rewind (recap) ===
 
   /**
-   * Get the checkpoint feature-domain delegate (see triologue/checkpoint.ts).
+   * Peek at the rewind anchor: the LAST real `brief` in the conversation.
    *
-   * Checkpoint is an isolated feature domain: instead of the facade offering
-   * individual passthrough methods (findOpenCheckpoint/findCheckpointById/
-   * findAllCheckpoints/generateCheckpointId/recapMessages), callers obtain
-   * this delegate ONCE and interact with it directly for all checkpoint
-   * concerns (queries, id generation, and the recap span truncation).
+   * Every brief marks a point the conversation can collapse back to, so its
+   * `message` is what survives a recap. Returns null when the history holds no
+   * brief at all (the very first turn, or a transcript restored mid-span).
    *
-   * The manager is bound to the live message store, so it always reflects
-   * the current history (including compact/clear/restore swaps). It is
-   * memoized — repeated calls return the same instance.
+   * The array index is intentionally NOT part of the return value: it is a
+   * truncation detail owned by this facade, and exposing it would let a caller
+   * carry a stale mark across a compaction or an interleaved truncation.
+   *
+   * `span` is a copy of the messages from just after the brief round-trip
+   * (assistant call + its tool result) to the end — exactly the region a
+   * rewind deletes, and therefore the only region worth summarizing.
    */
-  getCheckpointManager(): CheckpointManager {
-    if (!this.checkpointManager) {
-      this.checkpointManager = new CheckpointManager({
-        getMessages: () => this.store.getRaw(),
-        onRecap: (startIndex: number) => this.truncateAndRecount(startIndex),
-      });
-    }
-    return this.checkpointManager;
+  getLastBrief(): {
+    message: string;
+    confidence?: number;
+    span: Message[];
+  } | null {
+    const index = this.store.findLastBriefAnchor();
+    if (index < 0) return null;
+
+    const anchor = this.store.at(index);
+    const call = anchor?.tool_calls?.find((tc) => tc.function?.name === 'brief');
+    if (!call) return null; // defensive: anchor vanished between scan and read
+
+    // Anchor pair = assistant brief call + the tool result answering it.
+    // Skip the result too, so `span` never starts with a stranded tool msg.
+    let start = index + 1;
+    if (start < this.store.length && this.store.at(start)?.role === 'tool') start++;
+
+    const raw = call.function.arguments as Record<string, unknown> | undefined;
+    const message = typeof raw?.message === 'string' ? raw.message : '';
+    const confidence = typeof raw?.confidence === 'number' ? raw.confidence : undefined;
+
+    return { message, confidence, span: this.store.getRaw().slice(Math.min(start, this.store.length)) };
+  }
+
+  /**
+   * Collapse the conversation back to the last `brief` (the rewind primitive
+   * behind recap).
+   *
+   * Steps, in order:
+   *   1. re-scan for the anchor — never accept an index from the caller
+   *   2. capture the anchor's `message` BEFORE truncation (its pair is deleted)
+   *   3. truncate at the anchor's assistant message (truncateAndRecount: keeps
+   *      the ledger/journal/token accounting in one place)
+   *   4. reset the wrap-up mark — a stale mark greater than the new length
+   *      would make a later rollback do `messages.length = mark` and EXTEND
+   *      the array with holes
+   *   5. append the merge round-trip: assistant(empty + recap call) + its tool
+   *      result, so the history ends on role:'tool' and the next real agent()
+   *      is the normal tool → assistant handoff (triologue parity)
+   *
+   * The merge node is a `recap` call, never a `brief` one — that is what makes
+   * rewinds repeatable: the note can never be re-selected as the next anchor,
+   * so a second recap naturally rewinds to the brief BEFORE this one.
+   *
+   * Returns null when there is no brief to rewind to (nothing is modified).
+   */
+  rewindToLastBrief(
+    description: string,
+    additionalMessage: string,
+  ): { anchorMessage: string; tokensBefore: number; tokensAfter: number } | null {
+    const index = this.store.findLastBriefAnchor();
+    if (index < 0) return null;
+
+    const anchor = this.store.at(index);
+    const call = anchor?.tool_calls?.find((tc) => tc.function?.name === 'brief');
+    if (!call) return null;
+
+    const raw = call.function.arguments as Record<string, unknown> | undefined;
+    const anchorMessage = typeof raw?.message === 'string' ? raw.message : '';
+    const tokensBefore = this.store.tokenCount;
+
+    this.truncateAndRecount(index, 'recap');
+    this.wrapUp.reset();
+
+    const callId = `recap_rewind_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const header = [
+      `[RECAP] ${description}`,
+      anchorMessage ? `Rewound past the brief: "${anchorMessage}"` : '',
+    ].filter(Boolean).join('\n');
+
+    this.agent('', [{ id: callId, function: { name: 'recap', arguments: {} } }]);
+    this.tool('recap', [header, additionalMessage].filter(Boolean).join('\n\n'), callId);
+
+    return { anchorMessage, tokensBefore, tokensAfter: this.store.tokenCount };
   }
 
   // === Private Helpers ===

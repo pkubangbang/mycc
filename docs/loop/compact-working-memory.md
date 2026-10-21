@@ -84,6 +84,28 @@ Three messages ending in `tool`, so `getLastRole()` is `'tool'` after compact. T
 
 This replaces the previous 2-message `[summary, ack-assistant]` shape, where the synthetic assistant left `getLastRole() === 'assistant'`, so the next real `agent()` tripped `duplicate_assistant` and normal control flow depended on structural-violation recovery. The focus is a **section inside the existing user message**, not a fourth message.
 
+### 3.2b Interaction with recap (rewind)
+
+Every real `brief` is a **rewind anchor**: `recap` truncates at the last brief and
+appends a merge note (see `brief-and-recap-rewind.md`). Compaction and rewind
+compose as follows:
+
+- **Compaction is the floor.** `compact()` does `store.replaceAll(...)`, so it
+  destroys the whole conversation and with it every rewind anchor. `recap` can
+  never rewind past the most recent compaction — the history is gone.
+- **The resume brief is the floor anchor** (and stays synthetic-free): a
+  post-compact `recap` finds "last brief" = the `compact_resume_*` pair, whose
+  span is empty. The handler declines (`Already at the compaction boundary`)
+  rather than consuming the floor for nothing.
+- **The summary survives.** The compaction summary lives in the `user` message
+  *before* the resume brief, so a rewind at the floor keeps it
+  (`user(summary) → assistant(recap) → tool`).
+- **`lastUserQuery` survives both.** It is written only by `user()`; neither
+  `replaceAll` nor `truncateTo` touches it, so the recap note's
+  `**User's last query (context)**` line stays truthful.
+- **A recap note is ordinary content to compaction**: it sits in the store, so a
+  later `compact()` summarizes it like any other message.
+
 ### 3.3 Two concurrent LLM calls
 
 | Call | Engine | Input | Tools | Cache | Purpose |

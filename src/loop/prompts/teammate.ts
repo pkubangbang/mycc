@@ -2,7 +2,7 @@
  * teammate.ts - Teammate (child-process) system prompt
  *
  * The prompt for a spawned teammate agent. Teammates never see the pinned-todo
- * section (that is lead-only) and never use checkpoint/recap; they share the
+ * section (that is lead-only) and never use recap; they share the
  * common sections (intent language, output behavior, verification, launch
  * args) from common.ts, plus their own Agent Memory variant.
  */

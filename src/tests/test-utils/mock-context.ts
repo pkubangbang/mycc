@@ -53,8 +53,6 @@ export function createMockTodo(overrides: Partial<TodoModule> = {}): TodoModule 
     updateTodo: vi.fn(() => ({ id: 1, name: 'test', done: true, hash: 'abcdef01' })),
     printTodoList: vi.fn(() => 'No todos.'),
     hasOpenTodo: vi.fn(() => false),
-    findCheckpointTodo: vi.fn(() => null),
-    closeCheckpointTodo: vi.fn(),
     clear: vi.fn(),
     getItems: vi.fn(() => []),
     pinTodo: vi.fn(() => null),

@@ -1,9 +1,9 @@
 /**
  * hook-esc-recap.test.ts — handleHook: ESC during recap (recap cancellation).
  *
- * Code path under test (hook.ts handleRecapCall, lines ~196-210):
- *   const summary = await handleRecap(fullMessages, allTools, checkpoint.description,
- *                                     escAware, comment, lastUserQuery, checkpointResult);
+ * Code path under test (hook.ts handleRecapCall):
+ *   const { summary, patch } = await handleRecapSpan(fullMessages, span, allTools,
+ *                                                    description, mindmap, escAware, comment);
  *   if (summary.startsWith('[RECAP] Cancelled:')) {
  *     triologue.agent(chat.assistantContent, chat.rawToolCalls, ...);
  *     triologue.tool('recap', summary, call.id);
@@ -42,12 +42,10 @@ vi.mock('../../../hook/hook-preprocessor.js', () => ({
   augmentToolCalls: vi.fn((calls: unknown[]) => calls),
 }));
 
-vi.mock('../../../loop/checkpoint-recap.js', () => ({
-  validateCheckpointIsolation: vi.fn(() => ({ valid: true })),
+vi.mock('../../../loop/recap-rewind.js', () => ({
   validateRecapIsolation: vi.fn(() => ({ valid: true })),
-  handleCheckpoint: vi.fn(() => ({ result: 'ok' })),
   handleRecap: vi.fn(),
-  handleRecapWithPatch: vi.fn(),
+  handleRecapSpan: vi.fn(),
 }));
 
 vi.mock('../../../mindmap/patch.js', () => ({
@@ -69,16 +67,15 @@ vi.mock('../../../loop/triologue.js', () => {
     getMessagesRaw = vi.fn(() => []);
     getLastRole = vi.fn(() => null);
     setSystemPrompt = vi.fn();
-    getCheckpointManager = vi.fn(() => ({
-      findOpen: vi.fn(() => null),
-      findById: vi.fn(() => ({
-        id: 'abc12345',
-        index: 2,
-        description: 'test checkpoint',
-      })),
-      findAll: vi.fn(() => []),
-      generateId: vi.fn(() => 'deadbeef'),
-      recap: vi.fn(),
+    getLastBrief = vi.fn(() => ({
+      message: 'explored the parser',
+      confidence: 7,
+      span: [{ role: 'tool', tool_name: 'bash', content: 'ls', tool_call_id: 'x' }],
+    }));
+    rewindToLastBrief = vi.fn(() => ({
+      anchorMessage: 'explored the parser',
+      tokensBefore: 100,
+      tokensAfter: 10,
     }));
     getTokenCount = vi.fn(() => 100);
     skipPendingTools = vi.fn();
@@ -90,7 +87,7 @@ vi.mock('../../../loop/triologue.js', () => {
 import { handleHook } from '../../../loop/states/hook.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { agentIO } from '../../../loop/agent-io.js';
-import { handleRecapWithPatch } from '../../../loop/checkpoint-recap.js';
+import { handleRecapSpan } from '../../../loop/recap-rewind.js';
 import { Triologue } from '../../../loop/triologue.js';
 import {
   createTurnVars,
@@ -116,7 +113,7 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
    */
   function makeRecapEnv() {
     const recapCall = createMockAugmentedToolCall('recap', {
-      checkpoint_id: 'abc12345',
+      description: 'explored the parser',
       comment: 'Next: implement the fix in parser.ts',
     });
     const env = createMockMachineEnv({ triologue });
@@ -132,9 +129,9 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
     const turn = createTurnVars();
     const chat = createChatData({ assistantContent: 'summarizing now' });
 
-    // handleRecapWithPatch returns the cancelled summary (ESC during recap LLM call)
+    // handleRecapSpan returns the cancelled summary (ESC during recap LLM call)
     // patch is null because getMindmap() returns null (no mindmap in mock env)
-    vi.mocked(handleRecapWithPatch).mockResolvedValueOnce({
+    vi.mocked(handleRecapSpan).mockResolvedValueOnce({
       summary: '[RECAP] Cancelled: ESC pressed during recap.',
       patch: null,
     } as never);
@@ -161,7 +158,7 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
     const turn = createTurnVars();
     const chat = createChatData({ assistantContent: 'summarizing now' });
 
-    vi.mocked(handleRecapWithPatch).mockResolvedValueOnce({
+    vi.mocked(handleRecapSpan).mockResolvedValueOnce({
       summary: '[RECAP] Cancelled: ESC pressed during recap.',
       patch: null,
     } as never);
@@ -181,13 +178,13 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
     expect(turn.isFirstRound).toBe(false);
   });
 
-  it('should call handleRecapWithPatch with full messages, tools, and escAware wrapper', async () => {
+  it('should call handleRecapSpan with full messages, span, tools, and escAware wrapper', async () => {
     const { env } = makeRecapEnv();
     const turn = createTurnVars({ lastUserQuery: 'finish the task' });
     const chat = createChatData({ assistantContent: 'let me recap' });
 
     // Normal (non-cancelled) recap completion — no patch (getMindmap returns null)
-    vi.mocked(handleRecapWithPatch).mockResolvedValueOnce({
+    vi.mocked(handleRecapSpan).mockResolvedValueOnce({
       summary: '[RECAP] Summary text here.',
       patch: null,
     } as never);
@@ -197,13 +194,13 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
 
     await handleHook(env, turn, chat);
 
-    expect(handleRecapWithPatch).toHaveBeenCalledTimes(1);
-    const callArgs = vi.mocked(handleRecapWithPatch).mock.calls[0];
-    // fullMessages (copy of getMessages), allTools, description, mindmap, checkpointId, escAware fn, comment, lastUserQuery
+    expect(handleRecapSpan).toHaveBeenCalledTimes(1);
+    const callArgs = vi.mocked(handleRecapSpan).mock.calls[0];
+    // fullMessages, span, allTools, description, mindmap, escAware fn, comment, lastUserQuery
     expect(callArgs[0]).toEqual(fakeMessages); // fullMessages
-    expect(callArgs[1]).toEqual([{ function: { name: 'bash' } }]); // allTools from loader
-    expect(callArgs[2]).toBe('test checkpoint'); // checkpoint.description
-    expect(callArgs[4]).toBe('abc12345'); // checkpointId
+    expect(callArgs[1]).toEqual([{ role: 'tool', tool_name: 'bash', content: 'ls', tool_call_id: 'x' }]); // span
+    expect(callArgs[2]).toEqual([{ function: { name: 'bash' } }]); // allTools from loader
+    expect(callArgs[3]).toBe('explored the parser'); // description
     expect(typeof callArgs[5]).toBe('function'); // escAware wrapper
     expect(callArgs[7]).toBe('finish the task'); // lastUserQuery
   });

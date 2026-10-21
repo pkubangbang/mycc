@@ -170,7 +170,7 @@ const commonAxes = [
 
 /**
  * Lead agent-memory section. Adds lead-only coordination (teammates, peers,
- * checkpoint/recap context compression) and communication channels on top of
+ * recap rewind context compression) and communication channels on top of
  * the shared axes. The lead reaches the user through the `agent >>` prompt,
  * NOT via a tool — so `question` is absent here (it is child-only).
  */
@@ -179,7 +179,7 @@ export function buildLeadAgentMemorySection(): string {
     '## Agent Memory',
     'You have structured capability modules beyond basic file I/O. They organize along a few conceptual axes:',
     ...commonAxes,
-    'You also coordinate: spawn/await teammates, broadcast, discover peer instances, and compress exploration via checkpoint/recap (lead-only).',
+    'You also coordinate: spawn/await teammates, broadcast, discover peer instances, and rewind your own exploration — every `brief` is an anchor, and `recap` collapses back to the last one (lead-only).',
     'Communication is async (mail_to), status (brief), or topic-shift (mycc_title).',
   ].join('\n');
 }

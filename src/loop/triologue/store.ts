@@ -73,7 +73,7 @@ export class MessageStore {
    * slipped into `messages` (e.g. via sparse-array length manipulation from
    * wrap-up rollback, TP auto-fixer injection, session restoration, or recap
    * slicing). Single chokepoint for ALL message access — unguarded raw
-   * consumers (hint-round, minifier, checkpoint-recap) that read `.role` /
+   * consumers (hint-round, minifier, recap-rewind) that read `.role` /
    * `.content` directly would otherwise throw "Cannot read properties of
    * undefined (reading 'role'/'content')".
    */
@@ -83,6 +83,30 @@ export class MessageStore {
       if (m && typeof m === 'object' && m.role) result.push(m);
     }
     return result;
+  }
+
+  /**
+   * Index of the last assistant message that called the `brief` tool, or -1.
+   *
+   * This is the rewind anchor used by recap(): every brief marks a point the
+   * conversation can collapse back to, so its text survives a rewind.
+   *
+   * Scans `this.messages` DIRECTLY rather than getRaw(): the returned index is
+   * fed to truncateTo(), which indexes the true array. getRaw() returns a
+   * FILTERED copy, so its indices diverge from truncateTo's whenever the array
+   * carries sparse holes (wrap-up rollback, TP recovery injection, restore) —
+   * truncating at a getRaw() index would silently cut the wrong span.
+   *
+   * PRIVATE implementation detail: this index must never leave the Triologue
+   * facade (see Triologue.getLastBrief / rewindToLastBrief).
+   */
+  findLastBriefAnchor(): number {
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const m = this.messages[i];
+      if (!m || m.role !== 'assistant' || !m.tool_calls) continue;
+      if (m.tool_calls.some((tc) => tc.function?.name === 'brief')) return i;
+    }
+    return -1;
   }
 
   push(message: Message): void {

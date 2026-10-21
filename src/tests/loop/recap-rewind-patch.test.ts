@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parsePatchResponse } from '../../loop/checkpoint-recap.js';
+import { parsePatchResponse } from '../../loop/recap-rewind.js';
 import type { Mindmap } from '../../mindmap/types.js';
 
 const mindmap: Mindmap = {
@@ -19,12 +19,12 @@ const mindmap: Mindmap = {
   },
 };
 
-describe('checkpoint recap patch root guard', () => {
+describe('recap patch root guard', () => {
   it.each(['update', 'delete'] as const)('rejects %s against root aliases', (action) => {
     const fields = action === 'update' ? ',"text":"overwritten root"' : '';
     const response = `{"action":"${action}","path":"///"${fields}}`;
 
-    const result = parsePatchResponse(response, mindmap, 'checkpoint-1');
+    const result = parsePatchResponse(response, mindmap);
 
     expect(result.patch).toBeNull();
     expect(result.error).toContain('Cannot update or delete root node');
