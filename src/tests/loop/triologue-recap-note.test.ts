@@ -1,39 +1,38 @@
 /**
- * triologue-recap-note.test.ts — the brief-result note that recap writes.
+ * triologue-recap-note.test.ts — the two writers of a brief result must not drift.
  *
- * recap does not append a summary turn: it REWRITES the anchor brief's tool
- * RESULT in place. These tests pin the note's wire shape and the marker rule
- * the anchor scan depends on:
- *
- *   pristine  → "OK"                       (still an eligible anchor)
- *   consumed  → "OK Note, a recap has reset the conversation here with summary: …"
+ * There is no "is this result pristine?" predicate any more: anchor eligibility
+ * comes from the STRUCTURE (non-synthetic brief + something after its
+ * round-trip), never from the result's text. This file therefore pins only what
+ * actually exists — the success line, the note framing, and the plan-scope
+ * section marker.
  */
 import { describe, it, expect, vi } from 'vitest';
-import {
-  PRISTINE_BRIEF_RESULT,
-  isPristineBriefResult,
-  noteWithSummary,
-  readNoteBody,
-} from '../../loop/triologue/recap-note.js';
 
+// agent-io writes to the terminal; keep the test output clean.
 vi.mock('../../loop/agent-io.js', () => ({
   agentIO: { verbose: vi.fn(), log: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+import {
+  PRISTINE_BRIEF_RESULT,
+  PLAN_SCOPE_HEADING,
+  hasPlanScopeSection,
+  noteWithSummary,
+} from '../../loop/triologue/recap-note.js';
+
 const MARKER = 'OK Note, a recap has reset the conversation here with summary: ';
 
 describe('recap-note', () => {
-  it('pristine result is exactly "OK"', () => {
+  it('the success line is "OK" and the tool renders it as "OK."', () => {
+    // PRISTINE_BRIEF_RESULT is the shared prefix; the period belongs to the
+    // rendered result so the plan-scope section reads as one sentence.
     expect(PRISTINE_BRIEF_RESULT).toBe('OK');
-    expect(isPristineBriefResult('OK')).toBe(true);
-    expect(isPristineBriefResult('OK.')).toBe(false);
-    expect(isPristineBriefResult(undefined)).toBe(false);
   });
 
   it('writes the summary after the marker, keeping the success prefix', () => {
     const content = noteWithSummary('{"summary":"xxxxx"}');
     expect(content).toBe(`${MARKER}{"summary":"xxxxx"}`);
-    expect(isPristineBriefResult(content)).toBe(false);
   });
 
   it('emits the body verbatim (no re-encoding)', () => {
@@ -45,13 +44,24 @@ describe('recap-note', () => {
     const first = noteWithSummary('first');
     const second = noteWithSummary('second');
     expect(second).not.toContain('first');
-    expect(readNoteBody(second)).toBe('second');
+    expect(second.slice(MARKER.length)).toBe('second');
     void first;
   });
 
-  it('readNoteBody recovers the body, null when pristine', () => {
-    expect(readNoteBody('OK')).toBeNull();
-    expect(readNoteBody(undefined)).toBeNull();
-    expect(readNoteBody(noteWithSummary('the summary'))).toBe('the summary');
+  it('an overwrite also replaces a plan-scope section', () => {
+    const withScope = `${PRISTINE_BRIEF_RESULT}. ${PLAN_SCOPE_HEADING}, decide the interface first.`;
+    expect(hasPlanScopeSection(withScope)).toBe(true);
+    // The note is the record of this stretch; the reflection rode in the slot
+    // and is gone after the rewind.
+    const noted = noteWithSummary('the summary');
+    expect(hasPlanScopeSection(noted)).toBe(false);
+    expect(noted).not.toContain(PLAN_SCOPE_HEADING);
+  });
+
+  it('hasPlanScopeSection recognizes only the plan-scope section', () => {
+    expect(hasPlanScopeSection(`OK. ${PLAN_SCOPE_HEADING}, x`)).toBe(true);
+    expect(hasPlanScopeSection('OK')).toBe(false);
+    expect(hasPlanScopeSection('OK.')).toBe(false);
+    expect(hasPlanScopeSection(undefined)).toBe(false);
   });
 });
