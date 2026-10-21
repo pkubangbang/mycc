@@ -308,8 +308,17 @@ export class TriologueLite {
 
   /**
    * Add an assistant message
+   *
+   * Signature mirrors the lead facade's `Triologue.agent` (triologue.ts): the
+   * message itself is positional, all optional metadata travels in `opts`, so
+   * the two classes stay interchangeable at their shared call sites.
    */
-  agent(content: string, toolCalls?: ToolCall[], reasoningContent?: string): void {
+  agent(
+    content: string,
+    toolCalls?: ToolCall[],
+    opts?: { reasoningContent?: string; synthetic?: boolean },
+  ): void {
+    const reasoningContent = opts?.reasoningContent;
     const lastRole = this.getLastRole();
 
     // Reject invalid transitions

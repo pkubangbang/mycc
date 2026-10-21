@@ -15,6 +15,19 @@ import type { Role } from './types.js';
 import { estimateTokens, estimateTokensForMessages } from '../../utils/token.js';
 import { agentIO } from '../agent-io.js';
 
+/**
+ * Message storage layer.
+ *
+ * Provenance of an infrastructure-injected `brief`: some `brief` round-trips
+ * are not the model talking to itself — two producers inject one purely to
+ * give it a thinking step: `llm.ts` (empty-output recovery) and `hook.ts`
+ * (crossroad). Their `message` is boilerplate ("Let me see what to do next."),
+ * so recap must never rewind to one.
+ *
+ * HOW THE DISTINCTION IS MADE: a property of the MESSAGE. See
+ * `Message.synthetic` (types.ts) and `findLastBriefAnchor` below, which is the
+ * ONLY place the rule is applied.
+ */
 export class MessageStore {
   private messages: Message[] = [];
   private tokens: number = 0;
@@ -47,6 +60,25 @@ export class MessageStore {
 
   at(index: number): Message | undefined {
     return this.messages[index];
+  }
+
+  /**
+   * Copy of the messages from `from` to the end, for a consumer that holds a
+   * TRUE-array index (findLastBriefAnchor, at(), length) and must slice there —
+   * getRaw() would shift the index left by the number of sparse holes.
+   *
+   * Returns a COPY and filters holes, so the store never hands out its mutable
+   * backing array: a caller slicing the live array could observe (or hold) a
+   * reference that later pushes/truncation mutate underneath it. Out-of-range
+   * `from` yields an empty array, so callers need no `Math.min` clamp.
+   */
+  sliceFrom(from: number): Message[] {
+    const result: Message[] = [];
+    for (let i = Math.max(0, from); i < this.messages.length; i++) {
+      const m = this.messages[i];
+      if (m && typeof m === 'object' && m.role) result.push(m);
+    }
+    return result;
   }
 
   /** Last element or undefined (defensive: skips sparse holes) */
@@ -91,6 +123,20 @@ export class MessageStore {
    * This is the rewind anchor used by recap(): every brief marks a point the
    * conversation can collapse back to, so its text survives a rewind.
    *
+   * SYNTHETIC briefs are skipped. Two producers inject a `brief` round-trip
+   * purely to give the model a thinking step — llm.ts (empty-output recovery)
+   * and hook.ts (crossroad). Their `message` is boilerplate, so rewinding to one
+   * would preserve infrastructure noise as the surviving anchor. They mark the
+   * injected MESSAGE with `synthetic: true` (types.ts), the same shape
+   * agentIO.brief already uses — never a flag inside `arguments` (model-authored
+   * and unvalidated here, so forgeable) and never a call-id convention.
+   * Skipped messages remain ordinary messages and still satisfy triologue
+   * parity — they are only ineligible as anchors.
+   *
+   * The compaction resume brief (compact.ts) is deliberately NOT marked: it is
+   * the FLOOR, the only brief left after a compaction, so skipping it would
+   * leave recap with no anchor at all.
+   *
    * Scans `this.messages` DIRECTLY rather than getRaw(): the returned index is
    * fed to truncateTo(), which indexes the true array. getRaw() returns a
    * FILTERED copy, so its indices diverge from truncateTo's whenever the array
@@ -104,7 +150,14 @@ export class MessageStore {
     for (let i = this.messages.length - 1; i >= 0; i--) {
       const m = this.messages[i];
       if (!m || m.role !== 'assistant' || !m.tool_calls) continue;
-      if (m.tool_calls.some((tc) => tc.function?.name === 'brief')) return i;
+      // SYNTHETIC is a property of the MESSAGE (types.ts Message.synthetic),
+      // set by the producer that injected it — the same shape agentIO.brief
+      // already uses for its output provenance. Anything else is unworkable:
+      // a flag inside `arguments` is model-authored and unvalidated here (so
+      // forgeable), and a call-id convention is an invented string that drifts.
+      // Unmarked messages anchor — a spurious anchor costs a rewind, a missing
+      // floor costs every recap after a compaction.
+      if (!m.synthetic && m.tool_calls.some((tc) => tc.function?.name === 'brief')) return i;
     }
     return -1;
   }
@@ -214,6 +267,17 @@ export class MessageStore {
   /**
    * Full message view for LLM calls: system prompt + project context +
    * filtered conversation. Same defensive filtering as getRaw().
+   *
+   * This is the OUTBOUND path (llm.ts retryChat, explorer-agent, esc-wrap-up),
+   * so every message is passed through {@link toProviderMessage}, which keeps
+   * ONLY the provider-visible fields (PROVIDER_MESSAGE_KEYS) and drops
+   * everything else — including the in-memory-only `synthetic` marker
+   * (types.ts). Filtering on egress rather than on ingress keeps the mark
+   * readable at its ONE consumer (findLastBriefAnchor, which reads the true
+   * array) while guaranteeing it never reaches a provider — and so can never
+   * be echoed back as model output. It is an ALLOW-list, not a deny-list: a
+   * future internal field is excluded by default instead of having to be
+   * remembered here.
    */
   getFullMessages(): Message[] {
     const result: Message[] = [];
@@ -224,14 +288,68 @@ export class MessageStore {
 
     // Inject project context (README, mindmap instructions, etc.)
     for (const m of this.projectContext) {
-      if (m && typeof m === 'object' && m.role) result.push(m);
+      if (m && typeof m === 'object' && m.role) result.push(toProviderMessage(m));
     }
 
     // Conversation history
     for (const m of this.messages) {
-      if (m && typeof m === 'object' && m.role) result.push(m);
+      if (m && typeof m === 'object' && m.role) result.push(toProviderMessage(m));
     }
 
     return result;
   }
+}
+
+/**
+ * The fields a provider may see — an ALLOW-LIST, not a deny-list.
+ *
+ * The payload is rebuilt from these keys only, so any runtime-only field is
+ * dropped BY DEFAULT, including ones added later: `synthetic` (recap
+ * provenance, types.ts), `hook_name` (minifier attribution), `imageMime`
+ * (multimodal hint), transcript envelope fields (`kind`, `user_origin`,
+ * `timestamp`), and the extended `Message.tool_call_id` / `reasoning_content`
+ * … which DO belong to the wire and are listed here explicitly.
+ *
+ * A deny-list was the earlier shape (strip `synthetic`, spread the rest). It
+ * is strictly weaker: every new internal field silently starts reaching the
+ * model unless someone remembers to exclude it, and a leaked marker can be
+ * imitated as model output — the same forgery hazard that ruled out a flag
+ * inside `arguments`. With an allow-list a forgotten field is merely absent
+ * from the payload, which is observable, rather than leaking.
+ *
+ * Keys cover BOTH provider shapes this runtime talks to:
+ *   - ollama: role, content, thinking, images, tool_calls, tool_name
+ *   - deepseek (engine/deepseek.ts normalizeMessage): + tool_call_id,
+ *     reasoning_content, imageMime (data-URL media type for `images[]`)
+ */
+const PROVIDER_MESSAGE_KEYS = [
+  'role',
+  'content',
+  'thinking',
+  'images',
+  'tool_calls',
+  'tool_name',
+  'tool_call_id',
+  'reasoning_content',
+  'imageMime',
+] as const;
+
+const PROVIDER_MESSAGE_KEY_SET: ReadonlySet<string> = new Set<string>(PROVIDER_MESSAGE_KEYS);
+
+/**
+ * Project a message onto the provider-visible fields, dropping everything
+ * else.
+ *
+ * Returns the SAME object when it carries no extra key, so the common case
+ * allocates nothing (this runs per message on every LLM call).
+ */
+function toProviderMessage(m: Message): Message {
+  const hasExtra = Object.keys(m).some((k) => !PROVIDER_MESSAGE_KEY_SET.has(k));
+  if (!hasExtra) return m;
+  const out: Record<string, unknown> = {};
+  for (const key of PROVIDER_MESSAGE_KEYS) {
+    const value = (m as unknown as Record<string, unknown>)[key];
+    if (value !== undefined) out[key] = value;
+  }
+  return out as unknown as Message;
 }

@@ -93,10 +93,14 @@ compose as follows:
 - **Compaction is the floor.** `compact()` does `store.replaceAll(...)`, so it
   destroys the whole conversation and with it every rewind anchor. `recap` can
   never rewind past the most recent compaction — the history is gone.
-- **The resume brief is the floor anchor** (and stays synthetic-free): a
-  post-compact `recap` finds "last brief" = the `compact_resume_*` pair, whose
-  span is empty. The handler declines (`Already at the compaction boundary`)
-  rather than consuming the floor for nothing.
+- **The resume brief is the floor anchor**: after a compaction it is the only
+  brief left, so `findLastBriefAnchor` always treats it as real — `compact.ts`
+  deliberately does NOT mark it `synthetic: true` (that mark is reserved for the
+  INCIDENTAL briefs from llm.ts empty-output recovery and hook.ts crossroad,
+  whose text is boilerplate). A post-compact `recap` therefore finds "last
+  brief" = the `compact_resume_*` pair, whose span is empty. The handler
+  declines (`[RECAP] Nothing to collapse — there is no new activity past your
+  last brief.`) rather than consuming the floor for nothing.
 - **The summary survives.** The compaction summary lives in the `user` message
   *before* the resume brief, so a rewind at the floor keeps it
   (`user(summary) → assistant(recap) → tool`).

@@ -64,6 +64,23 @@ export interface Message extends OllamaMessage {
   reasoning_content?: string;
   tool_call_id?: string;
   hook_name?: string;
+  /**
+   * Infrastructure-injected message, not model-authored.
+   *
+   * Same idea as the `synthetic` flag agentIO.brief carries: it marks provenance
+   * as a property OF THE MESSAGE, set by the producer that created it. It is
+   * deliberately NOT a field inside `arguments` — arguments are model-authored
+   * and this runtime never validates them against `input_schema`, so a model
+   * echoing such a flag would disqualify its own brief as a recap anchor — and
+   * it is not inferred from a call-id convention either, which would be an
+   * invented string that drifts.
+   *
+   * Recap reads this on the assistant message carrying the `brief` call: a
+   * synthetic brief round-trip (llm.ts empty-output recovery, hook.ts crossroad)
+   * is never a rewind anchor. The compaction resume brief is NOT marked — it is
+   * the FLOOR and must always anchor.
+   */
+  synthetic?: boolean;
 }
 
 // ============================================================================

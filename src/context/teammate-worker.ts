@@ -512,7 +512,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         const hasContent = !!(assistantMessage.content && assistantMessage.content.trim());
 
         // Register the assistant message (no tool calls to track)
-        triologue.agent(assistantMessage.content || '', undefined, reasoningContent);
+        triologue.agent(assistantMessage.content || '', undefined, { reasoningContent });
 
         nextBriefNudge = 5;
 
@@ -572,7 +572,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       emptyTurnRetries = 0;
 
       // There are tool calls — register assistant message with pending tool calls
-      triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
+      triologue.agent(assistantMessage.content || '', toolCalls, { reasoningContent });
 
       // 5. Execute tools
       for (const tc of toolCalls) {

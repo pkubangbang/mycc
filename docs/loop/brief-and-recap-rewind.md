@@ -39,12 +39,30 @@ recap#2 → query → tool1 → [recap(note₂)]
 | A recap note can never be its own anchor | the scan matches `tool_calls[].function.name === 'brief'` only |
 | Triologue parity is preserved | the merge pair ends on `role:'tool'`, so the next real `agent()` is the ordinary `tool → assistant` handoff |
 
-### No `synthetic` flag
+### Incidental vs. floor briefs
 
-A synthetic brief (compaction resume, crossroad bridge, empty-output recovery)
-is a harmless anchor: truncating **at** it deletes only its own assistant+tool
-pair, while the thing it points at (the compaction summary `user` message, the
-crossroad text) sits *before* it and survives. Nothing needs to be tagged.
+Not every `brief` is an anchor. Two producers inject a `brief` round-trip only
+to give the model a thinking step — `llm.ts` (empty-output recovery) and
+`hook.ts` (crossroad). Their `message` is boilerplate ("Let me see what to do
+next."), so rewinding to one would preserve infrastructure noise as the
+surviving anchor. They are **incidental** and skipped.
+
+The distinction is a property of the **message**: the producers set
+`Message.synthetic = true` on the assistant message they inject (see
+`types.ts`), and `MessageStore.findLastBriefAnchor` skips any marked message.
+Never a flag in `arguments` — arguments are model-authored and this runtime
+does not validate them against `input_schema`, so a model that echoed such a
+flag into its own brief would disqualify itself as an anchor. Never a call-id
+convention either: an invented string that rots the moment a producer forgets
+it.
+
+`synthetic` is **in-memory only**. It is set at creation inside the triologue
+and stripped on egress by `MessageStore.getFullMessages()` (the provider
+payload path), so the LLM never sees the marker and cannot imitate it.
+
+The compaction resume brief is the opposite case — the **floor**. After a
+compaction it is the only brief left, so skipping it would leave `recap` with
+no anchor at all. `compact.ts` therefore never marks it.
 
 ## ⚠️ Architecture: Meta-Tools
 

@@ -78,6 +78,8 @@ vi.mock('../../../loop/triologue.js', () => {
       tokensAfter: 10,
     }));
     getTokenCount = vi.fn(() => 100);
+    getResultThreshold = vi.fn(() => 25000);
+    recapNoteSize = vi.fn(() => 100);
     skipPendingTools = vi.fn();
   }
   return { Triologue: TriologueStub };

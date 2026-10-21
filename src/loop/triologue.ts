@@ -17,6 +17,7 @@ import { TpAutoFixer } from './triologue/tp-fix.js';
 import { loopEvents } from './loop-events.js';
 import type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } from './triologue/types.js';
 import { type PieceKind } from './triologue/transcript.js';
+import { readBriefConfidence, readBriefMessage } from './triologue/brief.js';
 
 export type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } from './triologue/types.js';
 
@@ -38,6 +39,23 @@ import { WrapUpManager } from './triologue/wrap-up.js';
 type DeferredInput =
   | { kind: 'user'; text: string }
   | { kind: 'note'; category: NoteCategory; hookName?: string; text: string };
+
+/**
+ * Assemble the exact tool-result string a recap appends: the `[RECAP] header`
+ * (label + quoted anchor brief) followed by the summarizer's body.
+ *
+ * SINGLE SOURCE OF TRUTH — both `rewindToLastBrief` (which appends it) and
+ * `Triologue.recapNoteSize` (which sizes it) call this, so a caller's
+ * size pre-check can never measure a different string than the one `tool()`
+ * will accept or reject.
+ */
+function buildRecapNote(description: string, anchorMessage: string, additionalMessage: string): string {
+  const header = [
+    `[RECAP] ${description}`,
+    anchorMessage ? `Rewound past the brief: "${anchorMessage}"` : '',
+  ].filter(Boolean).join('\n');
+  return [header, additionalMessage].filter(Boolean).join('\n\n');
+}
 
 export class Triologue {
   private store: MessageStore = new MessageStore();
@@ -559,8 +577,28 @@ export class Triologue {
 
   /**
    * Add an assistant message
+   *
+   * Positional args stay `(content, toolCalls)`: those two ARE the message.
+   * Everything else is optional metadata and travels in `opts`, so adding a
+   * third piece of metadata is never a breaking arity change.
+   *
+   * @param opts.reasoningContent - The model's reasoning/thinking text for
+   *   this turn, forwarded to the provider as `reasoning_content`.
+   * @param opts.synthetic - The message was injected by INFRASTRUCTURE, not
+   *   produced by the model (llm.ts empty-output recovery, hook.ts crossroad).
+   *   Set here, at creation, because provenance is a property of the
+   *   message (types.ts Message.synthetic) — never a flag inside `arguments`
+   *   (model-authored, unvalidated here → forgeable) and never a call-id
+   *   convention. Only an in-memory marker: the store strips it from the
+   *   provider payload (MessageStore.toProviderMessage), so it can neither
+   *   reach the LLM nor be echoed back.
    */
-  agent(content: string, toolCalls?: ToolCall[], reasoningContent?: string): void {
+  agent(
+    content: string,
+    toolCalls?: ToolCall[],
+    opts?: { reasoningContent?: string; synthetic?: boolean },
+  ): void {
+    const reasoningContent = opts?.reasoningContent;
     const lastRole = this.getLastRole();
 
     // Reject invalid transitions
@@ -580,6 +618,7 @@ export class Triologue {
       content: content || '',
       tool_calls: toolCalls,
       ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+      ...(opts?.synthetic ? { synthetic: true } : {}),
     });
 
     // Track pending tool calls in order
@@ -956,15 +995,69 @@ export class Triologue {
   // === Rewind (recap) ===
 
   /**
+   * Identity of the anchor, safe to carry across an await. NOT an array index,
+   * so it survives appends: rewindToLastBrief() re-derives the anchor and
+   * refuses to truncate when the identity differs (see the TOCTOU note there).
+   * Derived from content that never changes once written — the anchor's store
+   * index, its brief message, and the brief call's raw arguments — because
+   * `ToolCall.id` is not part of the Ollama tool-call shape.
+   */
+  anchorIdentity(index: number, call: { function: { name: string; arguments?: unknown } }): string {
+    const args = typeof call.function.arguments === 'string'
+      ? call.function.arguments
+      : JSON.stringify(call.function.arguments ?? {});
+    return `${index}:${call.function.name}:${args}`;
+  }
+
+  /**
+   * Resolve the rewind anchor ONCE for every caller.
+   *
+   * getLastBrief(), rewindToLastBrief() and recapNoteSize() must agree on four
+   * rules — which brief is "last" (the synthetic predicate lives in the store),
+   * which tool_calls entry counts (name === 'brief'), which brief owns the
+   * call (the FIRST one, if a message batches several), and how its message is
+   * read. Three hand-copied versions of that sequence is one edit away from the
+   * size pre-check measuring a string the append never produces — which is
+   * exactly the round-2 bug in a new costume. Returns null when there is no
+   * anchor, or when `expectedAnchorId` no longer matches it.
+   *
+   * Private: the index is a truncation detail that must not leave the facade.
+   */
+  private resolveAnchor(expectedAnchorId?: string): { index: number; call: { function: { name: string; arguments?: unknown } }; anchorMessage: string } | null {
+    const index = this.store.findLastBriefAnchor();
+    if (index < 0) return null;
+
+    const anchor = this.store.at(index);
+    // The store decides eligibility at the MESSAGE level (Message.synthetic),
+    // so a message reaching us is already a real anchor: quote its first brief
+    // call. Keeping a per-call filter here would be a second, divergent rule.
+    const call = anchor?.tool_calls?.find((tc) => tc.function?.name === 'brief');
+    if (!call) return null; // defensive: anchor vanished between scan and read
+
+    // TOCTOU guard: the caller peeked, then awaited the forks (10-60s of LLM
+    // time) during which a new brief may have landed. The re-scan above always
+    // yields a VALID current index, but it cannot tell whether that is still the
+    // anchor the caller summarized. If it moved, truncating would delete a span
+    // that was never summarized — refuse, having modified nothing.
+    if (expectedAnchorId !== undefined && this.anchorIdentity(index, call) !== expectedAnchorId) {
+      return null;
+    }
+
+    return { index, call, anchorMessage: readBriefMessage(call) };
+  }
+
+  /**
    * Peek at the rewind anchor: the LAST real `brief` in the conversation.
    *
-   * Every brief marks a point the conversation can collapse back to, so its
-   * `message` is what survives a recap. Returns null when the history holds no
-   * brief at all (the very first turn, or a transcript restored mid-span).
+   * Every REAL brief marks a point the conversation can collapse back to, so its
+   * `message` is what survives a recap. Incidental infrastructure briefs
+   * (empty-output recovery, crossroad) are skipped — see
+   * MessageStore.findLastBriefAnchor. Returns null when the history holds no
+   * real brief at all (the very first turn, or a transcript restored mid-span).
    *
-   * The array index is intentionally NOT part of the return value: it is a
-   * truncation detail owned by this facade, and exposing it would let a caller
-   * carry a stale mark across a compaction or an interleaved truncation.
+   * The array index is NOT returned. `id` is an opaque fingerprint that a
+   * caller may carry across an await and hand back to rewindToLastBrief, which
+   * re-derives the anchor and refuses to truncate if it moved.
    *
    * `span` is a copy of the messages from just after the brief round-trip
    * (assistant call + its tool result) to the end — exactly the region a
@@ -973,25 +1066,30 @@ export class Triologue {
   getLastBrief(): {
     message: string;
     confidence?: number;
+    /** Opaque anchor fingerprint — see anchorIdentity(). */
+    id: string;
     span: Message[];
   } | null {
-    const index = this.store.findLastBriefAnchor();
-    if (index < 0) return null;
-
-    const anchor = this.store.at(index);
-    const call = anchor?.tool_calls?.find((tc) => tc.function?.name === 'brief');
-    if (!call) return null; // defensive: anchor vanished between scan and read
+    const resolved = this.resolveAnchor();
+    if (!resolved) return null;
+    const { index, call, anchorMessage: message } = resolved;
 
     // Anchor pair = assistant brief call + the tool result answering it.
     // Skip the result too, so `span` never starts with a stranded tool msg.
     let start = index + 1;
     if (start < this.store.length && this.store.at(start)?.role === 'tool') start++;
 
-    const raw = call.function.arguments as Record<string, unknown> | undefined;
-    const message = typeof raw?.message === 'string' ? raw.message : '';
-    const confidence = typeof raw?.confidence === 'number' ? raw.confidence : undefined;
+    const confidence = readBriefConfidence(call);
 
-    return { message, confidence, span: this.store.getRaw().slice(Math.min(start, this.store.length)) };
+    // Slice the TRUE array, not getRaw(): `start` is a true-array index, and
+    // getRaw() filters sparse holes, so its indices shift left by the number
+    // of holes before the anchor. Slicing the filtered copy would either
+    // include the anchor's own brief pair or (with enough holes) yield an
+    // empty span and a bogus "already at the compaction boundary" refusal.
+    // sliceFrom keeps the same hole-safety for consumers.
+    const span = this.store.sliceFrom(start);
+
+    return { message, confidence, id: this.anchorIdentity(index, call), span };
   }
 
   /**
@@ -1019,31 +1117,42 @@ export class Triologue {
   rewindToLastBrief(
     description: string,
     additionalMessage: string,
+    expectedAnchorId?: string,
   ): { anchorMessage: string; tokensBefore: number; tokensAfter: number } | null {
-    const index = this.store.findLastBriefAnchor();
-    if (index < 0) return null;
-
-    const anchor = this.store.at(index);
-    const call = anchor?.tool_calls?.find((tc) => tc.function?.name === 'brief');
-    if (!call) return null;
-
-    const raw = call.function.arguments as Record<string, unknown> | undefined;
-    const anchorMessage = typeof raw?.message === 'string' ? raw.message : '';
+    // One resolution for every caller (see resolveAnchor) — including the
+    // TOCTOU refusal and the message read that tolerates a string-shaped
+    // `arguments`.
+    const resolved = this.resolveAnchor(expectedAnchorId);
+    if (!resolved) return null;
+    const { index, anchorMessage } = resolved;
     const tokensBefore = this.store.tokenCount;
 
     this.truncateAndRecount(index, 'recap');
     this.wrapUp.reset();
 
     const callId = `recap_rewind_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const header = [
-      `[RECAP] ${description}`,
-      anchorMessage ? `Rewound past the brief: "${anchorMessage}"` : '',
-    ].filter(Boolean).join('\n');
 
     this.agent('', [{ id: callId, function: { name: 'recap', arguments: {} } }]);
-    this.tool('recap', [header, additionalMessage].filter(Boolean).join('\n\n'), callId);
+    this.tool('recap', buildRecapNote(description, anchorMessage, additionalMessage), callId);
 
     return { anchorMessage, tokensBefore, tokensAfter: this.store.tokenCount };
+  }
+
+  /**
+   * The exact string `rewindToLastBrief` hands to `tool()` as the recap result.
+   *
+   * Exported through Triologue.getResultThreshold()'s sibling `recapNoteSize`
+   * so a caller CAN size-check what will actually be appended. Checking the
+   * bare summary instead under-measures by the header (description + quoted
+   * anchor) and by any comment/query text the caller folded in — and since
+   * `tool()` throws above the threshold AFTER the truncation, an
+   * under-measure means losing the span with the note unrecorded.
+   */
+  recapNoteSize(description: string, additionalMessage: string, expectedAnchorId?: string): number | null {
+    // null when the anchor moved — the rewind will refuse for the same reason.
+    const resolved = this.resolveAnchor(expectedAnchorId);
+    if (!resolved) return null;
+    return buildRecapNote(description, resolved.anchorMessage, additionalMessage).length;
   }
 
   // === Private Helpers ===
@@ -1066,6 +1175,17 @@ export class Triologue {
     // be gone — drop it rather than replay into a truncated context.
     this.dropDeferredInputs(`truncateAndRecount(${event})`);
     this.emitControl(event);
+  }
+
+  /**
+   * The character limit above which `tool()` refuses a result and dumps it to
+   * a longtext file instead. Exposed so a caller that is ABOUT to hand over a
+   * large result can refuse it before mutating anything — `tool()` throws
+   * after its ledger bookkeeping, so "append then catch" cannot roll back
+   * cleanly. See handleRecapCall.
+   */
+  getResultThreshold(): number {
+    return this.options.resultThreshold;
   }
 
   /**

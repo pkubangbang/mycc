@@ -150,7 +150,7 @@ describe('TriologueLite', () => {
 
     it('agent() appends assistant content and reasoning', () => {
       t.user('q');
-      t.agent('thinking out loud', undefined, 'rationale');
+      t.agent('thinking out loud', undefined, { reasoningContent: 'rationale' });
       const raw = t.getMessagesRaw();
       expect(raw[1].role).toBe('assistant');
       expect(raw[1].content).toBe('thinking out loud');
@@ -380,7 +380,7 @@ describe('TriologueLite', () => {
         { id: 'p1', function: { name: 'bash', arguments: { command: 'ls' } } },
       ] as unknown as ToolCall[];
       t.user('go');
-      t.agent('', tcs, 'why');
+      t.agent('', tcs, { reasoningContent: 'why' });
       t.tool('bash', 'out', 'p1');
       t.note('MAIL', 'hello');
 

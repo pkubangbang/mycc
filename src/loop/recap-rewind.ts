@@ -15,6 +15,7 @@ import type { Message, Tool } from '../types.js';
 import type { Mindmap, MindmapPatchAction, Node } from '../mindmap/types.js';
 import { get_node } from '../mindmap/get-node.js';
 import { forkChat } from '../engine/chat-provider.js';
+import { StreamAbortedError } from '../engine/chat-helpers.js';
 import { startSpinner, stopSpinner } from '../engine/chat-helpers.js';
 
 /**
@@ -142,7 +143,7 @@ export async function handleRecap(
       () => null as string | null
     );
     if (result === null) {
-      return `[RECAP] Cancelled: ESC pressed during summarization. Checkpoint "${description}" remains open.`;
+      return `[RECAP] Cancelled: ESC pressed during summarization. Nothing was collapsed — the span is still in context.`;
     }
     summary = result;
   } else {
@@ -473,6 +474,15 @@ export interface RecapWithPatchResult {
   summary: string;
   /** A validated patch action, or null if none was produced (from forkChat #2) */
   patch: MindmapPatchAction | null;
+  /**
+   * Non-null when the mindmap-patch fork failed. The patch is best-effort, so
+   * this never fails the recap — but it must not vanish silently either: the
+   * jsonl-validation failure is reported via `brief('warn', 'mindmap-patch')`,
+   * so a dropped patch deserves the same visibility. Reported by the CALLER
+   * (hook.ts), not from here: agentIO is process-wide and this module is also
+   * used by teammate recaps.
+   */
+  patchError: string | null;
 }
 
 /**
@@ -532,21 +542,56 @@ export async function handleRecapSpan(
   startSpinner('Recapping context');
   let summary: string;
   let patch: MindmapPatchAction | null;
+  // Set by the patch fork's catch — surfaced to the caller, never fatal.
+  let patchError: string | null = null;
   try {
     // ── Launch both forkChats concurrently via Promise.all ──
     // Both fork from the same triologue messages — neither depends on the other's output.
-    [summary, patch] = await Promise.all([
-      // forkChat #1: Recap Summary (unchanged from current handleRecap)
-      handleRecap(fullMessages, span, allTools, description, escAware, comment, lastUserQuery),
-      // forkChat #2: Patch Decision (independent, concurrent) — skip if no mindmap
-      mindmap
-        ? generatePatchAction(fullMessages, allTools, description, mindmap, escAware)
-        : Promise.resolve(null),
-    ]);
+    //
+    // forkChat only receives an AbortSignal via escAware (ESC), so a provider
+    // error on one fork does not cancel the other. We deliberately do NOT
+    // drain the abandoned sibling: awaiting it would block the finally — and
+    // therefore stopSpinner — for unbounded time if it never settles.
+    //
+    // REJECTION POLICY — the two forks are not equal:
+    //   • summary fork  — REQUIRED. Its rejection must reach the caller (it
+    //     becomes a failed recap), so it is awaited untouched.
+    //   • patch fork    — BEST-EFFORT. A mindmap patch is a nicety; letting it
+    //     reject would have Promise.all throw away the already-paid summary
+    //     and dump the turn to PROMPT. It is neutralised to `null` and only
+    //     logged. Neutralise means `.catch` returns a value, NOT that it
+    //     merely logs — a logging-only handler still leaves the rejection to
+    //     propagate through Promise.all.
+    const summaryFork = handleRecap(fullMessages, span, allTools, description, escAware, comment, lastUserQuery);
+    const patchFork: Promise<MindmapPatchAction | null> = mindmap
+      ? generatePatchAction(fullMessages, allTools, description, mindmap, escAware).catch((err: unknown) => {
+          // REACHABILITY: this branch is live but NARROW. escAware races
+          // forkChat against an ESC resolver (parent/core.ts:747); abort() fires
+          // synchronously (:724) while the sentinel resolves only after
+          // `await onCleanUp()` (:725), so forkChat usually rejects FIRST and
+          // the summary fork's rejection reaches the caller instead of the
+          // "[RECAP] Cancelled:" sentinel. The race is per-fork, so
+          // "summary resolves with the sentinel, patch rejects" is reachable —
+          // that interleaving is this handler's only entry point.
+          //
+          // StreamAbortedError does NOT mean "the recap is cancelled": any
+          // aborted stream raises it, including the teammate watchdog
+          // (context/teammate-worker.ts). So it is reported like any other
+          // patch failure, only shorter.
+          patchError = err instanceof StreamAbortedError
+            ? 'mindmap-patch fork aborted'
+            : `mindmap-patch fork failed: ${String(err)}`;
+          return null;
+        })
+      : Promise.resolve(null);
+    [summary, patch] = await Promise.all([summaryFork, patchFork]);
   } finally {
+    // Cleared on success, on ESC, and on a thrown error. A still-running
+    // sibling keeps streaming into a stopped spinner, which is harmless
+    // (startSpinner is non-refcounted; stopSpinner only clears the line).
     stopSpinner();
   }
 
-  return { summary, patch };
+  return { summary, patch, patchError };
 }
 

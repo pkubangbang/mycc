@@ -31,6 +31,7 @@ import { appendPatch, getPatchPath } from '../../mindmap/patch-jsonl.js';
 import { loopEvents } from '../loop-events.js';
 import { stripInternalMarkup } from '../../utils/letter-box.js';
 import { buildCandidatesBrief } from '../crossroad.js';
+import { briefToolCall } from '../triologue/brief.js';
 
 /**
  * Display the assistant's text content mid-loop via brief, stripping internal
@@ -85,7 +86,9 @@ async function handleRecapCall(
     : undefined;
 
   const fail = (message: string): HandlerResult => {
-    triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, chat.assistantReasoningContent);
+    triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
+      reasoningContent: chat.assistantReasoningContent,
+    });
     triologue.tool('recap', message, call.id);
     turn.isFirstRound = false;
     return AgentState.COLLECT;
@@ -110,7 +113,7 @@ async function handleRecapCall(
   // whose resume brief IS the last brief). Skip both forks: there is nothing to
   // summarize, and consuming the floor anchor would be pointless churn.
   if (anchor.span.length === 0) {
-    return fail('[RECAP] Already at the compaction boundary — nothing further to collapse.');
+    return fail('[RECAP] Nothing to collapse — there is no new activity past your last brief.');
   }
 
   // ---- abandon path: collapse without summarizing ----
@@ -124,15 +127,27 @@ async function handleRecapCall(
       parts.push('');
       parts.push(`**Next direction (recap comment — follow this):** ${comment}`);
     }
-    const result = triologue.rewindToLastBrief(description, parts.join('\n'));
-    if (result) {
-      ctx.core.brief('info', 'recap',
-        `(${chalk.yellow(result.tokensBefore.toLocaleString())} → ${chalk.green(result.tokensAfter.toLocaleString())} tokens)`,
-        `Abandoned: ${description}${comment ? ` — ${comment}` : ''}`,
-      );
-      turn.lastBriefMessage = result.anchorMessage;
-      turn.nextBriefNudge = 5;
+    const abandonParts = parts.join('\n');
+    // Size pre-check on the note that will ACTUALLY be appended (header +
+    // quoted anchor + body), not just the body: `tool()` throws above the
+    // threshold AFTER the truncation, so an under-measure loses the span.
+    const abandonSize = triologue.recapNoteSize(description, abandonParts, anchor.id);
+    if (abandonSize !== null && abandonSize > triologue.getResultThreshold()) {
+      return fail(`Error: the recap note is ${abandonSize} chars, over the ${triologue.getResultThreshold()}-char tool-result limit; nothing was discarded. Re-run with a shorter comment.`);
     }
+    const result = triologue.rewindToLastBrief(description, abandonParts, anchor.id);
+    if (!result) {
+      // The anchor moved between the peek at the top of this handler and here.
+      // Answer the call rather than returning COLLECT with a dangling
+      // tool_call and no result — that shape 400s on strict providers.
+      return fail('Error: The last brief changed while collapsing, so nothing was discarded. Run recap again.');
+    }
+    ctx.core.brief('info', 'recap',
+      `(${chalk.yellow(result.tokensBefore.toLocaleString())} → ${chalk.green(result.tokensAfter.toLocaleString())} tokens)`,
+      `Abandoned: ${description}${comment ? ` — ${comment}` : ''}`,
+    );
+    turn.lastBriefMessage = result.anchorMessage;
+    turn.nextBriefNudge = 5;
     turn.isFirstRound = false;
     return AgentState.COLLECT;
   }
@@ -155,7 +170,7 @@ async function handleRecapCall(
   // survives in the logs / Web UI as the record of the recap's silent wait.
   ctx.core.brief('info', 'recap', 'Summarizing the span since your last brief...');
   const mindmap = ctx.core.getMindmap();
-  const { summary, patch } = await handleRecapSpan(
+  const { summary, patch, patchError } = await handleRecapSpan(
     fullMessages,
     anchor.span,
     allTools,
@@ -168,7 +183,9 @@ async function handleRecapCall(
 
   // Check for ESC cancellation — the triologue is still untouched at this point.
   if (summary.startsWith('[RECAP] Cancelled:')) {
-    triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, chat.assistantReasoningContent);
+    triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
+      reasoningContent: chat.assistantReasoningContent,
+    });
     triologue.tool('recap', summary, call.id);
     ctx.core.brief('warn', 'recap', summary);
     // ESC pressed during recap - return STOP for centralized wrap-up
@@ -182,9 +199,33 @@ async function handleRecapCall(
     return AgentState.COLLECT;
   }
 
-  const result = triologue.rewindToLastBrief(description, summary);
+  // ── SIZE PRE-CHECK: refuse an oversized note BEFORE touching the triologue ──
+  // rewindToLastBrief() truncates first and only then appends the note, and
+  // tool() THROWS ResultTooLargeError when the note exceeds resultThreshold.
+  // Appending the note ourselves beforehand would "work", but addMessage()
+  // JOURNALS the pair as kind:'new' before the truncation drops it from the
+  // live array — and collateMessages() deliberately does not cut the durable
+  // view on a recap boundary (transcript.ts), so restoring a session would
+  // replay that discarded answer and show the summary twice.
+  //
+  // So: never append on the success path. Reject here instead, while the store
+  // is still untouched, and let the single rewindToLastBrief() append the one
+  // merge node that the model actually sees.
+  const threshold = triologue.getResultThreshold();
+  const noteSize = triologue.recapNoteSize(description, summary, anchor.id);
+  if (noteSize !== null && noteSize > threshold) {
+    ctx.core.brief('warn', 'recap',
+      `Recap note too large (${noteSize} chars > ${threshold}). Nothing was collapsed.`,
+    );
+    return fail(`Error: the recap note is ${noteSize} chars, over the ${threshold}-char tool-result limit; nothing was collapsed. Re-run recap with a shorter summary or comment.`);
+  }
+
+  const result = triologue.rewindToLastBrief(description, summary, anchor.id);
   if (!result) {
-    return fail('Error: No brief found to rewind to — nothing to collapse yet.');
+    // The anchor moved while the forks ran (a new brief landed) or vanished.
+    // Nothing was truncated and nothing was appended.
+    ctx.core.brief('warn', 'recap', 'Anchor moved during summarization — nothing was collapsed.');
+    return fail('Error: The last brief changed while the recap was summarizing, so nothing was collapsed. Run recap again — it will rewind to the new anchor.');
   }
 
   ctx.core.brief('info', 'recap',
@@ -196,6 +237,13 @@ async function handleRecapCall(
   // the old lastBriefMessage pointed at a message the model can no longer see.
   turn.lastBriefMessage = result.anchorMessage;
   turn.nextBriefNudge = 5;
+
+  // Surface a dropped patch with the same vocabulary as a validation failure
+  // below: the patch is best-effort and never fails the recap, but silence here
+  // would make a mindmap update that never happened invisible.
+  if (patchError) {
+    ctx.core.brief('warn', 'mindmap-patch', `patch dropped (recap continues): ${patchError}`);
+  }
 
   // ── Apply mindmap patch (if produced by forkChat #2) ──
   // Both the in-memory tree and the jsonl are updated simultaneously.
@@ -246,7 +294,9 @@ export async function handleHook(
     // 2. Validate recap isolation (must be called alone)
     const recapValidation = validateRecapIsolation(augmentedCalls);
     if (!recapValidation.valid) {
-      triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, chat.assistantReasoningContent);
+      triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
+      reasoningContent: chat.assistantReasoningContent,
+    });
       for (const call of augmentedCalls) {
         triologue.tool(call.function.name, recapValidation.message!, call.id);
       }
@@ -335,13 +385,11 @@ export async function handleHook(
       const briefMessage = inPlanMode
         ? 'Refining my analysis.'
         : 'Refining my approach. Let me re-orient on the in-flight task and decide the next step.';
-      triologue.agent(finalContent, [{
-        id: briefCallId,
-        function: {
-          name: 'brief',
-          arguments: { message: briefMessage, confidence: 7 },
-        },
-      }] as ToolCall[], chat.assistantReasoningContent);
+      const crossroadBrief = briefToolCall(briefMessage, 7, briefCallId);
+      triologue.agent(finalContent, [crossroadBrief], {
+        reasoningContent: chat.assistantReasoningContent,
+        synthetic: true,
+      });
 
       // Inject the crossroad file path into the brief tool result so the LLM
       // knows where the full decision record lives. When there is no crossroad
@@ -361,7 +409,7 @@ export async function handleHook(
       const briefResult = chat.crossroadFilePath
         ? `A direction refinement was applied to your response. The full decision record is saved at: ${chat.crossroadFilePath} (you may replay it with mycc-pretty-print --type=crossroad <path> only if the user asks to see the full response).`
         : 'OK';
-      triologue.tool('brief', briefResult, briefCallId);
+      triologue.tool('brief', briefResult, crossroadBrief.id);
 
       // Three-part display, in reading order:
       //   1. prefix  — the content before the turning word (never shown live,
@@ -404,7 +452,7 @@ export async function handleHook(
     triologue.agent(
       finalAssistantContent,
       finalToolCalls as ToolCall[] | undefined,
-      chat.assistantReasoningContent,
+      { reasoningContent: chat.assistantReasoningContent },
     );
 
     // Confusion scoring: +1 per assistant turn (agent spinning without progress)
