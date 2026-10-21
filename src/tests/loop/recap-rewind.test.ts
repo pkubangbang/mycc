@@ -536,6 +536,28 @@ describe('M1 — anchor identity', () => {
     expect(a.startsWith('brief_fixed:brief:')).toBe(true);
   });
 
+  it('rewrites the resolved result occurrence when call ids are reused across turns', () => {
+    const t = new Triologue();
+    const sameId = 'brief_reused';
+    t.agent('', [{ id: sameId, function: { name: 'brief', arguments: { message: 'FIRST' } } }]);
+    t.tool('brief', 'OK FIRST', sameId);
+    t.user('first work');
+
+    // Provider call IDs need only be unique within a turn; the second brief
+    // deliberately reuses the exact ID. Recap must rewrite the SECOND result,
+    // not the older matching result in the preserved prefix.
+    t.agent('', [{ id: sameId, function: { name: 'brief', arguments: { message: 'SECOND' } } }]);
+    t.tool('brief', 'OK SECOND', sameId);
+    t.user('second work');
+
+    const result = t.rewindToLastBrief('collapse second span', 'SECOND SUMMARY');
+    expect(result?.anchorMessage).toBe('SECOND');
+    const messages = t.getMessages();
+    expect(messages).toHaveLength(4);
+    expect(messages[1].content).toBe('OK FIRST');
+    expect(messages[3].content).toContain('SECOND SUMMARY');
+  });
+
   it('differentiates two briefs that reuse the same call id', () => {
     const t = new Triologue();
     t.agent('', [{ id: 'brief_dup', function: { name: 'brief', arguments: { message: 'ONE' } } }]);

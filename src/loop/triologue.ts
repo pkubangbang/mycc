@@ -1279,7 +1279,8 @@ export class Triologue {
     this.truncateAndRecount(resultIndex + 1, 'recap');
     this.wrapUp.reset();
 
-    const rewritten = this.store.rewriteToolResult(
+    const rewritten = this.store.rewriteToolResultAt(
+      resultIndex,
       call.id,
       noteWithSummary(buildRecapNote(description, anchorMessage, additionalMessage)),
     );

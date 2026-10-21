@@ -161,17 +161,17 @@ export class MessageStore {
   }
 
   /**
-   * REWRITE (in place) the tool result answering call `id` to `content`.
+   * REWRITE the specific tool-result occurrence at `index`.
    *
-   * Used by recap: the summary is written into the anchor brief's own result,
-   * not appended as a new message. In place, because the assistant→tool pairing
-   * must not change — position, `tool_call_id` and `tool_name` stay as the
-   * provider saw them. Returns false (modifying nothing) when no result exists.
+   * Tool-call IDs are only unique within one assistant turn and can be reused
+   * by a replay. Recap has already resolved the exact result index; searching
+   * globally by ID here could rewrite an older result after the new span has
+   * been truncated. Validate both position and ID, and otherwise modify nothing.
    */
-  rewriteToolResult(id: string | undefined, content: string): boolean {
-    const i = this.findToolResultIndex(id);
-    if (i < 0) return false;
-    this.messages[i].content = content;
+  rewriteToolResultAt(index: number, id: string | undefined, content: string): boolean {
+    const message = this.messages[index];
+    if (!id || !message || message.role !== 'tool' || message.tool_call_id !== id) return false;
+    message.content = content;
     return true;
   }
 
