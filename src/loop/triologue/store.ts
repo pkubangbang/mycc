@@ -10,7 +10,7 @@
  * Behavior is byte-identical: the facade delegates to this class.
  */
 
-import type { Message } from '../../types.js';
+import type { Message, ToolCall } from '../../types.js';
 import type { Role } from './types.js';
 import { estimateTokens, estimateTokensForMessages } from '../../utils/token.js';
 import { agentIO } from '../agent-io.js';
@@ -25,8 +25,9 @@ import { agentIO } from '../agent-io.js';
  * so recap must never rewind to one.
  *
  * HOW THE DISTINCTION IS MADE: a property of the MESSAGE. See
- * `Message.synthetic` (types.ts) and `findLastBriefAnchor` below, which is the
- * ONLY place the rule is applied.
+ * `Message.synthetic` (types.ts); the rule itself is applied in
+ * `briefIndices()` below (which lists the candidates) and completed by
+ * Triologue.currentAnchorIndex (which requires activity after the brief).
  */
 export class MessageStore {
   private messages: Message[] = [];
@@ -64,7 +65,7 @@ export class MessageStore {
 
   /**
    * Copy of the messages from `from` to the end, for a consumer that holds a
-   * TRUE-array index (findLastBriefAnchor, at(), length) and must slice there —
+   * TRUE-array index (briefIndices, at(), length) and must slice there —
    * getRaw() would shift the index left by the number of sparse holes.
    *
    * Returns a COPY and filters holes, so the store never hands out its mutable
@@ -118,48 +119,60 @@ export class MessageStore {
   }
 
   /**
-   * Index of the last assistant message that called the `brief` tool, or -1.
+   * TRUE-array indices of every NON-SYNTHETIC assistant message that called
+   * `brief`, in message order — the complete candidate set for anchor
+   * selection.
    *
-   * This is the rewind anchor used by recap(): every brief marks a point the
-   * conversation can collapse back to, so its text survives a rewind.
-   *
-   * SYNTHETIC briefs are skipped. Two producers inject a `brief` round-trip
-   * purely to give the model a thinking step — llm.ts (empty-output recovery)
-   * and hook.ts (crossroad). Their `message` is boilerplate, so rewinding to one
-   * would preserve infrastructure noise as the surviving anchor. They mark the
-   * injected MESSAGE with `synthetic: true` (types.ts), the same shape
-   * agentIO.brief already uses — never a flag inside `arguments` (model-authored
-   * and unvalidated here, so forgeable) and never a call-id convention.
-   * Skipped messages remain ordinary messages and still satisfy triologue
-   * parity — they are only ineligible as anchors.
-   *
-   * The compaction resume brief (compact.ts) is deliberately NOT marked: it is
-   * the FLOOR, the only brief left after a compaction, so skipping it would
-   * leave recap with no anchor at all.
-   *
-   * Scans `this.messages` DIRECTLY rather than getRaw(): the returned index is
-   * fed to truncateTo(), which indexes the true array. getRaw() returns a
-   * FILTERED copy, so its indices diverge from truncateTo's whenever the array
-   * carries sparse holes (wrap-up rollback, TP recovery injection, restore) —
-   * truncating at a getRaw() index would silently cut the wrong span.
-   *
-   * PRIVATE implementation detail: this index must never leave the Triologue
-   * facade (see Triologue.getLastBrief / rewindToLastBrief).
+   * This is only the FIRST half of the anchor rule: the second half (at least
+   * one message after the brief's round-trip) needs the tool result, so it is
+   * applied by Triologue.currentAnchorIndex, the sole consumer.
    */
-  findLastBriefAnchor(): number {
-    for (let i = this.messages.length - 1; i >= 0; i--) {
+  briefIndices(): number[] {
+    const result: number[] = [];
+    for (let i = 0; i < this.messages.length; i++) {
       const m = this.messages[i];
       if (!m || m.role !== 'assistant' || !m.tool_calls) continue;
-      // SYNTHETIC is a property of the MESSAGE (types.ts Message.synthetic),
-      // set by the producer that injected it — the same shape agentIO.brief
-      // already uses for its output provenance. Anything else is unworkable:
-      // a flag inside `arguments` is model-authored and unvalidated here (so
-      // forgeable), and a call-id convention is an invented string that drifts.
-      // Unmarked messages anchor — a spurious anchor costs a rewind, a missing
-      // floor costs every recap after a compaction.
-      if (!m.synthetic && m.tool_calls.some((tc) => tc.function?.name === 'brief')) return i;
+      // Provenance is a property of the MESSAGE (types.ts Message.synthetic),
+      // never a flag in `arguments` and never a call-id convention.
+      if (m.synthetic) continue;
+      if (!(m.tool_calls as ToolCall[]).some((tc) => tc.function?.name === 'brief')) continue;
+      result.push(i);
+    }
+    return result;
+  }
+
+  /** Index of the tool result answering call `id` (searching from `fromIndex`), or -1. */
+  findToolResultIndex(id: string | undefined, fromIndex = 0): number {
+    if (!id) return -1;
+    for (let i = Math.max(0, fromIndex); i < this.messages.length; i++) {
+      const m = this.messages[i];
+      if (m && m.role === 'tool' && m.tool_call_id === id) return i;
     }
     return -1;
+  }
+
+  /** First index strictly after `index` that holds a valid message, or length. */
+  firstMessageIndexAfter(index: number): number {
+    for (let i = index + 1; i < this.messages.length; i++) {
+      const m = this.messages[i];
+      if (m && typeof m === 'object' && m.role) return i;
+    }
+    return this.messages.length;
+  }
+
+  /**
+   * REWRITE (in place) the tool result answering call `id` to `content`.
+   *
+   * Used by recap: the summary is written into the anchor brief's own result,
+   * not appended as a new message. In place, because the assistant→tool pairing
+   * must not change — position, `tool_call_id` and `tool_name` stay as the
+   * provider saw them. Returns false (modifying nothing) when no result exists.
+   */
+  rewriteToolResult(id: string | undefined, content: string): boolean {
+    const i = this.findToolResultIndex(id);
+    if (i < 0) return false;
+    this.messages[i].content = content;
+    return true;
   }
 
   push(message: Message): void {
@@ -273,7 +286,7 @@ export class MessageStore {
    * ONLY the provider-visible fields (PROVIDER_MESSAGE_KEYS) and drops
    * everything else — including the in-memory-only `synthetic` marker
    * (types.ts). Filtering on egress rather than on ingress keeps the mark
-   * readable at its ONE consumer (findLastBriefAnchor, which reads the true
+   * readable at its consumers (briefIndices / currentAnchorIndex, which read the true
    * array) while guaranteeing it never reaches a provider — and so can never
    * be echoed back as model output. It is an ALLOW-list, not a deny-list: a
    * future internal field is excluded by default instead of having to be

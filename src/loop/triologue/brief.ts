@@ -73,6 +73,38 @@ export function readBriefConfidence(call: { function: { arguments?: unknown } })
   return parseBriefArgs(call).confidence;
 }
 
+/**
+ * Validate that `brief` is called alone (no other tools in the same turn).
+ *
+ * WHY THIS EXISTS — a brief is a rewind anchor: recap collapses the
+ * conversation back to the LAST brief. Answering only `brief` in a turn makes
+ * that anchor an unambiguous, self-contained boundary
+ * (Triologue.currentAnchorIndex / rewindToLastBrief never have to reason about a
+ * partial turn). `recap` carries the same rule (validateRecapIsolation) for
+ * the same reason.
+ *
+ * Enforced at the top of HOOK (states/hook.ts), BEFORE hook processing: an
+ * invalid turn is answered in full with this message and never executes a
+ * partial batch. Synthetic brief producers (recovery, crossroad, compact
+ * floor, TP recovery) each emit brief as the SOLE call of their turn and
+ * register directly with the triologue, so they never reach this guard.
+ */
+export function validateBriefIsolation(toolCalls: Array<{ function: { name: string } }>): { valid: boolean; message?: string } {
+  const hasBrief = toolCalls.some(c => c.function.name === 'brief');
+  if (!hasBrief) {
+    return { valid: true };
+  }
+
+  if (toolCalls.length > 1) {
+    return {
+      valid: false,
+      message: 'Brief must be called alone. Other tools cannot be used in the same turn.',
+    };
+  }
+
+  return { valid: true };
+}
+
 /** A fresh unique call id for a brief round-trip. */
 export function newBriefCallId(prefix = 'brief'): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;

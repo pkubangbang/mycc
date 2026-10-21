@@ -17,6 +17,7 @@ import type { Message, Tool, ToolCall } from '../../types.js';
 import { minifyMessages } from '../../utils/llm-chat-minifier.js';
 import { getSessionContext, getSessionDir } from '../../config.js';
 import { briefToolCall, newBriefCallId } from './brief.js';
+import { PRISTINE_BRIEF_RESULT } from './recap-note.js';
 
 export interface CompactDeps {
   /** Raw (defensively filtered) conversation messages for transcript + minification. */
@@ -218,6 +219,9 @@ export async function runAutoCompact(deps: CompactDeps, focus?: string, signal?:
   // The call itself is built by the shared writer (triologue/brief.ts), the
   // same one llm.ts recovery and hook.ts crossroad use, so this producer's
   // shape cannot drift from theirs.
+  // A SYNTHESIZED call id, minted like every other synthetic producer (no
+  // hand-invented id scheme): opaque and unique is all it must be — recap reads
+  // the anchor's message, never its id.
   const briefCall = briefToolCall(
     COMPACT_RESUME_BRIEF_MESSAGE,
     7,
@@ -253,7 +257,7 @@ export const COMPACT_RESUME_BRIEF_MESSAGE =
  * shape production no longer produces (exactly the P1 this extraction exists
  * to prevent recurring).
  *
- * THE RULE: `MessageStore.findLastBriefAnchor` skips assistant messages marked
+ * THE RULE: `MessageStore.briefIndices` / `Triologue.currentAnchorIndex` skip assistant messages marked
  * `synthetic: true` (types.ts Message.synthetic). Those are the INCIDENTAL
  * briefs — llm.ts empty-output recovery and hook.ts crossroad — whose text is
  * boilerplate the model should not be rewound to. This floor brief is
@@ -297,7 +301,10 @@ export function buildResumeRoundTrip(args: {
     {
       role: 'tool',
       tool_name: 'brief',
-      content: 'OK',
+      // The PRISTINE success result — the single literal lives in
+      // triologue/recap-note.ts. recap REWRITES this in place with the span
+      // summary, which is what marks this floor brief as consumed.
+      content: PRISTINE_BRIEF_RESULT,
       tool_call_id: briefCall.id,
     },
   ];

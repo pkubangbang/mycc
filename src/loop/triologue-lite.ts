@@ -285,8 +285,14 @@ export class TriologueLite {
     // Resolve toolCallId if not provided
     let resolvedId = toolCallId;
     if (!resolvedId) {
-      // Find the next pending tool call matching this function name
+      // Prefer a name match, but a provider/model can omit the ID and return
+      // a mismatched function name. Still close the oldest pending slot so the
+      // ledger cannot remain wedged forever (parity with the lead facade's
+      // tool() in triologue.ts); validateAlignment records the mismatch.
       resolvedId = this.ledger.findByName(functionName);
+      if (!resolvedId) {
+        resolvedId = this.ledger.getOrder()[0];
+      }
     }
 
     // Validate alignment

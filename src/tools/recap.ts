@@ -8,16 +8,21 @@
  * it needs access to triologue, which is not in AgentContext.
  *
  * Every `brief` is a rewind anchor. recap truncates the conversation at the
- * LAST brief and replaces everything after it with one note that quotes that
- * brief and carries the summary of the deleted span — so the brief's text
- * survives. Calling recap again rewinds further back, to the brief before.
+ * LAST (not-yet-consumed) brief and writes one note into that brief's own tool
+ * RESULT — replacing everything after it:
+ *
+ *   tool('brief', "OK Note, a recap has reset the conversation here with summary: \"…\"")
+ *
+ * so the brief's text and the summary of the deleted span both survive as a
+ * tool result. Calling recap again rewinds further back, to the brief before,
+ * and overwrites THAT brief's result with the new summary.
  */
 
 import type { ToolDefinition } from '../types.js';
 
 export const recapTool: ToolDefinition = {
   name: 'recap',
-  description: `Collapse the conversation back to your last \`brief\`, replacing everything after it with a short note. Use it when exploration has produced many messages that are no longer worth carrying. The last brief becomes the rewind anchor and its text is preserved inside the note, so keep briefs meaningful — they are what survives. Calling recap repeatedly rewinds progressively further, each time compressing the previous note into a new one. It cannot rewind past a context compaction. Must be called alone (no other tools in the same turn).
+  description: `Collapse the conversation back to your last \`brief\`, replacing everything after it with a short note. Use it when exploration has produced many messages that are no longer worth carrying. A brief becomes the rewind anchor once the conversation has moved past it (at least one message after its round-trip — another brief counts): its tool result is rewritten to "OK Note, a recap has reset the conversation here with summary: ..." so its text and the summary both survive, so keep briefs meaningful — they are what survives. Calling recap repeatedly rewinds progressively further — after a rewind the anchor's round-trip is last, so the next call rewinds to the brief before; new activity (even one more brief) re-arms that anchor, and a recap there overwrites its result with the new summary. It cannot rewind past a context compaction. Must be called alone (no other tools in the same turn).
 
 Set abandon=true to collapse the span WITHOUT summarizing it (the work is discarded). comment is REQUIRED unless abandon, and determines the direction of the next turn: write a clear, actionable directive stating what should happen next. It is placed at the END of the note — the last thing the conversation sees — so treat it as the steering instruction for subsequent work.`,
   input_schema: {

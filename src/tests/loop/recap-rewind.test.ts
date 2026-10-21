@@ -2,16 +2,19 @@
  * recap-rewind.test.ts — the rewind contract of recap.
  *
  * Design under test (see Triologue.getLastBrief / rewindToLastBrief):
- *   - every REAL `brief` is a rewind anchor;
- *   - recap truncates AT the last brief and appends a merge round-trip
- *     (assistant + tool('recap'), ending on role:'tool' for TP parity);
- *   - the merge node is a `recap` call, never a `brief` one, so it can never be
- *     re-selected as an anchor → repeated recaps rewind progressively further;
- *   - a compaction is the floor: its `compact_resume_*` brief is the
- *     only anchor left, and the summary user-message survives the rewind.
- *     Its message is deliberately NOT marked `synthetic`.
+ *   - a brief is a rewind anchor IFF it is not `synthetic` AND at least one
+ *     message follows its round-trip (the assistant brief call + its tool
+ *     result). Nothing else — no "consumed" marker, no pristine-result
+ *     heuristic: recap leaves the anchor's round-trip LAST, so the structural
+ *     rule alone makes repeated recaps walk backwards;
+ *   - recap truncates everything AFTER the brief's round-trip and REWRITES the
+ *     brief's own tool RESULT with the note ("OK Note, a recap has reset the
+ *     conversation here with summary: …"), ending on role:'tool' for TP parity;
  *   - an INCIDENTAL brief (llm.ts empty-output recovery, hook.ts crossroad) is
- *     marked `synthetic: true` on the assistant MESSAGE and is never an anchor.
+ *     marked `synthetic: true` on the assistant MESSAGE and is never an anchor;
+ *   - a compaction is the floor: its `compact_resume_*` brief is deliberately
+ *     NOT marked `synthetic`, so the first recap after a compaction anchors it
+ *     as soon as any activity follows (its summary user-message survives).
  *
  * These are pure store/triologue tests — no LLM, no forks.
  */
@@ -49,21 +52,21 @@ function store(): MessageStore {
   return new MessageStore();
 }
 
-describe('MessageStore.findLastBriefAnchor', () => {
-  it('returns -1 when there is no brief', () => {
+describe('MessageStore.briefIndices', () => {
+  it('returns nothing when there is no brief', () => {
     const s = store();
     s.push({ role: 'user', content: 'hi' });
     s.push({ role: 'assistant', content: 'hello' });
-    expect(s.findLastBriefAnchor()).toBe(-1);
+    expect(s.briefIndices()).toEqual([]);
   });
 
-  it('finds the assistant message that CALLED brief (not its tool result)', () => {
+  it('indexes the assistant message that CALLED brief (not its tool result)', () => {
     const s = store();
     s.push({ role: 'user', content: 'q' });
     s.push({ role: 'assistant', content: '', tool_calls: [briefCall('looked around')] });
     s.push({ role: 'tool', tool_name: 'brief', content: 'OK', tool_call_id: `brief_${seq}` });
-    expect(s.findLastBriefAnchor()).toBe(1);
-    expect(s.at(s.findLastBriefAnchor())?.role).toBe('assistant');
+    expect(s.briefIndices()).toEqual([1]);
+    expect(s.at(s.briefIndices()[0])?.role).toBe('assistant');
   });
 
   it('indexes the TRUE array even when sparse holes exist (getRaw divergence)', () => {
@@ -71,9 +74,19 @@ describe('MessageStore.findLastBriefAnchor', () => {
     s.push({ role: 'user', content: 'q' });
     s.push(undefined as unknown as Message); // hole — getRaw() would skip it
     s.push({ role: 'assistant', content: '', tool_calls: [briefCall('anchor')] });
+    s.push({ role: 'tool', tool_name: 'brief', content: 'OK', tool_call_id: `brief_${seq}` });
     // getRaw() index would be 1; truncateTo() needs the true index 2.
-    expect(s.findLastBriefAnchor()).toBe(2);
-    expect(s.getRaw().length).toBe(2);
+    expect(s.briefIndices()).toEqual([2]);
+    expect(s.getRaw().length).toBe(3);
+  });
+
+  it('skips synthetic briefs; a lone brief is still listed (rule 2 is the facade\'s half)', () => {
+    const s = store();
+    s.push({ role: 'assistant', content: '', synthetic: true, tool_calls: [{ id: 'm1', function: { name: 'brief', arguments: {} } }] as ToolCall[] });
+    s.push({ role: 'tool', tool_name: 'brief', content: 'OK', tool_call_id: 'm1' });
+    s.push({ role: 'assistant', content: '', tool_calls: [{ id: 'r1', function: { name: 'brief', arguments: {} } }] as ToolCall[] });
+    s.push({ role: 'tool', tool_name: 'brief', content: 'OK', tool_call_id: 'r1' });
+    expect(s.briefIndices()).toEqual([2]);
   });
 });
 
@@ -93,8 +106,12 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     expect(t.getMessages().length).toBe(before);
   });
 
-  it('exposes the anchor message and an opaque id, but never an index', () => {
+  it('a lone trailing brief is not an anchor yet; activity after it makes it one', () => {
     pushBrief(t, 'mapped the parser');
+    // Rule 2: the newest brief is where the conversation stands.
+    expect(t.getLastBrief()).toBeNull();
+
+    t.agent('working on it');
     const peek = t.getLastBrief()!;
     expect(peek.message).toBe('mapped the parser');
     expect(peek.confidence).toBe(7);
@@ -102,11 +119,12 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     // The id is opaque: it must not be the raw array index the caller would be
     // tempted to truncate at.
     expect(typeof peek.id).toBe('string');
-    // span starts AFTER the brief round-trip (assistant + its tool result)
-    expect(peek.span).toEqual([]);
+    // span starts AFTER the brief round-trip (assistant + its tool result) and
+    // is exactly the region a rewind would delete.
+    expect(peek.span.map((m) => m.content)).toEqual(['working on it']);
   });
 
-  it('rewinds to the brief and appends a recap merge pair ending on tool', () => {
+  it('rewinds to the brief by rewriting ITS tool result — no recap pair is appended', () => {
     t.user('start');
     pushBrief(t, 'mapped the parser');
     t.agent('thinking');
@@ -114,21 +132,49 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
 
     const result = t.rewindToLastBrief('collapse', 'SUMMARY BODY')!;
     expect(result.anchorMessage).toBe('mapped the parser');
-    expect(result.tokensBefore).toBeGreaterThan(result.tokensAfter);
+    // Tokens must DROP only when the collapsed span outweighs the note itself
+    // (the note takes the pristine "OK" result's place, so the delta is
+    // span − note). The two "thinking"/"more work" messages here are tiny.
+    const spanLen = result.tokensBefore;
+    expect(result.tokensAfter).toBeGreaterThan(0);
+    expect(result.tokensAfter).toBeLessThan(spanLen + 100);
 
+    // ['user','assistant(brief)','tool'] → everything AFTER the brief's
+    // round-trip is truncated; the round-trip itself SURVIVES and its result is
+    // what carries the note (no assistant(recap)/tool('recap') pair).
     const msgs = t.getMessages();
-    // ['user','assistant(brief)','tool','assistant(recap)','tool'] →
-    // truncate at the brief drops the brief round-trip too:
     expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant', 'tool']);
     expect(msgs[1].content).toBe('');
-    expect(msgs[1].tool_calls?.[0].function.name).toBe('recap');
-    expect(msgs[2].tool_name).toBe('recap');
+    expect(msgs[1].tool_calls?.[0].function.name).toBe('brief');
+    expect(msgs[2].tool_name).toBe('brief');
+    expect(msgs[2].tool_call_id).toBe((msgs[1].tool_calls?.[0] as ToolCall).id);
+    expect(msgs[2].content.startsWith('OK Note, a recap has reset the conversation here with summary: ')).toBe(true);
+    expect(msgs[2].content).toContain('SUMMARY BODY');
     expect(t.getLastRole()).toBe('tool'); // TP parity handoff to the next agent()
+  });
+
+  it('a second recap at the SAME anchor overwrites the note (pure overwrite, no stacking)', () => {
+    pushBrief(t, 'only anchor');
+    t.agent('work');
+    t.rewindToLastBrief('one', 'summary one');
+    expect(t.getMessages().at(-1)!.content).toContain('summary one');
+
+    // New activity after the anchor's round-trip re-arms the SAME brief (rule
+    // 2 needs no "consumed" marker), so the second recap targets it again and
+    // OVERWRITES its result rather than stacking a second note.
+    t.agent('more work');
+    expect(t.rewindToLastBrief('two', 'summary two')!.anchorMessage).toBe('only anchor');
+
+    const note = t.getMessages().at(-1)!.content;
+    expect(note).toContain('summary two');
+    expect(note).not.toContain('summary one'); // previous summary dropped
+    expect(t.getMessages().filter((m) => m.content.includes('summary two')).length).toBe(1);
   });
 
   it('quotes the anchor brief and keeps the steering message last', () => {
     pushBrief(t, 'mapped the parser');
     t.agent('work');
+    t.agent('more work');
     t.rewindToLastBrief('collapse', 'SUMMARY BODY\n\n**Next direction:** do X');
 
     const note = t.getMessages().at(-1)!.content;
@@ -138,7 +184,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     expect(note.trimEnd().endsWith('**Next direction:** do X')).toBe(true);
   });
 
-  it('is repeatable: a second recap rewinds to the brief BEFORE, and the note is never an anchor', () => {
+  it('is repeatable: a second recap rewinds to the brief BEFORE (the anchor trails the history)', () => {
     pushBrief(t, 'FIRST');
     t.agent('work one');
     pushBrief(t, 'SECOND');
@@ -147,15 +193,17 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     expect(t.getLastBrief()!.message).toBe('SECOND');
     t.rewindToLastBrief('one', 'summary one');
 
-    // the recap merge node did not become the anchor
+    // Recap left SECOND's round-trip LAST, so it now has nothing after it —
+    // rule 2 alone moves the anchor back to FIRST.
     expect(t.getLastBrief()!.message).toBe('FIRST');
 
     t.rewindToLastBrief('two', 'summary two');
     const msgs = t.getMessages();
-    // FIRST's round-trip is gone too; only its quoted text survives in note two
+    // SECOND's round-trip is gone too; only its quoted text survives in note two,
+    // written into FIRST's own result (nothing appended).
     expect(msgs.map((m) => m.role)).toEqual(['assistant', 'tool']);
     expect(msgs[1].content).toContain('Rewound past the brief: "FIRST"');
-    expect(t.getLastBrief()).toBeNull(); // no brief left to rewind to
+    expect(msgs[1].content).toContain('summary two');
   });
 
   it('treats a compaction as a floor: the compact_resume brief is the anchor and the summary survives', () => {
@@ -184,9 +232,16 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
       }),
     );
 
+    // Right after a compaction the floor brief IS the last message pair, so
+    // there is nothing below it to collapse yet.
+    expect(t.getLastBrief()).toBeNull();
+    expect(t.rewindToLastBrief('post-compact', 'note')).toBeNull();
+
+    // The first real activity after the boundary arms the floor brief.
+    t.user('next question');
     const peek = t.getLastBrief()!;
     expect(peek.message).toBe('Re-orienting on the compacted summary to resume the in-flight task.');
-    expect(peek.span).toEqual([]); // nothing to collapse right after a compaction
+    expect(peek.span.map((m) => m.content)).toEqual(['next question']);
 
     const result = t.rewindToLastBrief('post-compact', 'note')!;
     expect(result.anchorMessage).toBe('Re-orienting on the compacted summary to resume the in-flight task.');
@@ -199,6 +254,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
   it('clamps a stale wrap-up mark so a later rollback cannot extend the array', () => {
     pushBrief(t, 'anchor');
     t.agent('work');
+    t.agent('more work');
     // Simulate an ESC wrap-up that started beyond the post-rewind length.
     t.beginWrapUp();
     const activeBefore = t.hasActiveWrapUp();
@@ -216,6 +272,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
   it('recomputes the token count from the surviving messages', () => {
     pushBrief(t, 'anchor');
     for (let i = 0; i < 20; i++) t.agent(`filler ${i}`.repeat(20));
+    // (20 fillers already follow the brief round-trip — it is an anchor.)
     t.rewindToLastBrief('collapse', 'note');
     const recount = (t as unknown as { store: MessageStore }).store;
     recount.recomputeTokenCount();
@@ -258,17 +315,17 @@ describe('P2 regressions: synthetic anchors, TOCTOU, span index space', () => {
     // (arguments are never read for it), and no call-id convention has to be
     // remembered: an id that HAPPENS to look synthetic is still a real anchor.
     const store = new MessageStore();
-    expect(store.findLastBriefAnchor()).toBe(-1);
+    expect(store.briefIndices()).toEqual([]);
 
-    // An UNMARKED call anchors (fail safe), even if its id looks incidental.
+    // An UNMARKED call is a candidate (fail safe), even if its id looks incidental.
     store.push({ role: 'assistant', content: '', tool_calls: [{ id: 'synthetic_brief_lookalike', function: { name: 'brief', arguments: {} } }] as ToolCall[] });
     store.push({ role: 'tool', tool_name: 'brief', content: 'OK', tool_call_id: 'synthetic_brief_lookalike' });
-    expect(store.findLastBriefAnchor()).toBe(0);
+    expect(store.briefIndices()).toEqual([0]);
 
     // The SAME shape, marked, does not.
     store.push({ role: 'assistant', content: '', synthetic: true, tool_calls: [{ id: 'marked_1', function: { name: 'brief', arguments: {} } }] as ToolCall[] });
     store.push({ role: 'tool', tool_name: 'brief', content: 'OK', tool_call_id: 'marked_1' });
-    expect(store.findLastBriefAnchor()).toBe(0);
+    expect(store.briefIndices()).toEqual([0]);
   });
 
   it('strips the synthetic marker from the provider payload', () => {
@@ -283,7 +340,7 @@ describe('P2 regressions: synthetic anchors, TOCTOU, span index space', () => {
     expect('synthetic' in outbound[1]).toBe(false);
     // The in-memory message keeps the mark — it is the anchor rule's input.
     expect(store.at(0)!.synthetic).toBe(true);
-    expect(store.findLastBriefAnchor()).toBe(-1);
+    expect(store.briefIndices()).toEqual([]);
   });
 
   it('whitelists provider fields: a non-provider key is dropped, not spread', () => {
@@ -321,23 +378,29 @@ describe('P2 regressions: synthetic anchors, TOCTOU, span index space', () => {
   });
 
   it('refuses to truncate when the anchor moved since the peek (TOCTOU)', () => {
-    pushBrief(t, 'first anchor');
-    t.agent('work after the first anchor');
+    // FIRST is the current anchor — two real briefs, so the peek is stable.
+    pushBrief(t, 'FIRST');
+    t.agent('work');
     const staleId = t.getLastBrief()!.id;
+    expect(t.getLastBrief()!.message).toBe('FIRST');
 
-    // A second real brief lands while the caller awaits the recap forks.
-    pushBrief(t, 'second anchor');
+    // A SECOND brief + activity lands while the caller awaits the recap forks:
+    // the anchor MOVES forward to SECOND.
+    pushBrief(t, 'SECOND');
+    t.agent('work on SECOND');
+    t.agent('more work on SECOND');
     const len = t.getMessages().length;
+    expect(t.getLastBrief()!.id).not.toBe(staleId);
 
     // The caller still holds the OLD id → rewind must be a no-op, not a
     // truncation at the NEW anchor (which was never summarized).
     expect(t.rewindToLastBrief('collapse', 'note', staleId)).toBeNull();
     expect(t.getMessages().length).toBe(len);
-    expect(t.getLastBrief()?.message).toBe('second anchor');
+    expect(t.getLastBrief()?.message).toBe('SECOND');
 
-    // With the current id the same call succeeds.
+    // With the current id the same call succeeds — at SECOND.
     expect(t.rewindToLastBrief('collapse', 'note', t.getLastBrief()!.id)).not.toBeNull();
-    expect(t.getLastBrief()?.message).toBe('first anchor');
+    expect(t.getMessages().at(-1)!.content).toContain('Rewound past the brief: "SECOND"');
   });
 
   it('span slices the TRUE array: a hole before the anchor does not shift it', () => {

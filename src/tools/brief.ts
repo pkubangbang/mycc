@@ -7,10 +7,11 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { PRISTINE_BRIEF_RESULT } from '../loop/triologue/recap-note.js';
 
 export const briefTool: ToolDefinition = {
   name: 'brief',
-  description: 'Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence score (0-10) indicating your certainty about the current state. Your briefs are rewind anchors: recap collapses the conversation back to your last brief and preserves its text, so write briefs you would want to keep as your only surviving record of this stretch of work — state the conclusion first, then the evidence.',
+  description: 'Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence score (0-10) indicating your certainty about the current state. Your briefs are rewind anchors: recap collapses the conversation back to your last brief and preserves its text, so write briefs you would want to keep as your only surviving record of this stretch of work — state the conclusion first, then the evidence. Must be called alone (no other tools in the same turn).',
   input_schema: {
     type: 'object',
     properties: {
@@ -59,6 +60,10 @@ export const briefTool: ToolDefinition = {
 
     // Use core.brief to send the message via IPC to parent
     ctx.core.brief('info', 'brief', message, `confidence: ${confidence * 10}%`);
-    return 'OK';
+    // The PRISTINE result (triologue/recap-note.ts): recap rewrites exactly
+    // this content in place with the span summary, so it must stay the single
+    // literal — a different string here would make the brief look consumed and
+    // quietly drop it as a rewind anchor.
+    return PRISTINE_BRIEF_RESULT;
   },
 };

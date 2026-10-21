@@ -207,7 +207,7 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence parameter (0-10).
+**Description**: Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence parameter (0-10). Every brief is a recap rewind anchor — write briefs you would want to keep as your only surviving record. Must be called alone (no other tools in the same turn).
 
 **Parameters**:
 | Name | Type | Required | Description |
@@ -218,6 +218,16 @@ interface ToolDefinition {
 **Behavior**:
 - Displays message prominently in terminal
 - Used for progress reporting during long tasks
+- **Isolation**: `brief` must be called ALONE (`validateBriefIsolation` in
+  `src/loop/triologue/brief.ts`, enforced as HOOK step 2 before hook
+  processing). A turn that co-batches `brief` with any other tool is rejected
+  wholesale — every call in it is answered with
+  `Brief must be called alone. Other tools cannot be used in the same turn.`,
+  nothing executes, and the loop returns to COLLECT so the LLM re-emits the
+  work without the brief. A brief-only turn keeps recap's rewind anchor
+  unambiguous. Synthetic briefs (recovery, crossroad, compact floor, TP
+  recovery) are sole calls and bypass the guard.
+- Also emits a `[brief] blocked: ...` yellow log line when rejected
 - Also recorded into the peer discovery heartbeat (lead only) so other instances can see progress
 
 **Example**:
@@ -1093,7 +1103,7 @@ interface ToolDefinition {
 
 **Scope**: `['main']`
 
-**Description**: Collapse the conversation back to the last `brief` (the rewind anchor), replacing everything after it with a note that quotes the brief and carries the span summary. Repeatable — each call rewinds to the brief before. Cannot rewind past a context compaction. Must be called alone.
+**Description**: Collapse the conversation back to the newest `brief` the conversation has moved past — the rewind anchor (a brief anchors once at least one message follows its round-trip; another `brief` counts) — replacing everything after the brief's round-trip. The span summary is written into the BRIEF'S OWN TOOL RESULT, in place: `OK Note, a recap has reset the conversation here with summary: …` (the `[RECAP]` header quotes the brief). No summary turn is appended. Repeatable — after a rewind the anchor's round-trip is last, so the next call rewinds to the brief before; new activity (even one more brief) after a rewind re-arms that anchor and a recap there overwrites its result (a pure overwrite, never a stack). Cannot rewind past a context compaction. Must be called alone.
 
 **Parameters**:
 | Name | Type | Required | Description |
@@ -1102,7 +1112,7 @@ interface ToolDefinition {
 | abandon | boolean | no | If true, collapse without summarizing (discards the span) |
 | comment | string | yes (unless `abandon`) | REQUIRED. Directive determining the direction of the next turn; placed last in the note |
 
-**Note**: Meta-tool — actual execution happens in the state machine (`hook.ts`), not the handler. The rewind itself is `Triologue.rewindToLastBrief()`; see `docs/loop/brief-and-recap-rewind.md`.
+**Note**: Meta-tool — actual execution happens in the state machine (`hook.ts`), not the handler. The rewind itself is `Triologue.rewindToLastBrief()` (truncate after the anchor's tool result, then rewrite that result); the note's marker lives in `src/loop/triologue/recap-note.ts`. See `docs/loop/brief-and-recap-rewind.md`.
 
 ---
 

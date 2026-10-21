@@ -16,10 +16,29 @@ export class PendingToolLedger {
   private pending: Map<string, ToolCall> = new Map();
   private order: string[] = []; // Track order for sequential resolution
 
+  /**
+   * Observability hook for a duplicate id announced within one assistant turn.
+   * The duplicate is dropped (never registered) so the map and `order` stay in
+   * lockstep; the callback lets the facade report what it silently ignored.
+   */
+  onDuplicateId?: (dup: ToolCall) => void;
+
   // === Registration (from assistant tool_calls) ===
 
   register(toolCalls: ToolCall[]): void {
     for (const tc of toolCalls) {
+      // Duplicate-id guard: the ledger keys by id, but `order` is a list. A
+      // second call with an id already pending would overwrite the map entry
+      // while pushing a second order slot — the first resolve() would then
+      // drop BOTH slots, drive size to 0 early, and let flushDeferredInputs()
+      // fire while another result is still unwritten (assistant → tool → user
+      // → tool, the TP violation the flush gate prevents). No current provider
+      // announces duplicate ids within a turn, so this is unreachable today;
+      // the guard keeps an unreachable corruption from becoming reachable.
+      if (this.pending.has(tc.id)) {
+        this.onDuplicateId?.(tc);
+        continue;
+      }
       this.pending.set(tc.id, tc);
       this.order.push(tc.id);
     }

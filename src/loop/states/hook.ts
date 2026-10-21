@@ -5,8 +5,10 @@
  * registers the agent response with triologue, and branches to
  * TOOL (has calls) or STOP (no calls).
  *
- * META-TOOL: recap is handled here (not as a regular tool)
+ * META-TOOLS: recap is handled here (not as a regular tool)
  * because they need access to triologue which is not in AgentContext.
+ * brief needs no dispatch — it runs as a regular tool — but its ISOLATION
+ * (brief must be called alone) is enforced here, before hook processing.
  *
  * CROSSROAD: When crossroadContinuation is set on chat, the continuation is
  * merged into finalAssistantContent before triologue.agent() is called, and a
@@ -31,7 +33,8 @@ import { appendPatch, getPatchPath } from '../../mindmap/patch-jsonl.js';
 import { loopEvents } from '../loop-events.js';
 import { stripInternalMarkup } from '../../utils/letter-box.js';
 import { buildCandidatesBrief } from '../crossroad.js';
-import { briefToolCall } from '../triologue/brief.js';
+import { briefToolCall, newBriefCallId, validateBriefIsolation } from '../triologue/brief.js';
+import { PRISTINE_BRIEF_RESULT } from '../triologue/recap-note.js';
 
 /**
  * Display the assistant's text content mid-loop via brief, stripping internal
@@ -55,9 +58,14 @@ function briefAssistantContent(
 /**
  * Handle a recap tool call.
  *
- * Recap collapses the conversation back to the LAST brief (the rewind anchor):
- * everything between the brief and now is replaced by one note, into which the
- * anchor brief's own text is quoted. See Triologue.rewindToLastBrief().
+ * Recap collapses the conversation back to the LAST un-consumed brief (the
+ * rewind anchor): everything after the brief's round-trip is replaced by a note
+ * that is written INTO THE BRIEF'S OWN TOOL RESULT, in place —
+ *
+ *   tool('brief', "OK Note, a recap has reset the conversation here with summary: \"...\"")
+ *
+ * so the summary lives in a tool result, not in a fresh recap call, and a later
+ * recap overwrites it. See Triologue.rewindToLastBrief().
  *
  * This handler only (a) validates args, (b) forks the summary + mindmap-patch
  * LLM calls over the span that is about to be deleted, and (c) hands the text
@@ -128,9 +136,9 @@ async function handleRecapCall(
       parts.push(`**Next direction (recap comment — follow this):** ${comment}`);
     }
     const abandonParts = parts.join('\n');
-    // Size pre-check on the note that will ACTUALLY be appended (header +
-    // quoted anchor + body), not just the body: `tool()` throws above the
-    // threshold AFTER the truncation, so an under-measure loses the span.
+    // Size pre-check on the note that will ACTUALLY be written into the brief's
+    // tool result (header + quoted anchor + body), not just the body: the write
+    // happens AFTER the truncation, so an over-size note loses the span.
     const abandonSize = triologue.recapNoteSize(description, abandonParts, anchor.id);
     if (abandonSize !== null && abandonSize > triologue.getResultThreshold()) {
       return fail(`Error: the recap note is ${abandonSize} chars, over the ${triologue.getResultThreshold()}-char tool-result limit; nothing was discarded. Re-run with a shorter comment.`);
@@ -200,17 +208,10 @@ async function handleRecapCall(
   }
 
   // ── SIZE PRE-CHECK: refuse an oversized note BEFORE touching the triologue ──
-  // rewindToLastBrief() truncates first and only then appends the note, and
-  // tool() THROWS ResultTooLargeError when the note exceeds resultThreshold.
-  // Appending the note ourselves beforehand would "work", but addMessage()
-  // JOURNALS the pair as kind:'new' before the truncation drops it from the
-  // live array — and collateMessages() deliberately does not cut the durable
-  // view on a recap boundary (transcript.ts), so restoring a session would
-  // replay that discarded answer and show the summary twice.
-  //
-  // So: never append on the success path. Reject here instead, while the store
-  // is still untouched, and let the single rewindToLastBrief() append the one
-  // merge node that the model actually sees.
+  // The note replaces the anchor brief's tool result, which is then the ONLY
+  // record of the collapsed span. Reject here, while the store is still
+  // untouched, so an oversized summary can never coexist with a truncation that
+  // already threw the span away.
   const threshold = triologue.getResultThreshold();
   const noteSize = triologue.recapNoteSize(description, summary, anchor.id);
   if (noteSize !== null && noteSize > threshold) {
@@ -234,7 +235,8 @@ async function handleRecapCall(
   );
 
   // Resync the in-turn brief memory with the anchor that survived the rewind:
-  // the old lastBriefMessage pointed at a message the model can no longer see.
+  // the old lastBriefMessage pointed at a message the model can no longer see
+  // (the span after the anchor's round-trip was just discarded).
   turn.lastBriefMessage = result.anchorMessage;
   turn.nextBriefNudge = 5;
 
@@ -291,7 +293,22 @@ export async function handleHook(
     const augmentedCalls = augmentToolCalls(chat.rawToolCalls);
     chat.augmentedCalls = augmentedCalls;
 
-    // 2. Validate recap isolation (must be called alone)
+    // 2. Validate brief isolation (a brief turn is recap's rewind anchor, so it
+    //    must stand alone — the whole turn is rejected, nothing partial runs).
+    const briefValidation = validateBriefIsolation(augmentedCalls);
+    if (!briefValidation.valid) {
+      triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
+        reasoningContent: chat.assistantReasoningContent,
+      });
+      for (const call of augmentedCalls) {
+        triologue.tool(call.function.name, briefValidation.message!, call.id);
+      }
+
+      agentIO.log(chalk.yellow(`[brief] blocked: ${briefValidation.message}`));
+      return AgentState.COLLECT;
+    }
+
+    // 2b. Validate recap isolation (must be called alone)
     const recapValidation = validateRecapIsolation(augmentedCalls);
     if (!recapValidation.valid) {
       triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
@@ -363,7 +380,10 @@ export async function handleHook(
       // generation). A space reads as natural prose continuation, whereas a
       // newline would create a visual paragraph break mid-sentence.
       const finalContent = `${chat.assistantContent || ''} ${chat.crossroadContinuation}`;
-      const briefCallId = Math.random().toString(36).slice(2, 10);
+      // Use the shared writer's id convention (`crossroad_<ms>_<6 chars>`) so
+      // every brief call in a transcript is greppable by prefix and minted the
+      // same way. Hand-rolling here left crossroad ids unprefixed.
+      const briefCallId = newBriefCallId('crossroad');
       // Mode-aware brief message. Neither branch uses a blanket "Continuing."
       // directive. A synthetic "Continuing." the LLM reads in its own triologue
       // is a self-approval signal: the agent treats it as consent to drift
@@ -393,7 +413,7 @@ export async function handleHook(
 
       // Inject the crossroad file path into the brief tool result so the LLM
       // knows where the full decision record lives. When there is no crossroad
-      // file (e.g. file write failed), fall back to 'OK'.
+      // file (e.g. file write failed), fall back to the pristine result.
       //
       // NOTE: we deliberately do NOT instruct the LLM to replay the crossroad
       // by default. Pretty-printing the crossroad is only needed when the user
@@ -408,7 +428,7 @@ export async function handleHook(
       // the reconstructed text, so replaying a crossroad cannot re-trigger it.
       const briefResult = chat.crossroadFilePath
         ? `A direction refinement was applied to your response. The full decision record is saved at: ${chat.crossroadFilePath} (you may replay it with mycc-pretty-print --type=crossroad <path> only if the user asks to see the full response).`
-        : 'OK';
+        : PRISTINE_BRIEF_RESULT;
       triologue.tool('brief', briefResult, crossroadBrief.id);
 
       // Three-part display, in reading order:

@@ -27,6 +27,7 @@
 import { isDebuggingTp, getApiProvider } from '../../config.js';
 import { agentIO } from '../agent-io.js';
 import type { Message, ToolCall } from '../../types.js';
+import { newBriefCallId } from './brief.js';
 
 /**
  * All possible TP violation types that can be auto-recovered.
@@ -142,7 +143,7 @@ export function attemptAutoFix(
       // Bridge: user/system/null → assistant(with synthetic tool_call) → tool
       // Generate a synthetic ID so the subsequent tool() call finds a pending call.
       // Empty content is fine — the tool result will follow immediately.
-      const syntheticId = `tp_recovery_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const syntheticId = newBriefCallId('tp_recovery');
       // Build a ToolCall with a synthetic ID; function name is empty and
       // will be updated by the facade (ledger.updateLastName) when the real
       // tool() is called.

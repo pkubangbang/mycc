@@ -103,7 +103,7 @@ plain-language summary; the sibling file has the full detail where noted.
 | Concept | One-line definition | Detail |
 |---------|---------------------|--------|
 | **mindmap** | A navigable knowledge tree compiled from `MYCC.md`, queried via `recall(path=...)` for on-demand context. Answers project-structure questions. It can grow beyond `MYCC.md` because **`recap` auto-patches it** (see "Known Blind Spot" below). | `io-surfaces.md` |
-| **brief / recap** | Every `brief` is a rewind anchor. `recap` collapses the conversation back to the last brief (replacing everything after it with a note that quotes the brief), is repeatable (each call rewinds further), and **can also add/update/delete one mindmap node as a side effect** (the agent is not told this — see "Known Blind Spot"). | `io-surfaces.md` |
+| **brief / recap** | A `brief` becomes a rewind anchor once at least one message follows its round-trip (even another brief counts) and **must be called alone** (no other tools in the same turn — the whole turn is rejected otherwise). `recap` collapses the conversation back to that brief (replacing everything after the brief with a note written INTO the brief's own tool result: `OK Note, a recap has reset the conversation here with summary: …`), is repeatable (each call rewinds to the brief before, since a rewind leaves its anchor's round-trip last; new activity re-arms the same anchor and the note is overwritten, never stacked), and **can also add/update/delete one mindmap node as a side effect** (the agent is not told this — see "Known Blind Spot"). | `io-surfaces.md` |
 | **wiki / RAG** | A persistent semantic knowledge base (vectors in LanceDB); two-phase store (`wiki_prepare`→`wiki_put`), query with `wiki_get`. Embedding always via Ollama. | `ollama-dependencies.md` |
 | **intent language** | The `bash` tool's structured intent: `VERB OBJECT PARAM... TO PURPOSE` (VERB ∈ READ/WRITE/EDIT/DELETE/BUILD/TEST/INSTALL/RUN; OBJECT ∈ SOURCE/CONFIG/DEPENDENCY/ARTIFACT/SYSTEM/DATA/TEMP/USER). | — |
 | **grant system** | The `bash` tool's 5-step judging: dangerous-pattern check → intent grammar validation → mode+verb check → LLM analysis for RUN → user prompt for uncertain cases. Destructive commands are blocked by default. | — |
@@ -198,7 +198,8 @@ the mindmap changed.**
 
 **What actually happens (verified end-to-end):**
 
-1. The lead writes a `brief` (every brief is a rewind anchor), keeps working,
+1. The lead writes a `brief` (every brief is a rewind anchor; `brief` must be
+   called alone, with no other tools in that turn), keeps working,
    then later calls `recap` to collapse everything back to that brief.
 2. `recap` does **not** run one summarization pass — it runs **two
    concurrent LLM forks** (`handleRecapWithPatch` in

@@ -31,6 +31,7 @@ import { loader } from '../../context/shared/loader.js';
 import { handleCrossroad } from '../crossroad.js';
 import { loopEvents } from '../loop-events.js';
 import { briefToolCall, newBriefCallId } from '../triologue/brief.js';
+import { PRISTINE_BRIEF_RESULT } from '../triologue/recap-note.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getSessionContext, getSessionDir, isCrossroadDisabled } from '../../config.js';
@@ -346,11 +347,11 @@ export async function handleLlm(
         // rather than a passive [REMINDER] note. Confidence 7 means
         // slightly uncertain, nudging confusion index toward hint threshold.
         // `synthetic: true` marks the MESSAGE as infrastructure-injected (see
-        // types.ts / store.ts findLastBriefAnchor) so recap never rewinds to
+        // types.ts / store.ts briefIndices) so recap never rewinds to
         // this boilerplate brief. It is stripped from the provider payload.
         const recoveryBrief = briefToolCall('Let me see what to do next.', 7, newBriefCallId('brief_recover'));
         triologue.agent('', [recoveryBrief], { synthetic: true });
-        triologue.tool('brief', 'OK', recoveryBrief.id);
+        triologue.tool('brief', PRISTINE_BRIEF_RESULT, recoveryBrief.id);
         continue; // Re-run the while loop and call LLM again with new context
       }
 
