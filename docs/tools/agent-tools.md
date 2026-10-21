@@ -4,6 +4,7 @@ changelog:
   - "2026-10-13: Refined against src — fixed renamed/nonexistent peer tools (`peers` → `peer_list` + `peer_connect` + `peer_disconnect`); tool count 48 → 50"
   - "2026-08-13: Updated tool count from 45 to 48, version from v0.7.0 to v0.10.1"
   - "2026-08-13: Removed nonexistent tools: wt_create, wt_remove, wt_enter, wt_leave, wt_print, todo_write, order, time"
+  - "2026-10-21: `brief` description no longer teaches recap (teammates share its schema and cannot call recap); the contract moved to the lead-only `## Briefs and Recap` prompt section + the recap description."
   - "2026-10-21: `checkpoint` removed — every `brief` is now a rewind anchor and `recap` collapses back to the last one (see docs/loop/brief-and-recap-rewind.md). Recap args are now `description` / `abandon` / `comment`."
   - "2026-08-13: Added missing tools: grep, read_read, todo_create, todo_update, todo_pinning, issue_publish, issue_list, peers, checkpoint, recap, mycc_title, skill_search"
   - "2026-08-13: Fixed scopes: question (child-only), git_commit (main+child), skill_compile (main+child), tm_print (main+child)"
@@ -207,7 +208,9 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence parameter (0-10). Every brief is a recap rewind anchor — write briefs you would want to keep as your only surviving record. Must be called alone (no other tools in the same turn).
+**Description**: Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence parameter (0-10). State the conclusion first, then the evidence. Must be called alone (no other tools in the same turn).
+
+> The description deliberately says nothing about `recap` or rewind anchors: `brief` is `['main', 'child']`, so the same description reaches teammates, who cannot call `recap`. The recap contract lives in the `recap` description (lead-only) and in the lead's `## Briefs and Recap` system-prompt section (`buildBriefRecapSection()` in `src/loop/prompts/common.ts`); `src/tests/loop/prompts/brief-recap-scope.test.ts` guards the split.
 
 **Parameters**:
 | Name | Type | Required | Description |
@@ -224,8 +227,9 @@ interface ToolDefinition {
   wholesale — every call in it is answered with
   `Brief must be called alone. Other tools cannot be used in the same turn.`,
   nothing executes, and the loop returns to COLLECT so the LLM re-emits the
-  work without the brief. A brief-only turn keeps recap's rewind anchor
-  unambiguous. Synthetic briefs (recovery, crossroad, compact floor, TP
+  work without the brief. A brief-only turn keeps a recap rewind anchor
+  unambiguous for the lead (a child's briefs are never rewound, but the rule
+  is enforced uniformly). Synthetic briefs (recovery, crossroad, compact floor, TP
   recovery) are sole calls and bypass the guard.
 - Also emits a `[brief] blocked: ...` yellow log line when rejected
 - Also recorded into the peer discovery heartbeat (lead only) so other instances can see progress
