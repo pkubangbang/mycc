@@ -55,7 +55,7 @@ export const wikiPutTool: ToolDefinition = {
       return 'Error: document.title is required and must be a non-empty string.';
     }
     if (typeof docObj.content !== 'string' || docObj.content.trim() === '') {
-      return `Error: document.content is required and must be a non-empty string. Content must be ${WIKI_CONTENT_TOKEN_LIMITS.min}-${WIKI_CONTENT_TOKEN_LIMITS.max} tokens (the embedding model's context window).`;
+      return `Error: document.content is required and must be a non-empty string. Content must be ${WIKI_CONTENT_TOKEN_LIMITS.min}-${WIKI_CONTENT_TOKEN_LIMITS.max} tokens.`;
     }
 
     const document: WikiDocument = {
