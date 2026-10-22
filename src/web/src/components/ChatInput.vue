@@ -842,6 +842,19 @@ function fmtTime(at: number): string {
   .input-toolbar {
     right: 4px;
     bottom: 4px;
+    justify-content: flex-end;
+  }
+  /* Narrow screens cannot afford the 98px right gutter the wide layout
+     reserves for the toolbar: it left ~330-390px of empty space to the
+     right of wrapped text. The toolbar is bottom-anchored, so reserve
+     bottom padding instead and let text use the full width.
+     48px (not 44px): the toolbar occupies 28px + bottom:4px = 32px above
+     the textarea's padding edge, plus 2px of border = 34px. A 14px/1.5 line
+     box is only 21px tall, so 44px still left the LAST line's baseline ~10px
+     inside the button strip; 48px (34 + one full 21px line, rounded) clears
+     it. */
+  .input-area {
+    padding: 8px 12px 48px;
   }
 }
 /* Transient toast shown when the user clicks the lightning bolt while
@@ -883,6 +896,13 @@ function fmtTime(at: number): string {
   font-size: 14px;
   height: 40px;
   font-weight: 500;
+  /* CJK line-breaking allows a break between ANY two glyphs, and .send-btn
+     is a shrinkable flex child of .input-row: without nowrap the label
+     "发送" wraps to 发/送 and the button collapses to ~1 glyph wide.
+     nowrap keeps the label on one line; flex-shrink:0 stops the button
+     from being squeezed by the textarea sibling. */
+  white-space: nowrap;
+  flex-shrink: 0;
   transition: opacity 0.15s;
 }
 .send-btn:not(:disabled):hover {
