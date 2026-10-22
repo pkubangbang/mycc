@@ -15,6 +15,7 @@ export {
   createMockBg,
   createMockTeam,
   createMockWiki,
+  createMockPeer,
   type MockContextOptions,
 } from './mock-context.js';
 
@@ -28,3 +29,6 @@ export {
   sampleIssues,
   sampleMails,
 } from './fixtures.js';
+
+// LineEditor fixtures (key / charKey / createMockStdout)
+export { key, charKey, createMockStdout } from './line-editor.js';

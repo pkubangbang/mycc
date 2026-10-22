@@ -1,50 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { LineEditor } from '../../utils/line-editor.js';
-import type { KeyInfo } from '../../utils/key-parser.js';
 
-/**
- * Helper to create a KeyInfo object for testing
- */
-function key(
-  name: string,
-  options: Partial<KeyInfo> = {}
-): KeyInfo {
-  return {
-    name,
-    ctrl: false,
-    meta: false,
-    shift: false,
-    sequence: '',
-    ...options,
-  };
-}
-
-/**
- * Helper to create a printable character KeyInfo
- */
-function charKey(c: string): KeyInfo {
-  return {
-    name: '',
-    ctrl: false,
-    meta: false,
-    shift: false,
-    sequence: c,
-  };
-}
-
-/**
- * Create a mock stdout stream for testing
- */
-function createMockStdout() {
-  return {
-    write: vi.fn(),
-    columns: 80,
-    rows: 24,
-    isTTY: true,
-    on: vi.fn(),
-    removeListener: vi.fn(),
-  } as unknown as NodeJS.WriteStream;
-}
+import { key, charKey, createMockStdout } from '../test-utils/index.js';
 
 describe('LineEditor - History Navigation', () => {
   let mockStdout: NodeJS.WriteStream;

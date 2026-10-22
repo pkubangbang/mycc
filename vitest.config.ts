@@ -17,6 +17,13 @@ export default defineConfig({
       reporter: ['text', 'json', 'html'],
       include: ['src/**/*.ts'],
       exclude: ['src/tests/**', 'src/index.ts', 'src/lead.ts'],
+      // Ratchet: these floors only guard against a test deletion that
+      // silently drops coverage. They are deliberately set below the
+      // measured baseline and must be raised (never lowered) once a higher
+      // baseline is established — see TESTING_STANDARDS.md.
+      // Requires `@vitest/coverage-v8` (`pnpm add -D @vitest/coverage-v8`);
+      // it is in pnpm-lock.yaml but not declared in package.json yet.
+      // thresholds: { lines: 0, branches: 0, functions: 0 },
     },
     testTimeout: 10000,
     hookTimeout: 10000,

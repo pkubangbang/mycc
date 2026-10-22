@@ -13,9 +13,11 @@ This document defines the standard testing patterns for the mycc project. All te
 ```
 src/tests/
 ├── test-utils/          # Shared testing utilities
-│   ├── mock-context.ts  # AgentContext mock factories
+│   ├── mock-context.ts  # AgentContext mock factories (CANONICAL)
 │   ├── fixtures.ts      # Test fixtures and data
-│   └── helpers.ts       # Common test helpers
+│   ├── line-editor.ts   # LineEditor fixtures (key / charKey / createMockStdout)
+│   ├── index.ts         # Barrel re-export — import from here
+│   └── TESTING_STANDARDS.md
 ├── tools/               # Tool tests
 │   ├── test-utils.ts    # Tool-specific utilities
 │   ├── bash.test.ts
@@ -228,19 +230,35 @@ expect(value).toBeNull();
 expect(value).toBeUndefined();
 ```
 
-## Test File Size Limit
+## Test File Size: split by behaviour, not by line count
 
-Keep test files under **300 lines**. Split by functionality:
+There is **no hard line limit**. The rule is *one file = one coherent
+behaviour cluster of one module*; a number is only a smell, not a gate.
 
-```typescript
-// Instead of one large file:
-// mytool.test.ts (500 lines)
+- **Soft ceiling ~400 lines.** Above that, look for a behaviour seam.
+- **Never split by line count alone** — split where the *behaviour* changes,
+  and name the file after the behaviour (`bash-timeout.test.ts`,
+  `bash-output-truncation.test.ts`), not after an ordinal
+  (`bash-part2.test.ts` is wrong).
+- A file that is long because it enumerates data-driven cases (a table of
+  inputs in one `it.each`) is fine; a file that is long because it repeats
+  the same 30-line setup per case is not — factor the setup out.
 
-// Split into:
-// mytool-basics.test.ts (150 lines)
-// mytool-errors.test.ts (150 lines)
-// mytool-edge-cases.test.ts (100 lines)
-```
+## Two Hard Rules
+
+1. **Never inline a `CoreModule` / `AgentContext` mock in a test file.**
+   Import the factories from `test-utils`:
+   ```typescript
+   import { createMockContext, createMockIssue } from '../test-utils/index.js';
+   const ctx = createMockContext({ issue: createMockIssue({ listIssues: vi.fn(async () => []) }) });
+   ```
+   A per-file copy of the context mock is the single largest source of
+   duplication in this suite; overrides go through `MockContextOptions`.
+
+2. **Never assert a tool's `name` / `scope` / `input_schema` in a tool test
+   file.** Those invariants are owned by `src/tests/tool-registry.test.ts`,
+   which iterates `builtInTools` once. A per-file metadata assertion only
+   re-states a literal and cannot catch a registry-wide defect.
 
 ## Naming Conventions
 
@@ -294,5 +312,6 @@ it('should timeout after 5 seconds', async () => {
 - [ ] Happy path tests
 - [ ] Error handling tests
 - [ ] Edge case tests
-- [ ] Metadata tests (name, scope, schema)
-- [ ] File under 300 lines
+- [ ] NO metadata tests (name, scope, schema) — owned by tool-registry.test.ts
+- [ ] Mocks come from test-utils factories, not a local copy
+- [ ] File split at behaviour seams if over ~400 lines
