@@ -61,8 +61,9 @@ function makeDoc(domain: string, title: string, content: string): WikiDocument {
   return { domain, title, content, references: [] };
 }
 
-// Content >= 50 chars to satisfy wiki put()'s MIN_CONTENT_LENGTH when we
-// exercise the full import path (the mock put still records calls regardless).
+// Content long enough in TOKENS to satisfy wiki put()'s MIN_CONTENT_TOKENS
+// when we exercise the full import path (the mock put still records calls
+// regardless). ~97 chars ≈ 25 tokens, well above the 10-token floor.
 const LONG_CONTENT = 'This is a sufficiently long document content for testing wiki import integrity checks.';
 
 function makeDomain(name: string): WikiDomain {

@@ -3,6 +3,7 @@
  */
 
 import type { ToolDefinition, WikiDocument } from '../types.js';
+import { WIKI_CONTENT_TOKEN_LIMITS } from '../context/parent/wiki.js';
 
 export const wikiPutTool: ToolDefinition = {
   name: 'wiki_put',
@@ -54,7 +55,7 @@ export const wikiPutTool: ToolDefinition = {
       return 'Error: document.title is required and must be a non-empty string.';
     }
     if (typeof docObj.content !== 'string' || docObj.content.trim() === '') {
-      return 'Error: document.content is required and must be a non-empty string. Content must be 50-1000 characters.';
+      return `Error: document.content is required and must be a non-empty string. Content must be ${WIKI_CONTENT_TOKEN_LIMITS.min}-${WIKI_CONTENT_TOKEN_LIMITS.max} tokens (the embedding model's context window).`;
     }
 
     const document: WikiDocument = {

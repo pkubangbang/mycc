@@ -3,10 +3,11 @@
  */
 
 import type { ToolDefinition, WikiDocument } from '../types.js';
+import { WIKI_CONTENT_TOKEN_LIMITS } from '../context/parent/wiki.js';
 
 export const wikiPrepareTool: ToolDefinition = {
   name: 'wiki_prepare',
-  description: 'Validate a document before storing in knowledge base. Returns hash if accepted. Content must be 50-1000 characters of facts/rules (not opinions). Use before wiki_put.',
+  description: `Validate a document before storing in knowledge base. Returns hash if accepted. Content must be ${WIKI_CONTENT_TOKEN_LIMITS.min}-${WIKI_CONTENT_TOKEN_LIMITS.max} tokens of facts/rules (not opinions). The limit is the embedding model's context window (${WIKI_CONTENT_TOKEN_LIMITS.max} tokens); ~4 chars per token for Western text. Use before wiki_put.`,
   input_schema: {
     type: 'object',
     properties: {
@@ -20,7 +21,7 @@ export const wikiPrepareTool: ToolDefinition = {
       },
       content: {
         type: 'string',
-        description: 'Document content - facts, rules, or information to store (50-1000 characters). Should describe facts/rules, not opinions.',
+        description: `Document content - facts, rules, or information to store (${WIKI_CONTENT_TOKEN_LIMITS.min}-${WIKI_CONTENT_TOKEN_LIMITS.max} tokens; ~4 chars per token for Western text). Should describe facts/rules, not opinions.`,
       },
       references: {
         type: 'array',

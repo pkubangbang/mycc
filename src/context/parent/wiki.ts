@@ -22,7 +22,8 @@ import type {
   SkillIndexEntry,
 } from '../../types.js';
 import { getEmbedding, getEmbeddings, EMBEDDING_DIM, NAMESPACE } from '../../engine/rag-provider.js';
-import { getWikiDbDir, ensureDirs } from '../../config.js';
+import { getWikiDbDir, ensureDirs, getRagProvider } from '../../config.js';
+import { estimateTextTokens } from '../../utils/token.js';
 import {
   HASH_PATTERN,
   generateHash,
@@ -39,8 +40,34 @@ import {
 } from './wiki-wal.js';
 
 const DUPLICATE_THRESHOLD = 0.95;
-const MIN_CONTENT_LENGTH = 50;
-const MAX_CONTENT_LENGTH = 1000;
+
+/**
+ * Content length limits, in TOKENS (not characters).
+ *
+ * The limit exists because the content is embedded by the active RAG
+ * provider, and each provider has a fixed token context window. The old
+ * 50-1000 CHARACTER limit was an arbitrary proxy (~250-300 tokens) that
+ * under-used every supported model. The real ceiling is the embedding
+ * model's context window minus a small headroom margin:
+ *
+ *   - nomic-embed-text: 8192-token context window → cap 8000 tokens.
+ *   - embeddinggemma:   2048-token context window (gemma3.context_length
+ *     2048; model card "Maximum input context length of 2K") → cap 2000
+ *     tokens. The document-mode prompt prefix ("title: none | text: ")
+ *     adds a handful of tokens, absorbed by the headroom.
+ *
+ * Token counting uses estimateTextTokens() (src/utils/token.ts) — the
+ * same estimator the context-budget tracker uses, so a document that
+ * passes here also fits the embedding request without provider-side
+ * truncation.
+ *
+ * MIN is a usefulness floor: a few tokens record nothing worth retrieving.
+ */
+const MIN_CONTENT_TOKENS = 10;
+const MAX_CONTENT_TOKENS = getRagProvider() === 'embeddinggemma' ? 2000 : 8000;
+
+/** Exported so tool descriptions (wiki_prepare/wiki_put) can cite the live limit. */
+export const WIKI_CONTENT_TOKEN_LIMITS = { min: MIN_CONTENT_TOKENS, max: MAX_CONTENT_TOKENS } as const;
 
 /**
  * Column name of the one-way lifecycle state carried by every row.
@@ -336,12 +363,13 @@ export class WikiManager implements WikiModule {
       return { accepted: false, reason: 'Missing required fields: domain, title, or content' };
     }
 
-    if (document.content.length < MIN_CONTENT_LENGTH) {
-      return { accepted: false, reason: `Content too short (minimum ${MIN_CONTENT_LENGTH} characters)` };
+    const contentTokens = estimateTextTokens(document.content);
+    if (contentTokens < MIN_CONTENT_TOKENS) {
+      return { accepted: false, reason: `Content too short (minimum ${MIN_CONTENT_TOKENS} tokens, got ${contentTokens})` };
     }
 
-    if (document.content.length > MAX_CONTENT_LENGTH) {
-      return { accepted: false, reason: `Content too long (maximum ${MAX_CONTENT_LENGTH} characters)` };
+    if (contentTokens > MAX_CONTENT_TOKENS) {
+      return { accepted: false, reason: `Content too long (maximum ${MAX_CONTENT_TOKENS} tokens, got ${contentTokens})` };
     }
 
     // Validate domain against registered domains
