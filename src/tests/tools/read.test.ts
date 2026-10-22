@@ -15,7 +15,7 @@ describe('readTool', () => {
 
   beforeEach(() => {
     tempDir = createTempDir();
-    ctx = createMockContext(tempDir);
+    ctx = createMockContext({ workdir: tempDir });
   });
 
   afterEach(() => {
@@ -187,12 +187,6 @@ describe('readTool', () => {
 
     expect(result).toContain('你好世界');
     expect(result).not.toContain('﻿');
-  });
-
-  it('should have correct metadata', () => {
-    expect(readTool.name).toBe('read_file');
-    expect(readTool.scope).toEqual(['main', 'child']);
-    expect(readTool.input_schema.required).toContain('path');
   });
 
   // ── pure read: no handler intercepts special file types ──

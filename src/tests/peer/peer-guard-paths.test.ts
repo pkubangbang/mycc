@@ -200,16 +200,10 @@ describe('onChannelJoin setAuto guard (Fix #6)', () => {
     expect(setAutoCalled).toBe(true);
   });
 
-  it.skip('TODO(Fix #6): onChannelJoin callback calls agentIO.isPromptBlocked() before setAuto(true)', () => {
-    // AFTER FIX: agentIO exposes an isPromptBlocked() method (or equivalent)
-    // that returns true only when an ask() Promise is currently blocked.
-    // The onChannelJoin callback should check it before calling setAuto(true)
-    // + abortAsk/rejectInput. This test will verify:
-    //   1. isPromptBlocked() returns false when no ask() is pending.
-    //   2. isPromptBlocked() returns true when ask() is blocked.
-    //   3. The callback no-ops setAuto when not blocked.
-    // Cannot be unit-tested without a real agentIO.ask() block; document the
-    // gap and un-skip once isPromptBlocked() lands.
-    expect(true).toBe(true);
-  });
+  // TODO(Fix #6): the onChannelJoin callback should call
+  // agentIO.isPromptBlocked() before setAuto(true) + abortAsk/rejectInput.
+  // Not testable yet: agentIO exposes no isPromptBlocked() seam, so the only
+  // assertion available would be a tautology. Tracked as it.todo so it shows
+  // up in the report instead of silently passing.
+  it.todo('TODO(Fix #6): onChannelJoin no-ops setAuto(true) when no ask() is blocked');
 });

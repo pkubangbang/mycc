@@ -24,8 +24,9 @@
  * socket. It skips cleanly when tmux or the global `mycc` command are not
  * available (CI without tmux should not fail).
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
+import { describeIfLiveTmux } from '../test-utils/gates.js';
 
 const PORT = 3191; // dedicated to this test suite; unlikely to collide
 const SESSION = 'serve-health-test';
@@ -50,37 +51,8 @@ function sleepSync(seconds: number): void {
  *  (and does NOT actually suppress stderr). Use `2>/dev/null` on Unix. */
 const DEVNULL = process.platform === 'win32' ? '2>nul' : '2>/dev/null';
 
-/** True when a usable tmux SERVER is reachable. `tmux -V` only proves the
- *  binary is on PATH — it does NOT start or contact a server. A machine can
- *  have tmux installed but no server running (e.g. a fresh CI box, or a
- *  headless container without a tmux session ever started), in which case
- *  `tmux kill-session` throws "no server running". `tmux new-session -d`
- *  DOES start a server if none exists, so probe by creating + killing a
- *  throwaway session: if that round-trips, the live-tmux suite can run. */
-function hasTmux(): boolean {
-  try { sh('tmux -V', 3000); } catch { return false; }      // binary present?
-  try {
-    sh('tmux new-session -d -s __probe__ 2>/dev/null', 3000);
-    sh('tmux kill-session -t __probe__ 2>/dev/null', 3000);
-    return true;
-  } catch { return false; }
-}
-
-/** True when the global `mycc` command resolves (npm link present).
- *  Uses `where`/`which` rather than spawnSync('mycc',…) because on Windows the
- *  global shim is a .cmd/.ps1 that spawnSync without shell:true cannot resolve
- *  even though pwsh finds it. `where`/`which` matches the shell's own lookup. */
-function hasMycc(): boolean {
-  const lookup = process.platform === 'win32' ? 'where mycc' : 'which mycc';
-  try {
-    const out = sh(lookup, 5000);
-    return out.trim().length > 0;
-  } catch { return false; }
-}
-
-const tmuxOk = hasTmux();
-const myccOk = hasMycc();
-const canRun = tmuxOk && myccOk;
+// Gate: a live tmux server + a global `mycc` on PATH. The probe lives in
+// test-utils/gates.ts so every live suite shares one implementation.
 
 /** Fetch JSON from a URL via node's global fetch (vitest runs on node 18+). */
 async function fetchJson(url: string): Promise<Record<string, unknown>> {
@@ -118,7 +90,7 @@ function stopServe(): void {
   try { sh(`tmux kill-session -t ${SESSION}`, 3000); } catch { /* already gone */ }
 }
 
-describe.skipIf(!canRun)('ServeHub /health + /config (live tmux)', () => {
+describeIfLiveTmux('ServeHub /health + /config (live tmux)', () => {
   // One shared serve instance for the whole file — booting mycc twice (once
   // per describe block) races the port release and yields ECONNRESET on the
   // second fetch. A single beforeAll/afterAll pair starts the tmux session
@@ -170,14 +142,5 @@ describe.skipIf(!canRun)('ServeHub /health + /config (live tmux)', () => {
     expect(body['maxUploadMb']).toBeGreaterThan(0);
     // No --daemon → shouldDaemon() === false → non-persistent.
     expect(body['persistent']).toBe(false);
-  });
-});
-
-// When tmux or mycc is missing, emit a single record-keeping test so the
-// suite reports WHY it skipped rather than silently passing with 0 tests.
-describe.skipIf(canRun)('ServeHub live tmux tests (skipped: tmux/mycc unavailable)', () => {
-  it('skipped — tmux or global mycc command not found on PATH', () => {
-    // Pure presence guard; the real work is in the skipped blocks above.
-    expect(canRun).toBe(false);
   });
 });

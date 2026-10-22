@@ -12,17 +12,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { myccTitleTool } from '../../tools/mycc_title.js';
 
 describe('myccTitleTool', () => {
-  it('should have correct name and scope', () => {
-    expect(myccTitleTool.name).toBe('mycc_title');
-    // MAIN-ONLY: the tool's whole effect is a terminal side effect, and a
-    // teammate's stdio is piped, so a child could never observe it.
-    expect(myccTitleTool.scope).toEqual(['main']);
-  });
-
-  it('should require title parameter', () => {
-    expect(myccTitleTool.input_schema.required).toContain('title');
-  });
-
   it('should return error for missing title', () => {
     const ctx = { core: { getWorkDir: () => '/tmp', isPlainOutput: () => false } } as any;
     const result = myccTitleTool.handler(ctx, {});

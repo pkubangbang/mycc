@@ -128,10 +128,8 @@ describe('rebuildPatches', () => {
 
     const bAdd = adds.find((a) => a.title === 'B');
     const cAdd = adds.find((a) => a.title === 'C');
-    expect(bAdd).toBeDefined();
-    expect(bAdd!.path).toBe('/');
-    expect(cAdd).toBeDefined();
-    expect(cAdd!.path).toBe('/B');
+    expect(bAdd).toMatchObject({ action: 'add', title: 'B', path: '/' });
+    expect(cAdd).toMatchObject({ action: 'add', title: 'C', path: '/B' });
   });
 
   it('handles mixed scenario: add + update + preserved-deletion', () => {
@@ -157,8 +155,7 @@ describe('rebuildPatches', () => {
     expect(actions).toHaveLength(3);
 
     const updateAction = actions.find((a) => a.action === 'update');
-    expect(updateAction).toBeDefined();
-    expect(updateAction!.path).toBe('/A');
+    expect(updateAction).toMatchObject({ action: 'update', path: '/A' });
 
     const addActions = actions.filter((a) => a.action === 'add');
     expect(addActions).toHaveLength(2);

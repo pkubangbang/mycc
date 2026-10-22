@@ -171,7 +171,7 @@ describe('Hint Round JSON Output', () => {
     expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
     // The HINT note was injected as a user message with the [HINT] prefix.
     const hintMsg = findHint(messages);
-    expect(hintMsg).toBeDefined();
+    expect(hintMsg).toMatchObject({ role: 'user', content: expect.stringContaining('[HINT]') });
     expect(hintMsg!.content).toContain('**Blocker:** Agent is stuck on a syntax error');
     expect(hintMsg!.content).toContain('**Next Step:** Review the intent-language vocabulary');
     expect(hintMsg!.content).toContain('**Focus On:** intent-language syntax');
@@ -218,7 +218,7 @@ describe('Hint Round JSON Output', () => {
     ]);
 
     const hintMsg = findHint(messages);
-    expect(hintMsg).toBeDefined();
+    expect(hintMsg).toMatchObject({ role: 'user', content: expect.stringContaining('[HINT]') });
     expect(hintMsg!.content).toContain("**Also:** 'my-skill', 'other-skill' need compiling via `skill_compile`");
   });
 
@@ -234,7 +234,7 @@ describe('Hint Round JSON Output', () => {
     await manager.generate(new AbortController(), 10, 'breakdown');
 
     const hintMsg = findHint(messages);
-    expect(hintMsg).toBeDefined();
+    expect(hintMsg).toMatchObject({ role: 'user', content: expect.stringContaining('[HINT]') });
     expect(hintMsg!.content).not.toContain('**Wiki Search:**');
     expect(hintMsg!.content).not.toContain('Domain=');
   });
@@ -255,7 +255,7 @@ describe('Hint Round JSON Output', () => {
     expect(get).toHaveBeenCalledTimes(2);
     expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
     const hintMsg = findHint(messages);
-    expect(hintMsg).toBeDefined();
+    expect(hintMsg).toMatchObject({ role: 'user', content: expect.stringContaining('[HINT]') });
     expect(hintMsg!.content).not.toContain('**Wiki Search:**');
     expect(hintMsg!.content).toContain('**Blocker:**');
   });
@@ -271,7 +271,7 @@ describe('Hint Round JSON Output', () => {
 
     expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
     const hintMsg = findHint(messages);
-    expect(hintMsg).toBeDefined();
+    expect(hintMsg).toMatchObject({ role: 'user', content: expect.stringContaining('[HINT]') });
     expect(hintMsg!.content).not.toContain('**Wiki Search:**');
   });
 
@@ -289,7 +289,7 @@ describe('Hint Round JSON Output', () => {
     expect(get).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
     const hintMsg = findHint(messages);
-    expect(hintMsg).toBeDefined();
+    expect(hintMsg).toMatchObject({ role: 'user', content: expect.stringContaining('[HINT]') });
     expect(hintMsg!.content).toContain('**Wiki Search:**');
     expect(hintMsg!.content).toContain('domain="architecture"');
     expect(hintMsg!.content).not.toContain('domain="project"');
@@ -305,7 +305,7 @@ describe('Hint Round JSON Output', () => {
 
     expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
     const hintMsg = findHint(messages);
-    expect(hintMsg).toBeDefined();
+    expect(hintMsg).toMatchObject({ role: 'user', content: expect.stringContaining('[HINT]') });
     expect(hintMsg!.content).toContain('domain="project"');
     expect(hintMsg!.content).toContain('**Wiki Search:**');
   });
@@ -362,7 +362,7 @@ describe('Hint Round JSON Output', () => {
     // The [HINT] note IS injected — "no blockers" is no longer a silent no-op.
     // This is the key inversion of the old suppression behavior.
     const hintMsg = findHint(messages);
-    expect(hintMsg).toBeDefined();
+    expect(hintMsg).toMatchObject({ role: 'user', content: expect.stringContaining('[HINT]') });
     expect(hintMsg!.content).toContain('**Blocker:** no blockers');
     expect(hintMsg!.content).toContain('**Next Step:** The remaining work is completing test coverage for the compact module');
     expect(hintMsg!.content).toContain('**Focus On:** completing test coverage');
@@ -388,7 +388,7 @@ describe('Hint Round JSON Output', () => {
     if (typeof result === 'object') {
       expect(result.status).toBe('success');
     }
-    expect(findHint(messages)).toBeDefined();
+    expect(findHint(messages)).toMatchObject({ role: 'user', content: expect.stringContaining('[HINT]') });
   });
 
   // ---------------------------------------------------------------------------

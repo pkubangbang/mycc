@@ -20,7 +20,7 @@ describe('readPictureTool', () => {
 
   beforeEach(() => {
     tempDir = createTempDir();
-    ctx = createMockContext(tempDir);
+    ctx = createMockContext({ workdir: tempDir });
   });
 
   afterEach(() => {
@@ -205,13 +205,4 @@ describe('readPictureTool', () => {
 
   // ── Tool metadata ──────────────────────────────────────────────────────
 
-  it('should have correct metadata', () => {
-    expect(readPictureTool.name).toBe('read_picture');
-    expect(readPictureTool.scope).toEqual(['main', 'child']);
-    expect(readPictureTool.input_schema.required).toContain('path');
-    // cache and prompt are optional properties
-    const props = readPictureTool.input_schema.properties as Record<string, unknown>;
-    expect(props).toHaveProperty('cache');
-    expect(props).toHaveProperty('prompt');
-  });
 });

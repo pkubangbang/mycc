@@ -26,7 +26,7 @@ describe('webFetchTool', () => {
 
   beforeEach(() => {
     tempDir = createTempDir();
-    ctx = createMockContext(tempDir);
+    ctx = createMockContext({ workdir: tempDir });
   });
 
   afterEach(() => {

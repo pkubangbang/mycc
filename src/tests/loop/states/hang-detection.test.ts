@@ -49,7 +49,6 @@ describe('hang detection mechanisms', () => {
 
   describe('mechanism 1: per-transition timeout', () => {
     it('should expose HANG_TIMEOUT_MS as a configurable constant', () => {
-      expect(HANG_TIMEOUT_MS).toBeDefined();
       expect(typeof HANG_TIMEOUT_MS).toBe('number');
       expect(HANG_TIMEOUT_MS).toBeGreaterThan(0);
       // Default is 2000ms — well under vitest's 10s global timeout

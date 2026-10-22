@@ -37,8 +37,9 @@
  *
  * Skips cleanly when tmux or the global `mycc` command are unavailable.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { execSync } from 'child_process';
+import { describeIfLiveTmux } from '../test-utils/gates.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { WebSocket } from 'ws';
@@ -99,30 +100,7 @@ function sleepSync(seconds: number): void {
  *  (and does NOT suppress stderr). Use `2>/dev/null` on Unix. */
 const DEVNULL = process.platform === 'win32' ? '2>nul' : '2>/dev/null';
 
-/** True when a usable tmux SERVER is reachable. `tmux -V` only proves the
- *  binary is on PATH — it does NOT start or contact a server. A machine can
- *  have tmux installed but no server running, in which case `tmux
- *  kill-session` throws "no server running". Probe by creating + killing a
- *  throwaway session: `tmux new-session -d` starts a server if none exists,
- *  so if that round-trips the live-tmux suite can run. See
- *  serve-health.test.ts for the same fix. */
-function hasTmux(): boolean {
-  try { sh('tmux -V', 3000); } catch { return false; }
-  try {
-    sh(`tmux new-session -d -s __probe__ ${DEVNULL}`, 3000);
-    sh(`tmux kill-session -t __probe__ ${DEVNULL}`, 3000);
-    return true;
-  } catch { return false; }
-}
-
-function hasMycc(): boolean {
-  const lookup = process.platform === 'win32' ? 'where mycc' : 'which mycc';
-  try { return sh(lookup, 5000).trim().length > 0; } catch { return false; }
-}
-
-const tmuxOk = hasTmux();
-const myccOk = hasMycc();
-const canRun = tmuxOk && myccOk;
+// Gate: a live tmux server + a global `mycc` on PATH (test-utils/gates.ts).
 
 async function fetchJson(url: string): Promise<Record<string, unknown>> {
   const res = await fetch(url);
@@ -193,7 +171,7 @@ function openWebuiClient(): Promise<WebSocket> {
   });
 }
 
-describe.skipIf(!canRun)('peer wire two-instance smoke (live tmux)', () => {
+describeIfLiveTmux('peer wire two-instance smoke (live tmux)', () => {
   // Instance A's session id, discovered from the real /health peer block.
   let remoteSid: string;
   // Instance B (this process) hook log.
@@ -326,12 +304,4 @@ describe.skipIf(!canRun)('peer wire two-instance smoke (live tmux)', () => {
     // arm now (legitimately — the last human DID leave), but the tmux kill
     // in stopServe() ends the process long before the 30s budget fires.
   }, 30_000);
-});
-
-// When tmux or mycc is missing, emit a single record-keeping test so the
-// suite reports WHY it skipped rather than silently passing with 0 tests.
-describe.skipIf(canRun)('peer wire smoke (skipped: tmux/mycc unavailable)', () => {
-  it('skipped — tmux or global mycc command not found on PATH', () => {
-    expect(canRun).toBe(false);
-  });
 });

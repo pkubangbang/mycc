@@ -1,20 +1,29 @@
 /**
- * collect-repeated.test.ts - Unit tests for the dead-loop detection helpers
- * in the COLLECT state.
+ * collect-helpers.test.ts - Unit tests for the COLLECT state's pure helpers:
+ * the reactivation JSON parser and the dead-loop (repeated-action) detector.
  *
- * `detectRepeatedActions` feeds objective evidence into the hint-round
- * breakdown so the LLM judges should_compact on facts (a repeated-action
- * line) rather than a vague "the conversation feels long" feeling — which
- * was over-triggering compaction. The contract:
+ * Both are pure functions behind a forkChat/LLM boundary, so they need no mocks
+ * and share no state: they live together as one "COLLECT helpers" behaviour
+ * file. The state-machine wiring around them is covered by the integration
+ * suites (collect-keyword-*.test.ts, collect-esc-hint.test.ts).
+ *
+ * parseReactivationResult: `checkReactivation` asks the LLM (via forkChat) for
+ * a JSON array; the parser must tolerate surrounding noise and reject
+ * malformed output without throwing.
+ *
+ * detectRepeatedActions: feeds objective evidence into the hint-round breakdown
+ * so the LLM judges should_compact on facts (a repeated-action line) rather
+ * than a vague "the conversation feels long" feeling. The contract:
  *   - 3+ CONSECUTIVE same-tool calls sharing a common error-ish result prefix
  *     → report `Repeated actions: <tool> ×<count> (results start with "<prefix>")`
  *   - otherwise → null (LLM defaults should_compact=false)
  *
- * Only `detectRepeatedActions` is exercised here; `commonErrorPrefix` is a
- * private helper covered transitively through it (it gates the 3+ errorish
- * + longest-common-prefix logic).
+ * Only `detectRepeatedActions` is exercised; `commonErrorPrefix` is a private
+ * helper covered transitively through it (it gates the 3+ errorish +
+ * longest-common-prefix logic).
  */
 import { describe, it, expect } from 'vitest';
+import { parseReactivationResult } from '../../../loop/states/collect-pinned-todo.js';
 import { detectRepeatedActions } from '../../../loop/states/collect-hint.js';
 import type { SequenceEvent } from '../../../hook/sequence.js';
 
@@ -22,6 +31,67 @@ import type { SequenceEvent } from '../../../hook/sequence.js';
 function ev(tool: string, result: string): SequenceEvent {
   return { tool, args: {}, result, timestamp: 0 };
 }
+
+describe('parseReactivationResult', () => {
+  it('should parse a clean JSON array', () => {
+    const raw = '[{"id":2,"hash":"abc12345","reopen":true,"reason":"users table changed"}]';
+    const result = parseReactivationResult(raw);
+    expect(result).toEqual([
+      { id: 2, hash: 'abc12345', reopen: true, reason: 'users table changed' },
+    ]);
+  });
+
+  it('should parse multiple entries', () => {
+    const raw = '[{"id":1,"hash":"h1","reopen":false,"reason":"no change"},{"id":2,"hash":"h2","reopen":true,"reason":"changed"}]';
+    const result = parseReactivationResult(raw);
+    expect(result).toEqual([
+      { id: 1, hash: 'h1', reopen: false, reason: 'no change' },
+      { id: 2, hash: 'h2', reopen: true, reason: 'changed' },
+    ]);
+  });
+
+  it('should extract a JSON array from surrounding noise text', () => {
+    const raw = 'Here is my evaluation:\n[{"id":2,"hash":"abc","reopen":true,"reason":"x"}]\nHope that helps!';
+    const result = parseReactivationResult(raw);
+    expect(result).toEqual([
+      { id: 2, hash: 'abc', reopen: true, reason: 'x' },
+    ]);
+  });
+
+  it('should return null for non-JSON text', () => {
+    expect(parseReactivationResult('REACTIVATE because users changed')).toBeNull();
+    expect(parseReactivationResult('')).toBeNull();
+    expect(parseReactivationResult('   ')).toBeNull();
+  });
+
+  it('should return null for JSON that is not an array', () => {
+    expect(parseReactivationResult('{"id":2,"reopen":true}')).toBeNull();
+    expect(parseReactivationResult('"just a string"')).toBeNull();
+    expect(parseReactivationResult('42')).toBeNull();
+  });
+
+  it('should return null for malformed JSON array (unclosed)', () => {
+    expect(parseReactivationResult('[{"id":2,"reopen":true')).toBeNull();
+  });
+
+  it('should tolerate whitespace around the JSON array', () => {
+    const raw = '   \n  [{"id":5,"hash":"h","reopen":false,"reason":"skip"}]  \n  ';
+    const result = parseReactivationResult(raw);
+    expect(result).toEqual([
+      { id: 5, hash: 'h', reopen: false, reason: 'skip' },
+    ]);
+  });
+
+  it('should keep entries even if some fields are missing (caller guards per-entry)', () => {
+    // The parser only checks Array.isArray; per-entry type validation is done
+    // by the caller. So a partially-shaped entry passes through the parser.
+    const raw = '[{"id":2,"hash":"abc","reopen":true}]';
+    const result = parseReactivationResult(raw);
+    expect(result).toEqual([
+      { id: 2, hash: 'abc', reopen: true, reason: undefined },
+    ]);
+  });
+});
 
 describe('detectRepeatedActions', () => {
   it('reports 3+ consecutive same-tool calls sharing an error prefix', () => {

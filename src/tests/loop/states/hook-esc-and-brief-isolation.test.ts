@@ -1,5 +1,7 @@
 /**
- * hook-esc-recap.test.ts — handleHook: ESC during recap (recap cancellation).
+ * hook-esc-and-brief-isolation.test.ts — handleHook's two validation/early-exit
+ * guards: (1) `brief` must be called ALONE, and (2) ESC during recap cancels the
+ * recap and picks PROMPT vs COLLECT.
  *
  * Code path under test (hook.ts handleRecapCall):
  *   const { summary, patch } = await handleRecapSpan(fullMessages, span, allTools,
@@ -98,6 +100,83 @@ import {
   createMockAugmentedToolCall,
   createMockHookResult,
 } from '../esc-test-helpers.js';
+
+const ISOLATION_MESSAGE =
+  'Brief must be called alone. Other tools cannot be used in the same turn.';
+
+describe('handleHook — brief isolation', () => {
+  let triologue: Triologue;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    triologue = new Triologue();
+  });
+
+  it('rejects a turn that co-batches brief with another tool', async () => {
+    const briefCall = createMockAugmentedToolCall('brief', { message: 'looking', confidence: 6 }, 'call_brief');
+    const bashCall = createMockAugmentedToolCall('bash', { command: 'ls' }, 'call_bash');
+    const env = createMockMachineEnv({ triologue });
+    env.hookExecutor.processToolCalls = vi.fn(async () =>
+      createMockHookResult({ calls: [briefCall, bashCall] }),
+    ) as never;
+    const chat = createChatData({
+      assistantContent: 'checking things',
+      rawToolCalls: [briefCall, bashCall] as never,
+    });
+
+    const result = await handleHook(env, createTurnVars(), chat);
+
+    expect(result).toBe(AgentState.COLLECT);
+    // The assistant turn is registered once...
+    expect(triologue.agent).toHaveBeenCalledTimes(1);
+    // ...and EVERY call is answered with the same rejection (no partial run).
+    expect(triologue.tool).toHaveBeenCalledTimes(2);
+    expect(triologue.tool).toHaveBeenCalledWith('brief', ISOLATION_MESSAGE, 'call_brief');
+    expect(triologue.tool).toHaveBeenCalledWith('bash', ISOLATION_MESSAGE, 'call_bash');
+    // Hook processing never runs on a rejected turn.
+    expect(env.hookExecutor.processToolCalls).not.toHaveBeenCalled();
+    // Observability: the yellow block line is logged.
+    expect(agentIO.log).toHaveBeenCalledWith(expect.stringContaining('[brief] blocked:'));
+  });
+
+  it('lets a lone brief through to TOOL', async () => {
+    const briefCall = createMockAugmentedToolCall('brief', { message: 'looking', confidence: 6 }, 'call_brief');
+    const env = createMockMachineEnv({ triologue });
+    env.hookExecutor.processToolCalls = vi.fn(async () =>
+      createMockHookResult({ calls: [briefCall] }),
+    ) as never;
+    const chat = createChatData({
+      assistantContent: 'checking things',
+      rawToolCalls: [briefCall] as never,
+    });
+
+    const result = await handleHook(env, createTurnVars(), chat);
+
+    expect(result).toBe(AgentState.TOOL);
+    expect(env.hookExecutor.processToolCalls).toHaveBeenCalledTimes(1);
+    expect(triologue.tool).not.toHaveBeenCalled();
+    expect(agentIO.log).not.toHaveBeenCalledWith(expect.stringContaining('[brief] blocked:'));
+  });
+
+  it('does not disturb turns that do not contain brief', async () => {
+    const bashCall = createMockAugmentedToolCall('bash', { command: 'ls' }, 'call_bash');
+    const readCall = createMockAugmentedToolCall('read_file', { path: 'x' }, 'call_read');
+    const env = createMockMachineEnv({ triologue });
+    env.hookExecutor.processToolCalls = vi.fn(async () =>
+      createMockHookResult({ calls: [bashCall, readCall] }),
+    ) as never;
+    const chat = createChatData({
+      assistantContent: '',
+      rawToolCalls: [bashCall, readCall] as never,
+    });
+
+    const result = await handleHook(env, createTurnVars(), chat);
+
+    expect(result).toBe(AgentState.TOOL);
+    expect(env.hookExecutor.processToolCalls).toHaveBeenCalledTimes(1);
+    expect(triologue.tool).not.toHaveBeenCalled();
+  });
+});
 
 describe('handleHook — ESC during recap (recap cancellation)', () => {
   let triologue: Triologue;

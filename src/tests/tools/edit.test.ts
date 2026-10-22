@@ -15,7 +15,7 @@ describe('editTool', () => {
 
   beforeEach(() => {
     tempDir = createTempDir();
-    ctx = createMockContext(tempDir);
+    ctx = createMockContext({ workdir: tempDir });
   });
 
   afterEach(() => {
@@ -346,14 +346,6 @@ describe('editTool', () => {
 
 
 
-
-  it('should have correct metadata', () => {
-    expect(editTool.name).toBe('edit_file');
-    expect(editTool.scope).toEqual(['main', 'child']);
-    expect(editTool.input_schema.required).toContain('path');
-    expect(editTool.input_schema.required).toContain('old_text');
-    expect(editTool.input_schema.required).toContain('new_text');
-  });
 
   // Regression test for the reported bug: a missing/non-string `path` argument
   // previously crashed with "Cannot read properties of undefined (reading

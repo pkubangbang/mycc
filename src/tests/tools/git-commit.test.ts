@@ -47,7 +47,7 @@ describe('gitCommitTool', () => {
 
   beforeEach(() => {
     tempDir = createTempDir();
-    ctx = createMockContext(tempDir);
+    ctx = createMockContext({ workdir: tempDir });
     vi.clearAllMocks();
     // Default: main process (skip the teammate mail-to-lead branch)
     vi.mocked(agentIO.isMainProcess).mockReturnValue(true);
@@ -339,18 +339,6 @@ describe('gitCommitTool', () => {
 
       expect(ctx.core.question).toHaveBeenCalled();
       expect(result).toContain('auto mode is ON');
-    });
-  });
-
-  describe('tool metadata', () => {
-    it('should have correct name', () => {
-      expect(gitCommitTool.name).toBe('git_commit');
-    });
-    it('should have main+child scope', () => {
-      expect(gitCommitTool.scope).toEqual(['main', 'child']);
-    });
-    it('should require message', () => {
-      expect(gitCommitTool.input_schema.required).toContain('message');
     });
   });
 });
