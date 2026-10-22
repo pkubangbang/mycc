@@ -537,13 +537,14 @@ function fmtTime(at: number): string {
           @paste="onPaste"
         ></textarea>
         <!-- Toolbar with the three action buttons (compact, auto, attach),
-             rendered as a single horizontal row. The toolbar is always an
-             overlay INSIDE the textarea (absolute-positioned relative to
-             .input-area-wrapper). Its placement is responsive via CSS:
-               - wide  (>600px): anchored to the bottom-right corner; the
-                 textarea uses padding-right to clear the button strip;
-               - narrow (≤600px): spans the full bottom edge; the textarea
-                 uses padding-bottom to clear the toolbar row.
+             rendered as a single shrink-to-fit horizontal row overlaid at
+             the bottom-right INSIDE the textarea (absolute-positioned
+             relative to .input-area-wrapper). The container is only as wide
+             as the three buttons and is pointer-events:none, so it NEVER
+             covers the last line of a multi-line textarea (which made that
+             line unselectable); each .tool-btn re-enables pointer events.
+             The textarea reserves clear space via padding-right (see
+             .input-area).
              Order left→right: compact, auto, attach (attach rightmost). -->
         <div class="input-toolbar">
           <!-- "压缩上下文" button — sends the "/compact" slash command via
@@ -779,11 +780,15 @@ function fmtTime(at: number): string {
   background: var(--bg-input-field-disabled);
   color: var(--text-input-disabled);
 }
-/* Toolbar overlay: a single horizontal row of three icon buttons. It is
-   always absolutely positioned INSIDE the textarea (relative to
-   .input-area-wrapper). On wide screens it hugs the bottom-right corner;
-   on narrow screens (≤600px) it spans the full bottom edge. The buttons
-   share a common .tool-btn base; each adds its own hover color. */
+/* Toolbar: a single horizontal row of three icon buttons, overlaid INSIDE
+   the textarea (absolute, relative to .input-area-wrapper) at the
+   bottom-right corner on ALL widths. The container is shrink-to-fit — its
+   width is exactly the three buttons + their gaps (no `left`/`right`
+   stretch), and it is `pointer-events: none` so the wrapper-sized hit area
+   never exists; each .tool-btn re-enables pointer events for itself. The
+   textarea's right padding (see .input-area) keeps typed text out from
+   under the buttons. The buttons share a common .tool-btn base; each adds
+   its own hover color. */
 .input-toolbar {
   position: absolute;
   right: 2px;
@@ -792,6 +797,7 @@ function fmtTime(at: number): string {
   align-items: center;
   gap: 4px;
   z-index: 2;
+  pointer-events: none;
 }
 /* Shared icon-button base for the three toolbar buttons. */
 .tool-btn {
@@ -807,6 +813,10 @@ function fmtTime(at: number): string {
   height: 28px;
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
+  /* Re-enable hit-testing on the button itself: the toolbar container is
+     pointer-events:none so it never swallows clicks/selection, but the
+     buttons must still be clickable. */
+  pointer-events: auto;
 }
 .tool-btn:disabled {
   opacity: 0.3;
@@ -824,20 +834,14 @@ function fmtTime(at: number): string {
 .auto-btn--on {
   color: #f59e0b;
 }
-/* Narrow screens (≤600px): the toolbar drops to span the full bottom edge
-   of the textarea, right-aligned within the row. The textarea switches its
-   clear-space from padding-right (wide) to padding-bottom so the toolbar
-   row no longer overlaps typed text. The toolbar is still INSIDE the
-   textarea (absolute overlay), just stretched across the bottom. */
+/* Narrow screens (≤600px): keep the toolbar shrink-to-fit at the
+   bottom-right (no full-width stretch — a stretched container would put a
+   transparent hit band over the last line of a multi-line textarea and make
+   it unselectable). Only nudge it slightly inward from the border. */
 @media (max-width: 600px) {
-  .input-area {
-    padding: 8px 12px 40px;
-  }
   .input-toolbar {
     right: 4px;
-    left: 4px;
     bottom: 4px;
-    justify-content: flex-end;
   }
 }
 /* Transient toast shown when the user clicks the lightning bolt while
