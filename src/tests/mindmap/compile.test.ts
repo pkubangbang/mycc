@@ -11,16 +11,9 @@
  * To run them, remove the .skip or run with a longer timeout.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-import {
-  parse_markdown,
-  compile_mindmap,
-  compile_mindmap_from_content,
-  get_bottom_up_nodes,
-} from '../../mindmap/compile.js';
+import { describe, it, expect } from 'vitest';
+import { parse_markdown, get_bottom_up_nodes } from '../../mindmap/compile.js';
+import type { Node } from '../../mindmap/types.js';
 
 describe('parse_markdown', () => {
   it('should parse H1 heading as level 1 section', () => {
@@ -226,157 +219,52 @@ Section content`;
   });
 });
 
-// LLM-dependent tests - skipped by default for speed
-describe.skip('compile_mindmap (requires LLM)', () => {
-  let tempDir: string;
-  let mdPath: string;
+// The three former `describe.skip(...(requires LLM))` blocks are deleted.
+// They ran the real compile model and could never execute in CI, so their
+// assertions (`toHaveLength(64)` on a hash, `toContain` on four titles) were
+// never verified. `get_bottom_up_nodes` is a pure tree walk and is now covered
+// by the real tests below; the LLM path is covered by the live-provider
+// diagnostics, not the unit suite.
 
-  beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mindmap-compile-'));
-    mdPath = path.join(tempDir, 'test.md');
+describe('get_bottom_up_nodes', () => {
+  /** Build a Node with only the fields the traversal reads. */
+  const node = (title: string, children: Node[] = []): Node => ({
+    id: `/mindmap/${title.toLowerCase()}`,
+    text: `# ${title}`,
+    title,
+    summary: '',
+    level: 1,
+    children,
+    links: [],
   });
 
-  afterEach(() => {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+  // root
+  // ├── A
+  // │   └── B
+  // │       └── C
+  // └── D
+  const c = node('C');
+  const b = node('B', [c]);
+  const a = node('A', [b]);
+  const d = node('D');
+  const root = node('root', [a, d]);
+
+  it('visits every node exactly once, deepest first', () => {
+    const titles = get_bottom_up_nodes(root).map(n => n.title);
+    expect(titles).toEqual(['C', 'B', 'A', 'D', 'root']);
   });
 
-  it('should compile markdown file to mindmap', async () => {
-    fs.writeFileSync(mdPath, '# Title\n\nContent');
-    const mindmap = await compile_mindmap(mdPath);
-
-    expect(mindmap.root.id).toBe('/');
-    expect(mindmap.root.children).toHaveLength(1);
-    expect(mindmap.root.children[0].title).toBe('Title');
-    expect(mindmap.root.children[0].level).toBe(1);
-    // Summary should be generated (not empty)
-    expect(mindmap.root.children[0].summary.length).toBeGreaterThan(0);
+  it('places each child before its parent and the root last', () => {
+    const titles = get_bottom_up_nodes(root).map(n => n.title);
+    for (const parent of [root, a, b]) {
+      for (const child of parent.children) {
+        expect(titles.indexOf(child.title)).toBeLessThan(titles.indexOf(parent.title));
+      }
+    }
+    expect(titles[titles.length - 1]).toBe('root');
   });
 
-  it('should set correct node IDs', async () => {
-    fs.writeFileSync(mdPath, `# Main
-
-## Architecture
-Architecture content
-
-### Core
-Core content
-
-## Development
-Development content`);
-
-    const mindmap = await compile_mindmap(mdPath);
-
-    expect(mindmap.root.id).toBe('/');
-    expect(mindmap.root.children[0].id).toBe('/Main');
-    expect(mindmap.root.children[0].children[0].id).toBe('/Main/Architecture');
-    expect(mindmap.root.children[0].children[0].children[0].id).toBe('/Main/Architecture/Core');
-    expect(mindmap.root.children[0].children[1].id).toBe('/Main/Development');
-  });
-
-  it('should compute hash of source file', async () => {
-    const content = '# Main\n\nContent';
-    fs.writeFileSync(mdPath, content);
-    const mindmap = await compile_mindmap(mdPath);
-
-    expect(mindmap.hash).toHaveLength(64); // SHA-256 hex length
-    expect(typeof mindmap.hash).toBe('string');
-  });
-
-  it('should set timestamps', async () => {
-    fs.writeFileSync(mdPath, '# Main');
-    const mindmap = await compile_mindmap(mdPath);
-
-    expect(mindmap.compiled_at).toBeDefined();
-    expect(mindmap.updated_at).toBeDefined();
-  });
-
-  it('should extract URL links', async () => {
-    fs.writeFileSync(mdPath, `# Main
-
-## References
-
-- [Docs](https://example.com/docs)
-- [API](https://api.example.com)`);
-
-    const mindmap = await compile_mindmap(mdPath);
-
-    const refsNode = mindmap.root.children[0].children[0];
-    expect(refsNode.links).toHaveLength(2);
-    expect(refsNode.links[0].target_type).toBe('url');
-    expect(refsNode.links[0].url).toBe('https://example.com/docs');
-  });
-
-  it('should set preamble as root text', async () => {
-    fs.writeFileSync(mdPath, `This is the preamble.
-
-It goes before any heading.
-
-# First Section
-
-First content.`);
-
-    const mindmap = await compile_mindmap(mdPath);
-
-    expect(mindmap.root.text).toContain('This is the preamble');
-    expect(mindmap.root.text).toContain('It goes before any heading');
-    expect(mindmap.root.text).not.toContain('First Section');
-  });
-
-  it('should generate summaries for all nodes', async () => {
-    fs.writeFileSync(mdPath, `# Main
-
-## Section
-
-Content for section.`);
-
-    const mindmap = await compile_mindmap(mdPath);
-
-    // All nodes should have summaries
-    expect(mindmap.root.summary.length).toBeGreaterThan(0);
-    expect(mindmap.root.children[0].summary.length).toBeGreaterThan(0);
-    expect(mindmap.root.children[0].children[0].summary.length).toBeGreaterThan(0);
-  });
-});
-
-describe.skip('compile_mindmap_from_content (requires LLM)', () => {
-  it('should compile from string content', async () => {
-    const content = '# Main\n\nContent';
-    const mindmap = await compile_mindmap_from_content(content, 'test');
-
-    expect(mindmap.root.title).toBe('test');
-    expect(mindmap.root.children).toHaveLength(1);
-    expect(mindmap.root.children[0].title).toBe('Main');
-  });
-
-  it('should compute hash from content', async () => {
-    const content = '# Main\n\nContent';
-    const mindmap = await compile_mindmap_from_content(content);
-
-    expect(mindmap.hash).toHaveLength(64);
-  });
-});
-
-describe.skip('get_bottom_up_nodes (requires LLM)', () => {
-  it('should return nodes in bottom-up order', async () => {
-    const mindmap = await compile_mindmap_from_content(`# A
-## B
-### C
-## D`);
-
-    const nodes = get_bottom_up_nodes(mindmap.root);
-
-    // Deepest (C) should come before its parent (B)
-    // B should come before A
-    // A and D should come before root
-    const titles = nodes.map(n => n.title);
-    expect(titles).toContain('C');
-    expect(titles).toContain('B');
-    expect(titles).toContain('A');
-    expect(titles).toContain('D');
-
-    // C should be before B
-    const cIndex = titles.indexOf('C');
-    const bIndex = titles.indexOf('B');
-    expect(cIndex).toBeLessThan(bIndex);
+  it('returns a single node for a leaf-only tree', () => {
+    expect(get_bottom_up_nodes(c).map(n => n.title)).toEqual(['C']);
   });
 });
