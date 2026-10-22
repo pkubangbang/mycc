@@ -22,6 +22,25 @@ import fs from 'fs';
 import { execFileSync } from 'child_process';
 
 /**
+ * Shared options for both Windows start-time probes
+ * ({@link readStartTimeViaWmic}, {@link readStartTimeViaPowerShell}).
+ *
+ * `windowsHide` hides the console WINDOW but does NOT capture the child's
+ * stdio — without `stdio`, both probes inherit the terminal and their expected
+ * diagnostics leak into it. That is not cosmetic: at startup
+ * `pruneStaleEntries()` probes every stale peer in identity.json, so a few dead
+ * sessions print dozens of raw lines into the middle of the launch banner.
+ * `execFileSync` still throws on a non-zero exit, so error detection is
+ * unaffected.
+ */
+const WIN_PROBE_OPTS = {
+  encoding: 'utf-8' as const,
+  timeout: 5_000,
+  windowsHide: true,
+  stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'],
+};
+
+/**
  * Run `ps` with a PINNED C locale. Every `ps` call in mycc goes through here.
  *
  * WHY: `ps` output is locale-sensitive. With `LANG=zh_CN.UTF-8` (and `LC_ALL`
@@ -65,36 +84,16 @@ export function isPidAlive(pid: number | undefined | null): boolean {
  * the heartbeat file that names it, whereas the process that wrote a given
  * heartbeat necessarily started BEFORE that file was written.
  *
- * Windows: `wmic process where processid=<pid> get creationdate` (falling back
- * to PowerShell `Get-Process`). Unix: `ps -o lstart=`, run through
- * {@link runPs} so the locale is pinned to C (see that function for why a
- * locale-dependent `ps` silently reads a recycled pid as alive). Every path
- * returns null on failure — callers must treat null as "unknown".
+ * Every platform path returns null on failure — callers must treat null as
+ * "unknown" (see didPidStartAfter for why unknown is never evidence).
  */
 export function getProcessStartTime(pid: number): number | null {
   if (!pid || typeof pid !== 'number') return null;
   try {
     if (process.platform === 'win32') {
-      try {
-        const out = execFileSync('wmic', ['process', 'where', `processid=${pid}`, 'get', 'creationdate', '/value'], {
-          encoding: 'utf-8',
-          timeout: 5_000,
-          windowsHide: true,
-        });
-        const m = /CreationDate=(\d{14})/.exec(out);
-        if (m) return compactStampToMs(m[1]);
-      } catch {
-        // wmic absent/deprecated → fall through to PowerShell.
-      }
-      const psOut = execFileSync(
-        'powershell',
-        ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid}).StartTime.ToFileTimeUtc()`],
-        { encoding: 'utf-8', timeout: 5_000, windowsHide: true },
-      );
-      const fileTime = Number(psOut.trim());
-      // FILETIME is 100-ns ticks since 1601-01-01; convert to Unix ms.
-      if (Number.isFinite(fileTime) && fileTime > 0) return fileTime / 10_000 - 11_644_473_600_000;
-      return null;
+      const fromWmic = readStartTimeViaWmic(pid);
+      if (fromWmic !== null) return fromWmic;
+      return readStartTimeViaPowerShell(pid);
     }
     const out = runPs(['-p', String(pid), '-o', 'lstart=']);
     const ms = Date.parse(out.trim());
@@ -104,7 +103,61 @@ export function getProcessStartTime(pid: number): number | null {
   }
 }
 
-/** `YYYYMMDDhhmmss` (local) → ms since epoch, or null. */
+/**
+ * Windows probe #1: `wmic process where processid=<pid> get creationdate`.
+ *
+ * `wmic` is deprecated (absent from recent Windows builds and Server Core
+ * images) and prints "No Instance(s) Available." to stderr — while still
+ * exiting 0 — when the pid is gone. Both are handled here: an absent binary
+ * throws and is caught, and the diagnostics are discarded because
+ * {@link WIN_PROBE_OPTS} captures the child's stdio.
+ *
+ * Returns null when wmic is unusable or found no process, so the caller can
+ * fall through to PowerShell — "no answer" and "not running" are
+ * indistinguishable here, and the next probe settles it.
+ */
+function readStartTimeViaWmic(pid: number): number | null {
+  try {
+    const out = execFileSync(
+      'wmic',
+      ['process', 'where', `processid=${pid}`, 'get', 'creationdate', '/value'],
+      WIN_PROBE_OPTS,
+    );
+    const match = /CreationDate=(\d{14})/.exec(out);
+    return match ? compactStampToMs(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Windows probe #2 (fallback): PowerShell `Get-Process`.
+ *
+ * The script asks a NON-THROWING question. The obvious one-liner,
+ * `(Get-Process -Id N).StartTime.ToFileTimeUtc()`, produces a two-error crash
+ * dump for an absent process (ObjectNotFound, then "cannot call a method on a
+ * null-valued expression"). `-ErrorAction SilentlyContinue` plus the
+ * `if ($p -and $p.StartTime)` guard makes a dead pid yield empty output, which
+ * this function reports as null ("unknown") exactly as before.
+ */
+function readStartTimeViaPowerShell(pid: number): number | null {
+  const script =
+    `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
+    `if ($p -and $p.StartTime) { $p.StartTime.ToFileTimeUtc() }`;
+  const out = execFileSync(
+    'powershell',
+    ['-NoProfile', '-NonInteractive', '-Command', script],
+    WIN_PROBE_OPTS,
+  );
+  const fileTime = Number(out.trim());
+  // FILETIME is 100-ns ticks since 1601-01-01; convert to Unix ms.
+  if (!Number.isFinite(fileTime) || fileTime <= 0) return null;
+  return fileTime / 10_000 - 11_644_473_600_000;
+}
+
+/**
+ * `YYYYMMDDhhmmss` (local) → ms since epoch, or null.
+ */
 function compactStampToMs(stamp: string): number | null {
   const y = Number(stamp.slice(0, 4));
   const mo = Number(stamp.slice(4, 6)) - 1;
