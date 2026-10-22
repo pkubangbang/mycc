@@ -45,7 +45,7 @@ function makeMindmap(): Mindmap {
 
 const baseAdd = (): MindmapPatchAction => ({
   action: 'add', path: '/mycc.md', title: 'New Node', text: 'some text',
-  timestamp: '', checkpoint_id: '', reason: 'test', mindmap_hash: 'h1',
+  timestamp: '', reason: 'test', mindmap_hash: 'h1',
 });
 
 // ── Fix A: validatePatchAction orphan prevention ──────────────────────────
@@ -170,7 +170,7 @@ describe('get_node (Fix B — normalized-id matching)', () => {
     const add: MindmapPatchAction = {
       action: 'add', path: '/mycc.md/code-cleanup',
       title: '中文顿号 Multi-line Edit', text: 'rule body',
-      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+      timestamp: '', reason: 't', mindmap_hash: 'h1',
     };
     expect(applyPatchAction(mindmap, add)).toBe(true);
 
@@ -183,7 +183,7 @@ describe('get_node (Fix B — normalized-id matching)', () => {
     const add: MindmapPatchAction = {
       action: 'add', path: '/mycc.md/code-cleanup',
       title: 'Deep Rule', text: 'x',
-      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+      timestamp: '', reason: 't', mindmap_hash: 'h1',
     };
     applyPatchAction(mindmap, add);
     const childId = '/mycc.md/code-cleanup/deep-rule';
@@ -211,7 +211,7 @@ describe('applyPatchAction delete (normalized-id matching)', () => {
     expect(get_node(mindmap, '/mycc.md/code-cleanup')).not.toBeNull();
     const del: MindmapPatchAction = {
       action: 'delete', path: '/mycc.md/code-cleanup',
-      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+      timestamp: '', reason: 't', mindmap_hash: 'h1',
     };
     expect(applyPatchAction(mindmap, del)).toBe(true);
     expect(get_node(mindmap, '/mycc.md/code-cleanup')).toBeNull();
@@ -223,7 +223,7 @@ describe('applyPatchAction delete (normalized-id matching)', () => {
     expect(get_node(mindmap, '/mycc.md/code-cleanup')).not.toBeNull();
     const del: MindmapPatchAction = {
       action: 'delete', path: '/mycc.md/Code Cleanup',
-      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+      timestamp: '', reason: 't', mindmap_hash: 'h1',
     };
     expect(applyPatchAction(mindmap, del)).toBe(false);
     expect(get_node(mindmap, '/mycc.md/code-cleanup')).not.toBeNull();
@@ -234,7 +234,7 @@ describe('applyPatchAction delete (normalized-id matching)', () => {
     const add: MindmapPatchAction = {
       action: 'add', path: '/mycc.md',
       title: '主题节点', text: 'cjk body',
-      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+      timestamp: '', reason: 't', mindmap_hash: 'h1',
     };
     expect(applyPatchAction(mindmap, add)).toBe(true);
     const cjkId = '/mycc.md/主题节点'; // safeNodeId preserves CJK letters
@@ -242,7 +242,7 @@ describe('applyPatchAction delete (normalized-id matching)', () => {
 
     const del: MindmapPatchAction = {
       action: 'delete', path: cjkId,
-      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+      timestamp: '', reason: 't', mindmap_hash: 'h1',
     };
     expect(applyPatchAction(mindmap, del)).toBe(true);
     expect(get_node(mindmap, cjkId)).toBeNull();
@@ -263,7 +263,7 @@ describe('applyPatchAction add is idempotent (replay-safe dedup)', () => {
   it('returns true and does NOT duplicate when the same add is applied twice', () => {
     const add: MindmapPatchAction = {
       action: 'add', path: '/mycc.md', title: 'Dup Node', text: 'x',
-      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+      timestamp: '', reason: 't', mindmap_hash: 'h1',
     };
     expect(applyPatchAction(mindmap, add)).toBe(true);
     expect(applyPatchAction(mindmap, add)).toBe(true); // idempotent no-op
@@ -276,7 +276,7 @@ describe('applyPatchAction add is idempotent (replay-safe dedup)', () => {
   it('does NOT duplicate when replaying many identical add lines (simulates loadMindmapWithPatches)', () => {
     const add: MindmapPatchAction = {
       action: 'add', path: '/mycc.md', title: 'Replay Node', text: 'x',
-      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+      timestamp: '', reason: 't', mindmap_hash: 'h1',
     };
     // Simulate 5 duplicate JSONL lines being replayed.
     for (let i = 0; i < 5; i++) {
@@ -299,7 +299,7 @@ describe('applyPatchAction add replays action.links (term hoist)', () => {
       action: 'add', path: '/mycc.md',
       title: 'backlog / livelog / TP constraint',
       text: 'backlog = the append-only triologue JSONL file; livelog = the in-memory Triologue messages array.',
-      timestamp: '', checkpoint_id: '', reason: 'terminology', mindmap_hash: 'h1',
+      timestamp: '', reason: 'terminology', mindmap_hash: 'h1',
       links: [
         { target_type: 'term', term_name: 'backlog', comment: 'append-only triologue JSONL on disk' },
         { target_type: 'term', term_name: 'livelog', comment: 'in-memory Triologue messages array' },
@@ -319,7 +319,7 @@ describe('applyPatchAction add replays action.links (term hoist)', () => {
   it('omits action.links entirely when not provided (backward compatible)', () => {
     const add: MindmapPatchAction = {
       action: 'add', path: '/mycc.md', title: 'Plain Node', text: 'no links',
-      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+      timestamp: '', reason: 't', mindmap_hash: 'h1',
     };
     expect(applyPatchAction(mindmap, add)).toBe(true);
     const node = get_node(mindmap, '/mycc.md/plain-node');
@@ -330,7 +330,7 @@ describe('applyPatchAction add replays action.links (term hoist)', () => {
   it('drops malformed link entries (bad target_type / missing target field) defensively', () => {
     const add: MindmapPatchAction = {
       action: 'add', path: '/mycc.md', title: 'Bad Links', text: 'x',
-      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+      timestamp: '', reason: 't', mindmap_hash: 'h1',
       links: [
         { target_type: 'term', term_name: 'good-term', comment: 'ok' },
         { target_type: 'term', term_name: '', comment: 'empty term dropped' },

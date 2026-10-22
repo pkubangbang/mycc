@@ -141,12 +141,25 @@ export class MessageStore {
     return result;
   }
 
-  /** Index of the tool result answering call `id` (searching from `fromIndex`), or -1. */
-  findToolResultIndex(id: string | undefined, fromIndex = 0): number {
+  /**
+   * Index of the tool result answering call `id` (and optionally `toolName`),
+   * searching from `fromIndex`; -1 when none.
+   *
+   * A provider call id is unique only WITHIN one assistant turn, so an id-only
+   * search can bind a call to another tool's result after a replay/reuse.
+   * Callers that REWRITE or truncate on the answer (recap's anchor path) must
+   * pass the name too and compare against the result's `tool_name`.
+   *
+   * `fromIndex` is INCLUSIVE: the search starts AT that index. A caller that
+   * truncates to `resultIndex + 1` and then rewrites the surviving result must
+   * pass `resultIndex` (not `resultIndex + 1`) — after that truncation nothing
+   * follows it, so an off-by-one matches nothing and loses the write.
+   */
+  findToolResultIndex(id: string | undefined, fromIndex = 0, toolName?: string): number {
     if (!id) return -1;
     for (let i = Math.max(0, fromIndex); i < this.messages.length; i++) {
       const m = this.messages[i];
-      if (m && m.role === 'tool' && m.tool_call_id === id) return i;
+      if (m && m.role === 'tool' && m.tool_call_id === id && (!toolName || m.tool_name === toolName)) return i;
     }
     return -1;
   }
@@ -167,9 +180,15 @@ export class MessageStore {
    * not appended as a new message. In place, because the assistant→tool pairing
    * must not change — position, `tool_call_id` and `tool_name` stay as the
    * provider saw them. Returns false (modifying nothing) when no result exists.
+   *
+   * `fromIndex` matters: a call id is unique only within one assistant turn, so
+   * a restored or replayed history can carry the SAME id on two `brief` calls.
+   * A search from 0 would then find the OLDER result and write the note into it.
+   * Callers that already resolved the target pass its index, so the write lands
+   * on the occurrence they resolved and on nothing else.
    */
-  rewriteToolResult(id: string | undefined, content: string): boolean {
-    const i = this.findToolResultIndex(id);
+  rewriteToolResult(id: string | undefined, content: string, fromIndex = 0): boolean {
+    const i = this.findToolResultIndex(id, fromIndex);
     if (i < 0) return false;
     this.messages[i].content = content;
     return true;

@@ -148,9 +148,6 @@ export interface MindmapPatchAction {
   links?: Link[];
   /** ISO timestamp of when the patch was created */
   timestamp: string;
-  /** Legacy: the checkpoint id that triggered this patch. Always '' now that
-   *  checkpoints are gone; kept so old mindmap-patch.jsonl files still parse. */
-  checkpoint_id: string;
   /** Brief reason for the change (from LLM) */
   reason: string;
   /** Hash of mindmap.json at the time of patch creation (for invalidation) */

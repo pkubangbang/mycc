@@ -152,7 +152,11 @@ export async function handleRecap(
     summary = await forkChat(fullMessages, allTools, recapPrompt, undefined, 'none');
   }
 
-  summary = summary || '(no summary)';
+  // NO placeholder substitution here. An empty fork result stays empty and the
+  // caller's summary floor (states/hook.ts hasUsableSummary) refuses the rewind,
+  // leaving the span in context. Substituting '(no summary)' would let an empty
+  // fork pass as a successful collapse and delete the span.
+  summary = summary.trim();
 
   // Assemble the `additionalMessage` half of the recap note.
   // ORDERING (matters for LLM direction-following):
@@ -360,7 +364,6 @@ export function parsePatchResponse(
         title,
         text,
         timestamp: new Date().toISOString(),
-        checkpoint_id: '', // legacy field — checkpoints are gone; kept for old jsonl
         reason,
         mindmap_hash: mindmap.hash,
       },
@@ -387,7 +390,6 @@ export function parsePatchResponse(
         path,
         text,
         timestamp: new Date().toISOString(),
-        checkpoint_id: '', // legacy field — checkpoints are gone; kept for old jsonl
         reason,
         mindmap_hash: mindmap.hash,
       },
@@ -401,7 +403,6 @@ export function parsePatchResponse(
       action: 'delete',
       path,
       timestamp: new Date().toISOString(),
-      checkpoint_id: '', // legacy field — checkpoints are gone; kept for old jsonl
       reason,
       mindmap_hash: mindmap.hash,
     },

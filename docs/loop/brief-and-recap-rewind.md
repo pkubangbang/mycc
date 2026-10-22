@@ -11,22 +11,48 @@ that note so it survives.
 
 **The anchor rule** (`Triologue.currentAnchorIndex`) — a brief anchors **iff**:
 
-1. it is **not synthetic** (see "Incidental vs. floor briefs"), and
-2. **at least one message follows its round-trip** (the assistant `brief` call
-   *and* the tool result answering it).
+1. it is **not synthetic** (see "Incidental vs. floor briefs"),
+2. **its tool result exists** (an orphan `brief` call with no answer is not an
+   anchor — a rewind would have nowhere to write the note), and
+3. at least one message of **ACTIVITY** follows its round-trip (the assistant
+   `brief` call *and* the tool result answering it).
 
-Rule 2 is what makes a lone brief a non-anchor: the newest brief is where the
+**The walk-back (the same rule, read backwards).** Step back from the end of
+memory; skip a trailing `recap` round-trip; the first non-synthetic `brief`
+followed by activity is the target; reaching the start with none means there is
+nothing to collapse.
+
+- The pre-first-brief prefix belongs to compaction (`compact.ts`), never to recap.
+- A bare brief is not a target: it is where the conversation currently stands.
+- A failed recap is a message, not a wall — the walk steps over its round-trip.
+
+Rule 3 is what makes a lone brief a non-anchor: the newest brief is where the
 conversation currently stands, so there is nothing below it to collapse. The
 moment *anything* lands after it — a tool call, a query, **or even another
 brief** — it becomes history and anchors. There is no separate "consumed"
 marker and no pristine-result test: after a rewind the anchor's round-trip is
-the last thing in the history, so rule 2 alone walks the anchor backwards.
+the last thing in the history, so rule 3 alone walks the anchor backwards.
 
-There is no `checkpoint` tool any more. The old design needed one because a
-checkpoint had to be *created* in one turn (producing an id) and *consumed*
-later by `recap({checkpoint_id})`. With the anchor discovered by scanning the
-triologue for the last `brief`, no id exists — so the split has no basis, and
-the triologue is the single source of truth for where a rewind lands.
+**Activity excludes the recap machinery talking to itself.** A recap has two
+outcomes and neither is activity:
+
+- **success** — the span is truncated and the summary is written into the
+  anchor `brief`'s own tool result, so the anchor's round-trip IS the last
+  thing in the history (rule 3 is then satisfied only by real work);
+- **failure** — nothing is rolled back. The call is answered with an ordinary
+  TOOL-CALL ERROR result (`hook.ts fail()`); the triologue is otherwise
+  byte-identical to before the attempt.
+
+`hasMessagesAfterBrief()` therefore skips a `recap` round-trip (the assistant
+call and the result answering it) by tool name. Without that,
+`brief(A) → recap#1(failed)` would arm A as an anchor and the NEXT recap would
+fold the user's still-unserved query into one summary — the original message
+gone, its text merely quoted in the note. No message-level marker is involved:
+"failed" is not a property the history needs to carry.
+
+There is no `checkpoint` tool: the anchor is discovered by scanning the
+triologue, so the triologue is the single source of truth for where a rewind
+lands.
 
 ## Brief must be called alone
 
@@ -130,10 +156,18 @@ Regular tools receive `AgentContext` (`core`, `todo`, `mail`, …). The triologu
   regular tool execution, runs the real logic with `env.triologue`, and returns
   `COLLECT` without calling the regular handler.
 - **Rewind primitive** (`src/loop/triologue.ts`): `getLastBrief()` (read-only
-  peek: `{ message, confidence, span }`) and `rewindToLastBrief(description,
-  additionalMessage)` (truncate + rewrite the anchor's tool result). The array
-  index never leaves the facade — a caller-held mark could go stale across a
-  compaction.
+  peek: `{ message, confidence, id, span }`) and `rewindToLastBrief(description,
+  additionalMessage, expectedBriefCallId?)` (truncate + rewrite the anchor's tool
+  result). Both read ONE private resolution (`resolveAnchor()`), which returns
+  the anchor's tool-result index alongside the message: the span start and the
+  truncation point are the same number, so they cannot disagree. The array index
+  never leaves the facade — a caller-held mark could go stale across a
+  compaction; the caller carries `expectedBriefCallId` (the brief's tool-call
+  id alone — never the array index, never the arguments; an id that a
+  malformed/restored history reuses resolves to the MOST RECENT such call, so an
+  older anchor's span is never truncated on a guess) and the rewind refuses when
+  it moved. The id is a compare-and-swap token, NOT a locator: the anchor itself
+  is found by walking back from the end of the triologue.
 - **Isolation**: `recap` must be called ALONE (`validateRecapIsolation`,
   HOOK step 2b). `brief` carries the same rule (`validateBriefIsolation` in
   `src/loop/triologue/brief.ts`, HOOK step 2) — see "Brief must be called
@@ -142,8 +176,17 @@ Regular tools receive `AgentContext` (`core`, `todo`, `mail`, …). The triologu
 The handler sequence: validate args → `getLastBrief()` (null ⇒ "No brief found
 to rewind to"; empty `span` ⇒ "Nothing to collapse — there is no new activity
 past your last brief") → fork the summary and the
-mindmap patch concurrently over the pre-rewind history → `rewindToLastBrief()` →
-resync `turn.lastBriefMessage` / `turn.nextBriefNudge` → apply the patch.
+mindmap patch concurrently over the pre-rewind history → **summary floor**
+(`hasUsableSummary()`: empty / whitespace / `[RECAP] …` / below
+`MIN_RECAP_SUMMARY_CHARS` ⇒ refuse, nothing truncated) → **size ceiling**
+(`recapNoteSize() > resultThreshold` ⇒ refuse, nothing truncated) →
+`rewindToLastBrief()` → resync `turn.lastBriefMessage` / `turn.nextBriefNudge` →
+apply the patch.
+
+Every refusal answers the recap call and returns `COLLECT` so the model can
+retry. A refusal rolls NOTHING back — no truncation, no rewrite of an earlier
+brief's result — and, since the recap tool never produces activity, it can
+never be folded by the next recap (see the anchor rule).
 
 ## The note
 

@@ -22,10 +22,12 @@ describe('briefTool', () => {
   });
 
   describe('happy path', () => {
-    it('should send simple message and return OK', () => {
+    it('should send simple message and return the success result', () => {
       const result = briefTool.handler(ctx, { message: 'Task completed', confidence: 10 });
 
-      expect(result).toBe('OK');
+      // The success line ends with a period: the loop may append the plan-scope
+      // reflection to it in plan mode (see src/loop/plan-scope.ts).
+      expect(result).toBe('OK.');
       expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', 'Task completed', 'confidence: 100%');
     });
 

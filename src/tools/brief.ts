@@ -71,10 +71,12 @@ export const briefTool: ToolDefinition = {
 
     // Use core.brief to send the message via IPC to parent
     ctx.core.brief('info', 'brief', message, `confidence: ${confidence * 10}%`);
-    // The PRISTINE result (triologue/recap-note.ts): recap rewrites exactly
-    // this content in place with the span summary, so it must stay the single
-    // literal — a different string here would make the brief look consumed and
-    // quietly drop it as a rewind anchor.
-    return PRISTINE_BRIEF_RESULT;
+    // The pristine result (triologue/recap-note.ts). recap REWRITES exactly this
+    // content in place with the span summary, so it must stay the single
+    // literal. The success text ends with a period because a result may carry
+    // more after it ("OK. When thinking on the larger scope, …") — that section
+    // is added by the TOOL stage in plan mode, never here: the tool stays a
+    // reporter, the loop owns the enhancement.
+    return PRISTINE_BRIEF_RESULT + '.';
   },
 };

@@ -20,7 +20,7 @@ import chalk from 'chalk';
 import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
 import type { ToolCall } from '../../types.js';
-import type { AugmentedToolCall } from '../../hook/hook-executor.js';
+import type { AugmentedToolCall, ProcessToolCallsResult } from '../../hook/hook-executor.js';
 import { augmentToolCalls } from '../../hook/hook-preprocessor.js';
 import { agentIO } from '../agent-io.js';
 import { loader } from '../../context/shared/loader.js';
@@ -35,6 +35,7 @@ import { stripInternalMarkup } from '../../utils/letter-box.js';
 import { buildCandidatesBrief } from '../crossroad.js';
 import { briefToolCall, newBriefCallId, validateBriefIsolation } from '../triologue/brief.js';
 import { PRISTINE_BRIEF_RESULT } from '../triologue/recap-note.js';
+import { buildPlanScopeNote, withPlanScopeNote } from '../plan-scope.js';
 
 /**
  * Display the assistant's text content mid-loop via brief, stripping internal
@@ -53,6 +54,104 @@ function briefAssistantContent(
   if (stripped) {
     ctx.core.brief('info', 'assistant', stripped);
   }
+}
+
+/**
+ * The minimum meaningful recap summary length (characters after trimming).
+ *
+ * A one-word "summary" ("ok", "done", "n/a") still records nothing: the whole
+ * point of a recap is that the deleted span remains recoverable from the note,
+ * so a note shorter than this is treated as "the fork produced no usable text"
+ * rather than folded into the history as a successful collapse.
+ */
+const MIN_RECAP_SUMMARY_CHARS = 40;
+
+/**
+ * True when `summary` is real text a rewind may delete a span in favour of.
+ *
+ * Rejects the sentinels the fork can return or the caller can substitute:
+ *   - '' / whitespace-only
+ *   - '[RECAP] …' protocol lines ('No messages to summarize.', 'Cancelled: …')
+ *     — the ESC one is handled upstream, but a future producer returning a
+ *     protocol line must never be mistaken for content
+ *   - the '(no summary)' placeholder recap-rewind.ts used to substitute for an
+ *     empty fork (guarded there too, so an old call path cannot slip past)
+ *   - anything below MIN_RECAP_SUMMARY_CHARS
+ */
+function hasUsableSummary(summary: string | undefined | null): boolean {
+  const text = (summary ?? '').trim();
+  if (text.length < MIN_RECAP_SUMMARY_CHARS) return false;
+  if (text.startsWith('[RECAP]')) return false;
+  if (text.toLowerCase() === '(no summary)') return false;
+  return true;
+}
+
+
+/**
+ * PLAN-mode brief enhancement: answer a `brief` turn with a reflection.
+ *
+ * WHY THE HOOK STAGE — the HOOK stage is where mycc augments what the model just
+ * did, and it is the FIRST place in the turn where the brief call exists in a
+ * forkable history: the assistant message carrying it has not been registered
+ * yet (step 6 does that), so the messages handed to forkChat end on a complete
+ * round-trip. The TOOL stage cannot offer that — there the assistant call is
+ * already in the store while its result is not, and a fork would send
+ * `assistant(tool_calls) → user`, which strict providers reject.
+ *
+ * WHAT IT PRODUCES — the brief's own tool result:
+ *   tool('brief', "OK. When thinking on the larger scope, …", callId)
+ * so it survives exactly as long as that brief's note slot does: the next recap
+ * of this stretch OVERWRITES it with the span summary. That is the intended
+ * one-shot lifetime — the reflection describes the work that FOLLOWS this brief.
+ *
+ * Returns null when nothing was done (not plan mode, no brief call, blocked
+ * call, or any fork failure) — the caller then proceeds with the normal turn and
+ * the brief executes exactly as before. A reflection never fails a brief.
+ */
+async function handlePlanScopeBrief(
+  env: MachineEnv,
+  chat: ChatData,
+  hookResult: ProcessToolCallsResult,
+): Promise<HandlerResult | null> {
+  const { triologue, ctx } = env;
+  if (ctx.core.getMode() !== 'plan') return null;
+
+  const briefCall = hookResult.calls.find((c) => c.function.name === 'brief');
+  if (!briefCall || hookResult.blockedCalls.has(briefCall.id)) return null;
+
+  // ESC while planning: do not spend an LLM call the user just cancelled.
+  if (agentIO.isNeglectedMode()) return null;
+
+  const args = briefCall.function.arguments as Record<string, unknown> | undefined;
+  const briefMessage = typeof args?.message === 'string' ? args.message : '';
+
+  // The prefix is the pre-turn history: assistant(tool_calls) for THIS turn has
+  // not been registered yet (see the caller), so it is fully answered.
+  const note = await buildPlanScopeNote({
+    messages: [...triologue.getMessages()],
+    tools: loader.getToolsForScope(env.scope),
+    briefMessage,
+    resultThreshold: triologue.getResultThreshold(),
+    // The fork gets its OWN ESC-aware slot: it must be interruptible while it
+    // runs, which the tool-execution wrapper cannot provide here.
+    escAware: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) =>
+      ctx.core.escAware(fn, cleanup),
+  });
+  if (!note) return null; // failed / cancelled / empty — run the turn normally
+
+  // Register the FULL turn here (assistant call + its result), exactly like the
+  // crossroad branch below, so the loop skips this call: the tool never runs and
+  // TP parity holds (the round-trip is complete and last).
+  triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
+    reasoningContent: chat.assistantReasoningContent,
+  });
+  triologue.tool('brief', withPlanScopeNote(note), briefCall.id);
+  ctx.core.brief('info', 'plan-scope', 'Plan-mode scope reflection attached to this brief.');
+
+  // The turn is fully answered above (one assistant message, one result), so the
+  // loop continues to the next LLM round. `brief` must be called alone
+  // (validateBriefIsolation, step 2), so there is nothing else to dispatch.
+  return AgentState.COLLECT;
 }
 
 /**
@@ -93,6 +192,11 @@ async function handleRecapCall(
     ? recapArgs.comment.trim()
     : undefined;
 
+  // A refusal answers the call with a TOOL-CALL ERROR and COLLAPSES NOTHING:
+  // the triologue is left byte-identical to before the attempt, and nothing is
+  // written into any earlier brief's result. It needs no marking — anchor
+  // scanning already knows the recap tool never produces activity (see
+  // Triologue.hasMessagesAfterBrief).
   const fail = (message: string): HandlerResult => {
     triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
       reasoningContent: chat.assistantReasoningContent,
@@ -205,6 +309,18 @@ async function handleRecapCall(
     }
     turn.isFirstRound = false;
     return AgentState.COLLECT;
+  }
+
+  // ── SUMMARY FLOOR: an empty summary must not truncate ──
+  // The upper-bound check below exists because an over-size note loses the span
+  // without recording it. The mirror-image failure loses the span AND the
+  // knowledge: a fork that returns '' (provider hiccup, refusal, truncated
+  // stream) would still delete everything after the anchor and leave a note
+  // holding nothing but the header. Refuse — nothing truncated — and let the
+  // model retry.
+  if (!hasUsableSummary(summary)) {
+    ctx.core.brief('warn', 'recap', 'Recap summary was empty — nothing was collapsed.');
+    return fail('[RECAP] The summarization produced no usable text, so nothing was collapsed. Run recap again.');
   }
 
   // ── SIZE PRE-CHECK: refuse an oversized note BEFORE touching the triologue ──
@@ -366,6 +482,27 @@ export async function handleHook(
     if (recapCall && !hookResult.blockedCalls.has(recapCall.id)) {
       return handleRecapCall(recapCall, env, chat, turn);
     }
+
+    // 4b. PLAN-MODE SCOPE REFLECTION — a brief turn is a checkpoint of the
+    //     model's own thinking, so while PLANNING the loop answers it with one
+    //     extra paragraph:
+    //       tool('brief', "OK. When thinking on the larger scope, …", callId)
+    //
+    //     WHY HERE and not in the TOOL stage: at this point the assistant
+    //     message carrying the brief call is NOT yet registered, so the fork
+    //     sees a legal, fully-answered prefix. In the TOOL stage the assistant
+    //     call is already in the store while its result is not, and a fork
+    //     there would send `assistant(tool_calls) → user`, which strict
+    //     providers reject (see the ledger note in triologue.ts). Same shape as
+    //     the crossroad branch below: fork in HOOK, register both messages here,
+    //     then let the loop skip that call.
+    //
+    //     The result is produced ONCE and registered here; the `brief` tool
+    //     itself is untouched (it stays a plain reporter). Any failure — fork
+    //     error, ESC, empty output, no room — falls through and the brief runs
+    //     normally, so a reflection is never a dependency of a brief.
+    const planScope = await handlePlanScopeBrief(env, chat, hookResult);
+    if (planScope) return planScope;
 
     // 5. Crossroad: FIRST-CLASS branch — handled BEFORE normal registration.
     //    Emits a SINGLE triologue.agent() call with merged content + brief tool call

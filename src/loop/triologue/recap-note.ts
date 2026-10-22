@@ -1,34 +1,48 @@
 /**
- * recap-note.ts - The ONE way to build a brief/recap tool-result note.
+ * recap-note.ts - the brief result's success line and the recap note appended to it.
  *
- * A `brief` result is not just "OK": it is the durable *note* that survives a
- * recap. Two writers produce that note's text and they must never drift:
+ * A `brief` result is the durable note that survives a recap. Two writers
+ * produce it and they must never drift:
  *
- *   1. the `brief` tool handler — the pristine success result ("OK");
- *   2. recap's rewind — it REWRITES the anchor brief's result in place with
- *      `noteWithSummary()`, so the collapsed span's summary lives in a TOOL
- *      RESULT (where the conversation still shows the anchor turn) instead of
- *      in a synthetic recap call appended at the end.
+ *   1. the `brief` tool (+ the TOOL-stage plan-scope reflection) — the success
+ *      result, "OK." optionally followed by a section;
+ *   2. recap's rewind — it REWRITES that result in place with `noteWithSummary()`,
+ *      so the collapsed span's summary lives in a TOOL RESULT (where the
+ *      conversation still shows the anchor turn) instead of in a synthetic
+ *      recap call appended at the end.
  *
- * The rewritten result is what marks the anchor as CONSUMED: a pristine result
- * means "this brief still anchors", a noted result means "a recap already
- * rewound here" (see Triologue.currentAnchorIndex). That is why the two
- * functions are defined side by side in this module — the marker and the note
- * are the same string.
+ * There is deliberately NO "is this result pristine / consumed" predicate.
+ * Anchor eligibility is never decided from the result's TEXT: a brief anchors
+ * iff it is not synthetic AND something follows its round-trip
+ * (Triologue.hasMessagesAfterBrief), and a brief a recap already rewound here is
+ * still eligible again once new activity lands. A content predicate would be a
+ * second, divergent answer to "is this brief available" — and it invites exactly
+ * the bug it looks like it prevents (a brief carrying an extra section being
+ * mistaken for a consumed one).
  */
 
-/** The result a `brief` call answers with before any recap has touched it. */
+/**
+ * The result a `brief` call answers with before any recap has touched it.
+ *
+ * The tool appends the sentence period ("OK.") so the result reads as prose when
+ * the plan-scope section follows it; the recap note is appended after that same
+ * prefix (`noteWithSummary`), so the two writers share one success line.
+ */
 export const PRISTINE_BRIEF_RESULT = 'OK';
 
-/** Marker opening the note text appended after the pristine success. */
+/** Marker opening the note text appended after the success result. */
 const NOTE_MARKER = 'Note, a recap has reset the conversation here with summary: ';
 
 /**
- * True when `content` is still the untouched success result — i.e. the brief
- * it answers is an eligible rewind anchor.
+ * The section the TOOL stage appends to a brief result in PLAN mode (see
+ * src/loop/plan-scope.ts). Defined here, next to the marker, so every known
+ * section of a brief result is declared in one place.
  */
-export function isPristineBriefResult(content: string | undefined): boolean {
-  return content === PRISTINE_BRIEF_RESULT;
+export const PLAN_SCOPE_HEADING = 'When thinking on the larger scope';
+
+/** True when `content` is a brief result carrying the plan-scope section. */
+export function hasPlanScopeSection(content: string | undefined): boolean {
+  return typeof content === 'string' && content.startsWith(`${PRISTINE_BRIEF_RESULT}. ${PLAN_SCOPE_HEADING}`);
 }
 
 /**
@@ -36,23 +50,14 @@ export function isPristineBriefResult(content: string | undefined): boolean {
  *
  * PURE OVERWRITE — the previous note (if any) is dropped. A second recap at the
  * same anchor replaces the summary rather than stacking summaries, so the
- * history never carries a chain of superseded notes.
+ * history never carries a chain of superseded notes. Anything else the result
+ * carried (the plan-scope reflection) is overwritten too: the note is the
+ * record of this stretch, and the reflection described work that is now folded
+ * into it.
  *
- * The body is emitted verbatim after the marker. The caller composes it (see
- * triologue.ts buildRecapNote) and may wrap it in JSON (`{"summary": "..."}`)
- * exactly as the user's example shows — this module deliberately does not
- * re-encode it.
+ * The body is emitted verbatim after the marker. The caller composes it
+ * (anchor header + summary) — this module deliberately does not re-encode it.
  */
 export function noteWithSummary(body: string): string {
   return `${PRISTINE_BRIEF_RESULT} ${NOTE_MARKER}${body}`;
-}
-
-/**
- * Recover the note body from a rewritten result — the region the size
- * pre-check measures. Returns null when the result is still pristine.
- */
-export function readNoteBody(content: string | undefined): string | null {
-  if (content === undefined || isPristineBriefResult(content)) return null;
-  const prefix = `${PRISTINE_BRIEF_RESULT} ${NOTE_MARKER}`;
-  return content.startsWith(prefix) ? content.slice(prefix.length) : content;
 }
