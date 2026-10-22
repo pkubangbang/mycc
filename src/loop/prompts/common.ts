@@ -207,11 +207,11 @@ export function buildLeadAgentMemorySection(): string {
 export function buildBriefRecapSection(): string {
   return [
     '## Briefs and Recap',
-    'Every `brief` is a recap anchor — but only YOU (the lead) can call `recap`; teammates cannot.',
-    '- A brief anchors once at least one message follows its round-trip (another brief counts), and must be the sole call of its turn.',
-    '- `recap` rewinds to that brief and rewrites its tool result in place: `OK Note, a recap has reset the conversation here with summary: …`.',
-    '- It is repeatable: each call rewinds one brief further back, and new activity re-arms the same anchor (the note is overwritten, never stacked).',
-    '- So write briefs as the record you would want to survive the rewind — conclusion first, then the evidence.',
+    '`brief` + `recap` shape your context like a **stack** — only YOU (the lead) can call `recap`; teammates cannot.',
+    '- `brief` **pushes** a frame where an exploration span starts (sole call of its turn). Write it as the record you want to survive a pop: conclusion first, then evidence.',
+    '- `recap` **pops** the topmost frame with activity after it, replacing the span with a summary in the brief\'s result — shed bulky exploration, keep what you learned. Repeatable: each pop rewinds one brief further; new activity re-arms the frame and overwrites its note.',
+    '- `recap(abandon=true)` pops and **discards** the span — undo a wrong direction, try another.',
+    '- Compaction is the floor, not a frame: `recap` cannot rewind past it.',
   ].join('\n');
 }
 
