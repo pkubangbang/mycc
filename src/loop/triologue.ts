@@ -1262,9 +1262,13 @@ export class Triologue {
 
     // Written at the RESOLVED occurrence, not the first one bearing this call
     // id: ids are unique only within a turn, so two briefs may share one, and a
-    // search from 0 would rewrite the older brief's result instead. `resultIndex
-    // + 1` is safe as the lower bound — everything after the anchor's own result
-    // was truncated above, so the anchor's result is the only candidate left.
+    // search from 0 would rewrite the older brief's result instead.
+    //
+    // The lower bound MUST be `resultIndex` — the search is INCLUSIVE of
+    // `fromIndex`. After `truncateAndRecount(resultIndex + 1)` the array holds
+    // indices 0..resultIndex, so `resultIndex + 1` would start past the end,
+    // match nothing, and return false AFTER the span was already deleted (the
+    // caller would report "anchor moved" while the summary was lost).
     const rewritten = this.store.rewriteToolResult(
       call.id,
       noteWithSummary(buildRecapNote(description, anchorMessage, additionalMessage)),

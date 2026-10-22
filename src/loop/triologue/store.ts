@@ -149,6 +149,11 @@ export class MessageStore {
    * search can bind a call to another tool's result after a replay/reuse.
    * Callers that REWRITE or truncate on the answer (recap's anchor path) must
    * pass the name too and compare against the result's `tool_name`.
+   *
+   * `fromIndex` is INCLUSIVE: the search starts AT that index. A caller that
+   * truncates to `resultIndex + 1` and then rewrites the surviving result must
+   * pass `resultIndex` (not `resultIndex + 1`) — after that truncation nothing
+   * follows it, so an off-by-one matches nothing and loses the write.
    */
   findToolResultIndex(id: string | undefined, fromIndex = 0, toolName?: string): number {
     if (!id) return -1;
