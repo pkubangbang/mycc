@@ -27,7 +27,7 @@ import type { Message, ToolCall } from '../../types.js';
 
 // agent-io writes to the terminal; keep the test output clean.
 vi.mock('../../loop/agent-io.js', () => ({
-  agentIO: { verbose: vi.fn(), log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  agentIO: { verbose: vi.fn(), log: vi.fn(), warn: vi.fn(), error: vi.fn(), brief: vi.fn() },
 }));
 
 let seq = 0;
@@ -530,22 +530,46 @@ describe('M1 — anchor identity', () => {
     };
     const a = mk(0);
     const b = mk(3);
-    // BEFORE: `${index}:brief:…` differed between a and b, so a replay that
-    // shifted indexes looked like a different anchor.
+    // The token must not include the array index: a replay that shifts indexes
+    // still names the same brief.
     expect(a).toBe(b);
-    expect(a.startsWith('brief_fixed:brief:')).toBe(true);
+    // The fingerprint is the call id alone.
+    expect(a).toBe('brief_fixed');
   });
 
-  it('differentiates two briefs that reuse the same call id', () => {
+  it('a reused call id collapses to the MOST RECENT anchor (id-only fingerprint)', () => {
+    // An id collision is not something the producers do (`newBriefCallId` is
+    // random; provider ids are chosen per call), but a hand-built or restored
+    // history can carry one. The contract is then "newest wins": the anchor is
+    // resolved newest-first, so recap can never truncate an OLDER span on the
+    // strength of a stale fingerprint.
     const t = new Triologue();
     t.agent('', [{ id: 'brief_dup', function: { name: 'brief', arguments: { message: 'ONE' } } }]);
     t.tool('brief', 'OK', 'brief_dup');
     t.user('activity');
-    const first = t.getLastBrief()!.id;
+    const first = t.getLastBrief()!;
+    expect(first.id).toBe('brief_dup');
+
     t.agent('', [{ id: 'brief_dup', function: { name: 'brief', arguments: { message: 'TWO' } } }]);
     t.tool('brief', 'OK', 'brief_dup');
     t.user('activity 2');
-    expect(t.getLastBrief()!.id).not.toBe(first);
+    expect(t.getLastBrief()!.id).toBe(first.id);
+    expect(t.getLastBrief()!.message).toBe('TWO');
+
+    // The stale fingerprint still MATCHES (that is what id-only means), so the
+    // guard passes. What contains the damage is that resolution never picks a
+    // stale slot: the note lands in the NEWEST anchor (TWO) — the same span the
+    // caller would have summarized — and ONE's round-trip survives above it.
+    expect(t.rewindToLastBrief('collapse', 'SUMMARY', first.id)).not.toBeNull();
+    const msgs = t.getMessages();
+    // ONE's round-trip and its work survive; only the span after TWO is gone.
+    expect(msgs.map((m) => m.content)).toEqual([
+      '',
+      expect.stringContaining('Rewound past the brief: "TWO"'), // TWO's own result
+      'activity',
+      '',
+      'OK', // ONE's result: untouched
+    ]);
   });
 });
 
@@ -554,6 +578,39 @@ describe('M1 — anchor identity', () => {
  * come from the same tool-result index, and an orphan brief is never an anchor.
  */
 describe('M2 — single anchor resolution', () => {
+  it('resolveAnchor matches the brief result by tool NAME too, not just the reused call id', () => {
+    // hasMessagesAfterBrief already rejects this shape, so the second line of
+    // defence is resolveAnchor itself — the path that TRUNCATES and REWRITES.
+    // A provider call id is unique only within a turn, so a reused id must not
+    // bind another tool's result to the brief: the note would land in the bash
+    // result and the brief's own tool_call would be left dangling.
+    //
+    // Shape (built directly in the store: the public API's TP fixer would inject
+    // an assistant for the dangling call and hide the case):
+    //   assistant(brief "ORPHAN", id=reused) → tool(bash, id=reused) → user
+    const t = new Triologue();
+    const internal = t as unknown as {
+      store: MessageStore;
+      resolveAnchor: (expected?: string) => unknown;
+      currentAnchorIndex: () => number;
+    };
+    internal.store.replaceAll([
+      { role: 'assistant', content: '', tool_calls: [{ id: 'reused', function: { name: 'brief', arguments: { message: 'ORPHAN', confidence: 7 } } }] },
+      { role: 'tool', tool_name: 'bash', content: 'not the brief answer', tool_call_id: 'reused' },
+      { role: 'user', content: 'later activity' },
+    ] as Message[]);
+
+    // The public scan refuses first (orphan: no BRIEF result).
+    expect(t.getLastBrief()).toBeNull();
+
+    // Force the scan onto that brief, as a future scan rule or a restored
+    // history could: resolveAnchor must STILL refuse. BEFORE: it bound the bash
+    // result to the brief call and returned a snapshot.
+    internal.currentAnchorIndex = () => 0;
+    expect(internal.resolveAnchor()).toBeNull();
+    expect(t.getMessages()[1].content).toBe('not the brief answer');
+  });
+
   it('an orphan brief (no tool result) is not an anchor', () => {
     const t = new Triologue();
     t.agent('', [{ id: 'brief_orphan', function: { name: 'brief', arguments: { message: 'ORPHAN' } } }]);

@@ -1005,30 +1005,6 @@ export class Triologue {
   // === Rewind (recap) ===
 
   /**
-   * Identity of the anchor, safe to carry across an await.
-   *
-   * Built from the brief call's OWN id plus its raw arguments:
-   *
-   *   - NOT the store array index (the old form `${index}:${name}:${args}`):
-   *     a rollback/replay that rebuilds the conversation could put an unrelated
-   *     brief at the same index with the same arguments, and the fingerprint
-   *     would collide.
-   *   - NOT the `tool_call_id` alone either (an earlier revision of this
-   *     comment claimed call ids are unique — they are only unique *within* a
-   *     turn, and a model replaying a turn can re-send one), so the arguments
-   *     are folded in as the discriminator.
-   *
-   * rewindToLastBrief() re-derives the anchor and refuses to truncate when the
-   * identity differs (see the TOCTOU note there).
-   */
-  anchorIdentity(call: { id?: string; function: { name: string; arguments?: unknown } }): string {
-    const args = typeof call.function.arguments === 'string'
-      ? call.function.arguments
-      : JSON.stringify(call.function.arguments ?? {});
-    return `${call.id ?? ''}:${call.function.name}:${args}`;
-  }
-
-  /**
    * The CURRENT anchor: the brief the next recap would rewind to.
    *
    * THE RULE — a brief is an anchor IFF
@@ -1112,7 +1088,7 @@ export class Triologue {
   }
 
   /**
-   * Resolve the rewind anchor ONCE for every caller.
+   * Resolve the rewind anchor ONCE for every caller and snapshot it.
    *
    * getLastBrief(), rewindToLastBrief() and recapNoteSize() must agree on four
    * rules — which brief is "last" (the synthetic predicate lives in the store),
@@ -1120,13 +1096,7 @@ export class Triologue {
    * call (the FIRST one, if a message batches several), and how its message is
    * read. Three hand-copied versions of that sequence is one edit away from the
    * size pre-check measuring a string the append never produces — which is
-   * exactly the round-2 bug in a new costume. Returns null when there is no
-   * anchor, or when `expectedAnchorId` no longer matches it.
-   *
-   * Private: the index is a truncation detail that must not leave the facade.
-   */
-  /**
-   * Resolve the rewind anchor ONCE for every caller and snapshot it.
+   * exactly the round-2 bug in a new costume.
    *
    * Everything downstream reads from THIS snapshot: the caller sizes the note
    * with `recapNoteSize(…)` and then rewinds with `rewindToLastBrief(…)`, and
@@ -1139,13 +1109,13 @@ export class Triologue {
    * Returns null when there is no anchor, when the anchor has no tool result
    * answering it (an orphan brief cannot be rewound — a recap has nowhere to
    * write its note; it is reported as "no anchor" here so the caller refuses
-   * before spending two LLM forks), or when `expectedAnchorId` no longer
+   * before spending two LLM forks), or when `expectedBriefCallId` no longer
    * matches it.
    *
    * Private: the indexes are truncation details that must not leave the facade.
    */
   private resolveAnchor(
-    expectedAnchorId?: string,
+    expectedBriefCallId?: string,
   ): { index: number; resultIndex: number; call: ToolCall; anchorMessage: string; id: string } | null {
     const index = this.currentAnchorIndex();
     if (index < 0) return null;
@@ -1159,8 +1129,12 @@ export class Triologue {
 
     // The tool result answering THIS call, searched from the anchor on (not
     // from index 0 — a replayed call id must not bind the anchor to an older
-    // answer in the span).
-    const resultIndex = this.store.findToolResultIndex(call.id, index + 1);
+    // answer in the span). The TOOL NAME must match too, exactly as in
+    // hasMessagesAfterBrief: a provider call id is unique only within a turn,
+    // so a reused id must not turn another tool's result into this brief's
+    // result. This is the path that TRUNCATES and REWRITES, so a wrong match
+    // here rewrites an unrelated result and strands the brief's own tool_call.
+    const resultIndex = this.store.findToolResultIndex(call.id, index + 1, 'brief');
     // An orphan brief (no result) is not a legal anchor: there is no message to
     // write the note into, and truncating would strand the assistant's
     // tool_calls. Refuse here, once, before any work is done.
@@ -1171,8 +1145,15 @@ export class Triologue {
     // yields a VALID current index, but it cannot tell whether that is still the
     // anchor the caller summarized. If it moved, truncating would delete a span
     // that was never summarized — refuse, having modified nothing.
-    const id = this.anchorIdentity(call);
-    if (expectedAnchorId !== undefined && id !== expectedAnchorId) {
+    //
+    // The token is the brief's tool-call id: `tool = brief && id = x` is what
+    // makes a message an anchor, so the id is the honest identity, and it is the
+    // one value that survives a rebuilt/replayed store — an array index would
+    // accept a different brief occupying the same slot. It is NOT a locator:
+    // the anchor is found by the walk-back above; this only answers "still the
+    // same brief?".
+    const id = call.id ?? '';
+    if (expectedBriefCallId !== undefined && id !== expectedBriefCallId) {
       return null;
     }
 
@@ -1203,7 +1184,7 @@ export class Triologue {
   getLastBrief(): {
     message: string;
     confidence?: number;
-    /** Opaque anchor fingerprint — see anchorIdentity(). */
+    /** The anchor brief's call id — the token to hand back to rewindToLastBrief. */
     id: string;
     span: Message[];
   } | null {
@@ -1265,13 +1246,13 @@ export class Triologue {
   rewindToLastBrief(
     description: string,
     additionalMessage: string,
-    expectedAnchorId?: string,
+    expectedBriefCallId?: string,
   ): { anchorMessage: string; tokensBefore: number; tokensAfter: number } | null {
     // One resolution for every caller (see resolveAnchor) — including the
     // TOCTOU refusal, the message read that tolerates a string-shaped
     // `arguments`, and the tool-result index. Nothing below re-derives either
     // the anchor or its result index independently.
-    const resolved = this.resolveAnchor(expectedAnchorId);
+    const resolved = this.resolveAnchor(expectedBriefCallId);
     if (!resolved) return null;
     const { call, anchorMessage, resultIndex } = resolved;
     const tokensBefore = this.store.tokenCount;
@@ -1300,9 +1281,9 @@ export class Triologue {
    * happens AFTER the truncation, an under-measure loses the span with the note
    * unrecorded.
    */
-  recapNoteSize(description: string, additionalMessage: string, expectedAnchorId?: string): number | null {
+  recapNoteSize(description: string, additionalMessage: string, expectedBriefCallId?: string): number | null {
     // null when the anchor moved — the rewind will refuse for the same reason.
-    const resolved = this.resolveAnchor(expectedAnchorId);
+    const resolved = this.resolveAnchor(expectedBriefCallId);
     if (!resolved) return null;
     return buildRecapNote(description, resolved.anchorMessage, additionalMessage).length;
   }

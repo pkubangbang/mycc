@@ -17,6 +17,15 @@ that note so it survives.
 3. at least one message of **ACTIVITY** follows its round-trip (the assistant
    `brief` call *and* the tool result answering it).
 
+**The walk-back (the same rule, read backwards).** Step back from the end of
+memory; skip a trailing `recap` round-trip; the first non-synthetic `brief`
+followed by activity is the target; reaching the start with none means there is
+nothing to collapse.
+
+- The pre-first-brief prefix belongs to compaction (`compact.ts`), never to recap.
+- A bare brief is not a target: it is where the conversation currently stands.
+- A failed recap is a message, not a wall — the walk steps over its round-trip.
+
 Rule 3 is what makes a lone brief a non-anchor: the newest brief is where the
 conversation currently stands, so there is nothing below it to collapse. The
 moment *anything* lands after it — a tool call, a query, **or even another
@@ -41,11 +50,9 @@ fold the user's still-unserved query into one summary — the original message
 gone, its text merely quoted in the note. No message-level marker is involved:
 "failed" is not a property the history needs to carry.
 
-There is no `checkpoint` tool any more. The old design needed one because a
-checkpoint had to be *created* in one turn (producing an id) and *consumed*
-later by `recap({checkpoint_id})`. With the anchor discovered by scanning the
-triologue for the last `brief`, no id exists — so the split has no basis, and
-the triologue is the single source of truth for where a rewind lands.
+There is no `checkpoint` tool: the anchor is discovered by scanning the
+triologue, so the triologue is the single source of truth for where a rewind
+lands.
 
 ## Brief must be called alone
 
@@ -150,13 +157,17 @@ Regular tools receive `AgentContext` (`core`, `todo`, `mail`, …). The triologu
   `COLLECT` without calling the regular handler.
 - **Rewind primitive** (`src/loop/triologue.ts`): `getLastBrief()` (read-only
   peek: `{ message, confidence, id, span }`) and `rewindToLastBrief(description,
-  additionalMessage, expectedAnchorId?)` (truncate + rewrite the anchor's tool
+  additionalMessage, expectedBriefCallId?)` (truncate + rewrite the anchor's tool
   result). Both read ONE private resolution (`resolveAnchor()`), which returns
   the anchor's tool-result index alongside the message: the span start and the
   truncation point are the same number, so they cannot disagree. The array index
   never leaves the facade — a caller-held mark could go stale across a
-  compaction; the caller carries `id` (`anchorIdentity()` = brief call id +
-  raw arguments, never the array index) and the rewind refuses when it moved.
+  compaction; the caller carries `expectedBriefCallId` (the brief's tool-call
+  id alone — never the array index, never the arguments; an id that a
+  malformed/restored history reuses resolves to the MOST RECENT such call, so an
+  older anchor's span is never truncated on a guess) and the rewind refuses when
+  it moved. The id is a compare-and-swap token, NOT a locator: the anchor itself
+  is found by walking back from the end of the triologue.
 - **Isolation**: `recap` must be called ALONE (`validateRecapIsolation`,
   HOOK step 2b). `brief` carries the same rule (`validateBriefIsolation` in
   `src/loop/triologue/brief.ts`, HOOK step 2) — see "Brief must be called
@@ -173,10 +184,9 @@ mindmap patch concurrently over the pre-rewind history → **summary floor**
 apply the patch.
 
 Every refusal answers the recap call and returns `COLLECT` so the model can
-retry. A refusal answers the call with a tool-call error and rolls NOTHING
-back — no truncation, no rewrite of an earlier brief's result — and, since the
-recap tool never produces activity, it can never be folded by the next recap
-(see the anchor rule).
+retry. A refusal rolls NOTHING back — no truncation, no rewrite of an earlier
+brief's result — and, since the recap tool never produces activity, it can
+never be folded by the next recap (see the anchor rule).
 
 ## The note
 

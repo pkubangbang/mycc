@@ -141,12 +141,20 @@ export class MessageStore {
     return result;
   }
 
-  /** Index of the tool result answering call `id` (searching from `fromIndex`), or -1. */
-  findToolResultIndex(id: string | undefined, fromIndex = 0): number {
+  /**
+   * Index of the tool result answering call `id` (and optionally `toolName`),
+   * searching from `fromIndex`; -1 when none.
+   *
+   * A provider call id is unique only WITHIN one assistant turn, so an id-only
+   * search can bind a call to another tool's result after a replay/reuse.
+   * Callers that REWRITE or truncate on the answer (recap's anchor path) must
+   * pass the name too and compare against the result's `tool_name`.
+   */
+  findToolResultIndex(id: string | undefined, fromIndex = 0, toolName?: string): number {
     if (!id) return -1;
     for (let i = Math.max(0, fromIndex); i < this.messages.length; i++) {
       const m = this.messages[i];
-      if (m && m.role === 'tool' && m.tool_call_id === id) return i;
+      if (m && m.role === 'tool' && m.tool_call_id === id && (!toolName || m.tool_name === toolName)) return i;
     }
     return -1;
   }
