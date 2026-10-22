@@ -96,7 +96,7 @@ integrity gate.
 ### 2.1 Move `note` out of the hash signature (REJECTED)
 
 The peer reminder puts the volatile `sid` in the *name*, but other callers
-(e.g. checkpoint todos) put volatile data in the *note*. A tempting
+(e.g. the removed checkpoint todos) put volatile data in the *note*. A tempting
 generalization: drop `note` from `SHA256(name|done|note)` so note changes
 don't invalidate the hash.
 

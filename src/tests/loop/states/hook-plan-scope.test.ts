@@ -124,6 +124,34 @@ describe('HOOK-stage plan-mode scope reflection', () => {
     expect(msgs[1].content).toContain('parser.ts');
   });
 
+  it('PLAN mode: the brief BODY still reaches the user, as its own [brief] line', async () => {
+    const { env, chat } = makeEnv('plan');
+    await handleHook(env, createTurnVars(), chat);
+
+    // The `brief` tool never runs on this path, so the hook must print the
+    // user's text itself — otherwise the agent's status update is invisible
+    // exactly while it is planning. Same label and detail shape as brief.ts.
+    const brief = vi.mocked(env.ctx.core.brief);
+    const call = brief.mock.calls.find((c) => c[1] === 'brief');
+    expect(call).toBeDefined();
+    expect(call![2]).toBe('recon done');
+    expect(call![3]).toBe('confidence: 70%');
+  });
+
+  it('PLAN mode: the reflection is a SEPARATE plan-scope block, not a note on the brief', async () => {
+    const { env, chat } = makeEnv('plan');
+    await handleHook(env, createTurnVars(), chat);
+
+    const brief = vi.mocked(env.ctx.core.brief);
+    const scope = brief.mock.calls.find((c) => c[1] === 'plan-scope');
+    expect(scope).toBeDefined();
+    // The block carries the reflection text itself — never the old fixed
+    // placeholder line, which told the user nothing.
+    expect(scope![2]).toContain('parser.ts');
+    expect(scope![2]).not.toBe('Plan-mode scope reflection attached to this brief.');
+    expect(scope![2]).not.toContain(`OK. ${PLAN_SCOPE_HEADING}`);
+  });
+
   it('PLAN mode: the fork sees a LEGAL prefix (no unanswered tool_calls)', async () => {
     const { env, triologue, chat } = makeEnv('plan');
     triologue.user('earlier work');

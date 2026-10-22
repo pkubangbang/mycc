@@ -144,19 +144,19 @@ function rebuildPatches(
       // Patch-added node → emit 'add' action
       const parentPath = node.id.split('/').slice(0, -1).join('/') || '/';
       actions.push({ action: 'add', path: parentPath, title: node.title, text: node.text,
-        timestamp: new Date().toISOString(), checkpoint_id: '',
+        timestamp: new Date().toISOString(), // (the legacy checkpoint_id field was removed)
         reason: 'Rebuilt from in-memory state', mindmap_hash: mindmapHash });
     } else if (!basePaths.has(node.id) && node.id !== '/' && node.id !== '') {
       // MYCC.md-deleted node (is_mycc, absent from fresh base) → PRESERVE as 'add'
       // On replay it becomes is_mycc=false, so the content survives.
       const parentPath = node.id.split('/').slice(0, -1).join('/') || '/';
       actions.push({ action: 'add', path: parentPath, title: node.title, text: node.text,
-        timestamp: new Date().toISOString(), checkpoint_id: '',
+        timestamp: new Date().toISOString(), // (the legacy checkpoint_id field was removed)
         reason: 'Preserved from MYCC.md deletion', mindmap_hash: mindmapHash });
     } else if (node.is_patch) {
       // MYCC.md node modified by patch → emit 'update' to preserve patched text
       actions.push({ action: 'update', path: node.id, text: node.text,
-        timestamp: new Date().toISOString(), checkpoint_id: '',
+        timestamp: new Date().toISOString(), // (the legacy checkpoint_id field was removed)
         reason: 'Rebuilt from in-memory state', mindmap_hash: mindmapHash });
     }
     // else: is_mycc=true, is_patch=false, in base → pure MYCC.md node, no action
@@ -223,11 +223,11 @@ No file watch. No automatic compile. Same as current behavior.
 
 Each recap launches **two concurrent forkChat calls** (via `Promise.all`), both forking from the same triologue state:
 
-1. **forkChat #1 — Recap Summary** (same as current `handleRecap`): reviews the checkpoint span and produces the structured recap summary.
-2. **forkChat #2 — Patch Decision** (new): independently reviews the same checkpoint span and decides if one patch action is warranted. Does NOT receive the recap summary — it works directly from the conversation history, same as forkChat #1.
+1. **forkChat #1 — Recap Summary** (same as current `handleRecap`): reviews the recap span and produces the structured recap summary.
+2. **forkChat #2 — Patch Decision** (new): independently reviews the same recap span and decides if one patch action is warranted. Does NOT receive the recap summary — it works directly from the conversation history, same as forkChat #1.
 
 **Why concurrent works:**
-- Both calls fork from the **same triologue messages** — the checkpoint span is the shared input.
+- Both calls fork from the **same triologue messages** — the recap span is the shared input.
 - forkChat #1 compresses that span into a summary; forkChat #2 makes a structural decision from that span. Neither depends on the other's output.
 - Both calls share the **same prompt-cache prefix** (system + projectContext + conversation + tools), so running them concurrently means both hit the cache simultaneously.
 - Result: recap completes in **one round-trip latency** instead of two sequential.
@@ -247,13 +247,13 @@ This is exactly the existing `handleRecap` logic — `buildRecapPrompt` + `forkC
 forkChat #2 runs concurrently with #1, forking from the same triologue messages. It does NOT receive the recap summary. Its prompt:
 
 ```
-[MINDMAP PATCH] You just completed a checkpoint: "{description}".
-Review the conversation history from when the checkpoint was created up to now.
+[MINDMAP PATCH] You just completed a recap span: "{description}".
+Review the conversation history from the rewind anchor (the last brief) up to now.
 
 Here is the current mindmap tree (paths only, [M] = MYCC.md-sourced, [P] = patch-added):
 {treeOutline}
 
-Based on what was learned during this checkpoint, decide if ONE mindmap node should be changed.
+Based on what was learned during this span, decide if ONE mindmap node should be changed.
 You may choose ONE of:
 - ADD: add a child node to an existing parent (provide path=parent_path, title, text)
 - UPDATE: update an existing node's text (provide path=target_path, text)
@@ -281,7 +281,7 @@ interface ParsedPatchResponse {
   error?: string;                     // validation error (for retry feedback)
 }
 
-function parsePatchResponse(response: string, mindmap: Mindmap, checkpointId: string): ParsedPatchResponse {
+function parsePatchResponse(response: string, mindmap: Mindmap, anchorCallId: string): ParsedPatchResponse {
   const trimmed = response.trim();
   
   // 1. "none" case
@@ -338,7 +338,7 @@ function parsePatchResponse(response: string, mindmap: Mindmap, checkpointId: st
       title: parsed.title,
       text: parsed.text,
       timestamp: new Date().toISOString(),
-      checkpoint_id: checkpointId,
+      // (the legacy checkpoint_id field was removed from MindmapPatchAction)
       reason: parsed.reason || '',
       mindmap_hash: mindmap.hash,
     },
@@ -356,7 +356,7 @@ async function generatePatchAction(
   allTools: Tool[],
   description: string,
   mindmap: Mindmap,
-  checkpointId: string,
+  anchorCallId: string,
   escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>,
 ): Promise<MindmapPatchAction | null> {
   const MAX_RETRIES = 2;
@@ -378,7 +378,7 @@ async function generatePatchAction(
       response = await forkChat(fullMessages, allTools, prompt, undefined, 'none');
     }
     
-    const parsed = parsePatchResponse(response, mindmap, checkpointId);
+    const parsed = parsePatchResponse(response, mindmap, anchorCallId);
     if (!parsed.error) {
       return parsed.patch;  // valid (including null = "none")
     }
@@ -396,17 +396,17 @@ async function generatePatchAction(
 
 ```typescript
 async function handleRecapWithPatch(
-  fullMessages, allTools, description, mindmap, checkpointId,
-  escAware?, comment?, lastUserQuery?, checkpointResult?
+  fullMessages, allTools, description, mindmap, anchorCallId,
+  escAware?, comment?, lastUserQuery?, anchorResult?
 ): Promise<{ summary: string; patch: MindmapPatchAction | null }> {
   // ── Launch both forkChats concurrently via Promise.all ──
   // Both fork from the same triologue messages — neither depends on the other's output.
   const [summary, patch] = await Promise.all([
     // forkChat #1: Recap Summary (unchanged from current handleRecap)
-    handleRecap(fullMessages, allTools, description, escAware, comment, lastUserQuery, checkpointResult),
+    handleRecap(fullMessages, allTools, description, escAware, comment, lastUserQuery, anchorResult),
     // forkChat #2: Patch Decision (independent, concurrent)
     mindmap
-      ? generatePatchAction(fullMessages, allTools, description, mindmap, checkpointId, escAware)
+      ? generatePatchAction(fullMessages, allTools, description, mindmap, anchorCallId, escAware)
       : Promise.resolve(null),
   ]);
   
@@ -427,7 +427,7 @@ interface MindmapPatchAction {
   title?: string;         // for 'add'
   text?: string;          // for 'add'/'update'
   timestamp: string;
-  checkpoint_id: string;
+  // (the legacy checkpoint_id field was removed from MindmapPatchAction)
   reason: string;
   mindmap_hash: string;   // hash of mindmap.json at time of patch
 }
@@ -511,7 +511,7 @@ Truncate if tree is large (> 200 nodes): show first 3 levels + count of deeper n
 
 | File | Role |
 |------|------|
-| `src/loop/checkpoint-recap.ts` | `handleRecap` (forkChat #1, unchanged). `generatePatchAction` (forkChat #2, independent, concurrent, with validation + retry). `handleRecapWithPatch` wrapper launching both via `Promise.all`. Returns patch to caller. |
+| `src/loop/recap-rewind.ts` | `handleRecap` / `handleRecapSpan` (forkChat #1). `generatePatchAction` (forkChat #2, independent, concurrent, with validation + retry). `handleRecapWithPatch` wrapper launching both via `Promise.all`. Returns patch to caller. |
 | `src/mindmap/patch.ts` | `applyPatchAction()` (pure in-memory, no LLM). Also has `patch_mindmap()`, `summarize_node()`, `add_child_node()`, `remove_node()`, `move_node()`. |
 | `src/mindmap/types.ts` | `MindmapPatchAction` interface |
 | `src/loop/states/hook.ts` | Calls `handleRecapWithPatch`, applies patch (in-memory + jsonl simultaneously) |
@@ -699,7 +699,7 @@ Takes current in-memory tree, does BFS, rewrites jsonl. Useful if jsonl has grow
 │                   DURING SESSION                      │
 │                                                       │
 │  ┌──────────────────┐   ┌───────────────────────┐   │
-│  │  recall tool      │   │  checkpoint → recap    │   │
+│  │  recall tool      │   │  brief anchor → recap  │   │
 │  │  (reads in-mem    │   │  forkChat #1: summary  │   │
 │  │   merged tree)    │   │  forkChat #2: patch    │   │
 │  └──────────────────┘   │   (validate + retry)   │   │
@@ -731,7 +731,7 @@ The implementation was completed in this order, all files now exist in `src/`:
 2. **`src/mindmap/load.ts`** — Sets `is_mycc = true, is_patch = false` on every node during `load_mindmap` / `load_mindmap_from_json`; strips flags before serialization
 3. **`src/mindmap/patch-jsonl.ts`** — `validatePatchAction()`, `appendPatch()`, `readAllPatches()`, `writePatches()`, `rebuildPatches()`, `clearPatches()`, `getPatchPath()`
 4. **`src/mindmap/patch.ts`** — `applyPatchAction()` (pure in-memory, no LLM, sets `is_mycc`/`is_patch` flags)
-5. **`src/loop/checkpoint-recap.ts`** — `handleRecap` (forkChat #1, unchanged). `generatePatchAction` (forkChat #2, concurrent, with validation + retry). `handleRecapWithPatch` wrapper.
+5. **`src/loop/recap-rewind.ts`** — `handleRecap` / `handleRecapSpan` (forkChat #1). `generatePatchAction` (forkChat #2, concurrent, with validation + retry). `handleRecapWithPatch` wrapper.
 6. **`src/loop/states/hook.ts`** — After `handleRecapWithPatch`, applies patch (in-memory + jsonl simultaneously)
 7. **`src/loop/agent-repl.ts`** — Mindmap loading with patch replay. Keeps existing hash-check.
 8. **`src/tools/recall.ts`** — Shows `[M]`/`[P]` marker in output, hoisted term collection at root

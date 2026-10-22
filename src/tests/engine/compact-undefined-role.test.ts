@@ -8,7 +8,7 @@
  * length-manipulation / wrap-up rollback / TP auto-fixer injection / session
  * restoration), an `undefined`, `null`, or non-object entry can slip into the
  * messages array. Any raw reader of the messages array (a provider's
- * `normalizeMessage`, `minifyMessages` in `runAutoCompact`, checkpoint
+ * `normalizeMessage`, `minifyMessages` in `runAutoCompact`, recap
  * iteration) that reads `msg.role` directly then crashes. This class of bug
  * is NOT provider-specific — it reproduces under BOTH Ollama and DeepSeek;
  * the original "Ollama native binding never reads .role from JS" assumption

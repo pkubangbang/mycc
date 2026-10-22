@@ -96,7 +96,12 @@ export const myccTitleTool: ToolDefinition = {
     },
     required: ['title'],
   },
-  scope: ['main', 'child'],
+  // MAIN-ONLY: every side effect of this tool lands on the terminal channel
+  // (OSC title sequence on process.stdout, process.title on win32, printBanner).
+  // Teammates are spawned with stdio ['pipe','pipe','pipe','ipc']
+  // (context/parent/team.ts), so none of that ever reaches the user's view —
+  // exposing the tool to a child is pure noise in its schema.
+  scope: ['main'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
     const rawTitle = args.title as string;
 

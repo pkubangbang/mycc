@@ -35,7 +35,7 @@ import { stripInternalMarkup } from '../../utils/letter-box.js';
 import { buildCandidatesBrief } from '../crossroad.js';
 import { briefToolCall, newBriefCallId, validateBriefIsolation } from '../triologue/brief.js';
 import { PRISTINE_BRIEF_RESULT } from '../triologue/recap-note.js';
-import { buildPlanScopeNote, withPlanScopeNote } from '../plan-scope.js';
+import { buildPlanScopeNote, formatPlanScopeForDisplay, withPlanScopeNote } from '../plan-scope.js';
 
 /**
  * Display the assistant's text content mid-loop via brief, stripping internal
@@ -146,7 +146,27 @@ async function handlePlanScopeBrief(
     reasoningContent: chat.assistantReasoningContent,
   });
   triologue.tool('brief', withPlanScopeNote(note), briefCall.id);
-  ctx.core.brief('info', 'plan-scope', 'Plan-mode scope reflection attached to this brief.');
+
+  // The `brief` TOOL never runs on this path (the turn is answered above), so
+  // its own prints are skipped too. Print them here, in the tool's exact shape,
+  // or the user never sees what the agent actually said while planning.
+  const confidence = typeof args?.confidence === 'number' ? args.confidence : undefined;
+  if (briefMessage) {
+    ctx.core.brief('info', 'brief', briefMessage,
+      confidence === undefined ? undefined : `confidence: ${confidence * 10}%`);
+    try {
+      ctx.peer.recordBrief(briefMessage, confidence ?? 0);
+    } catch {
+      // Best-effort, exactly like brief.ts — heartbeat recording must never
+      // break the brief path.
+    }
+  }
+
+  // The reflection is its own block, not a note on the brief: the brief line
+  // stays the user's text verbatim, and this block carries the STEP-BACK
+  // analysis. Rendered with a heading rule so a multi-paragraph answer stays
+  // readable instead of collapsing into one grey run of text.
+  ctx.core.brief('info', 'plan-scope', formatPlanScopeForDisplay(note));
 
   // The turn is fully answered above (one assistant message, one result), so the
   // loop continues to the next LLM round. `brief` must be called alone
@@ -483,7 +503,7 @@ export async function handleHook(
       return handleRecapCall(recapCall, env, chat, turn);
     }
 
-    // 4b. PLAN-MODE SCOPE REFLECTION — a brief turn is a checkpoint of the
+    // 4b. PLAN-MODE SCOPE REFLECTION — a brief turn is a snapshot of the
     //     model's own thinking, so while PLANNING the loop answers it with one
     //     extra paragraph:
     //       tool('brief', "OK. When thinking on the larger scope, …", callId)

@@ -3,7 +3,6 @@
  *
  * Child team module with restricted capabilities:
  * - mailTo: writes directly to mailbox files
- * - broadcast: sends mail to lead requesting broadcast
  * - createTeammate: sends mail to lead requesting creation
  * - printTeam: IPC request to get team status
  * - All other operations: FORBIDDEN
@@ -108,25 +107,15 @@ export class ChildTeam implements TeamModule {
   }
 
   /**
-   * Request lead to broadcast to all teammates
-   * Lead decides whether to broadcast
+   * Interface satisfier only — `TeamModule.broadcast` is shared with the parent
+   * implementation, but `broadcast` itself is a MAIN-ONLY tool, so no child code
+   * path can ever reach this method (`broadcast.ts` is not in the child's
+   * schema, and there is no `team_broadcast` IPC to forward through). It throws
+   * rather than silently forwarding a request the lead cannot fulfil, so an
+   * accidental future call fails loudly instead of quietly doing nothing.
    */
-  broadcast(title: string, content: string): void {
-    const mail = new MailBox('lead');
-    mail.appendMail(
-      this.owner,
-      'Broadcast Request',
-      [
-        `I suggest broadcasting to the team:`,
-        ``,
-        `Title: ${title}`,
-        ``,
-        `Content:`,
-        content,
-        ``,
-        `Please decide if this should be broadcast.`,
-      ].join('\n')
-    );
+  broadcast(_title: string, _content: string): void {
+    throw new Error('broadcast is lead-only; a teammate cannot broadcast');
   }
 
   /**

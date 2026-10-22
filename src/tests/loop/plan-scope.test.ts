@@ -49,6 +49,31 @@ describe('buildPlanScopeNote', () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
+  it('asks the four escape-hatch checks, and offers no tools and no escape-free format', async () => {
+    vi.mocked(forkChat).mockResolvedValue('a reflection');
+    await buildPlanScopeNote(BASE);
+
+    const args = (vi.mocked(forkChat).mock.calls[0] as unknown[]) as [unknown, unknown, string];
+    const prompt = args[2];
+    // The four framings that make this a GLOBAL check, not a progress review.
+    for (const label of ['TUNNEL', 'SUBLATE', 'WRONG PRB', 'REVERSIBLE']) {
+      expect(prompt).toContain(`${label}:`);
+    }
+    // Text-only: the model is told it cannot read anything new, and that NAMING
+    // a required read beats guessing what the file says.
+    expect(prompt).toContain('you cannot read anything new');
+    expect(prompt).toContain('needs read of');
+    // "none" must stay a legal answer on every line, or the model invents a
+    // tunnel to fill the format.
+    // A BARE "none" is banned: it is exactly the boilerplate the reflection
+    // exists to prevent. Each line must justify why the wider frame misses.
+    expect(prompt).toContain('A bare "none" is NOT acceptable');
+    // The old prose constraint is gone: a single paragraph cannot carry four
+    // checkable claims, it collapses into restatement.
+    expect(prompt).not.toContain('150-400 words');
+    expect(prompt).not.toContain('one paragraph');
+  });
+
   it('returns null when ESC cancels the fork (cleanup value)', async () => {
     vi.mocked(forkChat).mockResolvedValue('ignored');
     const cancelled = (async () => null) as never;

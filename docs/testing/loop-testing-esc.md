@@ -1237,7 +1237,7 @@ if (summary.startsWith('[RECAP] Cancelled:')) {
 }
 ```
 
-**Mock setup**: Mock `handleRecap` from `../checkpoint-recap.js` to return `'[RECAP] Cancelled: ESC pressed'`. Mock `augmentToolCalls` to pass through. Mock `hookExecutor.processToolCalls` to return a result with a recap call.
+**Mock setup**: Mock `handleRecap` from `../recap-rewind.js` to return `'[RECAP] Cancelled: ESC pressed'`. Mock `augmentToolCalls` to pass through. Mock `hookExecutor.processToolCalls` to return a result with a recap call. (`../checkpoint-recap.js` was split into `../recap-rewind.js` (recap) and `../recap-note.js`; the `checkpoint` half no longer exists.)
 
 ```typescript
 vi.mock('../../loop/agent-io.js', () => {
@@ -1250,11 +1250,10 @@ vi.mock('../../loop/agent-io.js', () => {
     },
   };
 });
-vi.mock('../checkpoint-recap.js', () => ({
-  validateCheckpointIsolation: vi.fn(() => ({ valid: true })),
+vi.mock('../../../loop/recap-rewind.js', () => ({
   validateRecapIsolation: vi.fn(() => ({ valid: true })),
-  handleCheckpoint: vi.fn(),
-  handleRecap: vi.fn(async () => '[RECAP] Cancelled: ESC pressed during recap'),
+  handleRecap: vi.fn(async () => ({ cancelled: true, text: '[RECAP] Cancelled: ESC pressed during recap' })),
+  handleRecapSpan: vi.fn(),
 }));
 vi.mock('../../hook/hook-preprocessor.js', () => ({
   augmentToolCalls: vi.fn((calls) => calls), // pass through
@@ -1266,7 +1265,7 @@ vi.mock('../../context/shared/loader.js', () => ({
 import { handleHook } from '../../loop/states/hook.js';
 import { AgentState } from '../../loop/state-machine.js';
 import { agentIO } from '../../loop/agent-io.js';
-import { handleRecap } from '../checkpoint-recap.js';
+import { handleRecap } from '../../../loop/recap-rewind.js';
 import { createMockToolCall, createMockHookResult, createTurnVars, createPassData, createMockMachineEnv } from '../esc-test-helpers.js';
 import { Triologue } from '../../loop/triologue.js';
 ```
@@ -1277,11 +1276,12 @@ import { Triologue } from '../../loop/triologue.js';
 ```typescript
 it('should return PROMPT when ESC fires during recap and neglectedMode is true', async () => {
   const triologue = new Triologue();
-  // Set up triologue with a checkpoint so recap can find it
-  // (handleRecapCall calls triologue.getCheckpointManager().findById(id))
-  // ... need to mock getCheckpointManager() to return a manager stub
+  // recap resolves its anchor by SCANNING for the last unconsumed brief's
+  // tool result — there is no checkpoint id and no manager to stub. Seed the
+  // triologue with one complete brief round-trip instead:
+  //   agent(content, [brief call]) → tool('brief', 'OK.', callId)
 
-  const recapCall = createMockToolCall('recap', { checkpoint_id: 'abc12345' }, 'call-recap');
+  const recapCall = createMockToolCall('recap', { description: 'test recap' }, 'call-recap');
   const env = createMockMachineEnv({
     triologue,
     hookExecutor: {
@@ -1291,16 +1291,6 @@ it('should return PROMPT when ESC fires during recap and neglectedMode is true',
     },
   });
 
-  // Mock getCheckpointManager() to return a fake manager
-  (triologue as any).getCheckpointManager = vi.fn(() => ({
-    findById: (id: string) => ({
-      id: 'abc12345',
-      description: 'test checkpoint',
-      index: 0,
-    }),
-    findAll: () => [],
-    recap: vi.fn(),
-  }));
   vi.spyOn(triologue, 'getTokenCount').mockReturnValue(1000);
   vi.spyOn(triologue, 'getMessages').mockReturnValue([]);
 

@@ -14,8 +14,9 @@ import { myccTitleTool } from '../../tools/mycc_title.js';
 describe('myccTitleTool', () => {
   it('should have correct name and scope', () => {
     expect(myccTitleTool.name).toBe('mycc_title');
-    expect(myccTitleTool.scope).toContain('main');
-    expect(myccTitleTool.scope).toContain('child');
+    // MAIN-ONLY: the tool's whole effect is a terminal side effect, and a
+    // teammate's stdio is piped, so a child could never observe it.
+    expect(myccTitleTool.scope).toEqual(['main']);
   });
 
   it('should require title parameter', () => {

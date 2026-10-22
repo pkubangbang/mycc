@@ -16,7 +16,7 @@
  *     assistant bridge and resolve pending ids (same wiring as full facade).
  *  4. compact() swaps the store, recomputes tokens, and rebuilds project
  *     context at the boundary.
- *  5. Lead-only features are ABSENT: no wrap-up / checkpoint / hint-round /
+ *  5. Lead-only features are ABSENT: no wrap-up / recap-rewind / hint-round /
  *     loadRestoration / clear methods on the lite class.
  */
 

@@ -29,7 +29,7 @@ Each LLM call enters `LLM → HOOK`. From HOOK (and from LLM/TOOL/COLLECT), the 
 | Symbol | Path | Meaning |
 |--------|------|---------|
 | **T** | HOOK→TOOL→COLLECT | Tool calls executed, normal tool round |
-| **H** | HOOK→COLLECT | Hook-blocked / deferred messages / crossroad / checkpoint / recap → re-enter COLLECT |
+| **H** | HOOK→COLLECT | Hook-blocked / deferred messages / crossroad / recap / plan-mode brief reflection → re-enter COLLECT |
 | **W** | HOOK→STOP→COLLECT | No tools + team question/mail/timeout → STOP awaits → COLLECT |
 
 **Exits (end the loop):**
@@ -205,7 +205,7 @@ export class MockHarness {
     // Exits (E,X,P,S): E=ESC during LLM, X/P/S=LLM succeeds then exit fires downstream
     switch (sym) {
       case 'T': return createMockChatResponse({ toolCalls: [createMockToolCall('bash')] });
-      case 'H': return createMockChatResponse({ toolCalls: [createMockToolCall('checkpoint')] }); // triggers HOOK→COLLECT
+      case 'H': return createMockChatResponse({ toolCalls: [createMockToolCall('recap')] }); // triggers HOOK→COLLECT
       case 'W': return createMockChatResponse({ content: 'text only' }); // no tools → STOP awaits → COLLECT
       case 'E': throw new Error('ESC'); // simulates ESC during LLM
       case 'X': return createMockChatResponse({ content: 'text' }); // HOOK catch will fire

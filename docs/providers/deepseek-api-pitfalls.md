@@ -99,6 +99,6 @@ Opening tags may also carry attributes, e.g. a DSML-wrapped `invoke name="brief"
 
 **Fix:** Two choke points, display-only (raw content stays in the triologue):
 - `stripInternalMarkup()` matches the pipe as a per-side character class — ASCII `|` **or** fullwidth vline, `{1,2}` (single or double), on each side — and tolerates attributes on opening tags. The fast-path gate is now `includes('DSML')` (the invariant shared by every form), not `includes(FW_VLINE)`. Four pattern shapes are handled (paired, self-closing, opening-only, closing-only), for ASCII, fullwidth, and mixed forms alike.
-- All mid-loop brief sites in `hook.ts` (checkpoint, recap, crossroad, normal path) route content through `briefAssistantContent()`, which strips DSML first and skips the brief if nothing displayable remains.
+- All mid-loop brief sites in `hook.ts` (recap, crossroad, plan-mode reflection, normal path) route content through `briefAssistantContent()`, which strips DSML first and skips the brief if nothing displayable remains.
 
 **Files:** `src/utils/letter-box.ts` — `stripInternalMarkup()`; `src/loop/states/hook.ts` — `briefAssistantContent()`. Tests in `src/tests/letter-box.test.ts` (ASCII-pipe, fullwidth, and mixed cases).

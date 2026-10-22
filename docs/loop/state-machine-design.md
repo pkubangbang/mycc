@@ -16,7 +16,7 @@ The original `src/loop/agent-loop.ts` has been removed; the state machine in `sr
 | **slash** | Execute slash commands (e.g., `/team`, `/load`, `/help`). Bidirectional with PROMPT: PROMPT detects `/`, routes to SLASH, SLASH executes and returns to PROMPT. When a command sets `nextQuery` (e.g., `/load`), it is stored on `env.pendingSlashQuery` for the PROMPT handler to consume. | `src/loop/states/slash.ts` |
 | **collect** | Pre-LLM pipeline: child questions, mail collection, team status injection, steering queue drain (webui), file upload drain (webui), hint round (confusion ≥ 10), todo nudging (with peer channel state + pinned todo reactivation), brief nudging, worktree cleanup nudge, skill discovery from extracted keywords. | `src/loop/states/collect.ts` |
 | **llm** | Auto-compact (proactive via `needsCompact()` or deferred via `pass.deferredCompact`). Build system prompt, call `retryChat` with internal retry loop, handle abort. Crossroad detection (turning words → truncate + generate alternative continuation). Records a successful LLM stage (`recordLlmSuccess()` increments the streak — a pure counter; it does NOT engage auto mode). | `src/loop/states/llm.ts` |
-| **hook** | Augment tool calls with metadata. Evaluate hook conditions. Inject, replace, or block tool calls. Handle meta-tools (checkpoint, recap). Crossroad continuation injection. Handle deferred compact requests (sets `pass.deferredCompact`, actual compact runs at LLM stage). Branch to `tool` or `stop`. | `src/loop/states/hook.ts` |
+| **hook** | Augment tool calls with metadata. Evaluate hook conditions. Inject, replace, or block tool calls. Handle meta-tools (recap). Crossroad continuation injection. Handle deferred compact requests (sets `pass.deferredCompact`, actual compact runs at LLM stage). Branch to `tool` or `stop`. | `src/loop/states/hook.ts` |
 | **tool** | Execute tool calls sequentially. Handle ESC interruption, hook blocking, sequence tracking, ResultTooLargeError, confusion scoring (semantic duplication via embedding similarity, error results), keyword extraction from brief messages. | `src/loop/states/tool.ts` |
 | **stop** | Handle the no-tool-call case. Neglected mode wrap-up (ESC during LLM → display final response, exit auto mode if on). Await teammates (if any). Always transitions to `prompt` — PROMPT is the single decision point for the auto-redirect. | `src/loop/states/stop.ts` |
 | **wait** | Autonomous-mode block. Replaces prompting when auto mode is on. Blocks for an external event — new mail, a teammate state change (holding/working), or a webui steering note — then transitions to `collect`. ESC (or a programmatic `setAuto(false)`) exits auto mode and returns to `prompt`. Polls every 1s. | `src/loop/states/await.ts` |
@@ -64,7 +64,7 @@ type StateHandler = (
 | hook | has surviving tool calls | tool |
 | hook | no calls (all blocked or LLM produced none) | stop |
 | hook | compact requested (deferred) | collect |
-| hook | checkpoint/recap meta-tool | collect |
+| hook | recap meta-tool | collect |
 | hook | crossroad continuation | collect |
 | tool | all executed | collect |
 | tool | ESC interrupt | prompt |
@@ -151,7 +151,7 @@ src/loop/states/await.ts         — handleWait (autonomous-mode block)
 | crossroad detection | llm | `llm.ts`, `crossroad.ts` |
 | augmentToolCalls + processToolCalls | hook | `hook.ts` |
 | blocked call handling | hook | `hook.ts` |
-| checkpoint / recap meta-tools | hook | `hook.ts`, `checkpoint-recap.ts` |
+| recap meta-tool | hook | `hook.ts`, `recap-rewind.ts` |
 | no-tool branching | hook (→ tool or stop) | `hook.ts` |
 | tool execution loop | tool | `tool.ts` |
 | deferred messages | tool | `tool.ts` |

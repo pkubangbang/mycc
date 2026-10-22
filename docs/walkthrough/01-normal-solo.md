@@ -115,7 +115,7 @@ For example, a `lint-after-edit` hook might:
 - **Action**: `block` — prevent the commit until lint passes
 
 ### Meta-Tool Dispatch
-Two special tools — `checkpoint` and `recap` — are handled here, not in the regular TOOL state. They need access to the triologue, which is outside `AgentContext`. The HOOK state intercepts them and runs them directly.
+One special meta-tool — `recap` (and the plan-mode brief reflection) — is handled here, not in the regular TOOL state. (`checkpoint` was removed on 2026-10-21: every `brief` is now the rewind anchor.) They need access to the triologue, which is outside `AgentContext`. The HOOK state intercepts them and runs them directly.
 
 ### Crossroad Continuation Injection
 If crossroad was triggered in the LLM state, the selected continuation is injected here as a synthetic `brief()` call, replacing the original tool calls. The flow goes to COLLECT so the LLM can regenerate tool calls.

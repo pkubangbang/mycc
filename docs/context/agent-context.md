@@ -164,8 +164,9 @@ peer：跨实例 peer discovery 与通信
 
 `getReactivationCandidates()` — 返回带有重激活条件且已完成的 pinned todo，供 COLLECT 状态评估是否重新打开。
 
-### clear / getItems / findCheckpointTodo / closeCheckpointTodo
-`clear()` 清空列表。`getItems()` 返回所有项。`findCheckpointTodo(checkpointId)` 和 `closeCheckpointTodo(checkpointId)` 用于管理 checkpoint 自动创建的 todo。
+### clear / getItems
+`clear()` 清空列表。`getItems()` 返回所有项。
+（旧的 `findCheckpointTodo(checkpointId)` / `closeCheckpointTodo(checkpointId)` 已随 `checkpoint` 工具一并移除——`brief` 不再自动创建 todo，`recap` 也不再关闭 todo。）
 
 ## team
 

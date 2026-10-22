@@ -7,7 +7,8 @@ changelog:
   - "2026-10-21: `brief` description no longer teaches recap (teammates share its schema and cannot call recap); the contract moved to the lead-only `## Briefs and Recap` prompt section + the recap description."
   - "2026-10-21 (fix round): a FAILED recap rolls nothing back and writes nothing into an earlier brief's result — it is answered with a tool-call error, and the recap tool never counts as activity for anchor scanning (a successful recap writes its summary into the previous brief's tool result); the summary has a FLOOR (`hasUsableSummary`, empty ⇒ refuse instead of truncating) as well as a ceiling; the anchor is resolved once (`resolveAnchor` returns the tool-result index, an orphan brief is not an anchor); the TOCTOU token is the anchor brief's call id alone (no array index, no args; `anchorIdentity` deleted — a compare-and-swap token, not a locator); the legacy `checkpoint_id` field is deleted outright from `MindmapPatchAction` and from all patch writers (old jsonl files are not migrated). See docs/loop/brief-recap-loopholes.md."
   - "2026-10-21: `checkpoint` removed — every `brief` is now a rewind anchor and `recap` collapses back to the last one (see docs/loop/brief-and-recap-rewind.md). Recap args are now `description` / `abandon` / `comment`."
-  - "2026-08-13: Added missing tools: grep, read_read, todo_create, todo_update, todo_pinning, issue_publish, issue_list, peers, checkpoint, recap, mycc_title, skill_search"
+  - "2026-10-22: tool count 50 → 49; `mycc_title` and `read_read` narrowed to `['main']` (terminal side effect / longtext dumps are lead-only); `git_commit` removed from the teammate exclusion list (it is `['main', 'child']`); `checkpoint` purged from docs, comments and test snippets."
+  - "2026-08-13: Added missing tools: grep, read_read, todo_create, todo_update, todo_pinning, issue_publish, issue_list, peers, recap, mycc_title, skill_search"
   - "2026-08-13: Fixed scopes: question (child-only), git_commit (main+child), skill_compile (main+child), tm_print (main+child)"
   - "2026-08-13: Fixed bash params (added intent, timeout), ToolDefinition interface (JSONSchema7, signal), summary table"
   - "2026-08-13: Updated loader path from src/context/loader.ts to src/context/shared/registry.ts"
@@ -48,8 +49,8 @@ interface ToolDefinition {
 - Tools with `['child']` only available to teammate agents (e.g., `question`)
 
 **Summary:**
-- **Lead (main)**: All 50 built-in tools except `question` (child-only)
-- **Teammate (child)**: Cannot use `broadcast`, `tm_create`, `tm_remove`, `tm_await`, `hand_over`, `plan_on`, `plan_off`, `recap`, `peer_list`, `peer_connect`, `peer_disconnect`, `todo_pinning`, `git_commit` (main+child). `question` is child-only.
+- **Lead (main)**: All 49 built-in tools except `question` (child-only)
+- **Teammate (child)**: Cannot use `broadcast`, `tm_create`, `tm_remove`, `tm_await`, `hand_over`, `plan_on`, `plan_off`, `recap`, `peer_list`, `peer_connect`, `peer_disconnect`, `todo_pinning`, `mycc_title`, `read_read`. `question` is child-only. (`git_commit` IS available to teammates — it is `['main', 'child']`.)
 
 ---
 
@@ -325,9 +326,9 @@ interface ToolDefinition {
 
 **File**: `src/tools/mycc_title.ts`
 
-**Scope**: `['main', 'child']`
+**Scope**: `['main']`
 
-**Description**: Add a notification banner among the chat, to mark the change of topic in discussion.
+**Description**: Add a notification banner among the chat, to mark the change of topic in discussion. Lead-only: every effect is a terminal side effect (OSC title on stdout), which a teammate's piped stdio can never show.
 
 **Parameters**:
 | Name | Type | Required | Description |
@@ -779,9 +780,9 @@ interface ToolDefinition {
 
 **File**: `src/tools/read-read.ts`
 
-**Scope**: `['main', 'child']`
+**Scope**: `['main']`
 
-**Description**: Summarize long content from `.mycc/longtext/` files. Use when tool results are too large for context.
+**Description**: Summarize long content from `.mycc/longtext/` files. Use when tool results are too large for context. Lead-only: teammates do not produce longtext dumps (the teammate facade omits the result-threshold dump).
 
 **Parameters**:
 | Name | Type | Required | Description |
@@ -1224,7 +1225,7 @@ All three are `['main']` (lead only — child processes use NoopPeerModule). Rea
 | question | child | Communication |
 | mail_to | main, child | Communication |
 | broadcast | main | Communication |
-| mycc_title | main, child | Communication |
+| mycc_title | main | Communication |
 | issue_create | main, child | Issue Management |
 | issue_claim | main, child | Issue Management |
 | issue_close | main, child | Issue Management |
@@ -1243,7 +1244,7 @@ All three are `['main']` (lead only — child processes use NoopPeerModule). Rea
 | bg_await | main, child | Background Tasks |
 | screen | main, child | Screen & Image |
 | read_picture | main, child | Screen & Image |
-| read_read | main, child | Content Summarization |
+| read_read | main | Content Summarization |
 | todo_create | main, child | Task Management |
 | todo_update | main, child | Task Management |
 | todo_pinning | main | Task Management |

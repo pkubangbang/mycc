@@ -22,6 +22,17 @@
  * brief, so when that work is folded into a summary, the reflection is folded
  * with it. Nothing accumulates across recaps.
  *
+ * WHAT IT ASKS (the four escape-hatch checks)
+ * It is NOT a progress review. A plan can be executed perfectly and still be
+ * wrong, because every step optimised inside a frame nobody questioned. The
+ * four lines each attack that frame from a different angle:
+ *   TUNNEL     — break a rule, if the simplification beats the stated cost;
+ *   SUBLATE    — unify two warring requirements under one named invariant;
+ *   WRONG PRB  — would you still do this if the task had never been proposed?
+ *   REVERSIBLE — is this a one-way door, and is there a two-way equivalent?
+ * Every line admits "none", and the model has NO tools: when a check needs an
+ * unread file it must answer "needs read of <path>" rather than guess.
+ *
  * CONTRACT: never fail the brief. Any failure (fork throw, ESC, empty output,
  * no room) returns null and the caller stores the plain success result.
  */
@@ -35,20 +46,56 @@ const SCOPE_NOTE_OVERHEAD_CHARS = 512;
 /** The prompt. TEXT ONLY — the reflection must not take actions. */
 function buildPrompt(briefMessage: string): string {
   return [
-    'You are the same agent, in PLAN mode, reflecting on your own status update.',
+    'You are the same agent, in PLAN mode. This is not a progress check — it is the moment to',
+    'ask whether the problem you are solving is the right one at all.',
     '',
     `Your brief: ${briefMessage}`,
     '',
-    `Continue as one paragraph beginning "${PLAN_SCOPE_HEADING}, …" — 150-400 words, plain text, no tools.`,
-    'Make it a STEP BACK from the task, not a restatement of it. Be concrete (name files, decisions, risks).',
+    'LOCAL OPTIMA ARE THE FAILURE MODE. A plan can be perfectly executed and still be wrong,',
+    'because every step optimises inside a frame nobody questioned. Your job here is to question',
+    'the frame: to find the move that is cheap only if you make it NOW, and expensive later.',
     '',
-    'Address exactly these, in this order:',
-    '1. Is the work you are about to do serving what the user actually asked for, or have you drifted into a sub-problem?',
-    '2. What does this plan assume that you have NOT verified (files, APIs, behaviors, user intent)?',
-    '3. What will you regret not deciding now — an interface, an invariant, an ordering, a rollback path?',
-    '4. The next step that unlocks the most, and what you will abandon if it fails.',
+    'Everything you may cite must already appear above: the user\'s request, your tool calls and',
+    'their results. You have NO tools here — you cannot read anything new. If a check needs a',
+    'file you have not read, answer with "needs read of <path>" and nothing else: naming what',
+    'you must read is worth more than guessing what it says.',
     '',
-    'Do not restate the brief or recap your progress. Output text only.',
+    'Output plain text, exactly four lines, in this order, each starting with its label:',
+    '',
+    'TUNNEL: ...',
+    'SUBLATE: ...',
+    'WRONG PRB: ...',
+    'REVERSIBLE: ...',
+    '',
+    'TUNNEL — the quantum-tunnelling move. Is there a RULE (a scope declaration, an interface',
+    '  contract, a hook, a documented promise, a habit of this codebase) that, if broken now,',
+    '  would make this work SIMPLER? Give all three, in one line: the rule and where it lives',
+    '  (`file.ts:LINE` or a named contract); what simplification it buys, counted (tools / files /',
+    '  branches / states removed); and what it costs (who breaks, what must migrate, whether it',
+    '  can be undone). A rule break with no stated cost is not a tunnel, it is damage — omit it.',
+    '  A bare "none" is NOT acceptable: write `none — <one clause saying why no rule stands in',
+    '  the way here>`. Do NOT invent a tunnel to fill the line; do not hide behind the format',
+    '',
+    'SUBLATE — is one of the tensions you are carrying actually two projections of a SINGLE',
+    '  higher-order requirement? Write it as thesis vs antithesis, then name the synthesis as one',
+    '  invariant with a name you could put in a doc. Unifying a contradiction removes the conflict;',
+    '  breaking a rule only moves it (compare with TUNNEL — prefer this when both are available).',
+    '  `none — <one clause: the requirements here simply do not collide>`. A task list is not a',
+    '  tension, and saying so in one clause is the honest answer.',
+    '',
+    'WRONG PRB — stronger than "did I drift": if this task had never been proposed, would you',
+    '  still do this now? If not, say what you would do instead and why the user\'s phrasing',
+    '  points elsewhere. The cheaper equivalent of what was asked counts as an answer.',
+    '  Otherwise `no — <one clause naming what the user actually asked and why this serves it>`.',
+    '',
+    'REVERSIBLE — is the step you are about to take a one-way door? Name it if so. If a two-way',
+    '  equivalent exists that costs little more, name that instead. One-way doors with no',
+    '  alternative are exactly what locks a frame in place. `two-way — <the revert, named>` if',
+    '  that is the honest answer.',
+    '',
+    'Banned: restating the brief, recapping progress, and any sentence that would be equally true',
+    'of a different task ("consider the bigger picture", "there may be risks", "we should validate").',
+    'Every line must be checkable against a file, a named decision, or a user statement above.',
   ].join('\n');
 }
 
@@ -118,6 +165,56 @@ export async function buildPlanScopeNote(deps: PlanScopeDeps): Promise<string | 
   const body = stripReasoningEcho(out ?? '');
   if (!body) return null;
   return clamp(normalizeOpening(body), budget);
+}
+
+/**
+ * Render the reflection for the TERMINAL (the tool result keeps the raw form).
+ *
+ * The model answers in four labelled lines; a terminal block reads far better
+ * with a heading rule and one line per label than as a grey wall of text. Any
+ * line that does not carry a known label (a model that ignored the format) is
+ * passed through unchanged — the display must never drop content it does not
+ * recognise.
+ */
+// Labels the prompt asks for, in order. Kept as one alternation below so the
+// formatter re-cuts even when the model answers as a single run-on paragraph.
+/** Where each label's value ends and the NEXT label begins. */
+const LABEL_RE = /\b(TUNNEL|SUBLATE|WRONG PRB|REVERSIBLE)\b\s*[:\u2014-]\s*/gi;
+
+/** Display width of the label column (longest label is 10 chars). */
+const LABEL_WIDTH = 12;
+
+/**
+ * Render the reflection for the TERMINAL (the tool result keeps the raw form).
+ *
+ * The model answers in four labelled lines, but it does not always honour the
+ * newlines — a single long paragraph with all four labels inline is common. So
+ * a line-based split is not enough: the text is re-cut at the LABELS, giving
+ * one aligned row per label. Text that carries no label at all is passed
+ * through unchanged (the display must never drop, or reformat away, content it
+ * does not recognise).
+ */
+export function formatPlanScopeForDisplay(note: string): string {
+  const body = note.replace(new RegExp(`^\\s*${PLAN_SCOPE_HEADING}[,:]?\\s*`, 'i'), '').trim();
+  if (!body) return note;
+
+  const marks: Array<{ label: string; at: number; end: number }> = [];
+  for (const m of body.matchAll(LABEL_RE)) {
+    marks.push({ label: m[1].toUpperCase(), at: m.index ?? 0, end: m.index! + m[0].length });
+  }
+  if (marks.length === 0) return note; // unlabelled prose — show it verbatim
+
+  // A lead-in before the first label (e.g. "Serves the ask.") rides on the
+  // first row rather than becoming a stray line.
+  const head = body.slice(0, marks[0].at).replace(/^[,;\s]+|[,;\s]+$/g, '');
+  const rows = marks.map((mark, i) => {
+    const until = i + 1 < marks.length ? marks[i + 1].at : body.length;
+    const value = body.slice(mark.end, until).replace(/^[,;\s]+|[,;\s]+$/g, '');
+    const lead = i === 0 && head ? ` ${head}` : '';
+    return `${mark.label.padEnd(LABEL_WIDTH)}${lead}${value ? ` ${value}` : ''}`.trimEnd();
+  });
+
+  return ['── plan-scope ──────────────────────────────────', ...rows].join('\n');
 }
 
 /** The complete brief tool result: success line + the reflection paragraph. */

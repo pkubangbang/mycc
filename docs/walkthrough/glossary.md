@@ -37,14 +37,14 @@
 | 31 | MachineEnv | 机器环境 | Lifetime data tier: Triologue, AgentContext, HookExecutor, InputProvider. |
 | 32 | Mail | 邮件 | File-based async messaging between agents via JSONL files. |
 | 33 | markPromptBoundary | 标记提示边界 | Method that clears per-turn events, defining a turn boundary. |
-| 34 | Meta-Tool | 元工具 | checkpoint and recap — handled in HOOK state, not TOOL, because they need triologue access. |
+| 34 | Meta-Tool | 元工具 | `recap` (and the plan-mode brief reflection) — handled in HOOK state, not TOOL, because they need triologue access. `checkpoint` was removed: every `brief` is the rewind anchor. |
 | 35 | Mindmap | 思维导图 | Tree-structured knowledge system compiled from MYCC.md. |
 | 36 | Neglected Mode | 被忽略模式 | See ESC. |
 | 37 | Order | 指令 | Combined mail_to + tm_await into a single blocking call. |
 | 38 | PassData | 传递数据 | Per-pass data tier: tool calls, assistant content, hook results, crossroad continuation. |
 | 39 | Plan Mode | 计划模式 | Restricted mode where code changes are prohibited; only read-only tools work. |
 | 40 | PROMPT | PROMPT | State where the system waits for user input. |
-| 41 | Recap | 回顾 | Compresses all messages from a checkpoint into a structured summary. |
+| 41 | Recap | 回顾 | Rewinds to the last `brief` and rewrites that brief's tool result in place with a structured summary. |
 | 42 | retryChat | retryChat | LLM call with internal retry loop and exponential backoff. |
 | 43 | Sequence | 序列 | Query interface over conversation history for hook condition evaluation. |
 | 44 | Slash Command | 斜杠命令 | User commands starting with `/` that bypass the LLM (e.g., `/mode`, `/plan`). |

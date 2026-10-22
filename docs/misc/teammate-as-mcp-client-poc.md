@@ -71,7 +71,7 @@ extra round-trip.
   - 36 are `['main','child']`; 1 is `['child']`-only (`question`).
   - 13 are `['main']`-only and therefore **hidden** from teammates:
     `todo_pinning, tm_create, tm_remove, tm_await, broadcast, hand_over,
-    plan_on, plan_off, checkpoint, recap, peer_list, peer_connect,
+    plan_on, plan_off, recap, peer_list, peer_connect,
     peer_disconnect`.
 - Lead sees `36 + 13 = 49`.
 - Custom tools present: **0** (`.mycc/tools/` and `~/.mycc-store/tools/` are

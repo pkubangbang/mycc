@@ -122,6 +122,10 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
   plan_on: chalk.magenta,
   plan_off: chalk.magenta,
   mode_change: chalk.magenta,
+  // PLAN-mode reflection appended to a brief (loop/plan-scope.ts). Its own
+  // label so the reflection reads as a separate block from the brief body.
+  'plan-scope': chalk.magenta,
+  plan_scope: chalk.magenta,
 
   // Hooks
   hook: chalk.gray,

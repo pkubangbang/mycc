@@ -267,12 +267,16 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
   let lastHeartbeatTime = Date.now();
   let nextTimeNudge = TIME_NUDGE_INTERVAL;
 
-  // Tools that modify state (progress indicators)
+  // Tools that modify state (progress indicators).
+  // NOTE: `broadcast` is deliberately absent — it is main-only, so a child can
+  // never call it and the entry could never fire. Listing it here would only
+  // suggest the child has a broadcast path it does not have (ChildTeam had a
+  // request-forwarding stub, now deleted: no `team_broadcast` IPC exists).
   const ACTION_TOOLS = new Set([
     'write_file', 'edit_file', 'todo_create', 'todo_update', 'issue_create', 'issue_close',
     'issue_claim', 'issue_comment', 'blockage_create', 'blockage_remove',
     'tm_create', 'tm_remove', 'bg_create',
-    'bg_remove', 'mail_to', 'broadcast', 'git_commit',
+    'bg_remove', 'mail_to', 'git_commit',
   ]);
 
   // Read-only bash classification is derived from the command's INTENT verb

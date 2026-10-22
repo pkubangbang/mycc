@@ -115,7 +115,7 @@ LLM 响应后，**十字路口**系统扫描 LLM 输出中的**转折词**——
 - **动作**：`block`——阻止提交直到 lint 通过
 
 ### 元工具分发
-两个特殊工具——`checkpoint` 和 `recap`——在这里处理，而不是在常规的 TOOL 状态。它们需要访问 triologue，这在 `AgentContext` 之外。HOOK 状态拦截它们并直接运行。
+一个特殊元工具——`recap`（以及 PLAN 模式下 brief 的 scope 反思）——在这里处理，而不是在常规的 TOOL 状态。（`checkpoint` 已于 2026-10-21 移除：现在每个 `brief` 就是回卷锚点。）它们需要访问 triologue，这在 `AgentContext` 之外。HOOK 状态拦截它们并直接运行。
 
 ### 十字路口续写注入
 如果十字路口在 LLM 状态中被触发，选定的续写在这里作为合成的 `brief()` 调用注入，替换原始的工具调用。流程转到 COLLECT，让 LLM 重新生成工具调用。

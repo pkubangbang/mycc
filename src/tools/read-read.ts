@@ -26,7 +26,11 @@ export const readReadTool: ToolDefinition = {
     },
     required: ['file', 'focus']
   },
-  scope: ['main', 'child'],
+  // MAIN-ONLY: longtext dumps are a lead-loop feature. The teammate facade
+  // (loop/triologue-lite.ts) deliberately omits the result-threshold longtext
+  // dump — teammates accept large tool results as-is — so a child never
+  // produces .mycc/longtext entries and this tool could only ever miss.
+  scope: ['main'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> => {
     const filePath = args.file as string;
     const focus = args.focus as string;
