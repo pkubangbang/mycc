@@ -54,7 +54,7 @@ describe('screenTool detectEnvironment memoization + probe arg', () => {
   }
 
   it('probes the environment exactly once across multiple screen calls (probe default false reuses cache)', async () => {
-    const ctx = createMockContext({ workdir: tempDir });
+    const ctx = createMockContext(tempDir);
     vi.mocked(ctx.core.imgDescribe).mockResolvedValue('screen content');
 
     // First call: detectEnvironment probes the candidate list.
@@ -70,7 +70,7 @@ describe('screenTool detectEnvironment memoization + probe arg', () => {
   });
 
   it('re-probes when probe=true is passed (e.g. after a tool was installed mid-session)', async () => {
-    const ctx = createMockContext({ workdir: tempDir });
+    const ctx = createMockContext(tempDir);
     vi.mocked(ctx.core.imgDescribe).mockResolvedValue('screen content');
 
     await screenTool.handler(ctx, {});
@@ -91,7 +91,7 @@ describe('screenTool detectEnvironment memoization + probe arg', () => {
   });
 
   it('accepts probe=false explicitly and still reuses the cache', async () => {
-    const ctx = createMockContext({ workdir: tempDir });
+    const ctx = createMockContext(tempDir);
     vi.mocked(ctx.core.imgDescribe).mockResolvedValue('screen content');
 
     await screenTool.handler(ctx, { probe: false });

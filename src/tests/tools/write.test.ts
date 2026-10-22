@@ -15,7 +15,7 @@ describe('writeTool', () => {
 
   beforeEach(() => {
     tempDir = createTempDir();
-    ctx = createMockContext({ workdir: tempDir });
+    ctx = createMockContext(tempDir);
   });
 
   afterEach(() => {
@@ -280,4 +280,10 @@ describe('writeTool', () => {
     expect(buf[3]).toBe(0x48); // 'H' immediately after the single BOM
   });
 
+  it('should have correct metadata', () => {
+    expect(writeTool.name).toBe('write_file');
+    expect(writeTool.scope).toEqual(['main', 'child']);
+    expect(writeTool.input_schema.required).toContain('path');
+    expect(writeTool.input_schema.required).toContain('content');
+  });
 });

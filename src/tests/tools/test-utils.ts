@@ -9,13 +9,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { vi } from 'vitest';
-import type { AskResult } from '../../types.js';
+import type { AgentContext, CoreModule, AskResult } from '../../types.js';
 
 // Re-export comprehensive mock utilities
-import { createMockContext as createSharedMockContext, type MockContextOptions } from '../test-utils/index.js';
-
-export { createMinimalMockContext } from '../test-utils/index.js';
-export { createMockContext as createFullMockContext } from '../test-utils/mock-context.js';
+export { createMockContext as createFullMockContext, createMinimalMockContext } from '../test-utils/mock-context.js';
 
 /**
  * Wrap a plain answer string into an AskResult (the shape Core.question()
@@ -35,26 +32,76 @@ export function askResult(answer: string, source: 'user' | 'auto' = 'user'): Ask
 }
 
 /**
- * AgentContext factory for tool tests.
- *
- * Delegates every module to the shared factories (single source of truth) but
- * keeps one tool-specific default: requestExternalPathAccess DENIES with
- * 'Path escapes workspace'. Tool tests rely on that denial to assert the
- * path-traversal / out-of-workspace guards; the shared default approves so
- * that non-tool suites can exercise the granted path.
+ * Create a minimal mock AgentContext with a temporary work directory
+ * For full mock context with all modules, use createFullMockContext from mock-context.ts
  */
-export function createMockContext(options: MockContextOptions = {}): ReturnType<typeof createSharedMockContext> {
-  return createSharedMockContext({
-    ...options,
-    core: {
-      requestExternalPathAccess: vi.fn(async () => ({
-        approved: false,
-        resolvedPath: '',
-        reason: 'Path escapes workspace',
-      })),
-      ...options.core,
-    },
-  });
+export function createMockContext(workdir: string): AgentContext {
+  const core: CoreModule = {
+    getWorkDir: () => workdir,
+    setWorkDir: vi.fn(),
+    getName: () => 'test-agent',
+    brief: vi.fn(),
+    verbose: vi.fn(),
+    question: vi.fn(),
+    webSearch: vi.fn(),
+    webFetch: vi.fn(),
+    imgDescribe: vi.fn(),
+    readPictureCached: vi.fn(),
+    requestGrant: vi.fn(async () => ({ approved: true })),
+    requestExternalPathAccess: vi.fn(async () => ({ approved: false, resolvedPath: '', reason: 'Path escapes workspace' })),
+    addExternalAutoGrant: vi.fn(),
+    getMode: vi.fn(() => 'normal' as const),
+    // Auto mode is lead-only; default false so existing tests that hit the
+    // denied branch keep returning "Commit cancelled by user". Individual
+    // tests override getAuto via vi.mocked(ctx.core.getAuto).mockReturnValue(true).
+    getAuto: vi.fn(() => false),
+    setAuto: vi.fn(),
+    getMindmap: vi.fn(() => null),
+    isPlainOutput: vi.fn(() => false),
+    setMindmap: vi.fn(),
+    getConfusionIndex: vi.fn(() => 0),
+    increaseConfusionIndex: vi.fn(),
+    resetConfusionIndex: vi.fn(),
+    escAware: (vi.fn() as unknown) as CoreModule['escAware'],
+  };
+
+  return {
+    core,
+    todo: {
+      createTodo: vi.fn(),
+    } as never,
+    mail: {} as never,
+    skill: {} as never,
+    issue: {} as never,
+    bg: {
+      runCommand: vi.fn(),
+      getOutput: vi.fn(),
+      list: vi.fn(),
+      remove: vi.fn(),
+      awaitExit: vi.fn(),
+    } as never,
+    team: {} as never,
+    wiki: {
+      indexSkills: vi.fn().mockResolvedValue(undefined),
+    } as never,
+    peer: {
+      listIdentities: vi.fn(() => []),
+      isFresh: vi.fn(() => false),
+      listChannels: vi.fn(() => []),
+      joinChannel: vi.fn(() => ({ joined: false })),
+      sendMail: vi.fn(() => false),
+      sendPeerMail: vi.fn(() => false),
+      hasActiveChannel: vi.fn(() => false),
+      start: vi.fn(),
+      stop: vi.fn(),
+      getSelfSessionId: vi.fn(() => ''),
+      recordBrief: vi.fn(),
+      getBriefs: vi.fn(() => []),
+      getLatestHeartbeat: vi.fn(() => null),
+      getPid: vi.fn(() => null),
+      setOnChannelJoin: vi.fn(),
+    } as never,
+  };
 }
 
 /**

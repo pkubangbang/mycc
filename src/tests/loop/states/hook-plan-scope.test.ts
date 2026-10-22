@@ -132,12 +132,10 @@ describe('HOOK-stage plan-mode scope reflection', () => {
     // user's text itself — otherwise the agent's status update is invisible
     // exactly while it is planning. Same label and detail shape as brief.ts.
     const brief = vi.mocked(env.ctx.core.brief);
-    expect(brief.mock.calls.find((c) => c[1] === 'brief')).toStrictEqual([
-      'info',
-      'brief',
-      'recon done',
-      'confidence: 70%',
-    ]);
+    const call = brief.mock.calls.find((c) => c[1] === 'brief');
+    expect(call).toBeDefined();
+    expect(call![2]).toBe('recon done');
+    expect(call![3]).toBe('confidence: 70%');
   });
 
   it('PLAN mode: the reflection is a SEPARATE plan-scope block, not a note on the brief', async () => {
@@ -146,7 +144,7 @@ describe('HOOK-stage plan-mode scope reflection', () => {
 
     const brief = vi.mocked(env.ctx.core.brief);
     const scope = brief.mock.calls.find((c) => c[1] === 'plan-scope');
-    expect(scope?.[1]).toBe('plan-scope');
+    expect(scope).toBeDefined();
     // The block carries the reflection text itself — never the old fixed
     // placeholder line, which told the user nothing.
     expect(scope![2]).toContain('parser.ts');

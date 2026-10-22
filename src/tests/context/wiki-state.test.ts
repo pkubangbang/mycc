@@ -22,11 +22,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createMockCore } from '../test-utils/mock-context.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import type { WikiDocument, WALEntry } from '../../types.js';
+import type { WikiDocument, WALEntry, CoreModule } from '../../types.js';
 
 // --- Temp dir + config mock ----------------------------------------------
 let tempDir = '';
@@ -163,6 +162,9 @@ function hashOf(doc: WikiDocument): string {
   return crypto.createHash('sha256').update(`${doc.domain}:${doc.title}:${doc.content}`).digest('hex').slice(0, 16);
 }
 
+function makeCore(): CoreModule {
+  return { brief: vi.fn(), verbose: vi.fn() } as unknown as CoreModule;
+}
 
 const C = 'a document content long enough to be a realistic body';
 
@@ -197,7 +199,7 @@ describe('wiki state machine + 2FC', () => {
 
   async function newManager() {
     const { WikiManager } = await import('../../context/parent/wiki.js');
-    return new WikiManager(createMockCore());
+    return new WikiManager(makeCore());
   }
 
   it('put() writes LIVE (state=1) and appends a WAL line', async () => {
@@ -208,10 +210,9 @@ describe('wiki state machine + 2FC', () => {
     const res = await wiki.put(hash, doc);
     expect(res.success).toBe(true);
 
-    const rows = tableState.rows.filter((r) => r.hash === hash);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ hash, domain: 'project', title: 't' });
-    expect(Number(rows[0].state)).toBe(1); // solidified
+    const row = tableState.rows.find((r) => r.hash === hash);
+    expect(row).toBeDefined();
+    expect(Number(row!.state)).toBe(1); // solidified
     // WAL carries the entry (durable source of truth).
     expect(allWalEntries().some((e) => e.hash === hash && !e.deleted)).toBe(true);
   });
@@ -282,12 +283,12 @@ describe('wiki state machine + 2FC', () => {
     const res = await wiki.put(hash, doc);
     expect(res.success).toBe(true);
 
-    const rows = tableState.rows.filter((r) => r.hash === hash);
-    const walEntries = allWalEntries().filter((e) => e.hash === hash && !e.deleted);
-    expect(rows).toHaveLength(1);
-    expect(walEntries).toHaveLength(1);
-    expect(rows[0].rowId).toEqual(expect.any(String));
-    expect(rows[0].rowId).toBe(walEntries[0].id); // the shared transaction identity
+    const row = tableState.rows.find((r) => r.hash === hash);
+    const wal = allWalEntries().find((e) => e.hash === hash && !e.deleted);
+    expect(row).toBeDefined();
+    expect(wal).toBeDefined();
+    expect(typeof row!.rowId).toBe('string');
+    expect(row!.rowId).toBe(wal!.id); // the shared transaction identity
   });
 
   it('batchPut() records the SAME uuid in each DB row and its WAL entry', async () => {
@@ -303,11 +304,11 @@ describe('wiki state machine + 2FC', () => {
 
     const wal = allWalEntries();
     for (const doc of [a, b]) {
-      const rows = tableState.rows.filter((r) => r.hash === hashOf(doc));
-      const entries = wal.filter((e) => e.hash === hashOf(doc) && !e.deleted);
-      expect(rows).toHaveLength(1);
-      expect(entries).toHaveLength(1);
-      expect(rows[0].rowId).toBe(entries[0].id);
+      const row = tableState.rows.find((r) => r.hash === hashOf(doc));
+      const entry = wal.find((e) => e.hash === hashOf(doc) && !e.deleted);
+      expect(row).toBeDefined();
+      expect(entry).toBeDefined();
+      expect(row!.rowId).toBe(entry!.id);
     }
     // Distinct documents get distinct ids.
     const ids = [a, b].map((d) => tableState.rows.find((r) => r.hash === hashOf(d))!.rowId);

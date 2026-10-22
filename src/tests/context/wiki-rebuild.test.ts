@@ -22,11 +22,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createMockCore } from '../test-utils/mock-context.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import type { WikiDocument, WALEntry } from '../../types.js';
+import type { WikiDocument, WALEntry, CoreModule } from '../../types.js';
 
 // --- Temp dir + config mock ----------------------------------------------
 let tempDir = '';
@@ -177,6 +176,9 @@ function walBytes(): number {
     .reduce((sum, f) => sum + fs.statSync(path.join(logsDir(), f)).size, 0);
 }
 
+function makeCore(): CoreModule {
+  return { brief: vi.fn(), verbose: vi.fn() } as unknown as CoreModule;
+}
 
 // Content >= 1 char is fine here — rebuild does NOT run put()'s length checks.
 const C = 'a document content long enough to be realistic';
@@ -201,7 +203,7 @@ describe('WikiManager.rebuild()', () => {
 
   async function newManager() {
     const { WikiManager } = await import('../../context/parent/wiki.js');
-    return new WikiManager(createMockCore());
+    return new WikiManager(makeCore());
   }
 
   it('embeds in BATCHES (getEmbeddings), not one call per entry', async () => {
@@ -401,7 +403,7 @@ describe('WikiManager.batchPut() — alreadyExisted reporting', () => {
 
   async function newManager() {
     const { WikiManager } = await import('../../context/parent/wiki.js');
-    return new WikiManager(createMockCore());
+    return new WikiManager(makeCore());
   }
 
   it('flags a pre-existing hash alreadyExisted:true and a fresh one as a plain insert — in one batch', async () => {

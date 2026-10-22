@@ -20,7 +20,7 @@ describe('planOffTool', () => {
 
   beforeEach(() => {
     tempDir = createTempDir();
-    ctx = createMockContext({ workdir: tempDir });
+    ctx = createMockContext(tempDir);
     vi.clearAllMocks();
     // Default: in plan mode so the confirmation prompt is reached
     vi.mocked(ctx.core.getMode).mockReturnValue('plan');
@@ -113,4 +113,8 @@ describe('planOffTool', () => {
     });
   });
 
+  describe('tool metadata', () => {
+    it('should have correct name', () => { expect(planOffTool.name).toBe('plan_off'); });
+    it('should have main-only scope', () => { expect(planOffTool.scope).toEqual(['main']); });
+  });
 });

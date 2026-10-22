@@ -28,7 +28,7 @@ describe('bg-create', () => {
 
     beforeEach(() => {
       tempDir = createTempDir();
-      ctx = createMockContext({ workdir: tempDir });
+      ctx = createMockContext(tempDir);
       vi.clearAllMocks();
     });
 

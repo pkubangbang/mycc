@@ -458,7 +458,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     );
     // The two boosted skills clear the floor; the two unboosted (10.0) do not.
     const hintCall = vi.mocked(triologue.note).mock.calls.find(c => c[0] === 'HINT');
-    expect(hintCall?.[0]).toBe('HINT');
+    expect(hintCall).toBeDefined();
     const hintContent = hintCall ? String(hintCall[1]) : '';
     expect(hintContent).toContain('skill-3');
     expect(hintContent).toContain('skill-0');

@@ -41,7 +41,7 @@ describe('skill-load-basics', () => {
       buildAllSkillEntries: vi.fn(() => []),
     };
 
-    const ctx = createMockContext({ workdir });
+    const ctx = createMockContext(workdir);
     ctx.skill = skillModule;
     return ctx;
   }
@@ -209,7 +209,7 @@ describe('skill-load-content', () => {
       buildAllSkillEntries: vi.fn(() => []),
     };
 
-    const ctx = createMockContext({ workdir });
+    const ctx = createMockContext(workdir);
     ctx.skill = skillModule;
     return ctx;
   }
@@ -404,7 +404,7 @@ describe('skill-load-errors', () => {
       buildAllSkillEntries: vi.fn(() => []),
     };
 
-    const ctx = createMockContext({ workdir });
+    const ctx = createMockContext(workdir);
     ctx.skill = skillModule;
     return ctx;
   }

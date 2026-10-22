@@ -30,7 +30,7 @@ describe('bashTool', () => {
 
   beforeEach(() => {
     tempDir = createTempDir();
-    ctx = createMockContext({ workdir: tempDir });
+    ctx = createMockContext(tempDir);
     vi.clearAllMocks();
   });
 
@@ -328,6 +328,19 @@ describe('bashTool', () => {
     expect(displayCalls).toHaveLength(0);
   });
 
+  it('should have correct metadata', () => {
+    expect(bashTool.name).toBe('bash');
+    expect(bashTool.scope).toEqual(['main', 'child']);
+    expect(bashTool.input_schema.required).toContain('command');
+    expect(bashTool.input_schema.required).toContain('intent');
+    // timeout is optional — coerced to a safe default (30) when omitted, so it
+    // is intentionally NOT in `required`. This prevents the guaranteed
+    // first-call failure when the LLM omits timeout.
+    expect(bashTool.input_schema.required).not.toContain('timeout');
+    // display is optional — defaults to false (no terminal display).
+    expect(bashTool.input_schema.required).not.toContain('display');
+    expect(bashTool.input_schema.properties).toHaveProperty('display');
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -344,7 +357,7 @@ describe('bashTool timeout coercion', () => {
 
   beforeEach(() => {
     tempDir = createTempDir();
-    ctx = createMockContext({ workdir: tempDir });
+    ctx = createMockContext(tempDir);
     vi.clearAllMocks();
   });
 

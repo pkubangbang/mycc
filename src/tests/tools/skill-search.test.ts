@@ -88,7 +88,7 @@ function createMockContextWithSkills(
     getDomain: vi.fn().mockResolvedValue(undefined),
   };
 
-  const ctx = createMockContext({ workdir });
+  const ctx = createMockContext(workdir);
   ctx.skill = skillModule;
   ctx.wiki = wikiModule;
   return ctx;
@@ -148,6 +148,15 @@ describe('skillSearchTool - Basics', () => {
   // =========================================================================
   // Metadata
   // =========================================================================
+
+  it('should have correct tool metadata', () => {
+    expect(skillSearchTool.name).toBe('skill_search');
+    expect(skillSearchTool.description).toContain('Search skills by keywords');
+    expect(skillSearchTool.scope).toEqual(['main', 'child']);
+    expect(skillSearchTool.input_schema.required).toContain('search');
+    expect(skillSearchTool.input_schema.properties).toHaveProperty('search');
+    expect(skillSearchTool.input_schema.properties).toHaveProperty('semantic');
+  });
 
   // =========================================================================
   // Positional scoring — weights [10,7,5,3,2]
@@ -397,7 +406,7 @@ describe('skillSearchTool - Basics', () => {
       listDomains: vi.fn().mockResolvedValue([]),
       getDomain: vi.fn().mockResolvedValue(undefined),
     };
-    const ctx2 = createMockContext({ workdir: '/tmp/test' });
+    const ctx2 = createMockContext('/tmp/test');
     ctx2.skill = skillModule;
     ctx2.wiki = wikiModule;
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });

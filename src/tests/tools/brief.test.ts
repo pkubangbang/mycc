@@ -13,7 +13,7 @@ describe('briefTool', () => {
 
   beforeEach(() => {
     tempDir = createTempDir();
-    ctx = createMockContext({ workdir: tempDir });
+    ctx = createMockContext(tempDir);
     vi.clearAllMocks();
   });
 
@@ -85,7 +85,27 @@ describe('briefTool', () => {
 
   });
 
-  describe('confusion-index integration', () => {
+  describe('tool metadata and integration', () => {
+    it('should have correct tool name', () => {
+      expect(briefTool.name).toBe('brief');
+    });
+
+    it('should have correct scope (main and child)', () => {
+      expect(briefTool.scope).toEqual(['main', 'child']);
+    });
+
+    it('should require message parameter', () => {
+      expect(briefTool.input_schema.required).toContain('message');
+    });
+
+    it('should require confidence parameter', () => {
+      expect(briefTool.input_schema.required).toContain('confidence');
+    });
+
+
+
+
+
     it('should update confusion index based on confidence', () => {
       // High confidence (10) should reduce confusion (delta = 8 - 10 = -2)
       briefTool.handler(ctx, { message: 'test', confidence: 10 });

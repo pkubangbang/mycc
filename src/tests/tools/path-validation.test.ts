@@ -56,7 +56,7 @@ describe('path validation', () => {
 
   beforeEach(() => {
     tempDir = createTempDir();
-    ctx = createMockContext({ workdir: tempDir });
+    ctx = createMockContext(tempDir);
   });
 
   afterEach(() => {

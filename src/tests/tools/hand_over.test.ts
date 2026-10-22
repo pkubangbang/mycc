@@ -90,7 +90,7 @@ describe('Cluster A — hand_over intent validation', () => {
 
   beforeEach(() => {
     tempDir = createTempDir();
-    ctx = createMockContext({ workdir: tempDir });
+    ctx = createMockContext(tempDir);
     vi.clearAllMocks();
   });
 
@@ -198,7 +198,7 @@ describe('Cluster B — P1-1 tmux nesting self-check', () => {
 
   beforeEach(() => {
     tempDir = createTempDir();
-    ctx = createMockContext({ workdir: tempDir });
+    ctx = createMockContext(tempDir);
     vi.clearAllMocks();
     savedTmux = process.env.TMUX;
   });
@@ -374,7 +374,7 @@ describe('Cluster C — empty command opens an interactive shell (no "undefined"
 
   beforeEach(() => {
     tempDir = createTempDir();
-    ctx = createMockContext({ workdir: tempDir });
+    ctx = createMockContext(tempDir);
     vi.clearAllMocks();
   });
 
@@ -453,7 +453,7 @@ describe('Cluster D — 弱点2 summarizeOutput fallback + parseTerminalArgs', (
 
   beforeEach(() => {
     tempDir = createTempDir();
-    ctx = createMockContext({ workdir: tempDir });
+    ctx = createMockContext(tempDir);
     vi.clearAllMocks();
     // Default: ask returns 'n' (killSession path → summarizeOutput branch).
     vi.mocked(agentIO.ask).mockResolvedValue('n');

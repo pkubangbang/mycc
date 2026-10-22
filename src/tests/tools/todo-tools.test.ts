@@ -24,7 +24,7 @@ describe('todo-create', () => {
       findByPreviousHash: vi.fn(() => null),
       getReactivationCandidates: vi.fn(() => []),
     };
-    const ctx = createMockContext({ workdir: '/tmp/test' });
+    const ctx = createMockContext('/tmp/test');
     ctx.todo = mockTodo;
     return { ctx, mockTodo };
   }
@@ -154,7 +154,7 @@ describe('todo-update', () => {
       findByPreviousHash: vi.fn(() => null),
       getReactivationCandidates: vi.fn(() => []),
     };
-    const ctx = createMockContext({ workdir: '/tmp/test' });
+    const ctx = createMockContext('/tmp/test');
     ctx.todo = mockTodo;
     return { ctx, mockTodo };
   }

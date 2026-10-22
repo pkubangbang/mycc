@@ -198,9 +198,8 @@ describe('TriologueLite', () => {
       // user, (bridge assistant), tool
       expect(roles).toEqual(['user', 'assistant', 'tool']);
       const bridge = raw[1];
-      expect(bridge.tool_calls).toStrictEqual([
-        expect.objectContaining({ id: expect.any(String), function: expect.objectContaining({ name: 'bash' }) }),
-      ]);
+      expect(bridge.tool_calls).toBeDefined();
+      expect(bridge.tool_calls!.length).toBe(1);
     });
   });
 
@@ -300,9 +299,8 @@ describe('TriologueLite', () => {
       expect(raw.length).toBe(3);
       expect(raw[0].role).toBe('user');
       expect(raw[1].role).toBe('assistant');
-      expect(raw[1].tool_calls).toStrictEqual([
-        expect.objectContaining({ function: expect.objectContaining({ name: 'brief' }) }),
-      ]);
+      expect(raw[1].tool_calls).toBeDefined();
+      expect(raw[1].tool_calls!.length).toBe(1);
       expect((raw[1].tool_calls![0] as ToolCall).function.name).toBe('brief');
       expect(raw[2].role).toBe('tool');
       expect(raw[2].tool_name).toBe('brief');

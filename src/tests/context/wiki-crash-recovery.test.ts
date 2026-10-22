@@ -32,11 +32,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createMockCore } from '../test-utils/mock-context.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import type { WikiDocument, WALEntry } from '../../types.js';
+import type { WikiDocument, WALEntry, CoreModule } from '../../types.js';
 
 // --- Temp dir + config mock ----------------------------------------------
 let tempDir = '';
@@ -235,6 +234,9 @@ function hashOf(doc: WikiDocument): string {
   return crypto.createHash('sha256').update(`${doc.domain}:${doc.title}:${doc.content}`).digest('hex').slice(0, 16);
 }
 
+function makeCore(): CoreModule {
+  return { brief: vi.fn(), verbose: vi.fn() } as unknown as CoreModule;
+}
 
 const C = 'a document content long enough to be a realistic wiki body';
 
@@ -302,7 +304,7 @@ describe('wiki crash recovery (WAL-as-truth, fault-injected)', () => {
 
   async function newManager() {
     const { WikiManager } = await import('../../context/parent/wiki.js');
-    return new WikiManager(createMockCore());
+    return new WikiManager(makeCore());
   }
 
   /**

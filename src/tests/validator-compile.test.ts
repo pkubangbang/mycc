@@ -18,7 +18,9 @@ describe('compileCondition()', () => {
       const result = await compileCondition(jsonResponse, 'run lint before commit', 'test-skill', 0);
 
       expect(result.success).toBe(true);
-      expect(result.condition).toMatchObject({ trigger: ['git_commit'], version: 1 });
+      expect(result.condition).toBeDefined();
+      expect(result.condition?.trigger).toEqual(['git_commit']);
+      expect(result.condition?.version).toBe(1);
     });
 
     it('should increment version for existing conditions', async () => {
@@ -94,10 +96,8 @@ describe('compileCondition()', () => {
       const result = await compileCondition(jsonResponse, 'test', 'test-skill', 0);
 
       expect(result.success).toBe(false);
-      expect(result).toMatchObject({
-        success: false,
-        error: expect.stringMatching(/not allowed|Forbidden|invalid/i),
-      });
+      expect(result.error).toBeDefined();
+      expect(result.error).toMatch(/not allowed|Forbidden|invalid/i);
     });
 
     it('should fail on expression syntax error', async () => {
@@ -110,10 +110,8 @@ describe('compileCondition()', () => {
       const result = await compileCondition(jsonResponse, 'test', 'test-skill', 0);
 
       expect(result.success).toBe(false);
-      expect(result).toMatchObject({
-        success: false,
-        error: expect.stringMatching(/Validation failed|syntax|Expected/i),
-      });
+      expect(result.error).toBeDefined();
+      expect(result.error).toMatch(/Validation failed|syntax|Expected/i);
     });
   });
 });

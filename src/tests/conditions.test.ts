@@ -86,8 +86,22 @@ describe("ConditionRegistry", () => {
       fs.writeFileSync(conditionsFile, JSON.stringify(conditions, null, 2));
       await registry.load();
 
-      expect(registry.get("pre-commit-lint")).toBeDefined();
-      expect(registry.get("block-dangerous-push")).toBeDefined();
+      expect(registry.get("pre-commit-lint")).toMatchObject({
+        trigger: ["git_commit"],
+        when: "run lint before commit",
+        condition: 'turn.count("edit_file") > 0 && turn.lastIndex("bash#pnpm lint") == -1',
+        action: {
+          type: "inject_before",
+          tool: "bash",
+          args: { command: "pnpm lint", intent: "TEST ARTIFACT TO verify lint before commit" },
+        },
+        version: 1,
+      });
+      expect(registry.get("block-dangerous-push")).toMatchObject({
+        trigger: ["bash"],
+        action: { type: "block", reason: "Dangerous push to main is prohibited" },
+        version: 1,
+      });
     });
 
     it("should handle invalid JSON gracefully", async () => {
@@ -205,7 +219,13 @@ describe("ConditionRegistry", () => {
       expect(fs.existsSync(conditionsFile)).toBe(true);
       const content = fs.readFileSync(conditionsFile, "utf-8");
       const parsed = JSON.parse(content);
-      expect(parsed["test-skill"]).toBeDefined();
+      expect(parsed["test-skill"]).toMatchObject({
+        trigger: ["bash"],
+        when: "test",
+        condition: "true",
+        action: { type: "message" },
+        version: 1,
+      });
     });
 
     it("should create directory if missing", async () => {
@@ -414,8 +434,14 @@ describe("ConditionRegistry", () => {
       fs.writeFileSync(conditionsFile, JSON.stringify(conditions, null, 2));
       const result = await registry.load();
 
-      expect(registry.get("valid-hook")).toBeDefined();
-      expect(result.legacyConditions).toHaveLength(0);
+      expect(registry.get("valid-hook")).toMatchObject({
+        trigger: ["git_commit"],
+        when: "run lint before commit",
+        condition: 'turn.lastIndex("bash#pnpm lint") == -1',
+        action: { type: "block", reason: "Run lint first" },
+        version: 1,
+      });
+      expect(result).toMatchObject({ legacyConditions: [], errors: [] });
     });
 
     it("should handle array instead of object (no conditions loaded)", async () => {
@@ -437,7 +463,9 @@ describe("ConditionRegistry", () => {
       const result = await registry.save();
       // save() must not throw; it reports the failure via the result object.
       expect(result.success).toBe(false);
-      expect(result.error).toBeDefined();
+      // A bare toBeDefined() accepted ANY error text (including a TypeError from
+      // a future refactor). Pin it to the real write failure.
+      expect(result.error).toMatch(/EISDIR|ENOTDIR|not a directory|EEXIST/i);
       fs.rmSync(testDir, { force: true });
     });
   });

@@ -266,7 +266,8 @@ describe('Core (Parent) - requestGrant Method', () => {
   });
 
   it('should have requestGrant method on Core', () => {
-    expect(core.requestGrant).toEqual(expect.any(Function));
+    expect(core.requestGrant).toBeDefined();
+    expect(typeof core.requestGrant).toBe('function');
   });
 
   it('should accept write_file tool with path', async () => {
@@ -301,7 +302,9 @@ describe('Core (Parent) - requestGrant Method', () => {
 
     const result = await core.requestGrant('write_file', { path: '/test/file.ts' });
 
-    expect(result).toMatchObject({ approved: false, reason: expect.any(String) });
+    expect(result.approved).toBe(false);
+    expect(result.reason).toBeDefined();
+    expect(typeof result.reason).toBe('string');
   });
 });
 
@@ -320,7 +323,8 @@ describe('ChildCore - requestGrant Method', () => {
   });
 
   it('should have requestGrant method on ChildCore', () => {
-    expect(childCore.requestGrant).toEqual(expect.any(Function));
+    expect(childCore.requestGrant).toBeDefined();
+    expect(typeof childCore.requestGrant).toBe('function');
   });
 
   it('should send IPC request for write_file grant', async () => {
