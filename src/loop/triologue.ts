@@ -1260,9 +1260,15 @@ export class Triologue {
     this.truncateAndRecount(resultIndex + 1, 'recap');
     this.wrapUp.reset();
 
+    // Written at the RESOLVED occurrence, not the first one bearing this call
+    // id: ids are unique only within a turn, so two briefs may share one, and a
+    // search from 0 would rewrite the older brief's result instead. `resultIndex
+    // + 1` is safe as the lower bound — everything after the anchor's own result
+    // was truncated above, so the anchor's result is the only candidate left.
     const rewritten = this.store.rewriteToolResult(
       call.id,
       noteWithSummary(buildRecapNote(description, anchorMessage, additionalMessage)),
+      resultIndex,
     );
     if (!rewritten) return null; // defensive: the result vanished in truncation
     this.store.recomputeTokenCount();

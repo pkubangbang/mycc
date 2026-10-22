@@ -565,10 +565,11 @@ describe('M1 — anchor identity', () => {
     // ONE's round-trip and its work survive; only the span after TWO is gone.
     expect(msgs.map((m) => m.content)).toEqual([
       '',
-      expect.stringContaining('Rewound past the brief: "TWO"'), // TWO's own result
+      'OK', // ONE's result: untouched
       'activity',
       '',
-      'OK', // ONE's result: untouched
+      // TWO's own result: the note, written at the RESOLVED occurrence.
+      expect.stringContaining('Rewound past the brief: "TWO"'),
     ]);
   });
 });
@@ -578,6 +579,28 @@ describe('M1 — anchor identity', () => {
  * come from the same tool-result index, and an orphan brief is never an anchor.
  */
 describe('M2 — single anchor resolution', () => {
+  it('rewrites the resolved brief result, not an older result sharing its call id', () => {
+    // Same shape as the M1 reused-id case, without the hand-built store: two
+    // briefs share one call id, the newest is the anchor, and recap must write
+    // the note into the NEWEST result. BEFORE (rewrite searched from 0): the
+    // note landed in brief#1's result while brief#2's stayed "OK" — silently
+    // corrupting the wrong message.
+    const t = new Triologue();
+    t.agent('', [{ id: 'brief_dup', function: { name: 'brief', arguments: { message: 'ONE' } } }]);
+    t.tool('brief', 'OK ONE', 'brief_dup');
+    t.user('activity');
+    t.agent('', [{ id: 'brief_dup', function: { name: 'brief', arguments: { message: 'TWO' } } }]);
+    t.tool('brief', 'OK TWO', 'brief_dup');
+    t.user('activity 2');
+
+    expect(t.rewindToLastBrief('collapse', 'SUMMARY')).not.toBeNull();
+    const msgs = t.getMessages();
+    expect(msgs).toHaveLength(5);
+    expect(msgs[1].content).toBe('OK ONE'); // the older result is untouched
+    expect(msgs[4].content).toContain('SUMMARY'); // the note lands on TWO's result
+    expect(msgs[4].content).toContain('Rewound past the brief: "TWO"');
+  });
+
   it('resolveAnchor matches the brief result by tool NAME too, not just the reused call id', () => {
     // hasMessagesAfterBrief already rejects this shape, so the second line of
     // defence is resolveAnchor itself — the path that TRUNCATES and REWRITES.

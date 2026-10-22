@@ -16,6 +16,8 @@
 | C7 | **单次解析**：`getLastBrief()` / `recapNoteSize()` / `rewindToLastBrief()` 共用一个私有快照 `{ index, resultIndex, call, anchorMessage, id }`，span 起点与截断点不可能不一致 | `resolveAnchor()` | `M2 — single anchor resolution` |
 | C8 | **孤儿 brief 不是锚点**：brief 没有 tool 结果 ⇒ 没有写 note 的地方，截断会吊死 `tool_calls`；在付 fork 之前就拒绝 | `resolveAnchor()` → `resultIndex < 0` | `M2 — orphan brief` |
 | C9 | **结果按 tool 名匹配**：call id 只在一轮内唯一，复用 id 不能把别的工具的结果认作 brief 的结果 | `findToolResultIndex(id, from, 'brief')` | `M2 — resolveAnchor matches the brief result by tool NAME` |
+| C9b | **写回落在已解析的那一条**：两个 brief 共用 call id 时，note 写入 `resolveAnchor` 解析出的 `resultIndex`，而不是从 0 搜索到的第一条 | `rewriteToolResult(id, note, resultIndex)` | `M1 — a reused call id collapses to the MOST RECENT anchor`、`M2 — rewrites the resolved brief result` |
+| C9c | **TOCTOU 令牌不是「找锚点」**：`anchorIdentity` 已删，但 id 仍作为 peek→fork→写回的 compare-and-swap 值（正常状态机在 await 期间不会推进一轮 LLM，所以它防的是 out-of-band 变更，不是常规竞态） | `resolveAnchor(expectedBriefCallId)` | `M1`（`id` 不变即通过、变了即拒绝） |
 | C10 | **不写 `checkpoint_id`**：`MindmapPatchAction` 与其全部写入者都不再产出该键；旧 jsonl 多出的键读时被忽略，不做迁移 | `src/mindmap/types.ts` 等 | `patch-validation.test.ts` |
 
 ## 未覆盖（设计取舍，不修）

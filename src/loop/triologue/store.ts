@@ -175,9 +175,15 @@ export class MessageStore {
    * not appended as a new message. In place, because the assistant→tool pairing
    * must not change — position, `tool_call_id` and `tool_name` stay as the
    * provider saw them. Returns false (modifying nothing) when no result exists.
+   *
+   * `fromIndex` matters: a call id is unique only within one assistant turn, so
+   * a restored or replayed history can carry the SAME id on two `brief` calls.
+   * A search from 0 would then find the OLDER result and write the note into it.
+   * Callers that already resolved the target pass its index, so the write lands
+   * on the occurrence they resolved and on nothing else.
    */
-  rewriteToolResult(id: string | undefined, content: string): boolean {
-    const i = this.findToolResultIndex(id);
+  rewriteToolResult(id: string | undefined, content: string, fromIndex = 0): boolean {
+    const i = this.findToolResultIndex(id, fromIndex);
     if (i < 0) return false;
     this.messages[i].content = content;
     return true;
