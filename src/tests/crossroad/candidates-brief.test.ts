@@ -108,7 +108,7 @@ describe('buildCandidatesBrief — one line per direction', () => {
       'the enum only has AWAIT.',
     );
     const lines = text.split('\n');
-    expect(lines).toHaveLength(6); // '' + title + 3 rows + outcome
+    expect(lines).toHaveLength(7); // '' + title + 3 rows + '' + outcome
     expect(lines[1]).toBe('**🚦 Crossroad** — drafted 3 directions — chose #2:');
     const rows = lines.filter((l) => /^\d+\. /.test(l));
     expect(rows).toHaveLength(3);
@@ -126,7 +126,7 @@ describe('buildCandidatesBrief — one line per direction', () => {
     });
     expect(rows[1]).toBe("2. ✅ **go backward** — wait.ts filename aren't enum members. But I want to flag an assumption I've been coasting on: ever");
     expect(rows[2]).toBe("3. ⬜ synthesize at a high level — wait.ts filename aren't enum members. Stepping back: the pattern across this whole stretch is that");
-    expect(lines[5]).toBe('**Outcome** — the enum only has AWAIT.');
+    expect(lines[6]).toBe('**Outcome** — the enum only has AWAIT.');
     expect((text.match(/`/g) ?? [])).toHaveLength(0);
   });
 
@@ -191,7 +191,12 @@ describe('crossroad card — rendered composite (markdown-it, breaks:true)', () 
 
     // (d) the outcome is the LAST line of the same card
     expect(card.split('\n').at(-1)).toBe('**Outcome** — the enum only has AWAIT.');
-    expect(html.indexOf('<strong>Outcome</strong>')).toBeGreaterThan(html.lastIndexOf('<li>'));
+    // The outcome must be OUTSIDE the candidate list: after the closing </ol>.
+    // The old assertion (indexOf('<strong>Outcome</strong>') > lastIndexOf('<li>'))
+    // was tautologically true when the outcome rendered INSIDE the last <li>,
+    // so it graded nothing. Grade the list boundary instead.
+    expect(html.indexOf('</ol>')).toBeGreaterThan(-1);
+    expect(html.indexOf('<strong>Outcome</strong>')).toBeGreaterThan(html.indexOf('</ol>'));
   });
 
   it('hook.ts emits exactly one crossroad brief, with Resolved only in the else', () => {
