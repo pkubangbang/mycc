@@ -176,15 +176,23 @@ override both. Key vars: `OLLAMA_HOST`, `OLLAMA_MODEL`,
 
 Two I/O surfaces: the **CLI TUI** (default `agent >> ` prompt + letterbox)
 and the **WebUI** (`--serve`, browser chat at localhost:3173). mycc
-auto-creates folders at two scopes: project-level (`.mycc/sessions/`,
-`.mycc/mindmap.json`, `.mycc/imgcache/`, `.mycc/longtext/`,
-`.mycc/skills/`, `.mycc/conditions.json`, `.mycc/lfplater/`) and
-user-level (`~/.mycc-store/.env`, `~/.mycc-store/sessions/`,
-`~/.mycc-store/skills/`, `~/.mycc-store/discovery/` for peer identity +
-heartbeats + channels).
+auto-creates folders at two scopes: project-level (`ensureDirs()` in
+`src/config.ts`: `.mycc/`, `sessions/`, `skills/`, `tools/`, `longtext/`,
+`imgcache/`; module-owned extras such as `mindmap.json`,
+`mindmap-patch.jsonl`, `conditions.json`, `public/`, `uploaded/`,
+`transcripts/`, `lfplater/`, `tmp/`) and user-level
+(`ensureDirs()`: `~/.mycc-store/wiki/{db,logs,reindex.lock,domains.json}`,
+`discovery/` with identity + heartbeats + channels; accessors for `skills/`,
+`tools/`, and `.env`).
+
+**There is no single declared manifest of "well-known" subfolders.** The
+core set is *declared* (an accessor in `src/config.ts` + `ensureDirs()`);
+the rest is *conventional* — each module hard-codes its own
+`path.join(<root>, '.mycc', ...)`. When asked "does mycc know about folder
+X?", check `ensureDirs()` / the accessors first, then the owning module.
 
 > **Full surfaces description and every auto-created folder with its
-> creator and purpose:** see `io-surfaces.md`.
+> owner and purpose:** see `io-surfaces.md`.
 
 ---
 
