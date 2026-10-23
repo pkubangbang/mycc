@@ -27,6 +27,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MessageStore } from '../../loop/triologue/store.js';
 import { buildResumeRoundTrip } from '../../loop/triologue/compact.js';
 import { briefToolCall } from '../../loop/triologue/brief.js';
+import { briefHash } from '../../loop/triologue/recap-note.js';
 import { Triologue } from '../../loop/triologue.js';
 import type { Message, ToolCall } from '../../types.js';
 
@@ -121,9 +122,11 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     expect(peek.message).toBe('mapped the parser');
     expect(peek.confidence).toBe(7);
     expect(Object.keys(peek).sort()).toEqual(['confidence', 'hash', 'id', 'message', 'span']);
-    // The hash is the call id's prefix — the token 
-    // The hash is the call id's prefix - the token recap(target=...) takes.
-    expect(peek.hash).toBe(peek.id.slice(0, 8));
+    // The hash is the token recap(target=...) takes, derived from the id —
+    // never the id's raw prefix (ids share `brief_<epoch-ms>`, so a prefix cut
+    // would name the oldest same-epoch brief instead of this one).
+    expect(peek.hash).toBe(briefHash(peek.id));
+    expect(peek.hash).not.toBe(peek.id.slice(0, 8));
     // The id is opaque: it must not be the raw array index the caller would be
     // tempted to truncate at.
     expect(typeof peek.id).toBe('string');

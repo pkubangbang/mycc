@@ -4,7 +4,7 @@
  *
  * Step 3 of the COLLECT pipeline: when the confusion index crosses the
  * threshold, generate a hint round (LLM problem analysis → [HINT] note) and
- * handle its three outcomes. This module owns the step-3 policy layer:
+ * handle its two outcomes. This module owns the step-3 policy layer:
  *  - the trigger gate (confusion index + minimum message count),
  *  - the confusion breakdown (including the objective dead-loop evidence that
  *    seeds the hint prompt's next_step advice),

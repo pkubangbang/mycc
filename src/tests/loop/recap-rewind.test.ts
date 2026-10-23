@@ -22,6 +22,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MessageStore } from '../../loop/triologue/store.js';
 import { buildResumeRoundTrip } from '../../loop/triologue/compact.js';
 import { briefToolCall } from '../../loop/triologue/brief.js';
+import { briefHash, buildRecapNote } from '../../loop/triologue/recap-note.js';
 import { Triologue } from '../../loop/triologue.js';
 import type { Message, ToolCall } from '../../types.js';
 
@@ -148,7 +149,12 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     expect(msgs[1].tool_calls?.[0].function.name).toBe('brief');
     expect(msgs[2].tool_name).toBe('brief');
     expect(msgs[2].tool_call_id).toBe((msgs[1].tool_calls?.[0] as ToolCall).id);
-    expect(msgs[2].content).toMatch(/^\[[A-Za-z0-9_-]+\] OK Note, a recap has reset the conversation here with summary: /);
+    const anchorId = (msgs[1].tool_calls?.[0] as ToolCall).id;
+    // Pin THIS anchor's hash, not "some hash-shaped token": a regex of
+    // /^\[[A-Za-z0-9_-]+\]/ also accepts a token that names a DIFFERENT brief,
+    // so a wrong-anchor bug (the exact failure a colliding hash used to cause)
+    // would still pass.
+    expect(msgs[2].content).toBe(`[${briefHash(anchorId)}] OK Note, a recap has reset the conversation here with summary: ${buildRecapNote('collapse', 'mapped the parser', 'SUMMARY BODY')}`);
     expect(msgs[2].content).toContain('SUMMARY BODY');
     expect(t.getLastRole()).toBe('tool'); // TP parity handoff to the next agent()
   });
@@ -614,8 +620,7 @@ describe('M2 — single anchor resolution', () => {
     const t = new Triologue();
     const internal = t as unknown as {
       store: MessageStore;
-      resolveAnchor: (expected?: string) => unknown;
-      currentAnchorIndex: () => number;
+      briefStack: { resolveAnchor: (expected?: string) => unknown };
     };
     internal.store.replaceAll([
       { role: 'assistant', content: '', tool_calls: [{ id: 'reused', function: { name: 'brief', arguments: { message: 'ORPHAN', confidence: 7 } } }] },
@@ -628,9 +633,10 @@ describe('M2 — single anchor resolution', () => {
 
     // Force the scan onto that brief, as a future scan rule or a restored
     // history could: resolveAnchor must STILL refuse. BEFORE: it bound the bash
-    // result to the brief call and returned a snapshot.
-    internal.currentAnchorIndex = () => 0;
-    expect(internal.resolveAnchor()).toBeNull();
+    // result to the brief call and returned a snapshot. The anchor walk is
+    // exercised through the manager (briefStack) because the facade exposes
+    // only the peek/rewind surface.
+    expect(internal.briefStack.resolveAnchor()).toBeNull();
     expect(t.getMessages()[1].content).toBe('not the brief answer');
   });
 

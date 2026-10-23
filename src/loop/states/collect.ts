@@ -377,7 +377,7 @@ export async function handleCollect(
     //      Returns the freshest steering note (the query source for step 6).
     const { firstSteerNote } = await collectMailsAndInput(env);
 
-    // 3. Hint round + compaction. May short-circuit the pass.
+    // 3. Hint round. May short-circuit the pass (STOP on ESC).
     const hintSignal = await hintSuggester.runHintRound(env, turn);
     if (hintSignal === 'stop') return AgentState.STOP;
 

@@ -64,7 +64,7 @@ export function buildSummaryPrompt(conversationText: string, deps: CompactDeps, 
     : '';
 
   // The recap instruction. The compaction is machine-triggered (token
-  // threshold, dead-loop hint, hook-deferral), so the model gets no other
+  // threshold, hook-deferral), so the model gets no other
   // chance to choose it — this is where a compaction TELLS the model how to
   // keep its context small. The recap is the only way to shed old work while
   // KEEPING the direction it produced, so the two pressures the loop actually

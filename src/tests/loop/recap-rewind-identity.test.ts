@@ -114,8 +114,7 @@ describe('M2 — single anchor resolution', () => {
     const t = new Triologue();
     const internal = t as unknown as {
       store: MessageStore;
-      resolveAnchor: (expected?: string) => unknown;
-      currentAnchorIndex: () => number;
+      briefStack: { resolveAnchor: (expected?: string) => unknown };
     };
     internal.store.replaceAll([
       { role: 'assistant', content: '', tool_calls: [{ id: 'reused', function: { name: 'brief', arguments: { message: 'ORPHAN', confidence: 7 } } }] },
@@ -129,8 +128,7 @@ describe('M2 — single anchor resolution', () => {
     // Force the scan onto that brief, as a future scan rule or a restored
     // history could: resolveAnchor must STILL refuse. BEFORE: it bound the bash
     // result to the brief call and returned a snapshot.
-    internal.currentAnchorIndex = () => 0;
-    expect(internal.resolveAnchor()).toBeNull();
+    expect(internal.briefStack.resolveAnchor()).toBeNull();
     expect(t.getMessages()[1].content).toBe('not the brief answer');
   });
 

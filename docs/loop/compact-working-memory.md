@@ -161,7 +161,7 @@ The prompt deliberately does **not** ask for a broad summary — that is the sum
 
 The summary prompt keeps its existing three-section structure (Accomplishments / Current State / Key Decisions) plus the knowledge-persistence, focus-area, and user-instruction addenda.
 
-It also ends with a `## Managing your context with recap` section appended by `buildSummaryPrompt()`. A compaction is machine-triggered (token pressure, a dead loop) — the model never asked for it and has no idea it happened — so this is the one place it can be told that it now owns its context:
+It also ends with a `## Managing your context with recap` section appended by `buildSummaryPrompt()`. A compaction is machine-triggered (token pressure, a hook deferral) — the model never asked for it and has no idea it happened — so this is the one place it can be told that it now owns its context:
 
 - call `recap` once when the context feels heavy (long tool results, many files explored, stale work), at a point where the work reads as a finished stretch;
 - call `recap` with a steering `comment` when stuck in a dead loop, so the summary keeps the lesson and the comment breaks the bias;

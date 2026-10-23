@@ -30,20 +30,37 @@
  * mistaken for a consumed one).
  */
 
+import * as crypto from 'node:crypto';
+
 /**
- * Length of the hash shown in a brief result. 8 hex-ish chars is short enough
- * to read and quote, long enough that two briefs in one session never collide
- * in practice (ids carry a timestamp and a random tail).
+ * Length of the hash shown in a brief result.
+ *
+ * 8 CHARACTERS OF A DIGEST, not the first 8 characters of the call id: ids are
+ * minted as `brief_<13-digit-ms>_<tail>` (triologue/brief.ts), so a prefix cut
+ * renders `brief_17` for EVERY brief minted in the same ~1.15-day epoch — the
+ * model would be offered a "target" that silently names the oldest match.
+ * Hashing the whole id decorrelates the display from the id's flat prefix, so
+ * two briefs colliding is the usual 1-in-16^8 birthday case.
  */
 export const BRIEF_HASH_LENGTH = 8;
 
 /**
- * The hash shown for a brief call — a stable PREFIX of its call id, never a
+ * The hash shown for a brief call — a stable digest of its call id, never a
  * separate registry. `recap(target=…)` accepts either this hash or the full id
- * (see the triologue's anchor resolution), so a stale/partial id still lands.
+ * (see resolveBriefTarget), so a stale/partial id still lands.
+ *
+ * Lower-case hex, so the display is readable and the comparison in
+ * resolveBriefTarget is a plain string equality. `undefined` (a brief whose
+ * call id was lost) hashes to '' and therefore renders `[]` — never a
+ * plausible-looking token that would name some other brief.
  */
 export function briefHash(callId: string | undefined): string {
-  return (callId ?? '').slice(0, BRIEF_HASH_LENGTH);
+  if (!callId) return '';
+  return crypto
+    .createHash('sha256')
+    .update(callId)
+    .digest('hex')
+    .slice(0, BRIEF_HASH_LENGTH);
 }
 
 /**
