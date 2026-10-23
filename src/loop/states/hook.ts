@@ -260,7 +260,7 @@ async function handleRecapCall(
       // The hash DOES exist — it just has nothing after it yet (true of every
       // freshly printed anchor). Say that instead of "no brief matches", which
       // would deny the line the model is reading.
-      return fail(`Error: the brief [${target}] has nothing after it yet — recap folds the work that follows an anchor, so it becomes foldable once new work lands below it. Call recap without target to collapse to the newest foldable brief.`);
+      return fail(`Error: the brief [${target}] has nothing after it yet — recap folds the work that follows an anchor, so it becomes foldable once new work lands below it. Call recap without target to collapse the span after the newest foldable anchor.`);
     }
     if (target) {
       // An EXPLICIT target never falls back: collapsing somewhere the model did
@@ -284,7 +284,7 @@ async function handleRecapCall(
   // whose resume brief IS the last brief). Skip both forks: there is nothing to
   // summarize, and consuming the floor anchor would be pointless churn.
   if (anchor.span.length === 0) {
-    return fail('[RECAP] Nothing to collapse — there is no new activity past your last brief.');
+    return fail('[RECAP] Nothing to collapse — no work has landed after the anchor yet.');
   }
 
   // ---- abandon path: collapse without summarizing ----
@@ -306,6 +306,12 @@ async function handleRecapCall(
     if (abandonSize !== null && abandonSize > triologue.getResultThreshold()) {
       return fail(`Error: the recap note is ${abandonSize} chars, over the ${triologue.getResultThreshold()}-char tool-result limit; nothing was discarded. Re-run with a shorter comment.`);
     }
+    // Announce the discard BEFORE it happens: the collapse below is synchronous
+    // and only its RESULT is reported at the end, so without this line the work
+    // looks like a hang for as long as the collapse takes. Emitted AFTER the
+    // size gate on purpose — a rejected recap must not announce a discard that
+    // never happens.
+    ctx.core.brief('info', 'recap', 'Discarding the span after the anchor...');
     const result = triologue.rewindToLastBrief(description, abandonParts, anchor.id, target);
     if (!result) {
       // The anchor moved between the peek at the top of this handler and here.
@@ -339,7 +345,7 @@ async function handleRecapCall(
   // The durable one-line trace: the spinner started inside handleRecapSpan is
   // terminal-only (and cleared by its finally{}), so this brief is what
   // survives in the logs / Web UI as the record of the recap's silent wait.
-  ctx.core.brief('info', 'recap', 'Summarizing the span since your last brief...');
+  ctx.core.brief('info', 'recap', 'Summarizing the span after the anchor...');
   const mindmap = ctx.core.getMindmap();
   const { summary, patch, patchError } = await handleRecapSpan(
     fullMessages,
