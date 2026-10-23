@@ -34,7 +34,7 @@ import { loopEvents } from '../loop-events.js';
 import { stripInternalMarkup } from '../../utils/letter-box.js';
 import { buildCandidatesBrief } from '../crossroad.js';
 import { briefToolCall, newBriefCallId, validateBriefIsolation } from '../triologue/brief.js';
-import { briefResultLine } from '../triologue/recap-note.js';
+import { briefReceiptLine, stampBriefResult } from '../triologue/recap-note.js';
 import { buildPlanScopeNote, formatPlanScopeForDisplay, withPlanScopeNote } from '../plan-scope.js';
 
 /**
@@ -127,10 +127,16 @@ async function handlePlanScopeBrief(
 
   // The prefix is the pre-turn history: assistant(tool_calls) for THIS turn has
   // not been registered yet (see the caller), so it is fully answered.
+  // ONE snapshot of the candidate list for both the budget and the stamp: the
+  // assistant message is registered between them, which can change what counts
+  // as open, so the two must read the same list rather than re-derive it.
+  const openAnchors = triologue.listOpenAnchors();
   const note = await buildPlanScopeNote({
     messages: [...triologue.getMessages()],
     tools: loader.getToolsForScope(env.scope),
     briefMessage,
+    briefCallId: briefCall.id,
+    openAnchors,
     resultThreshold: triologue.getResultThreshold(),
     // The fork gets its OWN ESC-aware slot: it must be interruptible while it
     // runs, which the tool-execution wrapper cannot provide here.
@@ -145,7 +151,14 @@ async function handlePlanScopeBrief(
   triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
     reasoningContent: chat.assistantReasoningContent,
   });
-  triologue.tool('brief', withPlanScopeNote(note), briefCall.id);
+  // The result is stamped with the ANCHOR LINE, exactly as the TOOL stage would
+  // have done — this path answers the turn in HOOK and never reaches handleTool,
+  // which is the only other place that stamps. Plan-mode briefs were therefore
+  // the ONLY lead briefs without an anchor line, in the very mode where recap is
+  // most recommended. Stamping here also lets the plan-scope reflection carry a
+  // hash prefix in its result, so one writer still owns the rendering.
+  const stamped = stampBriefResult(withPlanScopeNote(note), briefCall.id, openAnchors);
+  triologue.tool('brief', stamped, briefCall.id);
 
   // The `brief` TOOL never runs on this path (the turn is answered above), so
   // its own prints are skipped too. Print them here, in the tool's exact shape,
@@ -209,7 +222,7 @@ async function handleRecapCall(
   const description = typeof recapArgs.description === 'string' ? recapArgs.description.trim() : '';
   const abandon = recapArgs.abandon === true;
   // Optional anchor selector: the hash shown at the start of a brief result
-  // (`[<hash>] OK`). Absent/empty → the default (newest solidified) anchor.
+  // (`[<hash>] ANCHOR — …`). Absent/empty → the default (newest solidified) anchor.
   const target = typeof recapArgs.target === 'string' && recapArgs.target.trim()
     ? recapArgs.target.trim()
     : undefined;
@@ -243,13 +256,26 @@ async function handleRecapCall(
 
   const anchor = triologue.getLastBrief(target);
   if (!anchor) {
+    if (target && triologue.targetRefusal(target) === 'nothing-after') {
+      // The hash DOES exist — it just has nothing after it yet (true of every
+      // freshly printed anchor). Say that instead of "no brief matches", which
+      // would deny the line the model is reading.
+      return fail(`Error: the brief [${target}] has nothing after it yet — recap folds the work that follows an anchor, so it becomes foldable once new work lands below it. Call recap without target to collapse to the newest foldable brief.`);
+    }
     if (target) {
       // An EXPLICIT target never falls back: collapsing somewhere the model did
       // not choose would delete a span it meant to keep. Quote the hashes that DO
-      // exist (that is exactly what target takes) so the retry can pick a real
-      // anchor.
-      const known = triologue.listBriefHashes().map((b) => `[${b.hash}]`).join(', ');
-      return fail(`Error: No brief matches target "${target}"${known ? `. Addressable briefs: ${known}` : ', and this conversation has no briefs yet'}. Call recap without target to collapse to the newest brief instead.`);
+      // work — the set `target` accepts, not every brief that exists — so the
+      // retry can pick a real anchor instead of a hash this same message refuses.
+      const known = triologue.listBriefHashes(true).map((b) => `[${b.hash}]`).join(', ');
+      // Never claim there are no briefs when there ARE — only none foldable yet.
+      const all = triologue.listBriefHashes();
+      const tail = known
+        ? `. Addressable briefs: ${known}`
+        : all.length > 0
+          ? '. The briefs in this conversation all have nothing after them yet, so none is foldable.'
+          : ', and this conversation has no briefs yet';
+      return fail(`Error: No brief matches target "${target}"${tail}. Call recap without target to collapse to the newest foldable brief.`);
     }
     return fail('Error: No brief found to rewind to — nothing to collapse yet. Call brief first, then recap.');
   }
@@ -598,7 +624,9 @@ export async function handleHook(
       // the reconstructed text, so replaying a crossroad cannot re-trigger it.
       const briefResult = chat.crossroadFilePath
         ? `A direction refinement was applied to your response. The full decision record is saved at: ${chat.crossroadFilePath} (you may replay it with mycc-pretty-print --type=crossroad <path> only if the user asks to see the full response).`
-        : briefResultLine(crossroadBrief.id);
+        // Synthetic (see crossroadBrief) — a receipt, never the anchor line: it
+        // is not addressable, so naming a `recap(target=…)` call would lie.
+        : briefReceiptLine(crossroadBrief.id);
       triologue.tool('brief', briefResult, crossroadBrief.id);
 
       // Three-part display, in reading order:

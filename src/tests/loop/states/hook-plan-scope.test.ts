@@ -4,7 +4,8 @@
  * The reflection is produced in the HOOK stage (states/hook.ts
  * handlePlanScopeBrief) and registered as the brief's own tool result:
  *
- *   tool('brief', "OK. When thinking on the larger scope, …", callId)
+ *   tool('brief', "[<hash>] ANCHOR — recap(target=\"<hash>\") folds the work after this point
+ *                 When thinking on the larger scope, …", callId)
  *
  * Why HOOK: this is the first point in the turn where the brief call exists in a
  * FORKABLE history — the assistant message carrying it is not registered yet, so
@@ -120,7 +121,13 @@ describe('HOOK-stage plan-mode scope reflection', () => {
     expect(msgs[0].role).toBe('assistant');
     expect(msgs[1].role).toBe('tool');
     expect(msgs[1].tool_call_id).toBe(briefCall.id);
-    expect(msgs[1].content).toContain(`OK. ${PLAN_SCOPE_HEADING}`);
+    // LINE 1 is the anchor line the TOOL stage would have stamped; the
+    // reflection is the section under it. Plan-mode briefs are lead briefs, so
+    // they are addressable like any other — this path never reaches handleTool,
+    // which is why the HOOK stage stamps it itself.
+    const [line1, ...body] = (msgs[1].content as string).split('\n');
+    expect(line1).toMatch(/^\[[A-Za-z0-9_-]+\] ANCHOR — recap\(target="[A-Za-z0-9_-]*"\) folds the work after this point$/);
+    expect(body.join('\n')).toContain(PLAN_SCOPE_HEADING);
     expect(msgs[1].content).toContain('parser.ts');
   });
 
@@ -150,6 +157,7 @@ describe('HOOK-stage plan-mode scope reflection', () => {
     expect(scope![2]).toContain('parser.ts');
     expect(scope![2]).not.toBe('Plan-mode scope reflection attached to this brief.');
     expect(scope![2]).not.toContain(`OK. ${PLAN_SCOPE_HEADING}`);
+    expect(scope![2]).not.toContain('ANCHOR');
   });
 
   it('PLAN mode: the fork sees a LEGAL prefix (no unanswered tool_calls)', async () => {

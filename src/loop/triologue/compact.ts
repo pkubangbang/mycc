@@ -309,8 +309,9 @@ export function buildResumeRoundTrip(args: {
       // The pristine success result - WITH its anchor hash, so the floor brief
       // is addressable by recap(target=...) from the first moment. Rendered by
       // recap-note.ts briefResultLine (the same writer the TOOL stage stamps),
-      // never hand-assembled. recap REWRITES this in place with the span
-      // summary, keeping the hash line.
+      // never hand-assembled. This brief is NOT synthetic — it is the only
+      // anchor left after a compaction — so the invitation is truthful here.
+      // recap REWRITES this in place with the span summary, keeping line 1.
       content: briefResultLine(briefCall.id),
       tool_call_id: briefCall.id,
     },

@@ -13,7 +13,31 @@ import { ResultTooLargeError } from '../../types.js';
 import { loader } from '../../context/shared/loader.js';
 import { isVerbose } from '../../config.js';
 import { loopEvents } from '../loop-events.js';
-import { stampBriefResult } from '../triologue/recap-note.js';
+import { BRIEF_OK, briefReceiptLine, hashOf, stampBriefResult } from '../triologue/recap-note.js';
+
+/**
+ * A CHILD-scope brief result: the same `OK` ack the handler returns, prefixed
+ * with the anchor hash but WITHOUT the `recap(target=…)` invitation — `recap` is
+ * lead-only, so the call shape would name a tool the teammate does not have.
+ *
+ * Today a teammate's loop (context/teammate-worker.ts) registers its results
+ * directly and never reaches this stage, so this branch is a guard, not a
+ * behaviour: it keeps the lead-only invitation from leaking IF that path ever
+ * starts routing through handleTool. Cheap, and the alternative — a stamp whose
+ * audience rule lives only in a caller's address space — is exactly the bug this
+ * branch exists to prevent.
+ *
+ * Same rules as `stampBriefResult`: idempotent, and a no-op on anything that is
+ * not a pristine success or that has no call id.
+ */
+function childBriefReceipt(content: string, callId: string | undefined): string {
+  if (hashOf(content) !== null) return content;
+  if (!content.startsWith(BRIEF_OK)) return content;
+  if (!callId) return content;
+  const rest = content.slice(BRIEF_OK.length).replace(/^\.\s*/, '').trim();
+  const line = briefReceiptLine(callId);
+  return rest ? `${line}\n${rest}` : line;
+}
 
 // Tools that are purely exploratory (information gathering)
 const EXPLORATION_TOOLS = new Set([
@@ -106,15 +130,26 @@ export async function handleTool(
         agentIO.verbose('tool', `Result: ${toolName}`, { outputLength: output.length });
       }
 
-      // A brief's success result is stamped with its ANCHOR HASH — `[<hash>] OK`
-      // — here, and only here: the handler receives no call id, so the loop is
-      // the one place that can render it. The hash is `briefHash(callId)`, the
-      // same token recap writes back (`noteWithSummary`) and `recap(target=…)`
+      // A brief's success result is turned into the ANCHOR LINE — the fixed
+      // first line `[<hash>] ANCHOR — recap(target="<hash>") to fold everything
+      // above`, plus the "open" candidate list — here, and only here: the
+      // handler receives no call id, and only the loop can see the brief stack
+      // the candidates come from. The hash is `briefHash(callId)`, the same
+      // token recap writes back (`noteWithSummary`) and `recap(target=…)`
       // resolves, so a brief is addressable the moment it lands. Only the
-      // pristine "OK…" result is stamped: an error or a plan-scope-less variant
-      // is never relabelled as an anchor. See recap-note.ts stampBriefResult.
+      // pristine "OK…" result is stamped: an error is never relabelled as an
+      // anchor. See recap-note.ts stampBriefResult.
+      //
+      // TEAMMATES GET A RECEIPT, NOT THE ANCHOR LINE: `brief` is shared with the
+      // child scope while `recap` is lead-only (src/tools/brief.ts), so printing
+      // a `recap(target=…)` call to a teammate advertises a tool it cannot call.
+      // The hash still prefixes the line — nothing else about the result changes.
+      // (Guards a path the teammate worker does not currently take; see
+      // childBriefReceipt.)
       const resultContent = toolName === 'brief'
-        ? stampBriefResult(output, toolCallId)
+        ? (env.scope === 'main'
+            ? stampBriefResult(output, toolCallId, triologue.listOpenAnchors())
+            : childBriefReceipt(output, toolCallId))
         : output;
 
       // Observability: emit tool_executed (silent when no listeners)

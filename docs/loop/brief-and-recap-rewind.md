@@ -85,8 +85,8 @@ recap#2 → query → tool1 → [brief(A) result = note₂]
   result in place**:
 
   ```
-  assistant('', [brief("B's message", 7)]) → tool('brief', "[brief_17] OK Note, a
-      recap has reset the conversation here with summary: <note₁>")
+  assistant('', [brief("B's message", 7)]) → tool('brief', "[<hash>] ANCHOR
+      Note, a recap has reset the conversation here with summary: <note₁>")
   ```
 
   `note₁` starts with `[RECAP] <description>` and `Rewound past the brief: "<B's
@@ -193,7 +193,8 @@ never be folded by the next recap (see the anchor rule).
 The note is the anchor brief's rewritten TOOL RESULT:
 
 ```
-[<hash>] OK Note, a recap has reset the conversation here with summary: <body>
+[<hash>] ANCHOR                      <- line 1: the anchor line, written once, never rewritten
+Note, a recap has reset the conversation here with summary: <body>   <- line 2: the recap's note
 
 <body> =
 [RECAP] <description>
@@ -206,27 +207,44 @@ Rewound past the brief: "<anchor brief message>"
 **Next direction (recap comment — follow this):** <comment>
 ```
 
-The `[<hash>] OK Note, …` marker is added by `noteWithSummary()` in
-`src/loop/triologue/recap-note.ts` (the same module owns the pristine
-`[<hash>] OK` line, so the marker and the hash prefix cannot drift).
+A `· open:` list is appended to line 1 when other foldable anchors exist: the newest
+up to 3, then `(+N more)` for the remainder (a count, never an offer — there is no tool
+that enumerates anchors). A rewind retires the whole ` — recap(…)` clause, so a folded
+anchor's line 1 is `[<hash>] ANCHOR`.
 
-### The brief result line: `[<hash>] OK`
+The note is appended by `noteWithSummary()` in
+`src/loop/triologue/recap-note.ts` (the same module that renders line 1, so the
+marker and the anchor line cannot drift). It APPENDS: line 1 is kept, minus the
+`recap(target=…)` invitation, which is retired because the span it names is now
+gone.
 
-Every brief result starts with a short **hash** — the first 8 characters of the
-brief's tool-call id (`brief_1792715569650_ab12cd` → `brief_17`), rendered as
-`[brief_17] OK`. `briefResultLine()` renders it, `stampBriefResult()` applies it
-idempotently (a result that already carries a `[<hash>]` prefix is left alone),
-and `briefHash()` derives the hash.
+### The brief result line: `[<hash>] ANCHOR — recap(target="<hash>") folds the work after this point`
+
+Every brief result starts with a short **hash** — 8 characters of a digest of
+the brief's tool-call id — followed by the call that folds to it. `briefResultLine()`
+renders it, `stampBriefResult()` applies it idempotently (a result that already
+carries a `[<hash>]` prefix is left alone), and `briefHash()` derives the hash.
+
+Two callers deliberately do NOT get that line, and render `briefReceiptLine()`
+(`[<hash>] OK`) instead, because the invitation would be false:
+
+- a **teammate's** brief — `brief` is `['main', 'child']` but `recap` is
+  `['main']`, so a child must not be told to call a tool it does not have;
+- a **synthetic** brief (crossroad, empty-output recovery) — it is not in
+  `store.briefIndices()`, so every `recap(target=…)` naming it is refused.
 
 The hash exists so the model can **name** an anchor: it is exactly the token
-`recap` takes in `target` (`[brief_17]`, `brief_17`, or the full call id all
-resolve). A rewind rewrites the result to `[<hash>] OK Note, …` — the hash
-survives, so a later recap can still address the same brief.
+`recap` takes in `target` (the shown hash or the full call id both resolve). A
+rewind APPENDS its note under line 1 and retires the `recap(target=…)`
+invitation — `[<hash>] ANCHOR — recap(…)` becomes `[<hash>] ANCHOR` — because the
+span the call names is now gone. The hash survives, so a later recap can still
+address the same brief once new activity lands after it.
 
 ### `recap(target=…)`
 
 `recap` takes an optional `target`:
 
+- **names the last brief** (nothing after it yet) → a distinct refusal: `that brief has nothing after it yet — recap folds the work that follows an anchor`. The hash exists; it is simply not foldable until new work lands below it.
 - **empty** (the normal case) → the default anchor: the newest *solidified*
   brief, i.e. one with meaningful activity after its round-trip. Recap
   round-trips do not count as activity.

@@ -208,7 +208,7 @@ export function buildBriefRecapSection(): string {
   return [
     '## Briefs and Recap',
     '`brief` + `recap` shape your context like a **stack**, and only YOU (the lead) can call `recap`. When the direction drifts, default to `recap(abandon=true)` — it forks nothing.',
-    '- `brief` **pushes** a frame where an exploration span starts (sole call of its turn): conclusion first, then evidence.',
+    '- `brief` **pushes** a frame where an exploration span starts (sole call of its turn): conclusion first, then evidence. Its result\'s first line is that frame\'s **anchor**; a `· open:` list there names earlier anchors you can fold to instead.',
     '- `recap` **pops frames back to a target**, summarising the span into that frame\'s result — no `target` pops to the newest frame you have moved past, `target="<hash>"` pops until that frame. Repeatable: each pop rewinds one further; new activity re-arms the frame and overwrites its note.',
     '- `recap(abandon=true)` pops and **discards** the span — the way out of a wrong direction.',
     '- Compaction is the floor: `recap` cannot rewind past it.',

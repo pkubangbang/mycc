@@ -71,15 +71,17 @@ export const briefTool: ToolDefinition = {
 
     // Use core.brief to send the message via IPC to parent
     ctx.core.brief('info', 'brief', message, `confidence: ${confidence * 10}%`);
-    // A plain success line, `OK`. The TOOL stage (states/tool.ts) PREFIXES this
-    // result with the anchor hash — `[<hash>] OK` — because only the loop knows
-    // the tool-call id the hash is derived from (a handler receives no id). The
-    // hash is the same one recap's rewind writes (`noteWithSummary`), so the
-    // two writers still share ONE rendering (recap-note.ts briefResultLine).
-    // The success text ends with a period because a result may carry more after
-    // it ("OK. When thinking on the larger scope, …") — that section is added
-    // by the TOOL stage in plan mode, never here: the tool stays a reporter,
-    // the loop owns the enhancement.
+    // A plain success line, `OK`. The TOOL stage (states/tool.ts) replaces this
+    // ack with the ANCHOR LINE — `[<hash>] ANCHOR — recap(target="<hash>") to
+    // folds the work after this point` — because only the loop knows the id the
+    // hash is derived from (a handler receives no id), and only the loop can
+    // see the brief stack the `· open:` candidates come from. The hash is the
+    // same one recap's rewind writes (`noteWithSummary`), so the two writers
+    // still share ONE rendering (recap-note.ts briefResultLine). The success
+    // text ends with a period because a result may carry more after it
+    // ("OK. When thinking on the larger scope, …") — that section is added by
+    // the TOOL stage in plan mode, never here: the tool stays a reporter, the
+    // loop owns the enhancement.
     return `${BRIEF_OK}.`;
   },
 };

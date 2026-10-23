@@ -5,11 +5,17 @@
  * produce it and they must never drift:
  *
  *   1. the `brief` tool (+ the TOOL-stage plan-scope reflection) — the success
- *      result, "[<hash>] OK", optionally followed by a section;
- *   2. recap's rewind — it REWRITES that result in place with `noteWithSummary()`,
- *      so the collapsed span's summary lives in a TOOL RESULT (where the
- *      conversation still shows the anchor turn) instead of in a synthetic
- *      recap call appended at the end.
+ *      result, whose FIRST LINE is the anchor line
+ *      `[<hash>] ANCHOR — recap(target="<hash>") folds the work after this point`,
+ *      optionally followed by `· open: <hashes>` and by a section (plan scope);
+ *   2. recap's rewind — it APPENDS the note under that fixed first line with
+ *      `noteWithSummary()`, so the collapsed span's summary lives in a TOOL
+ *      RESULT (where the conversation still shows the anchor turn) instead of
+ *      in a synthetic recap call appended at the end.
+ *
+ * LINE 1 IS STRUCTURE, LINE 2+ IS CONTENT. The anchor line is written once and
+ * never rewritten — a recap adds its note below it — so an anchor stays visibly
+ * an anchor (address included) after it has been folded.
  *
  * THE HASH — every brief result opens with "[<hash>] ", where `<hash>` is a
  * short, readable token identifying THAT brief (the first 8 characters of the
@@ -64,35 +70,187 @@ export function briefHash(callId: string | undefined): string {
 }
 
 /**
- * The success word of a brief result — `OK`. Exported so the `brief` tool (the
- * reporter, which does not know its call id) and the synthetic producers can
- * render the plain form without inventing a second literal.
+ * The success word of a brief result — `OK`.
+ *
+ * The plain ack the `brief` TOOL HANDLER itself returns (it does not know its
+ * call id). Kept as the handler's literal because the TOOL stage recognises it
+ * to decide whether a result is a pristine success worth stamping; the result
+ * the MODEL sees replaces this word with {@link BRIEF_ANCHOR_WORD}.
  */
 export const BRIEF_OK = 'OK';
 
 /**
- * The success line a `brief` call answers with before any recap has touched it:
- * `[<hash>] OK` (with no trailing period — callers append it when prose follows).
+ * The success word the MODEL sees: `ANCHOR`.
+ *
+ * WHY NOT `OK` (docs/loop/brief-and-recap-rewind.md, "surfacing the anchor"):
+ * `OK` is the vocabulary of a tool RECEIPT — the model reads `[a1b2c3d4] OK.`
+ * as "this call finished, nothing to do here" and files the hash away as
+ * decoration. `ANCHOR` names the OBJECT the hash addresses, which is the only
+ * in-transcript evidence that `recap(target="a1b2c3d4")` has anything to point
+ * at. It is the same three characters' worth of structure, a different
+ * category in the model's vocabulary.
+ */
+export const BRIEF_ANCHOR_WORD = 'ANCHOR';
+
+/**
+ * The fixed first line of every brief result:
+ *
+ *   [<hash>] ANCHOR — recap(target="<hash>") folds the work after this point
+ *
+ * LINE 1 IS STRUCTURE, NEVER CONTENT. It is written once and never rewritten:
+ * the anchor's identity, its address and the shape of the call that uses it all
+ * survive a recap, so a brief that has already been folded is still visibly an
+ * anchor the next time the model reads the history. A recap's summary is
+ * appended as a SECOND line ({@link noteWithSummary}) — that append is the only
+ * thing a rewind changes.
+ *
+ * The bracket/hash position is part of the contract: `hashOf` reads `[<hash>]`
+ * off the front and `resolveBriefTarget` accepts the same spelling, so the
+ * hash must stay where it has always been.
+ *
+ * `undefined` (a brief whose call id was lost) still renders a well-formed line
+ * with an empty hash — never a plausible-looking token naming some other brief.
  */
 export function briefResultLine(callId: string | undefined): string {
+  const hash = briefHash(callId);
+  // NAME THE SPAN, NOT A DIRECTION: a rewind keeps everything UP TO this brief
+  // and deletes what came AFTER it. "everything above" reads as "everything above
+  // this line in the transcript" — the opposite span — and a model that believes
+  // recap deletes its earlier history has every reason never to call it.
+  return `[${hash}] ${BRIEF_ANCHOR_WORD} — ${foldCall(hash)} folds the work after this point`;
+}
+
+/**
+ * The shape of the call that folds to `hash` — the ONLY place that spelling is
+ * written, so line 1, the recap tool description and the prompt section cannot
+ * drift apart.
+ */
+export function foldCall(hash: string): string {
+  return `recap(target="${hash}")`;
+}
+
+/**
+ * The result line a brief gets when the anchor line would be a FALSE affordance.
+ *
+ * Two callers hit this:
+ *
+ *   - a CHILD-scope brief: `brief` is `['main', 'child']` but `recap` is
+ *     `['main']`, so a teammate that reads `recap(target=…)` is being told to
+ *     call a tool it does not have (see the audience note in src/tools/brief.ts);
+ *   - a synthetic brief (crossroad, empty-output recovery): it is excluded from
+ *     `store.briefIndices()`, so every `recap(target=…)` naming it is REFUSED.
+ *
+ * The hash stays at the front — `hashOf` / `stripHashPrefix` still read it — but
+ * the line promises nothing. Before this line existed, those results were a
+ * plain `[<hash>] OK`, which is exactly the neutral receipt wanted here.
+ */
+export function briefReceiptLine(callId: string | undefined): string {
   return `[${briefHash(callId)}] ${BRIEF_OK}`;
 }
 
 /**
- * Stamp a finished `brief` tool result with the anchor hash — `[<hash>] OK` —
- * the ONE place the hash prefix is applied to a real tool result.
+ * True when a first line still carries the `recap(target=…)` invitation —
+ * exactly the clause {@link withoutFoldInvitation} removes.
+ *
+ * Used by a rewind to decide whether the anchor line is a LIVE anchor line at
+ * all: a legacy one-line result (`[<hash>] OK Note, …`) or any line that never
+ * carried an invitation is not one, and keeping it as "line 1" would duplicate
+ * its old summary under the new note.
+ */
+export function hasFoldInvitation(line: string | undefined): boolean {
+  if (typeof line !== 'string') return false;
+  return FOLD_INVITATION_RE.test(line);
+}
+
+/**
+ * The same first line, with the invitation retired: the hash and the ANCHOR word
+ * stay (the anchor is still an anchor), the call shape and the verb go.
+ *
+ * `[<hash>] ANCHOR — recap(target="h") folds the work after this point`
+ *   → `[<hash>] ANCHOR`
+ */
+export function withoutFoldInvitation(line: string): string {
+  return line.replace(FOLD_INVITATION_RE, '');
+}
+
+/**
+ * Append the "other anchors you could fold instead" hint to a brief result
+ * line, when there are any.
+ *
+ * `candidates` are the OTHER addressable briefs, newest first (see
+ * `BriefStackManager.listBriefHashes`) — the just-created brief is excluded by
+ * the caller: it has nothing after it yet, so it is not itself a rewind target,
+ * but it DOES make every earlier solidified brief one.
+ *
+ * Rendered at most {@link OPEN_LIST_MAX} entries (an unbounded list is token
+ * soup in which the actionable clause gets lost), oldest-last so the newest
+ * candidate — the default target — reads first.
+ *
+ * ABOVE the cap the list still starts with the newest {@link OPEN_LIST_MAX} and
+ * ends with a count (`· open: a, b, c (+2 more)`): the retrievable targets stay
+ * named, the remainder is acknowledged without implying it can be enumerated
+ * (there is no list-anchors tool — the tail is a fact, not an offer).
+ */
+export const OPEN_LIST_MAX = 3;
+
+export function withOpenAnchors(line: string, candidates: readonly string[]): string {
+  if (candidates.length === 0) return line;
+  const shown = candidates.slice(0, OPEN_LIST_MAX).join(', ');
+  // Above the cap the line still ends with the COUNT: the tail must stay truthful
+  // without naming targets the model cannot retrieve (no tool enumerates
+  // anchors), and the count alone would break the `· open:` shape the prompt and
+  // the tool description both describe.
+  if (candidates.length > OPEN_LIST_MAX) {
+    return `${line} · open: ${shown} (+${candidates.length - OPEN_LIST_MAX} more)`;
+  }
+  return `${line} · open: ${shown}`;
+}
+
+/**
+ * Stamp a finished `brief` tool result with the anchor line — the ONE place
+ * the anchor rendering is applied to a real tool result.
  *
  * Applied by the TOOL stage after the `brief` tool returns, because a tool
- * handler receives no call id; the loop owns the id the hash is derived from.
- * Idempotent, and a no-op on anything that is not a success result (an error
+ * handler receives no call id; the loop owns the id the hash is derived from
+ * (and, unlike the handler, can see the stack the candidate list comes from).
+ *
+ * Idempotent, and a no-op on anything that is not a pristine success (an error
  * message must not be labelled as an anchor) or that already carries a hash.
+ * When the result is a success carrying a section after the ack (`OK. When
+ * thinking on the larger scope, …`), the section is preserved VERBATIM after
+ * the anchor line — the anchor replaces the ack word, it does not swallow the
+ * reflection.
  */
-export function stampBriefResult(content: string, callId: string | undefined): string {
+export function stampBriefResult(
+  content: string,
+  callId: string | undefined,
+  openAnchors: readonly string[] = [],
+): string {
   if (hashOf(content) !== null) return content;
   if (!content.startsWith(BRIEF_OK)) return content;
   if (!callId) return content;
-  return `[${briefHash(callId)}] ${content}`;
+  // Drop the ack word (and the period that terminated it) but keep everything
+  // the result carried after it.
+  const rest = content.slice(BRIEF_OK.length).replace(/^\.\s*/, '').trim();
+  const line = withOpenAnchors(briefResultLine(callId), openAnchors);
+  return rest ? `${line}\n${rest}` : line;
 }
+
+/**
+ * The rendered length of a stamped result, WITHOUT the caller's content — so a
+ * producer that budgets for its own text (the plan-scope reflection) reserves
+ * the real first line instead of guessing at it.
+ *
+ * `openAnchors` is the live candidate list, exactly as the TOOL stage will pass
+ * it (pass the same array to {@link stampBriefResult}); anything after line 1
+ * adds to it, so a caller reserves `briefStampedLength(id, open) + ownText`.
+ */
+export function briefStampedLength(callId: string | undefined, openAnchors: readonly string[] = []): number {
+  return withOpenAnchors(briefResultLine(callId), openAnchors).length;
+}
+
+/** The invitation clause of line 1 — ONE spelling, used to test and to remove. */
+const FOLD_INVITATION_RE = / — recap\(target="[^"]*"\)[^\n]*$/;
 
 /** Marker opening the note text appended after the success result. */
 const NOTE_MARKER = 'Note, a recap has reset the conversation here with summary: ';
@@ -122,23 +280,35 @@ export function hashOf(content: string | undefined): string | null {
 /** True when `content` is a brief result carrying the plan-scope section. */
 export function hasPlanScopeSection(content: string | undefined): boolean {
   if (typeof content !== 'string') return false;
-  // The success word sits between the hash and the section ([<hash>] OK. When…),
-  // so drop a leading hash AND a leading success word before matching.
-  const prose = stripHashPrefix(content).replace(/^\S+\.\s+/, '');
-  return prose.startsWith(PLAN_SCOPE_HEADING);
+  // The plan-scope reflection is the SECOND line of an anchored result (line 1
+  // is the fixed anchor line), so match it as a whole line anywhere in the
+  // body rather than only at the front. Legacy `[<hash>] OK. When thinking…`
+  // results still match: the section is the remainder of that same line.
+  return content.split('\n').some((line) => line.trim().startsWith(PLAN_SCOPE_HEADING));
 }
 
 /**
- * Drop a leading `[<hash>] ` from a brief result, leaving the prose. Returns
+ * Drop a leading `[<hash>] ` from a brief result, leaving the rest. Returns
  * `content` unchanged when it carries no prefix (the display path must never
  * lose text it does not recognise).
+ *
+ * Only the PREFIX goes: an anchored result's remaining lines (the anchor prose
+ * and any recap note) are kept verbatim, and a legacy `OK. <section>` result
+ * keeps its section after the ack word.
  */
 export function stripHashPrefix(content: string): string {
   if (typeof content !== 'string' || !content.startsWith(HASH_PREFIX_OPEN)) return content;
   const close = content.indexOf(']');
   if (close <= 1) return content;
   // Skip the single space that separates the hash from the prose.
-  return content.startsWith('] ', close) ? content.slice(close + 2) : content.slice(close + 1);
+  const rest = content.startsWith('] ', close) ? content.slice(close + 2) : content.slice(close + 1);
+  // Legacy results continue `OK. <prose>`; an anchored result opens with its own
+  // line and puts the content on the next one. Either way the status line is not
+  // prose — drop it, but never drop a section that follows.
+  return rest
+    .replace(new RegExp(`^${BRIEF_OK}\\.\\s*`), '')
+    .replace(/^ANCHOR(?: — | · )[^\n]*(?:\n|$)/, '')
+    .replace(/^ANCHOR(?:\n|$)/, '');
 }
 
 /**
@@ -155,8 +325,28 @@ export function stripHashPrefix(content: string): string {
  * The body is emitted verbatim after the marker. The caller composes it
  * (anchor header + summary) — this module deliberately does not re-encode it.
  */
-export function noteWithSummary(callId: string | undefined, body: string): string {
-  return `${briefResultLine(callId)} ${NOTE_MARKER}${body}`;
+export function noteWithSummary(callId: string | undefined, body: string, firstLine?: string): string {
+  // An id-less anchor renders no address rather than a fake one: `[] ANCHOR —
+  // recap(target="")` would offer a call that can never resolve.
+  const fallback = callId ? briefResultLine(callId) : `[] ${BRIEF_ANCHOR_WORD}`;
+  // LINE 1 IS STRUCTURE, LINE 2 IS THE RECAP. The caller passes the anchor
+  // line the result already carries (the live first line, with its candidate
+  // list frozen at the moment the brief landed) so the rewind APPENDS below it
+  // instead of re-rendering — the anchor's identity must survive untouched.
+  //
+  // The one thing the rewind DOES change is the invitation: once this anchor is
+  // folded, "recap(target=…) folds the work after this point" names an empty span, so a
+  // still-frozen call would fail the model on its own successful use.
+  const anchorLine = firstLine ?? fallback;
+  return `${withoutFoldInvitation(anchorLine)}\n${NOTE_MARKER}${body}`;
+}
+
+/**
+ * The exact length {@link noteWithSummary} writes for one anchored result —
+ * the number `recapNoteSize` must compare against the result threshold.
+ */
+export function anchoredNoteLength(firstLine: string, body: string): number {
+  return `${withoutFoldInvitation(firstLine)}`.length + 1 + NOTE_MARKER.length + body.length;
 }
 
 /**
@@ -180,7 +370,7 @@ export function buildRecapNote(description: string, anchorMessage: string, addit
 /**
  * Resolve a `recap(target=…)` argument to the brief it names.
  *
- * Accepts the hash shown in a brief result (`[<hash>] OK`, see `briefHash`) or
+ * Accepts the hash shown in a brief result (`[<hash>] ANCHOR …`, see `briefHash`) or
  * the full tool-call id it was derived from. Returns null when `target` names
  * no brief in `candidates` (each entry carries its call id) — the caller then
  * refuses the recap instead of silently rewinding somewhere else.
