@@ -2,7 +2,7 @@
  * collect-esc-hint.test.ts — handleCollect: ESC during hint generation.
  *
  * Code path under test (collect-hint.ts runHintRound, invoked from collect.ts):
- *   const hintSignal = await hintSuggester.runHintRound(env, turn, chat);
+ *   const hintSignal = await hintSuggester.runHintRound(env, turn);
  *     → if (confusion >= 10 && messageCount >= 6) {
  *         ctx.core.brief('info', 'loop', 'Generating hint...');
  *         const result = await ctx.core.escAware(
@@ -17,7 +17,9 @@
  * (Triologue.generateHintRound() is deleted). Ownership moved to
  * HintSuggester/HintRoundManager in states/collect-hint.ts. This test therefore
  * mocks `triologue/hint-round.js` so `HintRoundManager.generate` is the seam
- * that decides 'compact' / 'failed' / success.
+ * that decides 'failed' / success. The hint round NEVER signals compaction —
+ * there is no 'compact' outcome (compaction is owned by token-based
+ * auto-compact and the hook-driven deferredCompact path).
  *
  * Strategy: Mock escAware to call cleanup (returns 'aborted') to simulate ESC,
  * and stub triologue.getMessagesRaw() to return enough messages (>= 6) plus
@@ -210,103 +212,6 @@ describe('handleCollect — ESC during hint generation', () => {
     expect(hintGenerate).not.toHaveBeenCalled();
   });
 
-  describe('hint-round compaction (result === "compact")', () => {
-    // Helper to build an env wired for the 'compact' branch: enough messages,
-    // high confusion, escAware runs the operation and returns 'compact'.
-    function makeCompactEnv() {
-      vi.mocked(triologue.getMessagesRaw).mockReturnValue(makeMessages(8));
-      hintGenerate.mockResolvedValue('compact' as never);
-      const ctx = createMockContext({
-        core: {
-          getConfusionIndex: vi.fn(() => 12),
-          resetConfusionIndex: vi.fn(),
-          brief: vi.fn(),
-        } as never,
-      });
-      const env = createMockMachineEnv({ triologue });
-      env.ctx = ctx;
-      // escAware runs the operation normally (no ESC) → returns 'compact'
-      env.ctx.core.escAware = vi.fn(async (operation: any) => {
-        return await operation(new AbortController());
-      }) as never;
-      return env;
-    }
-
-    it('should return COLLECT (not STOP) so the loop continues on compacted context', async () => {
-      const env = makeCompactEnv();
-      const turn = createTurnVars();
-      const chat = createChatData();
-
-      const result = await handleCollect(env, turn, chat);
-
-      // BEFORE: return STOP → PROMPT (loop stalled at PROMPT, waiting for user).
-      // AFTER:  return COLLECT → LLM retries on the compacted triologue, same turn.
-      expect(result).toBe(AgentState.COLLECT);
-      expect(result).not.toBe(AgentState.STOP);
-    });
-
-    it('should call triologue.compact to perform the compaction', async () => {
-      const env = makeCompactEnv();
-      const turn = createTurnVars();
-      const chat = createChatData();
-
-      await handleCollect(env, turn, chat);
-
-      expect(triologue.compact).toHaveBeenCalledTimes(1);
-    });
-
-    it('consumes a pending hook-deferred compact when hint-compact already compacts', async () => {
-      const env = makeCompactEnv();
-      const turn = createTurnVars();
-      const chat = createChatData();
-      chat.deferredCompact = true;
-
-      await handleCollect(env, turn, chat);
-
-      expect(triologue.compact).toHaveBeenCalledTimes(1);
-      expect(chat.deferredCompact).toBe(false);
-    });
-
-    it('should reset confusion index after hint-compact', async () => {
-      const env = makeCompactEnv();
-      const turn = createTurnVars();
-      const chat = createChatData();
-
-      await handleCollect(env, turn, chat);
-
-      expect(env.ctx.core.resetConfusionIndex).toHaveBeenCalledTimes(1);
-    });
-
-    it('should reset sequence, hookExecutor, and requestEmbeddingTracker (mirror llm.ts auto-compact)', async () => {
-      const env = makeCompactEnv();
-      const turn = createTurnVars();
-      const chat = createChatData();
-
-      await handleCollect(env, turn, chat);
-
-      // Stat counts were computed against the pre-compact history; after
-      // compact() they are stale and must be cleared, exactly as the llm.ts
-      // auto-compact branch does. Without these the continued loop runs on
-      // corrupted stats (e.g. sequence events inflating the next confusion
-      // score, hook dedup cap suppressing the next turn's hooks).
-      // The hint-compact path calls compactReset() (session.* only — turn.*
-      // survives compaction per the revised semantics), not fullClear().
-      expect(env.sequence.compactReset).toHaveBeenCalledTimes(1);
-      expect(env.hookExecutor.resetTurn).toHaveBeenCalledTimes(1);
-      expect(env.requestEmbeddingTracker.clear).toHaveBeenCalledTimes(1);
-    });
-
-    it('should reset crossroadOccurred to false', async () => {
-      const env = makeCompactEnv();
-      env.crossroadOccurred = true; // arm a stale cooldown
-      const turn = createTurnVars();
-      const chat = createChatData();
-
-      await handleCollect(env, turn, chat);
-
-      expect(env.crossroadOccurred).toBe(false);
-    });
-  });
 
   describe('hint-round failure (result === "failed")', () => {
     // Helper to build an env wired for the 'failed' branch: enough messages,

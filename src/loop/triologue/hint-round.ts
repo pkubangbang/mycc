@@ -70,19 +70,15 @@ const HINT_SCHEMA = {
       type: 'string',
       description: 'Search query for the wiki knowledge base. Use 3-8 keywords describing the specific knowledge gap, NOT a full sentence. Base the query on the actual error messages, tool names, or concepts visible in the conversation. Examples: "intent language verb object table", "ollama retry timeout configuration", "worktree branch switching git". Guessing is encouraged — a rough keyword query is far better than leaving this empty. Never output null or an empty string.',
     },
-    should_compact: {
-      type: 'boolean',
-      description: 'Set true ONLY when the agent is stuck in a dead-loop (repeating the same failed actions, or cycling the same tool calls without progress) AND a hint alone will not break it. Do NOT set it for long conversations or scattered attention — context length is handled by a separate token-based compaction, and a hint is almost always the better intervention for those. Set false for normal blockers a hint can resolve.',
-    },
   },
-  required: ['blocker', 'next_step', 'focus_on', 'wiki_domain', 'wiki_query', 'should_compact'],
+  required: ['blocker', 'next_step', 'focus_on', 'wiki_domain', 'wiki_query'],
 } as const;
 
 const HINT_SYSTEM_PROMPT = `You are a problem-analysis assistant. Your task is to analyze the gap between the user's intent and the agent's current progress, then output a structured JSON analysis.
 
 CRITICAL INSTRUCTIONS:
 1. If there are NO REAL blockers preventing progress, set blocker to exactly: "no blockers"
-2. Do NOT fabricate blockers. "no blockers" means there is no real obstacle. In that case still fill next_step / focus_on / wiki_query with a genuine description of the current task. IMPORTANT: never frame next_step as a "Continue ..." or "you're fine, keep going" authorization to progress — describe what the remaining task IS (e.g. "The remaining work is completing test coverage for the compact module"), not a sanction to move past a review point. The [HINT] note is always injected when should_compact is false, so the agent will read whatever you write here. Any prior [HINT] notes in the context are your own earlier analyses; if the same advice was already given and not acted on, escalate — change the advice, widen the scope, or name why the previous suggestion failed — instead of repeating it.
+2. Do NOT fabricate blockers. "no blockers" means there is no real obstacle. In that case still fill next_step / focus_on / wiki_query with a genuine description of the current task. IMPORTANT: never frame next_step as a "Continue ..." or "you're fine, keep going" authorization to progress — describe what the remaining task IS (e.g. "The remaining work is completing test coverage for the compact module"), not a sanction to move past a review point. The [HINT] note is always injected, so the agent will read whatever you write here. Any prior [HINT] notes in the context are your own earlier analyses; if the same advice was already given and not acted on, escalate — change the advice, widen the scope, or name why the previous suggestion failed — instead of repeating it.
 3. When the blocker involves errors, unfamiliar tools, or missing knowledge, ALWAYS suggest a wiki search by setting wiki_domain and wiki_query. Pick wiki_domain ONLY from the "Available Wiki Domains" list below — copy a name exactly; NEVER invent one. Only leave both empty if the blocker is purely about code logic or syntax.
 4. wiki_query construction:
    - Use 3-8 keywords extracted from the error message, tool name, or concept causing the blocker.
@@ -92,29 +88,23 @@ CRITICAL INSTRUCTIONS:
 5. In the conversation context, tool calls tagged as ti[hook-name]|tool-name|args were injected by a hookish skill, NOT chosen by the agent. When diagnosing confusion, consider whether a hook is misbehaving — injecting the wrong tool, blocking spuriously, replacing incorrectly, or firing when it shouldn't. If a hook is the blocker, name the hook skill in the blocker field and describe what it is doing wrong.
 6. Cautious moves: if you notice the agent is making repeated single-tool-call turns where it could have batched independent calls (e.g. reading files one at a time, pinning todos one by one, creating issues one per turn), this is not a blocker but an efficiency gap. In that case set blocker to "no blockers" and put a concrete batch encouragement in next_step — tell the agent to emit all independent, dependency-free tool calls in a single response. Do NOT encourage batching when one call's arguments depend on another's result (e.g. creating a todo then pinning it by id, reading a file then editing it) or for brief and recap, which must each be called alone.
 7. Reply with ONLY a JSON object. No commentary, no markdown fences.
-8. should_compact decides whether to trigger a context compaction (summarise the history to restore focus). Set it true ONLY for a genuine DEAD-LOOP — the agent is repeating the same failed actions or cycling the same tool calls without making progress (e.g. the same error 3+ times, the same edit attempted repeatedly, the same file read over and over), and a hint alone will not break the loop because the stale context keeps biasing the agent the same way.
-   Do NOT set should_compact for long conversations, scattered attention, low-confidence moves, or losing track of the goal. Those are NOT dead-loops — a token-based compaction handles context length on a separate, objective path, and for scattered attention a HINT is the better intervention (it re-states the goal and next step WITHOUT discarding the working memory the agent just built). Setting should_compact on a long-but-progressing conversation throws away useful context.
-   Evidence: look at the "Repeated actions" line in the breakdown (if present) — it lists the same tool called N times with the same error. If there is NO repeated-action evidence, default should_compact to false. should_compact is independent of blocker — you may have a real blocker with should_compact=false, or blocker="no blockers" with should_compact=true (only if a dead-loop is visible).
-
 The schema is:
 ${JSON.stringify(HINT_SCHEMA, null, 2)}
 
 NOTE: the examples below OMIT wiki_domain / wiki_query on purpose — the domain list is dynamic, so no fixed name may appear. Fill both fields by copying a domain from the "Available Wiki Domains" list and writing a 3-8 keyword query.
 
 EXAMPLE A — blocker involves an unfamiliar tool error:
-{"blocker":"Agent repeatedly gets 'Error: [Intent]' when calling bash","next_step":"Review the intent-language VERB/OBJECT vocabulary and reformat the bash intent","focus_on":"intent-language syntax for bash tool","should_compact":false}
+{"blocker":"Agent repeatedly gets 'Error: [Intent]' when calling bash","next_step":"Review the intent-language VERB/OBJECT vocabulary and reformat the bash intent","focus_on":"intent-language syntax for bash tool"}
 
 EXAMPLE B — blocker is a missing API pattern:
-{"blocker":"Agent doesn't know how to register a new wiki domain programmatically","next_step":"Search wiki for domain registration API and follow the documented pattern","focus_on":"wiki domain registration API","should_compact":false}
+{"blocker":"Agent doesn't know how to register a new wiki domain programmatically","next_step":"Search wiki for domain registration API and follow the documented pattern","focus_on":"wiki domain registration API"}
 
 EXAMPLE C — no real blocker (describe the remaining task; do NOT frame this as a "Continue ..." authorization):
-{"blocker":"no blockers","next_step":"The remaining work is completing test coverage for the compact module","focus_on":"completing test coverage","should_compact":false}
+{"blocker":"no blockers","next_step":"The remaining work is completing test coverage for the compact module","focus_on":"completing test coverage"}
 
 EXAMPLE D — cautious moves (single-tool turns, encourage batching):
-{"blocker":"no blockers","next_step":"You are making one tool call per turn. Batch independent calls — emit all the read_file / todo_pinning / issue_create calls with no data dependency on each other in a single response to save round-trips. Do not batch calls where one needs another's result, and keep brief and recap alone.","focus_on":"batching independent tool calls","should_compact":false}
-
-EXAMPLE E — dead-loop (same failed edit attempted repeatedly):
-{"blocker":"Agent has attempted the same edit_file 4 times and hit the same 'old_text not found' error each time","next_step":"Re-read the target file fresh to see its current content, then rebuild old_text from that","focus_on":"stale old_text vs current file content","should_compact":true}`;
+{"blocker":"no blockers","next_step":"You are making one tool call per turn. Batch independent calls — emit all the read_file / todo_pinning / issue_create calls with no data dependency on each other in a single response to save round-trips. Do not batch calls where one needs another's result, and keep brief and recap alone.","focus_on":"batching independent tool calls"}
+`;
 
 /** Shape of the parsed hint data from LLM response */
 interface HintData {
@@ -123,7 +113,6 @@ interface HintData {
   focus_on: string;
   wiki_domain: string;
   wiki_query: string;
-  should_compact: boolean;
 }
 
 /**
@@ -177,15 +166,15 @@ export class HintRoundManager {
    * @param confusionScore - Current confusion score
    * @param confusionBreakdown - Human-readable breakdown of confusion factors
    * @param pendingSkills - Skills with 'when' but no compiled condition
-   * @returns 'aborted' if ESC was pressed, 'compact' when compaction is requested,
-   *   'failed' after bounded malformed-output retries, or a success object.
+   * @returns 'aborted' if ESC was pressed, 'failed' after bounded malformed-output retries,
+   *   or a success object.
    */
   async generate(
     abortController: AbortController,
     confusionScore: number,
     confusionBreakdown: string,
     pendingSkills?: string[],
-  ): Promise<'aborted' | 'compact' | 'failed' | { status: 'success'; focusOn: string }> {
+  ): Promise<'aborted' | 'failed' | { status: 'success'; focusOn: string }> {
     if (agentIO.isNeglectedMode()) return 'aborted';
 
     // Build compact conversation context for analysis
@@ -275,7 +264,6 @@ export class HintRoundManager {
    * @param wikiDomainNames - Set of registered wiki domain names (for pre-filter validation)
    * @param pendingSkills - Skills with 'when' but no compiled condition (for notification)
    * @returns 'aborted' if ESC was pressed, 'success' if the hint was injected,
-   *   'compact' if the LLM signalled should_compact (caller triggers compaction),
    *   'retry' if the response was malformed/unparseable and the caller should loop.
    *   Any non-abort error is rethrown to the caller.
    */
@@ -284,10 +272,10 @@ export class HintRoundManager {
     userPrompt: string,
     wikiDomainNames: Set<string>,
     pendingSkills?: string[],
-  ): Promise<'aborted' | 'retry' | 'compact' | { status: 'success'; focusOn: string }> {
+  ): Promise<'aborted' | 'retry' | { status: 'success'; focusOn: string }> {
     try {
       agentIO.verbose('triologue', 'Hint round request');
-      const truncatedPrompt = `${userPrompt.split(ANALYSIS_INSTRUCTION)[0]}${ANALYSIS_INSTRUCTION}\n...`;
+      const truncatedPrompt = `${userPrompt.split(ANALYSIS_INSTRUCTION)[0]}${ANALYSIS_INSTRUCTION}`;
       agentIO.verbose('triologue', truncatedPrompt, '');
 
       const response = await retryChat(
@@ -326,17 +314,6 @@ export class HintRoundManager {
       if (validationErrors.length > 0) {
         agentIO.verbose('triologue', `Hint round invalid fields, retrying: ${validationErrors.join('; ')}`);
         return 'retry';
-      }
-
-      // Compaction path: when the LLM signals should_compact (dead-loop or
-      // context stress), a HINT note would be thrown away by the imminent
-      // compact(), so do NOT inject it. Return 'compact' and let the caller
-      // (collect.ts via the facade) trigger triologue.compact(). next_step /
-      // focus_on still ride along inside hintData but are not surfaced as a
-      // note — compaction itself is the intervention.
-      if (hintData.should_compact) {
-        agentIO.verbose('triologue', `Hint round signalled compaction: ${hintData.blocker}`);
-        return 'compact';
       }
 
       // Executed semantic pre-filter: the hint LLM GUESSES a domain+query (a
@@ -494,9 +471,6 @@ export class HintRoundManager {
     }
     if (typeof hintData.wiki_query !== 'string' || hintData.wiki_query.trim() === '') {
       errors.push('wiki_query (must be a non-empty string — never null/empty)');
-    }
-    if (typeof hintData.should_compact !== 'boolean') {
-      errors.push('should_compact (must be a boolean)');
     }
     if (errors.length > 0) {
       return errors;

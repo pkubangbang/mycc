@@ -361,7 +361,7 @@ function logVerboseStats(env: MachineEnv, messageCount: number): void {
 export async function handleCollect(
   env: MachineEnv,
   turn: TurnVars,
-  chat: ChatData,
+  _chat: ChatData,
 ): Promise<HandlerResult> {
   const { triologue, ctx } = env;
 
@@ -378,9 +378,8 @@ export async function handleCollect(
     const { firstSteerNote } = await collectMailsAndInput(env);
 
     // 3. Hint round + compaction. May short-circuit the pass.
-    const hintSignal = await hintSuggester.runHintRound(env, turn, chat);
+    const hintSignal = await hintSuggester.runHintRound(env, turn);
     if (hintSignal === 'stop') return AgentState.STOP;
-    if (hintSignal === 'collect') return AgentState.COLLECT;
 
     // 4. Todo + peer-channel nudging (with reactivation on the same cycle).
     await runTodoNudge(env, turn);

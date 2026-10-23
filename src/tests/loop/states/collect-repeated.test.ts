@@ -3,12 +3,12 @@
  * in the COLLECT state.
  *
  * `detectRepeatedActions` feeds objective evidence into the hint-round
- * breakdown so the LLM judges should_compact on facts (a repeated-action
- * line) rather than a vague "the conversation feels long" feeling — which
- * was over-triggering compaction. The contract:
+ * breakdown so the LLM's next_step advice targets the actual loop (a
+ * repeated-action line) rather than a vague "the conversation feels long"
+ * feeling. The contract:
  *   - 3+ CONSECUTIVE same-tool calls sharing a common error-ish result prefix
  *     → report `Repeated actions: <tool> ×<count> (results start with "<prefix>")`
- *   - otherwise → null (LLM defaults should_compact=false)
+ *   - otherwise → null (no repeated-action line added)
  *
  * Only `detectRepeatedActions` is exercised here; `commonErrorPrefix` is a
  * private helper covered transitively through it (it gates the 3+ errorish

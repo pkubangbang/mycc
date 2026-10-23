@@ -7,11 +7,11 @@
  * handle its three outcomes. This module owns the step-3 policy layer:
  *  - the trigger gate (confusion index + minimum message count),
  *  - the confusion breakdown (including the objective dead-loop evidence that
- *    feeds the hint prompt's should_compact judgement),
+ *    seeds the hint prompt's next_step advice),
  *  - the ESC-interruptible call into the hint-round generator
  *    (via the `HintSuggester`-owned `HintRoundManager` →
  *    `triologue/hint-round.ts`), and
- *  - the outcome handling (stop on ESC / compact on dead-loop / continue).
+ *  - the outcome handling (stop on ESC / continue otherwise).
  *
  * Relationship to `triologue/hint-round.ts`: that module is the MECHANISM
  * (the LLM prompt, JSON schema, retry loop, validation, wiki pre-filter, and
@@ -37,8 +37,7 @@
  * See docs/archived/hint-round-review.md for the full hint-round subsystem review.
  */
 
-import type { ChatData, MachineEnv, TurnVars } from '../state-machine.js';
-import { loader } from '../../context/shared/loader.js';
+import type { MachineEnv, TurnVars } from '../state-machine.js';
 import type { SequenceEvent } from '../../hook/sequence.js';
 import { HintRoundManager } from '../triologue/hint-round.js';
 
@@ -80,9 +79,9 @@ function generateBreakdown(
   }
 
   // Dead-loop evidence: same tool called 3+ times recently with the same error
-  // prefix. Feeds the hint-round prompt instruction 8 so the LLM judges
-  // should_compact on facts (a repeated-action line) rather than a vague
-  // "the conversation feels long" feeling, which was over-triggering compact.
+  // prefix. Gives the hint-round prompt an objective repeated-action line so
+  // the LLM's next_step advice targets the actual loop instead of guessing
+  // from a vague "the conversation feels long" feeling.
   const repeated = detectRepeatedActions(events);
   if (repeated) {
     parts.push(repeated);
@@ -93,8 +92,8 @@ function generateBreakdown(
 
 /**
  * Detect repeated tool actions that signal a dead-loop, to feed the hint
- * round as objective evidence (so the LLM judges should_compact on facts,
- * not on a vague "the conversation feels long" feeling).
+ * round as objective evidence (so the LLM's next_step advice targets the
+ * actual loop) instead of a vague "the conversation feels long" feeling.
  *
  * A "repeated action" = the same tool called 3+ times in the recent window
  * with results that share the same error-ish prefix. We look at the trailing
@@ -105,8 +104,8 @@ function generateBreakdown(
  *
  * Returns a human-readable line like:
  *   "Repeated actions: edit_file ×4 (results start with "Error: old_text not found")"
- * or null if no repetition is found. The hint-round prompt (instruction 8)
- * tells the LLM to default should_compact=false when there is no such line.
+ * or null if no repetition is found. The hint-round prompt surfaces this
+ * line to the LLM as objective evidence of a loop.
  *
  * Exported for unit testing (see src/tests/loop/states/collect-repeated.test.ts).
  */
@@ -165,7 +164,7 @@ function commonErrorPrefix(results: string[]): string | null {
 }
 
 /** Signal returned by HintSuggester.runHintRound to steer the orchestrator. */
-export type HintSignal = 'continue' | 'stop' | 'collect';
+export type HintSignal = 'continue' | 'stop';
 
 /**
  * HintSuggester - Singleton owning the COLLECT step-3 hint-round generation.
@@ -214,20 +213,18 @@ export class HintSuggester {
 
   /**
    * Step 3: generate a hint round when confusion is high, and handle its
-   * three outcomes.
+   * outcomes.
    *
    * @returns `'stop'` if ESC aborted the hint round (caller returns STOP for
-   *          centralized wrap-up); `'collect'` if the hint round signalled a
-   *          dead-loop compaction (caller returns COLLECT to continue on
-   *          compacted context); `'continue'` for a normal pass, or when the
+   *          centralized wrap-up); `'continue'` for a normal pass, or when the
    *          hint block was skipped, or when the hint analysis FAILED (no
    *          hint injected — the confusion signal is deliberately preserved
    *          rather than cleared).
    *
    * Side effects on `turn`: captures `lastHintFocus` (the hint source) on a
-   * successful hint round; clears `collectTransientRetries` on compaction.
+   * successful hint round.
    */
-  async runHintRound(env: MachineEnv, turn: TurnVars, chat: ChatData): Promise<HintSignal> {
+  async runHintRound(env: MachineEnv, turn: TurnVars): Promise<HintSignal> {
     const { triologue, ctx } = env;
     const confusionIndex = ctx.core.getConfusionIndex();
     const messageCount = triologue.getMessagesRaw().length;
@@ -265,49 +262,6 @@ export class HintSuggester {
     if (typeof result === 'object' && result.status === 'success') {
       turn.lastHintFocus = result.focusOn;
     }
-    // If the LLM signalled should_compact (dead-loop or context stress),
-    // trigger compaction now and CONTINUE the loop on fresh, compacted
-    // context. Compaction is a mid-turn intervention (not a turn boundary),
-    // so we return COLLECT (not STOP): COLLECT → LLM will retryChat on the
-    // now-compacted triologue within the same turn. Returning STOP here was
-    // the bug — STOP → PROMPT ends the turn and waits for user input, so the
-    // loop stalled at PROMPT after a hint-compact. This mirrors the
-    // hook-deferred compaction path (hook.ts sets deferredCompact → llm.ts
-    // compacts and continues the while-loop).
-    //
-    // TP parity: compact() replaces the conversation with a 3-message
-    // [summary_user, brief_assistant, brief_tool] resume sequence, so
-    // getLastRole() is 'tool' — the next agent() (the real LLM response) is a
-    // natural tool→assistant transition. Any note/user/tool the following
-    // states inject starts from a legal role sequence. No special TP handling
-    // needed here.
-    //
-    // Stat reset MUST mirror the llm.ts auto-compact branch: the stale
-    // sequence events, embedding tracker, hook dedup cap, and crossroad
-    // cooldown were all computed against the pre-compact history that no
-    // longer exists. Without these resets, the continued loop would run on
-    // corrupted stats (e.g. sequence events inflating the next confusion
-    // score, hook dedup cap suppressing the next turn's hooks).
-    if (result === 'compact') {
-      ctx.core.brief('info', 'loop', 'Hint round signalled compaction (dead-loop / context stress); compacting...');
-      // This compact satisfies any deferred HOOK request too. Prevent the next
-      // LLM state from performing the same compaction a second time.
-      const tools = loader.getToolsForScope(env.scope);
-      await triologue.compact(undefined, undefined, tools, await ctx.wiki.listDomains());
-      chat.deferredCompact = false;
-      ctx.core.resetConfusionIndex();
-      env.requestEmbeddingTracker.clear();
-      // compactReset() clears session-level data ONLY (turn.events[] and
-      // totalTurns survive — a turn spans across compaction). resetTurn()
-      // re-arms per-turn hook dedup (same rationale as llm.ts auto-compact).
-      env.sequence.compactReset();
-      env.hookExecutor.resetTurn();
-      env.crossroadOccurred = false;
-      // Turn recovered via compaction — clear the transient-retry counter
-      // so the next hiccup starts a fresh circuit-breaker count.
-      turn.collectTransientRetries = 0;
-      return 'collect';
-    }
     // If the hint analysis FAILED (malformed output exhausted the bounded
     // 3-attempt budget), NO hint was injected — so this must NOT be treated
     // as a successful intervention. Falling through to the reset below would
@@ -323,7 +277,7 @@ export class HintSuggester {
       return 'continue';
     }
     // Reset confusion after a hint that actually landed (success). 'aborted'
-    // and 'failed' returned above; 'compact' reset and returned earlier.
+    // and 'failed' returned above.
     ctx.core.resetConfusionIndex();
     return 'continue';
   }

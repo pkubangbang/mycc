@@ -19,7 +19,6 @@
  *   - the executed wiki pre-filter: a kept line names the SNAPPED real domain,
  *     a zero-hit/error proposal is muted, and a missing wiki module passes the
  *     line through
- *   - 'compact' path: should_compact=true → returns 'compact', no note
  *   - 'aborted' path: abortController aborted → returns 'aborted'
  *   - retry on malformed JSON / missing required fields
  *   - wiki domains are included in the analysis prompt
@@ -65,7 +64,6 @@ function validHintResponse(overrides: Record<string, unknown> = {}) {
         focus_on: 'intent-language syntax',
         wiki_domain: 'architecture',
         wiki_query: 'intent language verb object',
-        should_compact: false,
         ...overrides,
       }),
     },
@@ -311,27 +309,32 @@ describe('Hint Round JSON Output', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // compact path
+  // the hint round never signals compaction
   // ---------------------------------------------------------------------------
+  // should_compact is GONE: the hint round always injects its [HINT] note and
+  // never returns a 'compact' signal. Compaction is owned by token-based
+  // auto-compact (TOKEN_THRESHOLD) and the hook-driven deferredCompact path —
+  // never by hint analysis.
 
-  it('returns "compact" (no HINT note) when should_compact is true', async () => {
+  it('injects the [HINT] note and returns success (never a compact signal)', async () => {
     vi.mocked(retryChat).mockResolvedValueOnce(
-      validHintResponse({ should_compact: true }) as never,
+      validHintResponse({ blocker: 'Agent is looping on a failing test' }) as never,
     );
     const { manager, messages } = makeManager(makeWiki());
 
     const result = await manager.generate(new AbortController(), 10, 'breakdown');
 
-    expect(result).toBe('compact');
-    // No HINT note injected — compaction is the intervention.
-    expect(findHint(messages)).toBeUndefined();
+    expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
+    expect(result).not.toBe('compact');
+    expect(findHint(messages)).toBeDefined();
   });
 
   // ---------------------------------------------------------------------------
   // "no blockers" note injection (the note is NEVER silently suppressed)
   // ---------------------------------------------------------------------------
-  // The hint-round always injects a [HINT] note when should_compact is false,
-  // INCLUDING the "no blockers" case. Suppressing the note on "no blockers"
+  // The hint-round always injects a [HINT] note (there is no suppressing
+  // branch), INCLUDING the "no blockers" case. Suppressing the note on
+  // "no blockers"
   // was a hazard: it swallowed genuinely valuable guidance (e.g. EXAMPLE D's
   // batch-encouragement coaching, which carries blocker:"no blockers") just
   // because the blocker label was the magic string "no blockers". The
@@ -381,10 +384,10 @@ describe('Hint Round JSON Output', () => {
     const result = await manager.generate(new AbortController(), 10, 'breakdown');
 
     // Narrow the discriminated union: only the { status, focusOn } variant
-    // carries .status. The 'aborted'/'compact' string variants do not, so
+    // carries .status. The 'aborted'/'failed' string variants do not, so
     // accessing result.status directly is a TS error on the union.
     expect(result).not.toBe('aborted');
-    expect(result).not.toBe('compact');
+    expect(result).not.toBe('failed');
     if (typeof result === 'object') {
       expect(result.status).toBe('success');
     }
@@ -433,7 +436,6 @@ describe('Hint Round JSON Output', () => {
             blocker: 'x',
             focus_on: 'y',
             wiki_domain: 'z',
-            should_compact: false,
           }),
         },
       } as never)
@@ -492,17 +494,14 @@ describe('Hint Round JSON Output', () => {
     expect(result).toEqual({ status: 'success', focusOn: 'finding the auto-mode activation handler' });
   });
 
-  it('does not expose focusOn on the compact path', async () => {
-    vi.mocked(retryChat).mockResolvedValueOnce(
-      validHintResponse({ should_compact: true }) as never,
-    );
+  it('exposes focusOn only on the success path', async () => {
+    vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
     const { manager } = makeManager(makeWiki());
 
     const result = await manager.generate(new AbortController(), 10, 'breakdown');
 
-    expect(result).toBe('compact');
-    // The compact path returns a plain string, not a { status, focusOn } object.
-    expect(result).not.toHaveProperty('focusOn');
+    expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
+    expect(result).toHaveProperty('focusOn');
   });
 
   // ---------------------------------------------------------------------------
