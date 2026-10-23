@@ -82,6 +82,22 @@ html, body, #app {
   --todo-card-border: #e8c44f;
   --todo-card-text: #5a4500;
 
+  /* PLAN-mode scope reflection card (PlanScopeCard.vue). Magenta/violet to
+     match the terminal's plan-scope colour (tool-colors.ts: chalk.magenta) so
+     the Web UI and the terminal identify the same block. The panel is a
+     faint violet tint; --plan-scope-heading is the card's title + left rule;
+     --plan-scope-label is the small check label (TUNNEL/SUBLATE/…);
+     --plan-scope-hint is the muted one-line explanation of each check;
+     --plan-scope-sentinel marks a "none — …" / "no — …" answer, which is an
+     honest non-finding and must not compete with the real ones. */
+  --plan-scope-bg: #faf5ff;
+  --plan-scope-border: #d8c4f0;
+  --plan-scope-heading: #7b3fb8;
+  --plan-scope-label: #6a3fa0;
+  --plan-scope-hint: #6b6480;
+  --plan-scope-text: #3a3346;
+  --plan-scope-sentinel: #8c8798;
+
   --md-code-bg: rgba(0, 0, 0, 0.06);
   --md-pre-bg: #f6f8fa;
   --md-blockquote-border: #d0d7de;
@@ -160,6 +176,17 @@ html, body, #app {
   --todo-card-bg: #0f3d2a;
   --todo-card-border: #1f7a4f;
   --todo-card-text: #c8e6c9;
+
+  /* PLAN-mode scope reflection card — dark violet panel, readable label and
+     hint tones against the navy chat background (see the light block above
+     for what each token drives). */
+  --plan-scope-bg: #241d33;
+  --plan-scope-border: #4a3a66;
+  --plan-scope-heading: #c79bf0;
+  --plan-scope-label: #b98ae8;
+  --plan-scope-hint: #a9a0c0;
+  --plan-scope-text: #ddd4e8;
+  --plan-scope-sentinel: #8b8399;
 
   --md-code-bg: rgba(255, 255, 255, 0.08);
   --md-pre-bg: #0f1923;

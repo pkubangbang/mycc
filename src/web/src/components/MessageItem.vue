@@ -3,6 +3,8 @@ import { computed, ref, onMounted, onBeforeUnmount } from 'vue';
 import MarkdownIt from 'markdown-it';
 import type { ChatMessage } from '../types';
 import { highlightCode, highlightBash } from '../highlight';
+import { PLAN_SCOPE_LOG_LABEL } from '../plan-scope';
+import PlanScopeCard from './PlanScopeCard.vue';
 
 const props = defineProps<{
   message: ChatMessage;
@@ -47,6 +49,19 @@ const isTodoCard = computed(() =>
   props.message.type === 'log' && !!props.message.label && TODO_LABELS.has(props.message.label)
 );
 
+// PLAN-mode scope reflection (src/loop/plan-scope.ts), emitted by the hook
+// stage as brief('info', 'plan-scope', formatPlanScopeForDisplay(note)).
+// Its content is formatted for a TERMINAL — an ASCII rule line plus four
+// padEnd()-aligned label columns — which markdown-it mangles (the rule turns
+// into an <hr>, the alignment collapses). It is therefore rendered by the
+// dedicated PlanScopeCard instead of the generic labeled-log markdown path.
+// The label is the backend contract; matched exactly so no other log whose
+// label merely contains "plan-scope" is hijacked.
+const isPlanScope = computed(() =>
+  props.message.type === 'log'
+  && props.message.label === PLAN_SCOPE_LOG_LABEL
+);
+
 // Render markdown for conversational content (user + assistant result) and
 // for labeled `log` messages (brief() structured status — e.g. the crossroad
 // alternatives list). Unlabeled `log`/error/warn stay plain-text monospace —
@@ -58,6 +73,7 @@ const isTodoCard = computed(() =>
 // command as a monospace terminal block — never markdown.
 const renderMarkdown = computed(() =>
   !isBashCommand.value
+  && !isPlanScope.value
   && (
     props.message.type === 'user'
     || props.message.type === 'result'
@@ -173,6 +189,7 @@ const bashHtml = computed(() =>
 // distorted by white-space:pre-wrap. Unlabeled `log` is raw tool stdout →
 // keep monospace + pre-wrap.
 const isMonospace = computed(() => {
+  if (isPlanScope.value) return false;
   if (props.message.type === 'log' && props.message.label) return false;
   return (
     props.message.type === 'log' ||
@@ -285,7 +302,7 @@ function quoteContent(): void {
   <div class="message-row" :class="{ 'is-user': isUser }">
     <div class="message-col">
       <div v-if="header" class="message-header">{{ header }}</div>
-      <div class="bubble" :class="[message.type, { mono: isMonospace, 'bash-card': isBashCommand }]">
+      <div class="bubble" :class="[message.type, { mono: isMonospace, 'bash-card': isBashCommand, 'plan-scope-bubble': isPlanScope }]">
         <div v-if="message.detail" class="bubble-detail">{{ message.detail }}</div>
         <template v-if="isBashCommand">
           <!-- Bash command card: the shell command is syntax-highlighted
@@ -301,6 +318,12 @@ function quoteContent(): void {
           <!-- Todo tool log: the full todoList snapshot is "extracted" into
                the floating TodoCard, so the inline bubble hides the list
                body entirely. Only the header + detail summary above render. -->
+        </template>
+        <template v-else-if="isPlanScope">
+          <!-- PLAN-mode scope reflection: a terminal-formatted block (ASCII
+               rule + aligned label columns) that markdown mangles. Rendered
+               as its own violet card with one row per check. -->
+          <PlanScopeCard :content="message.content" />
         </template>
         <template v-else-if="renderMarkdown">
           <!-- eslint-disable-next-line vue/no-v-html -- markdown-it escapes raw HTML (html:false) -->
@@ -455,6 +478,15 @@ function quoteContent(): void {
 .bubble.bash-card {
   background: var(--md-pre-bg);
   border: 1px solid var(--bubble-result-border);
+}
+/* Plan-scope reflection: the card owns its own violet panel, so the
+   surrounding log bubble becomes a transparent frame (the card is inset by
+   10px 14px, so a same-colour bubble would otherwise double the padding and
+   show a grey band around it). */
+.bubble.plan-scope-bubble {
+  background: transparent;
+  border: none;
+  padding: 2px 0;
 }
 .bash-command-html {
   margin: 0;
