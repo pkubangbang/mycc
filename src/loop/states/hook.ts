@@ -34,7 +34,7 @@ import { loopEvents } from '../loop-events.js';
 import { stripInternalMarkup } from '../../utils/letter-box.js';
 import { buildCandidatesBrief } from '../crossroad.js';
 import { briefToolCall, newBriefCallId, validateBriefIsolation } from '../triologue/brief.js';
-import { PRISTINE_BRIEF_RESULT } from '../triologue/recap-note.js';
+import { briefResultLine } from '../triologue/recap-note.js';
 import { buildPlanScopeNote, formatPlanScopeForDisplay, withPlanScopeNote } from '../plan-scope.js';
 
 /**
@@ -208,6 +208,11 @@ async function handleRecapCall(
   const recapArgs = call.function.arguments as Record<string, unknown>;
   const description = typeof recapArgs.description === 'string' ? recapArgs.description.trim() : '';
   const abandon = recapArgs.abandon === true;
+  // Optional anchor selector: the hash shown at the start of a brief result
+  // (`[<hash>] OK`). Absent/empty → the default (newest solidified) anchor.
+  const target = typeof recapArgs.target === 'string' && recapArgs.target.trim()
+    ? recapArgs.target.trim()
+    : undefined;
   const comment = typeof recapArgs.comment === 'string' && recapArgs.comment.trim()
     ? recapArgs.comment.trim()
     : undefined;
@@ -236,8 +241,16 @@ async function handleRecapCall(
     return fail('Error: comment is required (it determines the direction of the next turn). Provide a clear, actionable directive stating what should happen next.');
   }
 
-  const anchor = triologue.getLastBrief();
+  const anchor = triologue.getLastBrief(target);
   if (!anchor) {
+    if (target) {
+      // An EXPLICIT target never falls back: collapsing somewhere the model did
+      // not choose would delete a span it meant to keep. Quote the hashes that DO
+      // exist (that is exactly what target takes) so the retry can pick a real
+      // anchor.
+      const known = triologue.listBriefHashes().map((b) => `[${b.hash}]`).join(', ');
+      return fail(`Error: No brief matches target "${target}"${known ? `. Addressable briefs: ${known}` : ', and this conversation has no briefs yet'}. Call recap without target to collapse to the newest brief instead.`);
+    }
     return fail('Error: No brief found to rewind to — nothing to collapse yet. Call brief first, then recap.');
   }
 
@@ -263,11 +276,11 @@ async function handleRecapCall(
     // Size pre-check on the note that will ACTUALLY be written into the brief's
     // tool result (header + quoted anchor + body), not just the body: the write
     // happens AFTER the truncation, so an over-size note loses the span.
-    const abandonSize = triologue.recapNoteSize(description, abandonParts, anchor.id);
+    const abandonSize = triologue.recapNoteSize(description, abandonParts, anchor.id, target);
     if (abandonSize !== null && abandonSize > triologue.getResultThreshold()) {
       return fail(`Error: the recap note is ${abandonSize} chars, over the ${triologue.getResultThreshold()}-char tool-result limit; nothing was discarded. Re-run with a shorter comment.`);
     }
-    const result = triologue.rewindToLastBrief(description, abandonParts, anchor.id);
+    const result = triologue.rewindToLastBrief(description, abandonParts, anchor.id, target);
     if (!result) {
       // The anchor moved between the peek at the top of this handler and here.
       // Answer the call rather than returning COLLECT with a dangling
@@ -349,7 +362,7 @@ async function handleRecapCall(
   // untouched, so an oversized summary can never coexist with a truncation that
   // already threw the span away.
   const threshold = triologue.getResultThreshold();
-  const noteSize = triologue.recapNoteSize(description, summary, anchor.id);
+  const noteSize = triologue.recapNoteSize(description, summary, anchor.id, target);
   if (noteSize !== null && noteSize > threshold) {
     ctx.core.brief('warn', 'recap',
       `Recap note too large (${noteSize} chars > ${threshold}). Nothing was collapsed.`,
@@ -357,7 +370,7 @@ async function handleRecapCall(
     return fail(`Error: the recap note is ${noteSize} chars, over the ${threshold}-char tool-result limit; nothing was collapsed. Re-run recap with a shorter summary or comment.`);
   }
 
-  const result = triologue.rewindToLastBrief(description, summary, anchor.id);
+  const result = triologue.rewindToLastBrief(description, summary, anchor.id, target);
   if (!result) {
     // The anchor moved while the forks ran (a new brief landed) or vanished.
     // Nothing was truncated and nothing was appended.
@@ -585,7 +598,7 @@ export async function handleHook(
       // the reconstructed text, so replaying a crossroad cannot re-trigger it.
       const briefResult = chat.crossroadFilePath
         ? `A direction refinement was applied to your response. The full decision record is saved at: ${chat.crossroadFilePath} (you may replay it with mycc-pretty-print --type=crossroad <path> only if the user asks to see the full response).`
-        : PRISTINE_BRIEF_RESULT;
+        : briefResultLine(crossroadBrief.id);
       triologue.tool('brief', briefResult, crossroadBrief.id);
 
       // Three-part display, in reading order:

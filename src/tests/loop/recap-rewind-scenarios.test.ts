@@ -37,7 +37,15 @@ vi.mock('../../loop/agent-io.js', () => ({
   agentIO: { verbose: vi.fn(), log: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// Anchors are stamped with their hash ([<hash>] OK), so the note is matched by
+// its marker, not by a fixed success prefix.
+// Anchors are stamped with their hash (`[<hash>] OK`); the note itself starts at
+// the marker. withNoteOnly drops the hash line before matching, so the
+// check never depends on a particular hash value.
 const NOTE_PREFIX = 'OK Note, a recap has reset the conversation here with summary: ';
+function withNoteOnly(content: string | undefined): boolean {
+  return !!content && /^\[[A-Za-z0-9_-]+\] /.test(content) && content.replace(/^\[[A-Za-z0-9_-]+\] /, '').startsWith(NOTE_PREFIX);
+}
 
 let seq = 0;
 function briefCall(message: string, confidence = 7): ToolCall {
@@ -88,7 +96,7 @@ describe('recap rewind scenarios (anchor = non-synthetic brief with activity aft
     expect(result.anchorMessage).toBe('BRIEF TWO');
 
     // b2's OWN result carries the note; everything after b2 is folded away.
-    expect(resultOf(t, b2)!.startsWith(NOTE_PREFIX)).toBe(true);
+    expect(withNoteOnly(resultOf(t, b2))).toBe(true);
     expect(resultOf(t, b2)).toContain('summary of the span');
     expect(t.getMessages().at(-1)!.tool_call_id).toBe(b2);
     expect(t.getLastRole()).toBe('tool');
@@ -108,7 +116,7 @@ describe('recap rewind scenarios (anchor = non-synthetic brief with activity aft
     // after it — rule 2 skips it and b1 (which has b2 after it) anchors.
     const second = t.rewindToLastBrief('two', 'summary two')!;
     expect(second.anchorMessage).toBe('BRIEF ONE');
-    expect(resultOf(t, b1)!.startsWith(NOTE_PREFIX)).toBe(true);
+    expect(withNoteOnly(resultOf(t, b1))).toBe(true);
     expect(resultOf(t, b1)).toContain('summary two');
     // b2 was folded into the span.
     expect(resultOf(t, b2)).toBeUndefined();
@@ -134,7 +142,7 @@ describe('recap rewind scenarios (anchor = non-synthetic brief with activity aft
 
     // The anchor result is OVERWRITTEN in place (not appended): b2's note now
     // holds the second summary, and the history ends on b2's round-trip.
-    expect(resultOf(t, b2)!.startsWith(NOTE_PREFIX)).toBe(true);
+    expect(withNoteOnly(resultOf(t, b2))).toBe(true);
     expect(resultOf(t, b2)).toContain('summary two');
     expect(resultOf(t, b2)).not.toContain('summary one');
     expect(t.getMessages().at(-1)!.tool_call_id).toBe(b2);
@@ -176,12 +184,76 @@ describe('recap rewind scenarios (anchor = non-synthetic brief with activity aft
 
     const second = t.rewindToLastBrief('two', 'summary two')!;
     expect(second.anchorMessage).toBe('BRIEF THREE');
-    expect(resultOf(t, b3)!.startsWith(NOTE_PREFIX)).toBe(true);
+    expect(withNoteOnly(resultOf(t, b3))).toBe(true);
     expect(resultOf(t, b3)).toContain('summary two');
     expect(resultOf(t, b4)).toBeUndefined();          // folded into the span
     // b2 still holds RECAP ONE's note — it was that recap's anchor. A later
     // rewind elsewhere never disturbs an anchor it did not select.
     expect(resultOf(t, b2)).toContain('summary one');
     expect(t.getMessages().at(-1)!.tool_call_id).toBe(b3);
+  });
+
+  // ---------------------------------------------------------------------
+  // Explicit `target` (recap(target="<hash>")) — the model chooses the
+  // position instead of guessing which brief the default rule will pick.
+  // The hash shown on a brief's result (`[<hash>] OK`) is the call id's first
+  // 8 chars; `briefCall()` mints `brief_<n>`, so its hash is `brief_<n>` too.
+  // ---------------------------------------------------------------------
+  it('6. target rewinds to an EARLIER brief even when a newer solidified one exists', () => {
+    const b1 = pushBrief(t, 'BRIEF ONE');
+    pushTool(t);
+    const b2 = pushBrief(t, 'BRIEF TWO');
+    pushTool(t);
+
+    // The default rule would pick b2 (newest solidified); the explicit target
+    // wins over the "solidified" rule.
+    expect(t.getLastBrief()!.id).toBe(b2);
+    expect(t.getLastBrief(b1)!.id).toBe(b1);
+
+    const result = t.rewindToLastBrief('collapse', 'summary', undefined, `[${b1}]`)!;
+    expect(result.anchorMessage).toBe('BRIEF ONE');
+    // Everything after b1's round-trip is gone — including the newer b2.
+    expect(resultOf(t, b2)).toBeUndefined();
+    expect(withNoteOnly(resultOf(t, b1))).toBe(true);
+    expect(resultOf(t, b1)).toContain('summary');
+    expect(t.getMessages().at(-1)!.tool_call_id).toBe(b1);
+  });
+
+  it('7. an unknown target refuses and leaves the history untouched', () => {
+    const b1 = pushBrief(t, 'BRIEF ONE');
+    pushTool(t);
+    const len = t.getMessages().length;
+
+    expect(t.getLastBrief('nope12')).toBeNull();
+    expect(t.rewindToLastBrief('collapse', 'summary', undefined, 'nope12')).toBeNull();
+    // No silent fallback to the default anchor: b1 is still pristine.
+    expect(t.getMessages().length).toBe(len);
+    expect(resultOf(t, b1)).toBe('OK');
+  });
+
+  it('8. a target may address a brief by its full call id', () => {
+    const b1 = pushBrief(t, 'BRIEF ONE');
+    pushTool(t);
+    const b2 = pushBrief(t, 'BRIEF TWO');
+    pushTool(t);
+
+    expect(t.getLastBrief(b2)!.id).toBe(b2);
+    expect(t.rewindToLastBrief('collapse', 'summary', undefined, b1)!.anchorMessage).toBe('BRIEF ONE');
+    expect(resultOf(t, b2)).toBeUndefined();
+    expect(withNoteOnly(resultOf(t, b1))).toBe(true);
+  });
+
+  it('9. a target naming the LAST brief has nothing to collapse → null, unchanged', () => {
+    const b1 = pushBrief(t, 'BRIEF ONE');
+    pushTool(t);
+    const b2 = pushBrief(t, 'BRIEF TWO');
+    const len = t.getMessages().length;
+
+    // b2 is the very last round-trip: there is no span beneath it.
+    expect(t.getLastBrief(b2)).toBeNull();
+    expect(t.rewindToLastBrief('collapse', 'summary', undefined, b2)).toBeNull();
+    expect(t.getMessages().length).toBe(len);
+    expect(resultOf(t, b1)).toBe('OK');
+    expect(resultOf(t, b2)).toBe('OK');
   });
 });

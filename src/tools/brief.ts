@@ -7,7 +7,7 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
-import { PRISTINE_BRIEF_RESULT } from '../loop/triologue/recap-note.js';
+import { BRIEF_OK } from '../loop/triologue/recap-note.js';
 
 /**
  * `brief` is shared by the lead AND teammates (`scope: ['main', 'child']`), so
@@ -71,12 +71,15 @@ export const briefTool: ToolDefinition = {
 
     // Use core.brief to send the message via IPC to parent
     ctx.core.brief('info', 'brief', message, `confidence: ${confidence * 10}%`);
-    // The pristine result (triologue/recap-note.ts). recap REWRITES exactly this
-    // content in place with the span summary, so it must stay the single
-    // literal. The success text ends with a period because a result may carry
-    // more after it ("OK. When thinking on the larger scope, …") — that section
-    // is added by the TOOL stage in plan mode, never here: the tool stays a
-    // reporter, the loop owns the enhancement.
-    return PRISTINE_BRIEF_RESULT + '.';
+    // A plain success line, `OK`. The TOOL stage (states/tool.ts) PREFIXES this
+    // result with the anchor hash — `[<hash>] OK` — because only the loop knows
+    // the tool-call id the hash is derived from (a handler receives no id). The
+    // hash is the same one recap's rewind writes (`noteWithSummary`), so the
+    // two writers still share ONE rendering (recap-note.ts briefResultLine).
+    // The success text ends with a period because a result may carry more after
+    // it ("OK. When thinking on the larger scope, …") — that section is added
+    // by the TOOL stage in plan mode, never here: the tool stays a reporter,
+    // the loop owns the enhancement.
+    return `${BRIEF_OK}.`;
   },
 };

@@ -465,7 +465,7 @@ describe("ConditionRegistry", () => {
       expect(result.success).toBe(false);
       // A bare toBeDefined() accepted ANY error text (including a TypeError from
       // a future refactor). Pin it to the real write failure.
-      expect(result.error).toMatch(/EISDIR|ENOTDIR|not a directory|EEXIST/i);
+      // Windows reports ENOENT here (the mkdir of the parent fails, the temp\n      // file is never opened); POSIX reports EISDIR/ENOTDIR. Pin either real\n      // failure, but keep rejecting a TypeError from a future refactor.\n      expect(result.error).toMatch(/EISDIR|ENOTDIR|not a directory|EEXIST|ENOENT/i);
       fs.rmSync(testDir, { force: true });
     });
   });

@@ -85,8 +85,8 @@ recap#2 → query → tool1 → [brief(A) result = note₂]
   result in place**:
 
   ```
-  assistant('', [brief("B's message", 7)]) → tool('brief', "OK Note, a recap has
-      reset the conversation here with summary: <note₁>")
+  assistant('', [brief("B's message", 7)]) → tool('brief', "[brief_17] OK Note, a
+      recap has reset the conversation here with summary: <note₁>")
   ```
 
   `note₁` starts with `[RECAP] <description>` and `Rewound past the brief: "<B's
@@ -193,7 +193,7 @@ never be folded by the next recap (see the anchor rule).
 The note is the anchor brief's rewritten TOOL RESULT:
 
 ```
-OK Note, a recap has reset the conversation here with summary: <body>
+[<hash>] OK Note, a recap has reset the conversation here with summary: <body>
 
 <body> =
 [RECAP] <description>
@@ -206,9 +206,39 @@ Rewound past the brief: "<anchor brief message>"
 **Next direction (recap comment — follow this):** <comment>
 ```
 
-The `OK Note, …` marker is added by `noteWithSummary()` in
-`src/loop/triologue/recap-note.ts` (the same module owns the pristine `OK`
-literal, so the marker and the "still anchors" test cannot drift). The
+The `[<hash>] OK Note, …` marker is added by `noteWithSummary()` in
+`src/loop/triologue/recap-note.ts` (the same module owns the pristine
+`[<hash>] OK` line, so the marker and the hash prefix cannot drift).
+
+### The brief result line: `[<hash>] OK`
+
+Every brief result starts with a short **hash** — the first 8 characters of the
+brief's tool-call id (`brief_1792715569650_ab12cd` → `brief_17`), rendered as
+`[brief_17] OK`. `briefResultLine()` renders it, `stampBriefResult()` applies it
+idempotently (a result that already carries a `[<hash>]` prefix is left alone),
+and `briefHash()` derives the hash.
+
+The hash exists so the model can **name** an anchor: it is exactly the token
+`recap` takes in `target` (`[brief_17]`, `brief_17`, or the full call id all
+resolve). A rewind rewrites the result to `[<hash>] OK Note, …` — the hash
+survives, so a later recap can still address the same brief.
+
+### `recap(target=…)`
+
+`recap` takes an optional `target`:
+
+- **empty** (the normal case) → the default anchor: the newest *solidified*
+  brief, i.e. one with meaningful activity after its round-trip. Recap
+  round-trips do not count as activity.
+- **given** → the brief carrying that hash / id. An explicit target **wins over
+  the solidified rule**: it may name a brief that the conversation has not
+  visibly moved past, as long as *something* follows its round-trip.
+- An explicit target **never falls back**. If no brief matches, the call is
+  answered with an error quoting the addressable hashes and **nothing is
+  collapsed** — silently collapsing elsewhere would delete a span the model did
+  not choose.
+- A target naming the **last** brief has nothing beneath it to collapse, so it
+  is refused the same way. The
 `[RECAP]` header + quoted anchor are prepended by `rewindToLastBrief()` (it
 captures the anchor text **before** the truncation); the rest is the
 `additionalMessage` assembled by `handleRecap` in `src/loop/recap-rewind.ts`.
@@ -232,6 +262,15 @@ bug — the history no longer exists.
 - `MessageStore.lastQuery` is written only by `user()`, so
   `**User's last query (context)**` stays truthful even when the newest query
   was truncated away.
+- The compaction summary prompt ends with a `## Managing your context with
+  recap` section (see `buildSummaryPrompt()` in
+  `src/loop/triologue/compact.ts`): a compaction is machine-triggered, so the
+  model never chose it, and this is where it learns that it now owns its
+  context — call `recap` when the context feels heavy or when it is stuck in a
+  dead loop (with a steering `comment`), and use `target` only to collapse
+  further back than the newest usable brief. It deliberately does **not** tell
+  the model to `brief` first: a recap submerges the whole span, briefs included.
+  `emitControl('compact')` is untouched — it only journals a live-log boundary.
 
 ## Two resyncs a rewind must perform
 
@@ -271,7 +310,10 @@ quoted anchor + steering last, **repeatability**, **note-never-an-anchor**,
 **compaction floor**, wrap-up mark clamping, and token recount.
 `src/tests/loop/recap-rewind-scenarios.test.ts` pins the anchor rule against
 the sequences a real session produces (b1 → t → b2 → t; recap → recap;
-recap → t → recap; recap → brief → recap).
+recap → t → recap; recap → brief → recap), plus the explicit `target`
+scenarios: an earlier brief wins over a newer solidified one, an unknown hash
+refuses without touching history, a full call id resolves, and a target naming
+the last brief is refused.
 `src/tests/loop/triologue-brief-isolation.test.ts` covers `validateBriefIsolation`;
 `src/tests/loop/states/hook-brief-isolation.test.ts` pins the wholesale
 rejection (every call answered, hook processing skipped) and the lone-brief path.

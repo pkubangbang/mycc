@@ -13,6 +13,7 @@ import { ResultTooLargeError } from '../../types.js';
 import { loader } from '../../context/shared/loader.js';
 import { isVerbose } from '../../config.js';
 import { loopEvents } from '../loop-events.js';
+import { stampBriefResult } from '../triologue/recap-note.js';
 
 // Tools that are purely exploratory (information gathering)
 const EXPLORATION_TOOLS = new Set([
@@ -105,17 +106,28 @@ export async function handleTool(
         agentIO.verbose('tool', `Result: ${toolName}`, { outputLength: output.length });
       }
 
+      // A brief's success result is stamped with its ANCHOR HASH — `[<hash>] OK`
+      // — here, and only here: the handler receives no call id, so the loop is
+      // the one place that can render it. The hash is `briefHash(callId)`, the
+      // same token recap writes back (`noteWithSummary`) and `recap(target=…)`
+      // resolves, so a brief is addressable the moment it lands. Only the
+      // pristine "OK…" result is stamped: an error or a plan-scope-less variant
+      // is never relabelled as an anchor. See recap-note.ts stampBriefResult.
+      const resultContent = toolName === 'brief'
+        ? stampBriefResult(output, toolCallId)
+        : output;
+
       // Observability: emit tool_executed (silent when no listeners)
       loopEvents.emit('tool_executed', { tool: toolName, outputLength: output.length });
 
       sequence.add({
         tool: toolName,
         args: toolCall.function.arguments as Record<string, unknown>,
-        result: output,
+        result: resultContent,
         timestamp: Date.now(),
       });
 
-      triologue.tool(toolName, output, toolCallId);
+      triologue.tool(toolName, resultContent, toolCallId);
 
       // Track this tool call for semantic duplication detection
       await env.requestEmbeddingTracker.addEntry(toolName, toolCall.function.arguments as Record<string, unknown>);

@@ -6,7 +6,7 @@
  * asking whether that sub-problem is the right one. The loop therefore makes
  * every brief, while planning, carry one extra paragraph:
  *
- *   tool('brief', "OK. When thinking on the larger scope, …", callId)
+ *   tool('brief', "[<hash>] OK. When thinking on the larger scope, …", callId)
  *
  * WHY THE TOOL STAGE OWNS IT
  * A brief's RESULT is produced by execution, not by policy. Computing it here,
@@ -38,7 +38,7 @@
  */
 import type { Message, Tool } from '../types.js';
 import { forkChat } from '../engine/chat-provider.js';
-import { PRISTINE_BRIEF_RESULT, PLAN_SCOPE_HEADING } from './triologue/recap-note.js';
+import { BRIEF_OK, PLAN_SCOPE_HEADING } from './triologue/recap-note.js';
 
 /** Head room for the fork's signal + the result threshold's own safety slack. */
 const SCOPE_NOTE_OVERHEAD_CHARS = 512;
@@ -145,7 +145,7 @@ export interface PlanScopeDeps {
  * Pure I/O: one forkChat, no triologue mutation.
  */
 export async function buildPlanScopeNote(deps: PlanScopeDeps): Promise<string | null> {
-  const budget = deps.resultThreshold - PRISTINE_BRIEF_RESULT.length - 2 - SCOPE_NOTE_OVERHEAD_CHARS;
+  const budget = deps.resultThreshold - BRIEF_OK.length - 2 - SCOPE_NOTE_OVERHEAD_CHARS;
   if (budget < 200) return null; // no room worth writing — leave the brief plain
 
   const prompt = buildPrompt(deps.briefMessage);
@@ -219,5 +219,5 @@ export function formatPlanScopeForDisplay(note: string): string {
 
 /** The complete brief tool result: success line + the reflection paragraph. */
 export function withPlanScopeNote(note: string): string {
-  return `${PRISTINE_BRIEF_RESULT}. ${note}`;
+  return `${BRIEF_OK}. ${note}`;
 }

@@ -151,7 +151,7 @@ describe('handleLlm — empty output when lastRole === "tool" (img_describe regr
     // THE REGRESSION: agent() and tool() MUST be called despite lastRole==='tool'.
     expect(triologue.agent).toHaveBeenCalledTimes(1);
     expect(triologue.tool).toHaveBeenCalledTimes(1);
-    expect(triologue.tool).toHaveBeenCalledWith('brief', 'OK', expect.any(String));
+    expect(triologue.tool).toHaveBeenCalledWith('brief', expect.stringMatching(/^\[[A-Za-z0-9_-]+\] OK$/), expect.any(String));
   });
 
   it('does NOT infinite-loop: bails to PROMPT after MAX_EMPTY_RETRIES consecutive empties', async () => {
@@ -193,7 +193,7 @@ describe('handleLlm — empty output when lastRole === "tool" (img_describe regr
 
     expect(result).toBe(AgentState.HOOK);
     expect(triologue.agent).toHaveBeenCalledTimes(1);
-    expect(triologue.tool).toHaveBeenCalledWith('brief', 'OK', expect.any(String));
+    expect(triologue.tool).toHaveBeenCalledWith('brief', expect.stringMatching(/^\[[A-Za-z0-9_-]+\] OK$/), expect.any(String));
   });
 
   it('does not record an LLM success while spinning on empty output', async () => {

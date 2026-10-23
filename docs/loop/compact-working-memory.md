@@ -157,9 +157,17 @@ Output TEXT ONLY — do NOT use any tools.
 
 The prompt deliberately does **not** ask for a broad summary — that is the summary call's job. The two calls are independent: neither sees the other's output. Run concurrently via `Promise.all`, the focus is appended as a `### Recent Working Memory` section to the user message.
 
-### 3.6 Summary prompt (unchanged)
+### 3.6 Summary prompt
 
-The summary prompt keeps its existing three-section structure (Accomplishments / Current State / Key Decisions) plus the knowledge-persistence, focus-area, and user-instruction addenda. No change.
+The summary prompt keeps its existing three-section structure (Accomplishments / Current State / Key Decisions) plus the knowledge-persistence, focus-area, and user-instruction addenda.
+
+It also ends with a `## Managing your context with recap` section appended by `buildSummaryPrompt()`. A compaction is machine-triggered (token pressure, a dead loop) — the model never asked for it and has no idea it happened — so this is the one place it can be told that it now owns its context:
+
+- call `recap` once when the context feels heavy (long tool results, many files explored, stale work), at a point where the work reads as a finished stretch;
+- call `recap` with a steering `comment` when stuck in a dead loop, so the summary keeps the lesson and the comment breaks the bias;
+- `target` is optional — without it the recap collapses to the newest usable brief; each brief result starts with `[<hash>] OK`, so passing `target="<hash>"` collapses further back to an earlier point.
+
+The section deliberately does **not** tell the model to `brief` first: `recap` submerges the whole span, briefs included, so a fresh brief would be folded away in the same stroke. The `emitControl('compact')` live-log boundary is untouched — it journals a boundary, it is not a message to the model.
 
 ### 3.7 Backward-compatible fallback
 

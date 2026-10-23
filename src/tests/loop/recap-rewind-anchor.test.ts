@@ -120,7 +120,10 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     const peek = t.getLastBrief()!;
     expect(peek.message).toBe('mapped the parser');
     expect(peek.confidence).toBe(7);
-    expect(Object.keys(peek).sort()).toEqual(['confidence', 'id', 'message', 'span']);
+    expect(Object.keys(peek).sort()).toEqual(['confidence', 'hash', 'id', 'message', 'span']);
+    // The hash is the call id's prefix — the token 
+    // The hash is the call id's prefix - the token recap(target=...) takes.
+    expect(peek.hash).toBe(peek.id.slice(0, 8));
     // The id is opaque: it must not be the raw array index the caller would be
     // tempted to truncate at.
     expect(typeof peek.id).toBe('string');
@@ -153,7 +156,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     expect(msgs[1].tool_calls?.[0].function.name).toBe('brief');
     expect(msgs[2].tool_name).toBe('brief');
     expect(msgs[2].tool_call_id).toBe((msgs[1].tool_calls?.[0] as ToolCall).id);
-    expect(msgs[2].content.startsWith('OK Note, a recap has reset the conversation here with summary: ')).toBe(true);
+    expect(msgs[2].content).toMatch(/^\[[A-Za-z0-9_-]+\] OK Note, a recap has reset the conversation here with summary: /);
     expect(msgs[2].content).toContain('SUMMARY BODY');
     expect(t.getLastRole()).toBe('tool'); // TP parity handoff to the next agent()
   });

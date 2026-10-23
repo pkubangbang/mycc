@@ -1,67 +1,88 @@
-/**
- * triologue-recap-note.test.ts — the two writers of a brief result must not drift.
- *
- * There is no "is this result pristine?" predicate any more: anchor eligibility
- * comes from the STRUCTURE (non-synthetic brief + something after its
- * round-trip), never from the result's text. This file therefore pins only what
- * actually exists — the success line, the note framing, and the plan-scope
- * section marker.
- */
-import { describe, it, expect, vi } from 'vitest';
-
-// agent-io writes to the terminal; keep the test output clean.
-vi.mock('../../loop/agent-io.js', () => ({
-  agentIO: { verbose: vi.fn(), log: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
-
+import { describe, it, expect } from 'vitest';
 import {
-  PRISTINE_BRIEF_RESULT,
-  PLAN_SCOPE_HEADING,
+  BRIEF_OK,
+  briefHash,
+  briefResultLine,
+  stripHashPrefix,
+  hashOf,
   hasPlanScopeSection,
+  stampBriefResult,
+  resolveBriefTarget,
+  buildRecapNote,
   noteWithSummary,
+  PLAN_SCOPE_HEADING,
 } from '../../loop/triologue/recap-note.js';
 
-const MARKER = 'OK Note, a recap has reset the conversation here with summary: ';
-
+/**
+ * The brief result contract after the anchor-hash change:
+ *
+ *   [<hash>] OK                      pristine success (hash = call-id prefix)
+ *   [<hash>] OK Note, a recap …      consumed anchor (hash survives the rewrite)
+ *
+ * The hash is what `recap(target=…)` accepts, so the rendering and the parsing
+ * live in the SAME module and must agree — that is what most of these cases
+ * pin down.
+ */
 describe('recap-note', () => {
-  it('the success line is "OK" and the tool renders it as "OK."', () => {
-    // PRISTINE_BRIEF_RESULT is the shared prefix; the period belongs to the
-    // rendered result so the plan-scope section reads as one sentence.
-    expect(PRISTINE_BRIEF_RESULT).toBe('OK');
+  const ID = 'brief_1792715569650_ab12cd';
+  const HASH = 'brief_17'; // first BRIEF_HASH_LENGTH (8) chars of ID
+
+  it('renders the success line with the call-id prefix as the hash', () => {
+    expect(BRIEF_OK).toBe('OK');
+    expect(briefHash(ID)).toBe(HASH);
+    expect(briefResultLine(ID)).toBe(`[${HASH}] OK`);
   });
 
-  it('writes the summary after the marker, keeping the success prefix', () => {
-    const content = noteWithSummary('{"summary":"xxxxx"}');
-    expect(content).toBe(`${MARKER}{"summary":"xxxxx"}`);
+  it('stamps a pristine brief result exactly once', () => {
+    expect(stampBriefResult('OK.', ID)).toBe(`[${HASH}] OK.`);
+    // Idempotent: an already-stamped result is not stamped twice.
+    expect(stampBriefResult(`[${HASH}] OK.`, ID)).toBe(`[${HASH}] OK.`);
+    // Never labels a non-success result as an anchor.
+    expect(stampBriefResult('Error: confidence is required', ID)).toBe('Error: confidence is required');
   });
 
-  it('emits the body verbatim (no re-encoding)', () => {
-    const body = '[RECAP] collapse\nRewound past the brief: "foo bar"\n\n### Key Discoveries\n- x';
-    expect(noteWithSummary(body).slice(MARKER.length)).toBe(body);
+  it('reads the hash back and strips it for display', () => {
+    const result = `[${HASH}] OK Note, a recap has reset the conversation here with summary: body`;
+    expect(hashOf(result)).toBe(HASH);
+    expect(stripHashPrefix(result)).toBe('OK Note, a recap has reset the conversation here with summary: body');
+    // No prefix → unchanged (the display must never lose what it cannot parse).
+    expect(stripHashPrefix('OK')).toBe('OK');
+    expect(hashOf('OK')).toBeNull();
   });
 
-  it('is a pure overwrite: a second note replaces the first', () => {
-    const first = noteWithSummary('first');
-    const second = noteWithSummary('second');
+  it('resolves target by hash or full id, and refuses an unknown one', () => {
+    const candidates = [{ id: ID }, { id: 'brief_1792715569999_zz99zz' }];
+    expect(resolveBriefTarget(HASH, candidates)?.id).toBe(ID);
+    expect(resolveBriefTarget(`[${HASH}]`, candidates)?.id).toBe(ID);
+    expect(resolveBriefTarget(ID, candidates)?.id).toBe(ID);
+    expect(resolveBriefTarget('nope', candidates)).toBeNull();
+  });
+
+  it('a note keeps the hash line and is a pure overwrite', () => {
+    const first = noteWithSummary(ID, 'first');
+    const second = noteWithSummary(ID, 'second');
+    expect(first.startsWith(`[${HASH}] OK Note, a recap has reset the conversation here with summary: first`)).toBe(true);
     expect(second).not.toContain('first');
-    expect(second.slice(MARKER.length)).toBe('second');
-    void first;
+    expect(second.endsWith('summary: second')).toBe(true);
   });
 
   it('an overwrite also replaces a plan-scope section', () => {
-    const withScope = `${PRISTINE_BRIEF_RESULT}. ${PLAN_SCOPE_HEADING}, decide the interface first.`;
+    const withScope = stampBriefResult(`OK. ${PLAN_SCOPE_HEADING}, decide the interface first.`, ID);
     expect(hasPlanScopeSection(withScope)).toBe(true);
-    // The note is the record of this stretch; the reflection rode in the slot
-    // and is gone after the rewind.
-    const noted = noteWithSummary('the summary');
+    const noted = noteWithSummary(ID, 'the summary');
     expect(hasPlanScopeSection(noted)).toBe(false);
-    expect(noted).not.toContain(PLAN_SCOPE_HEADING);
   });
 
   it('hasPlanScopeSection recognizes only the plan-scope section', () => {
-    expect(hasPlanScopeSection(`OK. ${PLAN_SCOPE_HEADING}, x`)).toBe(true);
+    expect(hasPlanScopeSection(stampBriefResult(`OK. ${PLAN_SCOPE_HEADING}, x`, ID))).toBe(true);
     expect(hasPlanScopeSection('OK')).toBe(false);
     expect(hasPlanScopeSection('OK.')).toBe(false);
-    expect(hasPlanScopeSection(undefined)).toBe(false);
+  });
+
+  it('buildRecapNote heads with [RECAP] and quotes the anchor brief', () => {
+    const note = buildRecapNote('explore the loop', 'the anchor text', 'BODY');
+    expect(note.startsWith('[RECAP] explore the loop')).toBe(true);
+    expect(note).toContain('Rewound past the brief: "the anchor text"');
+    expect(note.endsWith('BODY')).toBe(true);
   });
 });
