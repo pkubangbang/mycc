@@ -207,11 +207,11 @@ export function buildLeadAgentMemorySection(): string {
 export function buildBriefRecapSection(): string {
   return [
     '## Briefs and Recap',
-    '`brief` + `recap` shape your context like a **stack** — only YOU (the lead) can call `recap`; teammates cannot.',
-    '- `brief` **pushes** a frame where an exploration span starts (sole call of its turn). Write it as the record you want to survive a pop: conclusion first, then evidence.',
-    '- `recap` **pops** the topmost frame with activity after it, replacing the span with a summary in the brief\'s result — shed bulky exploration, keep what you learned. Repeatable: each pop rewinds one brief further; new activity re-arms the frame and overwrites its note.',
-    '- `recap(abandon=true)` pops and **discards** the span — undo a wrong direction, try another.',
-    '- Compaction is the floor, not a frame: `recap` cannot rewind past it.',
+    '`brief` + `recap` shape your context like a **stack**, and only YOU (the lead) can call `recap`. When the direction drifts, default to `recap(abandon=true)` — it forks nothing.',
+    '- `brief` **pushes** a frame where an exploration span starts (sole call of its turn): conclusion first, then evidence.',
+    '- `recap` **pops frames back to a target**, summarising the span into that frame\'s result — no `target` pops to the newest frame you have moved past, `target="<hash>"` pops until that frame. Repeatable: each pop rewinds one further; new activity re-arms the frame and overwrites its note.',
+    '- `recap(abandon=true)` pops and **discards** the span — the way out of a wrong direction.',
+    '- Compaction is the floor: `recap` cannot rewind past it.',
   ].join('\n');
 }
 

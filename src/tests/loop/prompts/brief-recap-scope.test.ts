@@ -82,6 +82,19 @@ describe('system prompt: recap guidance is lead-only', () => {
   it('buildBriefRecapSection is self-contained and recap-only (no teammate path)', () => {
     const section = buildBriefRecapSection();
     expect(section).toContain('## Briefs and Recap');
-    expect(section).toMatch(/teammates cannot/i);
+    expect(section).toMatch(/only YOU \(the lead\)/i);
+  });
+
+  it('recap guidance defaults to abandon and pops to a target', () => {
+    const section = buildBriefRecapSection();
+    // The drift trigger + the cheap mode must be reachable from the always-on
+    // prompt; `abandon=true` is the DEFAULT because it forks nothing.
+    expect(section).toContain('recap(abandon=true)');
+    expect(section).toMatch(/default to/i);
+    // `target` addresses a frame by hash; a plain recap pops from the stack top.
+    expect(section).toContain('target="<hash>"');
+    expect(section).toMatch(/pops frames back to a target/i);
+    // Stale wording: recap is not limited to popping the topmost frame.
+    expect(section).not.toMatch(/pops the topmost frame/);
   });
 });

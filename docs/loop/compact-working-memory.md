@@ -161,13 +161,7 @@ The prompt deliberately does **not** ask for a broad summary — that is the sum
 
 The summary prompt keeps its existing three-section structure (Accomplishments / Current State / Key Decisions) plus the knowledge-persistence, focus-area, and user-instruction addenda.
 
-It also ends with a `## Managing your context with recap` section appended by `buildSummaryPrompt()`. A compaction is machine-triggered (token pressure, a hook deferral) — the model never asked for it and has no idea it happened — so this is the one place it can be told that it now owns its context:
-
-- call `recap` once when the context feels heavy (long tool results, many files explored, stale work), at a point where the work reads as a finished stretch;
-- call `recap` with a steering `comment` when stuck in a dead loop, so the summary keeps the lesson and the comment breaks the bias;
-- `target` is optional — without it the recap collapses to the newest usable brief; each brief result starts with `[<hash>] OK`, so passing `target="<hash>"` collapses further back to an earlier point.
-
-The section deliberately does **not** tell the model to `brief` first: `recap` submerges the whole span, briefs included, so a fresh brief would be folded away in the same stroke. The `emitControl('compact')` live-log boundary is untouched — it journals a boundary, it is not a message to the model.
+The summary prompt does **not** carry any recap guidance. "When/how to call `recap`" is taught in exactly one place — the lead system prompt's `## Briefs and Recap` section (`buildBriefRecapSection()` in `src/loop/prompts/common.ts`), which is in context on every turn. Repeating the policy in the compaction summary prompt injected a second, drifting copy into the conversation, so that section was removed. The `emitControl('compact')` live-log boundary is untouched — it journals a boundary, it is not a message to the model.
 
 ### 3.7 Backward-compatible fallback
 

@@ -63,25 +63,10 @@ export function buildSummaryPrompt(conversationText: string, deps: CompactDeps, 
     ? `\n**User's Last Instruction:** "${lastUserQuery}"\nEnsure the summary preserves ALL constraints, pending tasks, and requests from this instruction. The agent should continue working on this after the compact.\n`
     : '';
 
-  // The recap instruction. The compaction is machine-triggered (token
-  // threshold, hook-deferral), so the model gets no other
-  // chance to choose it — this is where a compaction TELLS the model how to
-  // keep its context small. The recap is the only way to shed old work while
-  // KEEPING the direction it produced, so the two pressures the loop actually
-  // meets are named here: context pressure and a dead loop.
-  //
-  // It deliberately does NOT tell the model to brief first. A recap submerges
-  // the whole span into the anchor it picks, so a fresh brief would only be an
-  // extra turn whose text is folded away in the same stroke. The note written
-  // by THIS compaction (the `Re-orienting…` floor brief) is already a rewind
-  // anchor once anything lands after it, so `recap` alone is enough.
-  const recapInstruction =
-    `\n## Managing your context with recap\n` +
-    `This conversation was compacted automatically, not because you asked. From here on you own the size of your context:\n` +
-    `- **When the context feels heavy** (long tool results accumulating, many files explored, the oldest work no longer needed to decide the next step), call \`recap\` once: it collapses the span since your newest usable brief into one summary that keeps the conclusion and the next direction. Do it at a point where the work so far reads as a finished stretch — right before starting the next one.\n` +
-    `- **When you are stuck in a dead loop** (the same tool, the same error or the same file over and over), call \`recap\` with a comment that states a different direction. The stale context is what keeps biasing you the same way; the summary keeps what you learned and the comment steers you out.\n` +
-    `- **Targets are optional.** \`recap\` with no \`target\` collapses back to your newest usable brief. Each brief result in the history starts with \`[<hash>] OK\`; pass \`target="<hash>"\` only to collapse back further, to an earlier point you want the summary of THIS work to hang from.\n` +
-    `- Briefs are NOT required before a recap: a recap submerges the whole span, so a fresh brief would be folded away in the same stroke. Recap must still be called alone (no other tools in the same turn).\n`;
+  // NOTE: no recap guidance here. "When/how to call recap" is taught in ONE
+  // place — the lead system prompt (buildBriefRecapSection). Repeating it in
+  // the compaction summary prompt pollutes the injected context with a second,
+  // drifting copy of the same policy.
 
   return (
     `Summarize this conversation for continuity. Cover the following sections:\n\n` +
@@ -95,7 +80,6 @@ export function buildSummaryPrompt(conversationText: string, deps: CompactDeps, 
     `${knowledgeInstruction}` +
     `${focusInstruction}` +
     `${userQueryInstruction}` +
-    `${recapInstruction}` +
     `${conversationText}`
   );
 }
