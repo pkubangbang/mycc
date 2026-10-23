@@ -82,14 +82,21 @@ interface TokenizeResult {
  * | 4        | `^[a-z_]+=$`                            | empty value        |
  * | 5        | `^=[^\s=]+$`                           | missing key        |
  * | 6        | token contains `=` (not 1-5)           | malformed equals    |
- * | 7        | bare token (no `=`, no `:`)            | missing `=`        |
+ * | 7        | bare token (no `=`, no `:`)            | single-token / pair |
  *
  * For priority 7 (bare token), the compiler looks ahead to the NEXT token
  * within the same loop iteration:
  * - If a next token exists AND it also has no `=` and no `:` — classify the
- *   PAIR as `key value` (missing `=`), consume BOTH tokens.
+ *   two adjacent tokens as a `key value` PAIR (one space-joined token in the
+ *   diagnostic) with the pair wording "missing '=' between key and value".
  * - If it is the last token OR the next token has `=`/`:` — classify the
- *   single token as a missing-`=` PARAM.
+ *   SINGLE token with single-token wording. It must NOT borrow the pair
+ *   phrasing: one word (`git_state`) is not a key/value pair, and describing
+ *   it as one reads to the caller as if the parser split it into two words.
+ *
+ * Both branches return immediately (the first malformed token ends the scan),
+ * so there is no index advance to do — the tokenizer only reports, it never
+ * rewrites the PARAM region.
  *
  * Returns immediately at the first malformed token.
  */
@@ -166,8 +173,10 @@ function tokenizeParams(paramRegion: string): TokenizeResult {
     // Look ahead to the next token within the same iteration.
     const nextToken = tokens[i + 1];
     if (nextToken !== undefined && !nextToken.includes('=') && !nextToken.includes(':')) {
-      // Two adjacent bare tokens — "key value" (missing '=' between them).
-      // Consume both tokens (advance index by 1 extra).
+      // Two adjacent bare tokens — a "key value" PAIR (missing '=' between
+      // them). The diagnostic quotes both tokens space-joined. (The scan stops
+      // here: the first malformed token ends the pass, so there is no index
+      // advance to perform.)
       return {
         wellFormed,
         malformed: {
@@ -177,12 +186,16 @@ function tokenizeParams(paramRegion: string): TokenizeResult {
       };
     }
 
-    // Last token or next token has '=' / ':' — single bare token.
+    // Single bare token (last token, or the next token is a well-formed
+    // PARAM). This is ONE word that is not a PARAM at all — it must not be
+    // described with the pair wording above, or a lone word such as
+    // `git_state` is reported as if it were a `key value` pair (i.e. "read as
+    // two words instead of one").
     return {
       wellFormed,
       malformed: {
         token,
-        issue: `is missing '=' between key and value — PARAMs must be 'key=value'`,
+        issue: `is a bare token missing '=' (not a 'key=value' PARAM) — a single word is not a key/value pair; write it as 'key=value'`,
       },
     };
   }

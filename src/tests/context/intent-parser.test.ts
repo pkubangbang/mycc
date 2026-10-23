@@ -382,6 +382,35 @@ describe('detectMalformedParam', () => {
     expect(r!.issue).toContain("missing '='");
   });
 
+  // ── Single-word bare tokens must not be read as a key/value PAIR ──
+
+  it('should report git_state as ONE bare token, not a key/value pair', () => {
+    // Regression: the single-token branch used to reuse the pair wording
+    // ("between key and value"), so a lone word was described as if it were
+    // two words — reported as "the intent parser read git_state as two words".
+    const r = detectMalformedParam('READ DATA git_state TO check working tree state');
+    expect(r).not.toBeNull();
+    expect(r!.token).toBe('git_state');
+    expect(r!.token).not.toContain(' ');
+    expect(r!.issue).not.toContain('between key and value');
+    expect(r!.issue).toContain('bare token');
+    expect(r!.issue).toContain("missing '='");
+  });
+
+  it('should report a lone bare token followed by a well-formed PARAM as one token', () => {
+    const r = detectMalformedParam('READ DATA git_state dirty=maybe TO check working tree state');
+    expect(r).not.toBeNull();
+    expect(r!.token).toBe('git_state');
+    expect(r!.issue).not.toContain('between key and value');
+  });
+
+  it('should keep the pair wording only for TWO adjacent bare tokens', () => {
+    const r = detectMalformedParam('READ DATA git state TO check working tree state');
+    expect(r).not.toBeNull();
+    expect(r!.token).toBe('git state');
+    expect(r!.issue).toContain('between key and value');
+  });
+
   // ── Malformed: split key-value pair ────────────────────────
 
   it('should detect key value (missing equals, split across tokens)', () => {
@@ -444,6 +473,18 @@ describe('validateIntent — malformed PARAM error path', () => {
     expect(result.error).toContain('typecheck');
     // The targeted malformed-PARAM error should win over the generic message.
     expect(result.error).not.toContain('invalid or missing');
+  });
+
+  it('should describe a single-word PARAM like git_state as one bare token (not a key/value pair)', () => {
+    // The reported bug: "the intent parser read git_state as two words instead
+    // of one". A single-word PARAM region must yield a single-token diagnosis.
+    const raw = 'READ DATA git_state TO check working tree state';
+    const result = validateIntent(parseIntent(raw), raw);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('Malformed PARAM');
+    expect(result.error).toContain('"git_state"');
+    expect(result.error).not.toContain('between key and value');
+    expect(result.hint).toContain('key=value');
   });
 
   it('should NOT report a malformed PARAM for a fully valid intent', () => {

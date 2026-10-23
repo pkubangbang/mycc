@@ -213,6 +213,7 @@ When updating the changelog, use the following procedure:
 - **Hint**: Drop the compact signal from the hint round; `collect-hint` and `HintRoundManager` shrink accordingly.
 ### Fixes
 - **Web**: Stop the `发送` label wrapping and reclaim the narrow-screen gutter in the chat input.
+- **Intent**: Diagnose a lone bare PARAM token as one word — `tokenizeParams` priority 7 used the two-token pair wording ("missing '=' between key and value") for the single-token branch, so a PARAM like `git_state` was reported as if the parser had split it into a `key value` pair. The single-token branch now says the token is a bare token missing `'='` and is not a key/value pair; the pair wording is reserved for two adjacent bare tokens. Regression tests cover `READ DATA git_state TO …`, a bare token followed by a well-formed PARAM, and the true `git state` pair.
 
 # Todo
 
