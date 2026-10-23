@@ -582,7 +582,59 @@ export interface CrossroadResult {
  *  - `—` separates the bold direction name from the preview (reads cleaner
  *    than `:` followed by another colon-bearing sentence).
  */
-export function buildCandidatesBrief(candidates: string[], selectedIndex: number): string {
+/** Max visible characters in one row's preview (before the ellipsis). */
+const PREVIEW_LIMIT = 100;
+
+/**
+ * Reduce a raw continuation to a ONE-LINE, markdown-inert preview.
+ *
+ * The ROW is deliberately mixed markdown (the direction name is bold when
+ * selected), but the PREVIEW is not: it is LLM prose that must survive
+ * markdown-it rendering untouched. Two failures came from slicing the raw
+ * text instead:
+ *  - a newline followed by `2. ` inside a preview is a CONTINUATION line of
+ *    the current list item (markdown-it with `breaks: true` turns it into a
+ *    `<br>`), so the real row 2 disappeared into row 1's paragraph;
+ *  - `.slice(0, 100)` cut a code span in half, leaving an orphan backtick
+ *    whose leaked fence state restyled the following row differently.
+ *
+ * Order matters: STRIP first, TRUNCATE second. Stripping shortens the string,
+ * so truncating first would re-expose exactly the cut-span problem.
+ */
+export function plainPreview(text: string, limit = PREVIEW_LIMIT): string {
+  // Deliberate: a code span left UNCLOSED at the cut point (the model's own
+  // continuation was truncated mid-span) loses its dangling fragment rather
+  // than surfacing `fix/recap-w` as if it were a real token. In a card whose
+  // purpose is "here are the three directions you may pick", a half-identifier
+  // rendered as clean text is worse than nothing.
+  const stripped = text
+    // Fenced blocks: keep their inner text, drop the fence lines.
+    .replace(/```[\w-]*\n?([\s\S]*?)```/g, ' $1 ')
+    // Inline code spans: keep the code text, drop the backticks.
+    .replace(/`([^`\n]*)`/g, '$1')
+    // Emphasis / strong markers (the direction name's bold is added later by
+    // the caller, never inherited from here).
+    .replace(/\*\*|__/g, '')
+    .replace(/(^|[\s(])([*_])(?=\S)([^*_\n]*?)\2(?=[\s).,;:!?]|$)/g, '$1$3')
+    // Any leftover backtick / single asterisk is punctuation noise in prose.
+    .replace(/[`*]/g, '')
+    // One line: newlines, tabs and space runs all collapse to a single space.
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (stripped.length <= limit) return stripped;
+  const head = stripped.slice(0, limit);
+  const lastSpace = head.lastIndexOf(' ');
+  // Cut on a word boundary when one exists; a single very long word is cut
+  // hard rather than yielding an empty preview.
+  return `${lastSpace > 0 ? head.slice(0, lastSpace) : head}…`;
+}
+
+export function buildCandidatesBrief(
+  candidates: string[],
+  selectedIndex: number,
+  outcome?: string,
+): string {
   const lines: string[] = [];
   lines.push('');
   const chosen = selectedIndex >= 0 ? ` — chose #${selectedIndex + 1}` : '';
@@ -591,12 +643,17 @@ export function buildCandidatesBrief(candidates: string[], selectedIndex: number
     const isSelected = i === selectedIndex;
     const directionName = GENERATION_DIRECTIONS[i]?.name ?? `option ${i + 1}`;
     const marker = isSelected ? '✅' : '⬜';
-    const preview = candidates[i].length > 100
-      ? `${candidates[i].slice(0, 100)}…`
-      : candidates[i];
+    const preview = plainPreview(candidates[i]);
     const namePart = isSelected ? `**${directionName}**` : directionName;
     lines.push(`${i + 1}. ${marker} ${namePart} — ${preview}`);
   }
+  // The resolved continuation rides along in the SAME card (one label, one
+  // header, one logical block): a separate "Resolved: …" brief rendered a
+  // second `[crossroad]` header directly under the card, so the card looked
+  // split in two. The card keeps the win marker independently, so the reader
+  // still knows which direction was chosen even if this line were absent.
+  const outcomeLine = outcome?.replace(/\s+/g, ' ').trim();
+  if (outcomeLine) lines.push(`**Outcome** — ${outcomeLine}`);
   return lines.join('\n');
 }
 

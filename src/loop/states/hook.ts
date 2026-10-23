@@ -648,10 +648,31 @@ export async function handleHook(
       // the intended order.
       briefAssistantContent(ctx, chat.assistantContent);
       if (chat.crossroadCandidates && chat.crossroadCandidates.length > 1) {
+        // ONE card, ONE label, ONE header: the resolved continuation rides in
+        // the candidate list as its `**Outcome** — …` final line. It used to be
+        // a second `brief('info', 'crossroad', 'Resolved: …')`, which rendered a
+        // second `[crossroad]` header directly under the card and made one
+        // logical block look split in two.
+        //
+        // DISPLAY ONLY: the model-visible triologue messages above (the merged
+        // agent message + the brief tool result) are emitted before this point
+        // and are NOT reordered — the LLM still reads prefix → refined
+        // direction → its own brief result, exactly as before.
         ctx.core.brief('info', 'crossroad',
-          buildCandidatesBrief(chat.crossroadCandidates, chat.crossroadSelectedIndex ?? -1));
+          buildCandidatesBrief(
+            chat.crossroadCandidates,
+            chat.crossroadSelectedIndex ?? -1,
+            chat.crossroadContinuation,
+          ));
+      } else {
+        // No candidate list (fewer than two drafts): the outcome is the only
+        // thing to show, so it keeps the standalone line. RETAINED DELIBERATELY:
+        // when there is no candidate list (`crossroadCandidates.length <= 1`)
+        // this standalone `Resolved:` brief is the only signal that a direction
+        // was chosen — it is not leftover from the card refactor, do not delete
+        // it while folding the outcome into the card above.
+        ctx.core.brief('info', 'crossroad', `Resolved: ${chat.crossroadContinuation}`);
       }
-      ctx.core.brief('info', 'crossroad', `Resolved: ${chat.crossroadContinuation}`);
 
       // Inject deferred hook messages so the LLM sees them in the next round.
       // Each deferred message carries its originating hook name for attribution.
