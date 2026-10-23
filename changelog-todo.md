@@ -125,6 +125,95 @@ When updating the changelog, use the following procedure:
 ### Chores
 - **Merge**: PR #31 (`feat/wiki-hint-refactor`) merged into `main`.
 
+## 2026-10-13
+### Features
+- **Serve**: Exclude the `.mycc` tree (and public `index.html`) from the Vite watcher via chokidar `ignored`, stopping the WebUI full-reload flicker.
+- **Docs**: Reorganize `docs/` into topic subfolders, archive drifted documents, update inbound references, and record the teammate-as-MCP-client PoC (not implemented).
+### Fixes
+- **Config**: Raise default `TOKEN_THRESHOLD` from 50000 to 100000.
+### Docs
+- **Skills**: Fix stale claims in `mycc-self-awareness` (verified against `src`).
+### Chores
+- **Logging**: Gate skill re-index chatter behind `-v`; log skill scheduling as a paired line.
+
+## 2026-10-14
+### Features
+- **Stop**: Add the `mycc-stop` CLI plus a shared stop-by-address / stop-by-sid primitive, and tombstone peer self-termination so stopped peers stay stopped.
+- **Peer**: Readable flat `/peer` output with full session ids and an optional name.
+### Fixes
+- **Compose**: Identify peers by durable name instead of session id (schema, channels, status, down); fail fast on uncertain peer ownership and treat an absent identity entry as released in `waitForPeerGone`; gate daemon dedup on a live pid; cull stopped peers from `identity.json` on `down`; sequence restart so a launch never races a peer shutdown.
+- **Peer**: Centralize pid liveness with a pid-reuse guard; preserve stop discovery and pending tombstones.
+- **Session**: Guard session-file creation with an exclusive `wx` open.
+### Docs
+- **Peer**: Align tombstone docs with the implementation; fix test typecheck.
+### Chores
+- **Merge**: PR #32 (`fix/compose-peer-name-identity`) and PR #33 (`fix/serve-suppress-public-html-reload`) merged into `main`.
+
+## 2026-10-15
+### Fixes
+- **Serve**: Serve `.mycc/public` via Express static instead of Vite's `publicDir`.
+### Docs
+- **Skills**: Bundle a Flappy Bird demo (with autopilot scripts and trained nets) into `serve-public-dir`.
+
+## 2026-10-16
+### Fixes
+- **Crossroad**: Correct the display order and refine the best-of-three brief layout.
+- **mycc-compose**: Actionable headless-launch guidance; repair the scripts eslint scope.
+
+## 2026-10-17
+### Fixes
+- **Team**: Prevent teammate silent-death from malformed required-arg calls.
+
+## 2026-10-18
+### Fixes
+- **Platform**: Pin `ps` locale/width, guard `git_commit` stdin `EPIPE`, and make spec fixtures platform-aware.
+
+## 2026-10-20
+### Features
+- **Recap**: Checkpoint removed — `brief` is now the sole `recap` rewind anchor.
+### Fixes
+- **Peer**: Validate identity entries at the parse boundary.
+- **mycc-compose**: Strict args validation, filename-based channel ownership, and explicit exit-code contracts.
+
+## 2026-10-21
+### Features
+- **Recap**: `recap` writes its summary into the anchor brief's tool result.
+### Fixes
+- **Recap**: Close brief/recap rewind loopholes (H1 H2 M1 M2 L1) — anchor resolution, empty-summary refusal, and message-identity checks at the HOOK stage.
+- **Prompts**: Stop teaching `recap` in the `brief` tool description.
+### Refactoring
+- **Triologue**: Brief provenance is a message property (`Message.synthetic`) with allow-list egress, so synthetic briefs can never reach a provider.
+### Docs
+- **Loop**: Document the brief/recap rewind model and its loopholes; add a checkpoint-and-recap reference.
+### Chores
+- **Merge**: PR #34 (`refactor/brief-provenance`) merged into `main`.
+
+## 2026-10-22
+### Features
+- **Recap**: Hashed brief results — `brief` returns a `[<hash>]` anchor; `recap` accepts an explicit `target` hash and states the inclusive result search bound.
+- **Hook**: Plan-mode scope reflection on every `brief` (HOOK stage), via `src/loop/plan-scope.ts`; narrow `mycc_title`/`read_read` to the main agent and purge the dead `broadcast` tool.
+- **Prompt**: Teach `brief` + `recap` as a context stack in the lead prompt.
+### Fixes
+- **Recap**: Write the note into the *resolved* brief result (not the first id match); anchor brief results by tool NAME too and simplify anchor identity.
+- **Peer**: Stop Windows liveness probes leaking stderr into the terminal.
+- **Web**: Keep the chat toolbar shrink-to-fit so the last textarea line stays selectable.
+- **Wiki**: Token-based content limit for `wiki_prepare`/`wiki_put`, shared by all embedding models (later unified to 10–1000 tokens).
+### Refactoring
+- **Tests**: Consolidate root-level compose/hooks suites and tools/loop/surface suites under `src/tests/`; add a registry-driven tool metadata test and shared `test-utils`; delete never-run skipped suites and add real mindmap tree-walk tests.
+### Docs
+- **Skills**: Add the `brief-isolation` hook skill; refresh `mycc-self-awareness`.
+### Chores
+- **Merge**: PR #36 (`fix/recap-anchor-tool-name`) merged into `main`.
+
+## 2026-10-23
+### Features
+- **Recap**: Explicit `recap` target hash with a hashed brief-result digest.
+### Refactoring
+- **Recap**: Extract `BriefStackManager` into `src/loop/triologue/brief-stack.ts`.
+- **Hint**: Drop the compact signal from the hint round; `collect-hint` and `HintRoundManager` shrink accordingly.
+### Fixes
+- **Web**: Stop the `发送` label wrapping and reclaim the narrow-screen gutter in the chat input.
+
 # Todo
 
 > Todo - Or never?
