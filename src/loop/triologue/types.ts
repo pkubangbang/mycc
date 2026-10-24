@@ -52,8 +52,6 @@ export interface TriologueOptions {
    */
   onMessage?: (msg: Message, getTriologue: () => Message[]) => void;
 
-  /** Optional duplication report provider for hint round */
-  getDuplicationReport?: () => string;
 }
 
 export interface ResolvedTriologueOptions {
@@ -64,5 +62,4 @@ export interface ResolvedTriologueOptions {
   onToolMisalign: (warning: ToolAlignmentWarning) => void;
   onCompact: (transcriptPath: string) => void;
   onMessage: (msg: Message, getTriologue: () => Message[]) => void;
-  getDuplicationReport?: () => string;
 }

@@ -12,7 +12,7 @@ import { agentIO } from '../agent-io.js';
 import { autoState } from '../auto-state.js';
 import { isVerbose } from '../../config.js';
 import { isTransientError } from '../../engine/chat-helpers.js';
-import { hintSuggester } from './collect-hint.js';
+import { hintRound } from '../hint-round.js';
 import { skillSuggester } from './collect-skill.js';
 import { checkReactivation } from './collect-pinned-todo.js';
 import { listWorktrees } from '../../context/worktree-store.js';
@@ -378,7 +378,7 @@ export async function handleCollect(
     const { firstSteerNote } = await collectMailsAndInput(env);
 
     // 3. Hint round. May short-circuit the pass (STOP on ESC).
-    const hintSignal = await hintSuggester.runHintRound(env, turn);
+    const hintSignal = await hintRound.run(turn);
     if (hintSignal === 'stop') return AgentState.STOP;
 
     // 4. Todo + peer-channel nudging (with reactivation on the same cycle).

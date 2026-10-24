@@ -183,8 +183,6 @@ export class Triologue {
       onToolMisalign: options.onToolMisalign ?? this.defaultOnToolMisalign,
       onCompact: options.onCompact ?? this.defaultOnCompact,
       onMessage: options.onMessage ?? (() => {}),
-
-      getDuplicationReport: options.getDuplicationReport,
     };
   }
 
@@ -908,13 +906,6 @@ export class Triologue {
    */
   getMessagesRaw(): Message[] {
     return this.store.getRaw();
-  }
-
-  /**
-   * Get the duplication report from the embedding tracker (for hint round context interface)
-   */
-  getDuplicationReport(): string {
-    return this.options.getDuplicationReport ? this.options.getDuplicationReport() : '';
   }
 
 
