@@ -687,6 +687,50 @@ export class HintRound {
 }
 
 /**
+ * The structural shape the hint round needs from a recorded denial.
+ *
+ * Declared here (not imported) so the hint round stays decoupled from
+ * parent/core.ts: any context that exposes `getRecentDenials()` in this shape
+ * is used, and every other context degrades to the regex classifier.
+ */
+interface RecordedDenial {
+  tool: string;
+  target: string;
+  reason: string;
+  kind: string;
+}
+
+/**
+ * Read recorded denials from the bound env, or null when this context has no
+ * recorder (child/lite contexts, test doubles that did not opt in).
+ *
+ * Guarded per the module's convention: an optional capability must degrade to
+ * the fallback path, never fail the hint round.
+ */
+function readRecentDenials(env: MachineEnv): RecordedDenial[] | null {
+  const core = env.ctx.core as unknown as { getRecentDenials?: () => RecordedDenial[] };
+  if (typeof core.getRecentDenials !== 'function') return null;
+  try {
+    const denials = core.getRecentDenials();
+    return Array.isArray(denials) ? denials : null;
+  } catch {
+    return null;
+  }
+}
+
+/** One line per denial: what was refused, and why. */
+function formatDenials(denials: RecordedDenial[]): string | null {
+  if (denials.length === 0) return null;
+  const lines: string[] = [
+    '## Recent Permission Blocks',
+    'Recorded at the grant gate (exact tool, target and rule). Fix the REQUEST, not the goal:',
+  ];
+  for (const d of denials.slice(-6)) {    lines.push(`- ${d.tool} → ${sanitizeField(d.target)} [${d.kind}]: ${sanitizeField(d.reason)}`);
+  }
+  return lines.join('\n');
+}
+
+/**
  * Summarize recent PERMISSION blocks as actionable evidence for the analyzer.
  *
  * Grants keep no history — `judgeBash` / `evaluateGrant` return a verdict that
@@ -736,7 +780,7 @@ export function summarizePermissionBlocks(events: SequenceEvent[]): string | nul
   if (counts.size === 0) return null;
   const lines: string[] = [
     '## Recent Permission Blocks',
-    'These attempts were refused by the tool layer. Fix the REQUEST, not the goal:',
+    'Classified from recent tool output. Fix the REQUEST, not the goal:',
   ];
   for (const [label, { count, sample }] of counts) {
     lines.push(`- ${label}${count > 1 ? ` ×${count}` : ''}: "${sample}"`);
@@ -832,7 +876,15 @@ function buildStateSections(env: MachineEnv): string[] {
   }
 
   // ── Recent Permission Blocks ──
-  const permissionEvidence = summarizePermissionBlocks(env.sequence.getEvents());
+  // Prefer the EXACT record captured at the grant chokepoint
+  // (Core.getRecentDenials): it knows which tool, which target and which rule,
+  // and cannot be confused by a tool result that merely QUOTES a block
+  // message. Contexts without a recorder (child/lite) fall back to classifying
+  // sequence-event results.
+  const denials = readRecentDenials(env);
+  const permissionEvidence = denials
+    ? formatDenials(denials)
+    : summarizePermissionBlocks(env.sequence.getEvents());
   if (permissionEvidence) parts.push(permissionEvidence);
 
   // ── Loop Evidence ──
