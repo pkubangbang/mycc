@@ -148,6 +148,43 @@ describe('applyServerMessage — steering review card', () => {
     expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([2]);
   });
 
+  it('reviews a re-echoed note exactly once (duplicate ids never stack in the card)', () => {
+    // REGRESSION TEST (review 2026-10-24). The old version of this case ran the
+    // second 'prompt' with an EMPTY steeringBuffer, so it could not fail: the
+    // duplicate-prone path is a note still queued server-side that the client
+    // sees AGAIN — on a reconnect's /history + on-connect prompt, or after the
+    // recovery path restored it. Here the same id is re-echoed between the two
+    // prompts, which is exactly the situation that produced two card rows with
+    // the same v-for :key (one instruction offered for submission twice).
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, steerEcho('note A', 1), ctx);
+    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
+    expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([1]);
+
+    // The server still holds note A (never consumed), so a refresh/reconnect
+    // replays it, followed by another prompt.
+    applyServerMessage(state, steerEcho('note A', 1), ctx);
+    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
+
+    // ONE row, still one row — not two.
+    expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([1]);
+  });
+
+  it('a discarded-then-re-echoed note comes back exactly once', () => {
+    // The user clears the card without sending; a later prompt re-offers the
+    // still-queued note. It must be ONE entry again, and it must survive.
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, steerEcho('note A', 4), ctx);
+    applyServerMessage(state, steerEcho('note B', 5), ctx);
+    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
+    expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([4, 5]);
+
+    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
+    expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([4, 5]);
+  });
+
   it('auto:on abandons any pending review', () => {
     const state = makeState();
     const ctx = makeCtx();
