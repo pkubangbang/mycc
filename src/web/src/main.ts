@@ -718,12 +718,35 @@ export const chatApi = {
    * - sendIds = [] → discard-all (drain without submitting)
    */
   resolveSteering(sendIds: number[]): void {
+    // The card is PROMPT-gated and the user may retry, so snapshot FIRST:
+    // every note the user wants to SEND (by value, so a later re-population
+    // from the server cannot change what is restored).
+    const toSend = store.pendingSteeringReview.filter((n) => sendIds.includes(n.id));
     // Local optimistic clear: the card disappears and the input box re-enables.
     store.pendingSteeringReview.splice(0);
     store.steeringBuffer.splice(0);
     // The backend owns the authoritative queue; this is a single positive
     // message (no separate discard-then-input ordering problem).
-    wsSend({ type: 'steer-resolve', sendIds });
+    const sent = wsSend({ type: 'steer-resolve', sendIds });
+    if (!sent) {
+      // DOUBLE-INJECTION GUARD. The socket was not OPEN, so the backend never
+      // received 'steer-resolve' — these notes are NOT consumed (the server
+      // still has them queued). Undo the optimistic clear so they stay in
+      // review instead of vanishing, and force an authoritative /history
+      // fetch: `steer-resolve` is terminal server-side (the queue is drained
+      // atomically on receipt), and a note the server already drained must
+      // never be sent twice. Marking historyDirty drops the ETag so the next
+      // fetch cannot 304, then reconnect immediately (not after the normal
+      // 1.5s backoff) so the review card reflects the backend's real queue.
+      store.pendingSteeringReview.splice(0, store.pendingSteeringReview.length, ...toSend);
+      historyDirty = true;
+      if (!reconnectTimer) {
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          void reconnect();
+        }, 300);
+      }
+    }
   },
   sendExit(): void {
     wsSend({ type: 'exit' });
