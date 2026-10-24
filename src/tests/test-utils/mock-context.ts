@@ -57,7 +57,7 @@ export function createMockTodo(overrides: Partial<TodoModule> = {}): TodoModule 
     getItems: vi.fn(() => []),
     pinTodo: vi.fn(() => null),
     findByPreviousHash: vi.fn(() => null),
-    getReactivationCandidates: vi.fn(() => []),
+    getPreventStopCandidates: vi.fn(() => []),
     ...overrides,
   };
 }

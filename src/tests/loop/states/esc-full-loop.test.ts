@@ -52,7 +52,11 @@ function createMockDeps() {
       verbose: vi.fn(),
       escAware: vi.fn((fn: any) => fn(new AbortController())),
     },
-    todo: { hasOpenTodo: vi.fn(() => false), printTodoList: vi.fn(() => '') },
+    todo: {
+      hasOpenTodo: vi.fn(() => false),
+      printTodoList: vi.fn(() => ''),
+      getPreventStopCandidates: vi.fn(() => []),
+    },
     mail: { collectMails: vi.fn(() => []), clearUnread: vi.fn() },
     skill: { listSkills: vi.fn(() => []), getSkill: vi.fn() },
     team: { handlePendingQuestions: vi.fn() },

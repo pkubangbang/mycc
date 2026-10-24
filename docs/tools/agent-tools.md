@@ -864,7 +864,7 @@ interface ToolDefinition {
 
 **Scope**: `['main']` (lead agent only)
 
-**Description**: Pin or unpin a todo item. Pinned todos are NOT auto-cleared when all todos are completed. Optionally set a reactivation condition.
+**Description**: Pin or unpin a todo item. Pinned todos are NOT auto-cleared when all todos are completed. Optionally set a stop guard.
 
 **Parameters**:
 | Name | Type | Required | Description |
@@ -872,16 +872,16 @@ interface ToolDefinition {
 | id | integer | yes | Todo item ID to pin/unpin |
 | hash | string | yes | Current hash of the item |
 | pinned | boolean | yes | true to pin, false to unpin |
-| reactivate | string | no | Natural-language reactivation condition (only when pinned=true) |
+| preventStop | string | no | Natural-language stop guard: while it holds the agent cannot end its turn (only when pinned=true); unpinning releases it |
 
 **Behavior**:
 - Pinned todos persist as long-term reminders
-- Reactivation condition: system evaluates completed pinned todos against conversation context and auto-reactivates when condition is met
+- Stop guard: at every turn end the condition is evaluated against the conversation; while it holds, the turn continues with a SYSTEM note instead of finishing
 - Requires current hash (anti-staleness)
 
 **Example**:
 ```json
-{ "id": 1, "hash": "abc12345", "pinned": true, "reactivate": "when the users table is modified" }
+{ "id": 1, "hash": "abc12345", "pinned": true, "preventStop": "until every loop test passes" }
 ```
 
 ---

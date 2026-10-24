@@ -22,7 +22,7 @@ describe('todo-create', () => {
       getItems: vi.fn(() => []),
       pinTodo: vi.fn(() => null),
       findByPreviousHash: vi.fn(() => null),
-      getReactivationCandidates: vi.fn(() => []),
+      getPreventStopCandidates: vi.fn(() => []),
     };
     const ctx = createMockContext('/tmp/test');
     ctx.todo = mockTodo;
@@ -152,7 +152,7 @@ describe('todo-update', () => {
       ]),
       pinTodo: vi.fn(() => null),
       findByPreviousHash: vi.fn(() => null),
-      getReactivationCandidates: vi.fn(() => []),
+      getPreventStopCandidates: vi.fn(() => []),
     };
     const ctx = createMockContext('/tmp/test');
     ctx.todo = mockTodo;

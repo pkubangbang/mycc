@@ -70,6 +70,12 @@ vi.mock('../../../engine/chat-helpers.js', () => ({
   stopSpinner: vi.fn(),
 }));
 
+// stop-prevent-stop: the STOP guard runs on every non-neglected turn end, so
+// stub it as 'no guards' — these suites assert the ESC/teammate-wait paths.
+vi.mock('../../../loop/states/stop-prevent-stop.js', () => ({
+  checkPreventStop: vi.fn(async () => ({ block: false })),
+}));
+
 vi.mock('../../../loop/triologue.js', () => {
   class TriologueStub {
     tool = vi.fn();

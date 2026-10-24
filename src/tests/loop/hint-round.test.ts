@@ -605,7 +605,7 @@ describe('Hint Round JSON Output', () => {
     vi.mocked(retryChat).mockResolvedValueOnce(
       validHintResponse({ blocker: 'Agent is looping on a failing test' }) as never,
     );
-    const { round, messages } = makeHarness({ wiki: makeWiki() });
+    const { round } = makeHarness({ wiki: makeWiki() });
 
     const signal = await round.run(createTurnVars());
 
@@ -703,7 +703,7 @@ describe('Hint Round JSON Output', () => {
     vi.mocked(retryChat)
       .mockResolvedValueOnce({ message: { content: 'not json at all' } } as never)
       .mockResolvedValueOnce(validHintResponse() as never);
-    const { round, messages } = makeHarness({
+    const { round } = makeHarness({
       wiki: makeWiki({ get: vi.fn(async () => [wikiHit('architecture')]) }),
     });
 
@@ -725,7 +725,7 @@ describe('Hint Round JSON Output', () => {
         },
       } as never)
       .mockResolvedValueOnce(validHintResponse() as never);
-    const { round, messages } = makeHarness({
+    const { round } = makeHarness({
       wiki: makeWiki({ get: vi.fn(async () => [wikiHit('architecture')]) }),
     });
 
@@ -738,7 +738,7 @@ describe('Hint Round JSON Output', () => {
     vi.mocked(retryChat)
       .mockResolvedValueOnce({ message: { content: '' } } as never)
       .mockResolvedValueOnce(validHintResponse() as never);
-    const { round, messages } = makeHarness({
+    const { round } = makeHarness({
       wiki: makeWiki({ get: vi.fn(async () => [wikiHit('architecture')]) }),
     });
 
