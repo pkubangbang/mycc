@@ -76,7 +76,7 @@ the transcript. Zero candidates → zero LLM calls.
 
 ### No safety cap — the escape is un-pinning
 
-A hold counter was considered and rejected: it fights the feature's purpose
+A HARD cap was considered and rejected: it fights the feature's purpose
 (long-horizon running). The release paths are intrinsic:
 
 - the condition stops holding, or
@@ -85,6 +85,60 @@ A hold counter was considered and rejected: it fights the feature's purpose
 
 The note returned on a hold states this explicitly, so the release is always
 discoverable.
+
+#### What we DO count (and why it is not the rejected cap)
+
+`TurnVars.preventStopHolds` records the number of **consecutive** turn ends a
+guard has held (per todo id; cleared the moment that guard releases). It is
+never consulted to make the decision — `checkPreventStop` still returns
+`block: true` however long the guard has held. Its only job is to put the
+count in front of the two readers that can act on it:
+
+- **The hold note** escalates from the 2nd hold onward: *"Held N consecutive
+  turn ends. If the previous attempt did not move this condition closer to
+  being met, repeating it will not help: change your approach, narrow the
+  condition, or release the guard with `todo_pinning(id=…, pinned=false)`."*
+- **The hint round** renders a `## Stop Guards (held)` section listing each
+  held guard with its count and condition, so the analyzer names the *guard*
+  as the blocker instead of advising about the todo it protects.
+
+Both are prompt-only and cost no extra LLM calls. The counter lives on
+`TurnVars` deliberately: a hold returns `COLLECT` **without**
+`markTurnBoundary()`, so the turn has not ended and `TurnVars` is exactly the
+scope that survives a held continuation and is cleared at a real boundary.
+
+#### Residual risk: an incapable model can still spin
+
+There is **no hard cap**, so a guard whose condition an evaluator keeps
+affirming holds the turn indefinitely. The loop costs a full LLM stage plus one
+`forkChat` per iteration, and `agent-repl.ts`'s `while (true)` has no iteration
+limit. The only exit is the agent unpinning the todo — and that is a **model
+decision**.
+
+This is accepted, for these reasons:
+
+1. **The vulnerable surface is narrow.** A spinning guard requires an agent
+   competent enough to create a pinned todo *and* write a `preventStop`
+   condition that a capable evaluator keeps affirming, yet not competent enough
+   to notice the condition cannot be met and unpin it. The two failure modes
+   pull in opposite directions; a weak model usually fails earlier — an
+   unstructured guard is filtered out by `getPreventStopCandidates()` (which
+   requires `pinned && preventStop?.trim()`), so no guard means no gate and no
+   cost at every STOP.
+2. **A cap would be a regular correctness loss** on honest long-horizon work,
+   which is the whole point of the feature. Trading a rare cost for a routine
+   wrong answer is a bad trade.
+3. **The escalation above makes the spin visible and self-documenting** — the
+   hold count is in the note the model reads every iteration and in the hint
+   round's evidence. Note this is *mitigation, not prevention*: an incapable
+   model may ignore both.
+
+Operator note: the spin is reachable whenever nothing can interrupt the loop —
+i.e. **any unattended run**, regardless of `--auto` / `--daemon` (the flags do
+not differ here; 停止 / ESC is available iff a WebUI or Coordinator is
+attached). If you run unattended with guarded todos, watch for repeated
+`guard #N held` verbose lines; unpin from the UI or restart with the guard
+removed.
 
 ### Fail open
 

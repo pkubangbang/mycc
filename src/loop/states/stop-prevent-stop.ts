@@ -28,7 +28,7 @@
  * - `updateTodo` is never called: this is a gate, not a mutation.
  */
 
-import type { MachineEnv } from '../state-machine.js';
+import type { MachineEnv, TurnVars } from '../state-machine.js';
 import { loader } from '../../context/shared/loader.js';
 import { forkChat } from '../../engine/chat-provider.js';
 
@@ -137,8 +137,15 @@ export function extractJsonArrayCandidates(text: string): string[] {
  *  - forkChat throws / ESC → `{block:false}`
  *  - non-JSON / non-array result → `{block:false}`
  *  - per-entry: wrong types, hash mismatch (hallucination), hold=false → skip
+ *
+ * `turn` is optional only for legacy callers/tests; when supplied, consecutive
+ * holds per guard are counted so the note can escalate (see
+ * TurnVars.preventStopHolds).
  */
-export async function checkPreventStop(env: MachineEnv): Promise<PreventStopVerdict> {
+export async function checkPreventStop(
+  env: MachineEnv,
+  turn?: TurnVars,
+): Promise<PreventStopVerdict> {
   const { triologue, ctx } = env;
   const candidates = ctx.todo.getPreventStopCandidates();
   if (candidates.length === 0) return { block: false };
@@ -217,9 +224,41 @@ export async function checkPreventStop(env: MachineEnv): Promise<PreventStopVerd
       // matches neither the current hash nor the ring → skipped.
       return e.hash === candidate.hash || (candidate.previousHashes ?? []).includes(e.hash);
     });
-    if (!ev || !ev.hold) continue;
+    if (!ev || !ev.hold) {
+      // This guard released — drop its hold streak. Any future hold starts
+      // counting from 1 again (the condition was met at least once).
+      if (turn && turn.preventStopHolds[candidate.id]) {
+        delete turn.preventStopHolds[candidate.id];
+      }
+      continue;
+    }
 
-    ctx.core.verbose('prevent-stop', `guard #${candidate.id} held: ${ev.reason ?? '(no reason given)'}`);
+    // Count the consecutive holds for this guard. A guard hold returns COLLECT
+    // WITHOUT markTurnBoundary(), so the turn has not ended and TurnVars still
+    // carries this — exactly the lifetime we want.
+    const heldBefore = turn?.preventStopHolds[candidate.id] ?? 0;
+    const held = heldBefore + 1;
+    if (turn) turn.preventStopHolds[candidate.id] = held;
+
+    ctx.core.verbose('prevent-stop', `guard #${candidate.id} held (${held}×): ${ev.reason ?? '(no reason given)'}`);
+
+    // ESCALATION (review 2026-10-24). The loop's only exit is the agent
+    // unpinning the todo, and a model that re-reads the same condition reaches
+    // the same conclusion every iteration. From the 2nd hold onward the note
+    // says so explicitly and names the release call, with the count as the
+    // evidence that the previous attempt changed nothing.
+    //
+    // DELIBERATELY NOT A CAP. A guard that is still making progress must never
+    // be auto-released: the honest long-horizon run is the feature. The
+    // residual risk — an incapable model that never takes the unpin path and
+    // therefore spins — is documented in docs/loop/pinned-todo-prevent-stop.md.
+    const escalation =
+      held >= 2
+        ? `\n\nHeld ${held} consecutive turn ends. If the previous attempt did not move this condition closer to being met, ` +
+          `repeating it will not help: change your approach, narrow the condition, or release the guard with ` +
+          `todo_pinning(id=${candidate.id}, pinned=false) and report what remains.`
+        : '';
+
     return {
       block: true,
       note:
@@ -227,7 +266,8 @@ export async function checkPreventStop(env: MachineEnv): Promise<PreventStopVerd
         `preventStop: "${candidate.preventStop}".` +
         `${ev.reason ? `\nEvaluator's stated grounds: ${ev.reason}` : ''}\n` +
         `Keep working towards it; when the condition no longer holds the turn can end. ` +
-        `To release the guard early, unpin #${candidate.id} (todo_pinning with pinned=false).`,
+        `To release the guard early, unpin #${candidate.id} (todo_pinning with pinned=false).` +
+        escalation,
     };
   }
 

@@ -34,6 +34,7 @@ export function createTurnVars(overrides: Partial<TurnVars> = {}): TurnVars {
     lastBriefMessage: '',
     lastHintFocus: '',
     collectTransientRetries: 0,
+    preventStopHolds: {},
     ...overrides,
   };
 }

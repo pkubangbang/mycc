@@ -176,4 +176,41 @@ describe('handleStop — pinned-todo stop guard wiring', () => {
     expect(result).toBe(AgentState.PROMPT);
     expect(triologue.note).not.toHaveBeenCalledWith('SYSTEM', expect.stringContaining('Stop prevented'));
   });
+
+  it('ESC interrupts the guard evaluation itself: an aborted check never holds the turn', async () => {
+    // The guard's forkChat is the ONE window where STOP blocks on the network.
+    // An ESC there must release the turn — a hold must never survive an
+    // interrupt. stop-prevent-stop wraps the call in escAware and substitutes
+    // '' on ESC, which parses to null → fail open.
+    vi.mocked(checkPreventStop).mockResolvedValue({ block: false });
+
+    const env = createMockMachineEnv({ triologue });
+    const turn = createTurnVars();
+    await handleStop(env, turn, createChatData());
+
+    // Whatever the guard decides, an ESC that lands sets neglected mode; the
+    // NEXT STOP entry takes the neglection branch and never re-enters the gate.
+    vi.mocked(agentIO.isNeglectedMode).mockReturnValue(true);
+    const result = await handleStop(env, turn, createChatData());
+
+    expect(result).toBe(AgentState.PROMPT);
+    expect(checkPreventStop).toHaveBeenCalledTimes(1); // not consulted again
+  });
+
+  it('the hold counter cannot trap ESC: neglected mode bypasses the gate before it runs', async () => {
+    // Regression guard for the B6 escalation work: the hold counter lives on
+    // TurnVars and is consulted INSIDE checkPreventStop, which is downstream of
+    // the neglection block. A turn already held N times must still be
+    // interruptible.
+    vi.mocked(checkPreventStop).mockResolvedValue({ block: true, note: GUARD_NOTE });
+    vi.mocked(agentIO.isNeglectedMode).mockReturnValue(true);
+
+    const env = createMockMachineEnv({ triologue });
+    const turn = createTurnVars({ preventStopHolds: { 2: 25 } }); // long-held guard
+
+    const result = await handleStop(env, turn, createChatData());
+
+    expect(result).toBe(AgentState.PROMPT);
+    expect(checkPreventStop).not.toHaveBeenCalled();
+  });
 });

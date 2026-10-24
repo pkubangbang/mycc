@@ -30,7 +30,7 @@ import { checkPreventStop } from './stop-prevent-stop.js';
 
 export async function handleStop(
   env: MachineEnv,
-  _turn: TurnVars,
+  turn: TurnVars,
   _chat: ChatData,
 ): Promise<HandlerResult> {
   const { triologue, ctx } = env;
@@ -133,7 +133,7 @@ export async function handleStop(
     //    (where long-horizon runs actually live).
     // Returning COLLECT is a turn CONTINUATION: markTurnBoundary() must NOT
     // run here (no turn events reset, no totalTurns increment).
-    const guard = await checkPreventStop(env);
+    const guard = await checkPreventStop(env, turn);
     if (guard.block) {
       if (guard.note) triologue.note('SYSTEM', guard.note);
       return AgentState.COLLECT;

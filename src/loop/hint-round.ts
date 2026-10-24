@@ -310,7 +310,7 @@ export class HintRound {
     // Use escAware for ESC-interruptible hint generation
     const result = await ctx.core.escAware(
       async (abortController) => {
-        return await this.generate(abortController, pendingSkills);
+        return await this.generate(abortController, pendingSkills, turn);
       },
       () => {
         // ESC pressed during hint generation — return 'aborted' so the
@@ -367,6 +367,7 @@ export class HintRound {
   private async generate(
     abortController: AbortController,
     pendingSkills?: string[],
+    turn?: TurnVars,
   ): Promise<'aborted' | 'failed' | { status: 'success'; focusOn: string }> {
     const env = this.env;
     if (!env) return 'aborted';
@@ -419,7 +420,7 @@ export class HintRound {
     const duplicationReport = env.requestEmbeddingTracker.getDuplicationReport();
 
     const userPrompt = [
-      ...buildStateSections(env),
+      ...buildStateSections(env, turn),
       '## Conversation Context',
       compactContext,
       '',
@@ -787,7 +788,7 @@ function sanitizeField(value: string): string {
  * Every section self-omits when it has nothing to say, so a quiet session adds
  * little beyond `## Todo List`.
  */
-function buildStateSections(env: MachineEnv): string[] {
+function buildStateSections(env: MachineEnv, turn?: TurnVars): string[] {
   const parts: string[] = [];
 
   // ── Todo List ──
@@ -811,6 +812,40 @@ function buildStateSections(env: MachineEnv): string[] {
     }
   }
   parts.push(todoLines.join('\n'));
+
+  // ── Stop Guards (held) ──
+  // Out-of-band: NOTHING in the transcript says how many consecutive turn ends
+  // a preventStop guard has blocked, so the analyzer cannot otherwise tell a
+  // one-off hold from a spin. Rendered only while a guard is actually holding
+  // (the counters are cleared on release), so a healthy session pays nothing.
+  //
+  // This is the evidence the hint round needs to name the RIGHT blocker: the
+  // guard — not the todo it protects. A guard can hold indefinitely (by design,
+  // no cap); the agent's exit is `todo_pinning(pinned=false)`, and a model that
+  // keeps re-reading the same condition will keep reaching the same answer.
+  if (turn) {
+    const held = Object.entries(turn.preventStopHolds ?? {})
+      .map(([id, count]) => ({ id: Number(id), count }))
+      .filter((h) => h.count > 0)
+      .sort((a, b) => b.count - a.count);
+    if (held.length > 0) {
+      const guardLines = ['## Stop Guards (held)'];
+      for (const h of held) {
+        const todo = todos.find((t) => t.id === h.id);
+        const condition = todo?.preventStop ? ` — preventStop: "${sanitizeField(todo.preventStop)}"` : '';
+        guardLines.push(
+          `- #${h.id} held ${h.count} consecutive turn end${h.count === 1 ? '' : 's'}${condition}`,
+        );
+      }
+      guardLines.push(
+        'A guard hold does not end the turn; it repeats it. If the same guard has held repeatedly with no change in the ' +
+        'underlying work, say so in `blocker` and make `next_step` either a genuinely different approach or ' +
+        '`todo_pinning(id=<n>, pinned=false)` to release a condition that cannot be met. Do NOT advise simply repeating the ' +
+        'previous attempt.',
+      );
+      parts.push(guardLines.join('\n'));
+    }
+  }
 
   // ── Mode & Write Scope ──
   // Plan mode only: "normal — writes permitted" is a constant and would be the

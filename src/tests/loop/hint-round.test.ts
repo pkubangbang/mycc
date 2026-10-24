@@ -302,8 +302,38 @@ describe('Hint Round JSON Output', () => {
     );
   });
 
-  it('renders the "no todos" fallback', async () => {
+  it('reports held stop guards so the analyzer can name the real blocker', async () => {
+    // A preventStop hold repeats the turn without ending it. Nothing in the
+    // transcript says HOW MANY times a guard has held, so without this section
+    // the analyzer can only see "a pinned todo exists" and advises about the
+    // todo rather than about the promise blocking the turn end.
     vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
+    const { round, env } = makeHarness({ wiki: makeWiki() });
+    env.ctx.todo.getItems = vi.fn(() => [
+      { id: 3, name: 'finish the migration', done: false, hash: 'h3', pinned: true, preventStop: 'until verified' },
+    ]) as never;
+
+    await round.run(createTurnVars({ preventStopHolds: { 3: 12 } }));
+
+    const userPrompt = getUserPrompt();
+    expect(userPrompt).toContain('## Stop Guards (held)');
+    expect(userPrompt).toContain('#3 held 12 consecutive turn ends');
+    expect(userPrompt).toContain('until verified');
+    // The escape must be spelled out: the agent is the only actor that can
+    // release a guard, and repeating the same attempt is the failure mode.
+    expect(userPrompt).toContain('todo_pinning(id=<n>, pinned=false)');
+  });
+
+  it('omits the Stop Guards section when no guard is holding', async () => {
+    vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
+    const { round } = makeHarness({ wiki: makeWiki() });
+
+    await round.run(createTurnVars());
+
+    expect(getUserPrompt()).not.toContain('## Stop Guards (held)');
+  });
+
+  it('renders the "no todos" fallback', async () => {    vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
     const { round, env } = makeHarness({ wiki: makeWiki() });
     env.ctx.todo.getItems = vi.fn(() => []) as never;
 
