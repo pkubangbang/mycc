@@ -652,11 +652,13 @@ export class Core extends BaseCore implements CoreModule {
    *
    * Consumed by the hint round's "## Recent Permission Blocks" section so the
    * analyzer gets exact evidence (which tool, which target, which rule) instead
-   * of classifying tool-result prose. Returns a copy — callers must not mutate
-   * the buffer.
+   * of classifying tool-result prose. Returns a DEEP copy — a shallow
+   * `[...arr]` still shares the entry objects, so a caller mutating
+   * `denials[0].kind` would silently rewrite the recorded history (a test that
+   * mutates one entry used to corrupt the ring until the next process restart).
    */
   getRecentDenials(): GrantDenial[] {
-    return [...this.recentDenials];
+    return this.recentDenials.map((d) => ({ ...d }));
   }
 
   /**

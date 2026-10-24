@@ -690,8 +690,7 @@ export class HintRound {
  * The structural shape the hint round needs from a recorded denial.
  *
  * Declared here (not imported) so the hint round stays decoupled from
- * parent/core.ts: any context that exposes `getRecentDenials()` in this shape
- * is used, and every other context degrades to the regex classifier.
+ * parent/core.ts: the env's core is reached by duck-typing.
  */
 interface RecordedDenial {
   tool: string;
@@ -704,8 +703,15 @@ interface RecordedDenial {
  * Read recorded denials from the bound env, or null when this context has no
  * recorder (child/lite contexts, test doubles that did not opt in).
  *
- * Guarded per the module's convention: an optional capability must degrade to
- * the fallback path, never fail the hint round.
+ * There is NO fallback classifier: an absent recorder means the section is
+ * simply OMITTED. Reconstructing refusals by pattern-matching tool-result
+ * prose was removed on purpose — it mis-classified any result that merely
+ * QUOTED a block message (reading bash-judge.ts, grepping its tests) and
+ * could not report which tool, target or rule was refused. Silence is the
+ * truthful output for "no evidence available"; a fabricated label is not.
+ *
+ * The real recorder lives at the lead's grant chokepoint
+ * (Core.requestGrant → recordDenial); see src/context/parent/core.ts.
  */
 function readRecentDenials(env: MachineEnv): RecordedDenial[] | null {
   const core = env.ctx.core as unknown as { getRecentDenials?: () => RecordedDenial[] };
@@ -718,72 +724,20 @@ function readRecentDenials(env: MachineEnv): RecordedDenial[] | null {
   }
 }
 
-/** One line per denial: what was refused, and why. */
+/**
+ * One line per denial: what was refused, and why.
+ *
+ * Returns null on an empty list, which makes the caller OMIT the section
+ * entirely — a clean session must not pad the prompt.
+ */
 function formatDenials(denials: RecordedDenial[]): string | null {
   if (denials.length === 0) return null;
   const lines: string[] = [
     '## Recent Permission Blocks',
     'Recorded at the grant gate (exact tool, target and rule). Fix the REQUEST, not the goal:',
   ];
-  for (const d of denials.slice(-6)) {    lines.push(`- ${d.tool} → ${sanitizeField(d.target)} [${d.kind}]: ${sanitizeField(d.reason)}`);
-  }
-  return lines.join('\n');
-}
-
-/**
- * Summarize recent PERMISSION blocks as actionable evidence for the analyzer.
- *
- * Grants keep no history — `judgeBash` / `evaluateGrant` return a verdict that
- * only survives as a TOOL-RESULT string — so the evidence is recovered by
- * classifying the trailing window of sequence events. Returns null when no
- * block is present, which makes the caller OMIT the section entirely (a clean
- * session must not pad the prompt).
- *
- * Exported for unit testing.
- */
-export function summarizePermissionBlocks(events: SequenceEvent[]): string | null {
-  if (events.length === 0) return null;
-  const window = events.slice(-10);
-  const counts = new Map<string, { count: number; sample: string }>();
-
-  for (const ev of window) {
-    const result = ev.result || '';
-    const lower = result.toLowerCase();
-    let label: string | null = null;
-    if (lower.startsWith('error: [intent]')) {
-      label = 'intent grammar rejected';
-    } else if (/cannot \w+ in plan mode/i.test(result) ||
-               lower.includes('operation not permitted in current mode')) {
-      // write.ts / edit.ts return grant.reason when present, else the generic
-      // fallback — BOTH plan-mode forms must match, or the most common block
-      // (a plain write in plan mode) would be invisible.
-      label = 'plan-mode block';
-    } else if (lower.includes('command blocked:')) {
-      label = 'dangerous-command block';
-    } else if (lower.includes('batch deletion')) {
-      label = 'batch-delete gate';
-    } else if (lower.includes('direct git commit is not allowed')) {
-      label = 'wrong-tool block (use git_commit)';
-    } else if (lower.includes('user denied')) {
-      label = 'human refusal';
-    }
-    if (!label) continue;
-
-    const entry = counts.get(label);
-    if (entry) {
-      entry.count++;
-    } else {
-      counts.set(label, { count: 1, sample: result.split('\n')[0].slice(0, 90) });
-    }
-  }
-
-  if (counts.size === 0) return null;
-  const lines: string[] = [
-    '## Recent Permission Blocks',
-    'Classified from recent tool output. Fix the REQUEST, not the goal:',
-  ];
-  for (const [label, { count, sample }] of counts) {
-    lines.push(`- ${label}${count > 1 ? ` ×${count}` : ''}: "${sample}"`);
+  for (const d of denials.slice(-6)) {
+    lines.push(`- ${d.tool} → ${sanitizeField(d.target)} [${d.kind}]: ${sanitizeField(d.reason)}`);
   }
   return lines.join('\n');
 }
@@ -876,15 +830,10 @@ function buildStateSections(env: MachineEnv): string[] {
   }
 
   // ── Recent Permission Blocks ──
-  // Prefer the EXACT record captured at the grant chokepoint
-  // (Core.getRecentDenials): it knows which tool, which target and which rule,
-  // and cannot be confused by a tool result that merely QUOTES a block
-  // message. Contexts without a recorder (child/lite) fall back to classifying
-  // sequence-event results.
-  const denials = readRecentDenials(env);
-  const permissionEvidence = denials
-    ? formatDenials(denials)
-    : summarizePermissionBlocks(env.sequence.getEvents());
+  // EXACT evidence only, recorded at the grant chokepoint
+  // (Core.requestGrant → recordDenial). An absent recorder omits the section
+  // rather than guessing from tool-output prose — see readRecentDenials().
+  const permissionEvidence = formatDenials(readRecentDenials(env) ?? []);
   if (permissionEvidence) parts.push(permissionEvidence);
 
   // ── Loop Evidence ──

@@ -355,27 +355,32 @@ describe('Hint Round JSON Output', () => {
     expect(userPrompt).toContain('plan mode — writes are blocked except: /x/plan.md');
   });
 
-  it('surfaces recent permission REFUSALS, not just the error text', async () => {
+  it('surfaces recorded permission REFUSALS with exact tool, target and rule', async () => {
     vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
     const { round, env } = makeHarness({ wiki: makeWiki() });
-    env.sequence.getEvents = vi.fn(() => [
-      { tool: 'bash', args: {}, result: 'Error: [Intent] missing TO purpose', timestamp: 1 },
-      { tool: 'write_file', args: {}, result: 'Operation not permitted in current mode', timestamp: 2 },
-    ]) as never;
+    // Exact evidence comes from the grant chokepoint, NOT from tool-output
+    // prose: the recorder knows which target and which rule were refused.
+    (env.ctx.core as unknown as { getRecentDenials: () => unknown }).getRecentDenials = () => [
+      { tool: 'bash', target: 'pnpm test', reason: 'Error: [Intent] missing TO purpose', kind: 'intent', seq: 1 },
+      { tool: 'write_file', target: 'src/loop/hint-round.ts', reason: 'You are in plan mode.', kind: 'plan-mode', seq: 2 },
+    ];
 
     await round.run(createTurnVars());
 
     const userPrompt = getUserPrompt();
     expect(userPrompt).toContain('## Recent Permission Blocks');
-    expect(userPrompt).toContain('intent grammar rejected');
-    expect(userPrompt).toContain('plan-mode block');
+    expect(userPrompt).toContain('bash → pnpm test [intent]');
+    expect(userPrompt).toContain('write_file → src/loop/hint-round.ts [plan-mode]');
   });
 
   it('omits the permission section when nothing was refused', async () => {
     vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
     const { round, env } = makeHarness({ wiki: makeWiki() });
+    (env.ctx.core as unknown as { getRecentDenials: () => unknown }).getRecentDenials = () => [];
+    // Even block-looking tool output must NOT resurrect the section: the
+    // prose classifier is gone on purpose.
     env.sequence.getEvents = vi.fn(() => [
-      { tool: 'read_file', args: {}, result: 'file contents ok', timestamp: 1 },
+      { tool: 'write_file', args: {}, result: 'Operation not permitted in current mode', timestamp: 1 },
     ]) as never;
 
     await round.run(createTurnVars());
@@ -383,30 +388,11 @@ describe('Hint Round JSON Output', () => {
     expect(getUserPrompt()).not.toContain('## Recent Permission Blocks');
   });
 
-  it('prefers the EXACT recorded denials over classifying tool-result prose', async () => {
+  it('no-ops (omits the section) when the context has no recorder', async () => {
     vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
     const { round, env } = makeHarness({ wiki: makeWiki() });
-    // A recorder is present: it wins, and the events are NOT consulted.
-    (env.ctx.core as unknown as { getRecentDenials: () => unknown }).getRecentDenials = () => [
-      { tool: 'write_file', target: 'src/loop/hint-round.ts', reason: 'Error: You are in plan mode.', kind: 'plan-mode', seq: 1 },
-    ];
-    env.sequence.getEvents = vi.fn(() => []) as never;
-
-    await round.run(createTurnVars());
-
-    const userPrompt = getUserPrompt();
-    expect(userPrompt).toContain('## Recent Permission Blocks');
-    // Exact target + structural kind — impossible to derive from prose alone.
-    expect(userPrompt).toContain('write_file → src/loop/hint-round.ts [plan-mode]');
-    // The prose classifier's output must NOT appear (empty events would have
-    // produced no section at all, so its absence proves the recorder won).
-    expect(userPrompt).not.toContain('Classified from recent tool output');
-  });
-
-  it('degrades to the sequence classifier when the context has no recorder', async () => {
-    vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
-    const { round, env } = makeHarness({ wiki: makeWiki() });
-    // Test contexts have no recorder by default — the fallback must fire.
+    // Test contexts have no recorder by default. The honest output for
+    // "no evidence available" is silence — not a guess derived from prose.
     expect((env.ctx.core as unknown as Record<string, unknown>).getRecentDenials).toBeUndefined();
     env.sequence.getEvents = vi.fn(() => [
       { tool: 'bash', args: {}, result: 'Error: [Intent] use VERB OBJECT', timestamp: 1 },
@@ -414,7 +400,37 @@ describe('Hint Round JSON Output', () => {
 
     await round.run(createTurnVars());
 
-    expect(getUserPrompt()).toContain('intent grammar rejected');
+    expect(getUserPrompt()).not.toContain('## Recent Permission Blocks');
+  });
+
+  it('keeps the Core recorder wired (guards against a silent rename)', async () => {
+    // readRecentDenials() reaches Core by duck-typing, so a rename would
+    // silently mute the section with no compile error. Pin the method here.
+    const { Core } = await import('../../context/parent/core.js');
+    expect(typeof new Core(process.cwd()).getRecentDenials).toBe('function');
+  });
+
+  it('takes the recorder as the SOLE permission source (events are not consulted)', async () => {
+    vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
+    const { round, env } = makeHarness({ wiki: makeWiki() });
+    // A recorder is present: it is the only evidence used. Block-looking
+    // tool-result prose alongside it must never reach the section.
+    (env.ctx.core as unknown as { getRecentDenials: () => unknown }).getRecentDenials = () => [
+      { tool: 'write_file', target: 'src/loop/hint-round.ts', reason: 'Error: You are in plan mode.', kind: 'plan-mode', seq: 1 },
+    ];
+    env.sequence.getEvents = vi.fn(() => [
+      { tool: 'bash', args: {}, result: 'Error: [Intent] use VERB OBJECT', timestamp: 1 },
+    ]) as never;
+
+    await round.run(createTurnVars());
+
+    const userPrompt = getUserPrompt();
+    expect(userPrompt).toContain('## Recent Permission Blocks');
+    // Exact target + structural kind — impossible to derive from prose alone.
+    expect(userPrompt).toContain('write_file → src/loop/hint-round.ts [plan-mode]');
+    // The transcript bash call appears in the conversation view, but no
+    // second, prose-derived entry may be appended to the permission section.
+    expect(userPrompt).not.toContain('bash → bash');
   });
 
   it('keeps ANALYSIS_INSTRUCTION unique even when a todo embeds it', async () => {
@@ -863,6 +879,77 @@ describe('HintRound lifecycle hygiene', () => {
     // before this run). The per-test retry budget is covered by the tests above;
     // this one only proves the second init(env) did NOT tear the binding down.
     expect(vi.mocked(retryChat).mock.calls.length).toBeGreaterThan(callsBefore);
+  });
+});
+
+describe('HintRound confusion-index reset contract', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    hintRound.reset();
+  });
+
+  // Locked invariant: resetConfusionIndex() fires EXACTLY ONCE, and ONLY when a
+  // hint actually landed. Every other exit — unbound env, gate closed, ESC,
+  // malformed output — must leave the signal intact, or the loop either hides
+  // a failed intervention or loses the trigger that made it retry.
+
+  it('resets exactly once on a successful hint', async () => {
+    vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
+    const { round, env } = makeHarness({
+      wiki: makeWiki({ get: vi.fn(async () => [wikiHit('architecture')]) }),
+    });
+
+    const signal = await round.run(createTurnVars());
+
+    expect(signal).toBe('continue');
+    expect(env.ctx.core.resetConfusionIndex).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT reset when the env is unbound (child path returns early)', async () => {
+    const round = new HintRound(); // never init()ed
+    const signal = await round.run(createTurnVars());
+    expect(signal).toBe('continue');
+  });
+
+  it('does NOT reset when the gate is closed (low confusion)', async () => {
+    const { round, env } = makeHarness({ wiki: makeWiki(), confusionIndex: 9 });
+
+    await round.run(createTurnVars());
+
+    expect(env.ctx.core.resetConfusionIndex).not.toHaveBeenCalled();
+  });
+
+  it('does NOT reset when ESC aborts the round', async () => {
+    const { round, env } = makeHarness({ wiki: makeWiki() });
+    env.ctx.core.escAware = vi.fn(async (_fn, onEsc) => onEsc(new AbortController())) as never;
+
+    const signal = await round.run(createTurnVars());
+
+    expect(signal).toBe('stop');
+    expect(env.ctx.core.resetConfusionIndex).not.toHaveBeenCalled();
+  });
+
+  it('does NOT reset when every attempt produced malformed output', async () => {
+    vi.mocked(retryChat).mockResolvedValue({ message: { content: 'not json' } } as never);
+    const { round, env } = makeHarness({ wiki: makeWiki() });
+
+    const signal = await round.run(createTurnVars());
+
+    expect(signal).toBe('continue');
+    expect(env.ctx.core.resetConfusionIndex).not.toHaveBeenCalled();
+  });
+
+  it('does NOT reset when the LLM call throws a transient error', async () => {
+    vi.mocked(retryChat).mockRejectedValueOnce(new Error('tls handshake timeout'));
+    const { round, env } = makeHarness({ wiki: makeWiki() });
+
+    // The error propagates to COLLECT (which retries the pass) — the signal
+    // must survive so the retry can regenerate the hint.
+    await expect(round.run(createTurnVars())).rejects.toThrow('tls handshake timeout');
+    expect(env.ctx.core.resetConfusionIndex).not.toHaveBeenCalled();
   });
 });
 
