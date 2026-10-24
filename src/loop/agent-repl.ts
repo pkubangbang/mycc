@@ -236,6 +236,11 @@ export async function main(): Promise<void> {
     clearWrapUp();
     ctx.todo.clear();
     ctx.issue.clearAll();
+    // The denial ring is process-scoped, so it must be dropped here too: a
+    // refusal recorded for the conversation the user just wiped would
+    // otherwise still be rendered as "## Recent Permission Blocks" in the
+    // fresh session's hint prompt.
+    ctx.core.clearDenials();
     // Fresh-session primitive: reset the skill-discovery throttle AND
     // invalidate the stale TurnVars composite sources. double-Ctrl+L is an
     // in-process "start fresh" (no state transition), so the state-machine

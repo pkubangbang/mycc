@@ -39,6 +39,7 @@ export function createMockCore(overrides: Partial<CoreModule> = {}): CoreModule 
     getConfusionIndex: vi.fn(() => 0),
     increaseConfusionIndex: vi.fn(),
     resetConfusionIndex: vi.fn(),
+    clearDenials: vi.fn(),
     escAware: (vi.fn() as unknown) as CoreModule['escAware'],
     ...overrides,
   };

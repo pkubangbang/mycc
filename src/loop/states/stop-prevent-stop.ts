@@ -69,16 +69,63 @@ export function parsePreventStopResult(raw: string): PreventStopEvaluation[] | n
   } catch {
     // fall through to extraction
   }
-  // 2. Extract first JSON array from surrounding noise
-  const match = trimmed.match(/\[[\s\S]*\]/);
-  if (!match) return null;
-  try {
-    const parsed = JSON.parse(match[0]);
-    if (Array.isArray(parsed)) return parsed as PreventStopEvaluation[];
-  } catch {
-    // give up
+  // 2. Extract a balanced JSON array from surrounding noise.
+  //
+  // NOT a greedy `/\[[\s\S]*\]/`: that spans from the first '[' to the LAST
+  // ']' in the whole reply, so a normal answer followed by any bracketed prose
+  // ("… [tests still fail]") yields a span JSON.parse rejects → null → the
+  // guard silently fails open. Scanning bracket-by-bracket (respecting
+  // strings and escapes) finds the array the model actually emitted.
+  for (const span of extractJsonArrayCandidates(trimmed)) {
+    try {
+      const parsed = JSON.parse(span);
+      if (Array.isArray(parsed)) return parsed as PreventStopEvaluation[];
+    } catch {
+      // try the next candidate
+    }
   }
   return null;
+}
+
+/**
+ * All balanced `[...]` spans in `text`, outermost first.
+ *
+ * String-aware: a '[' or ']' inside a JSON string literal does not change
+ * depth, and `\"` does not close a string. Exported for unit testing.
+ */
+export function extractJsonArrayCandidates(text: string): string[] {
+  const spans: string[] = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '[') {
+      if (depth === 0) start = i;
+      depth++;
+      continue;
+    }
+    if (ch === ']') {
+      if (depth === 0) continue; // stray closer
+      depth--;
+      if (depth === 0 && start >= 0) {
+        spans.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+  return spans;
 }
 
 /**
@@ -96,13 +143,21 @@ export async function checkPreventStop(env: MachineEnv): Promise<PreventStopVerd
   const candidates = ctx.todo.getPreventStopCandidates();
   if (candidates.length === 0) return { block: false };
 
-  // Build the evaluation prompt. `id` is fixed (echoed back); `hash` is
-  // supplied by the LLM from the conversation context so the anti-hallusion
-  // check stays active — a fabricated hash won't match the candidate.
+  // Build the evaluation prompt. `id` is fixed (echoed back) and `hash` is
+  // PRINTED HERE — it is system-side data, not user-authored, so there is no
+  // reason to make the model recall it from the transcript. (It previously had
+  // to, which broke the check outright: hashes live only in tool results and
+  // the throttled todo nudge, so after an update or a COMPACTION — see
+  // triologue.compact(), which replaces the whole transcript — the evaluator
+  // had no hash to echo, every entry failed the match, and the guard silently
+  // failed open. Exactly the long-horizon regime this feature targets.)
+  // The id+hash match is kept as a HALLUCINATION FILTER: a fabricated entry
+  // still won't match a candidate.
   // The done marker is included so the evaluator can tell a finished item
   // (guard is the only reason to keep going) from unfinished work.
   const todoLines = candidates.map(
-    (c) => `#${c.id} ${c.done ? '[done]' : '[open]'} "${c.name}" — preventStop: "${c.preventStop}"` +
+    (c) => `#${c.id} ${c.done ? '[done]' : '[open]'} [hash: ${c.hash}] "${c.name}"` +
+      ` — preventStop: "${c.preventStop}"` +
       `${c.note ? ` (note: ${c.note})` : ''}`,
   );
   const prompt =
@@ -113,11 +168,11 @@ export async function checkPreventStop(env: MachineEnv): Promise<PreventStopVerd
     'still unfinished.\n\n' +
     'Reply with ONLY a JSON array, no other text. Schema:\n' +
     '[\n' +
-    '  {"id": <todo_id>, "hash": "<current_hash_of_this_todo>", "hold": <true|false>, "reason": "<one sentence>"}\n' +
+    '  {"id": <todo_id>, "hash": "<hash_of_this_todo>", "hold": <true|false>, "reason": "<one sentence>"}\n' +
     ']\n\n' +
     'Rules:\n' +
     '- "id": the todo ID as listed above (echo it back).\n' +
-    '- "hash": the current hash of this todo item (from the todo list you have seen in conversation).\n' +
+    '- "hash": the [hash: …] value shown next to that todo above (copy it exactly).\n' +
     '- "hold": true only if the condition clearly still holds and there is real work left.\n' +
     '- If the condition is satisfied, or you are unsure, use false.\n' +
     '- Do not hold the turn based on work that predates the todo\'s last completion.';
@@ -148,21 +203,22 @@ export async function checkPreventStop(env: MachineEnv): Promise<PreventStopVerd
     return { block: false };
   }
 
-  for (const ev of evaluations) {
-    // Per-entry type guards — skip malformed entries, keep going
-    if (typeof ev.id !== 'number' || typeof ev.hash !== 'string' || typeof ev.hold !== 'boolean') {
-      continue;
-    }
-    if (!ev.hold) continue;
+  // Match order: candidate order (the todo list the agent sees), NOT the
+  // model's reply order — so the reported guard is the topmost one in the
+  // list, as the note claims.
+  for (const candidate of candidates) {
+    const ev = evaluations.find((e) => {
+      if (typeof e.id !== 'number' || typeof e.hash !== 'string' || typeof e.hold !== 'boolean') return false;
+      if (e.id !== candidate.id) return false;
+      // Hash anti-hallucination, with the lineage ring as the second chance:
+      // a model holding the PRE-update hash is the documented normal case
+      // (todo_update emits a findByPreviousHash warm hint for exactly this),
+      // and the todo's identity is already pinned by `id`. A fabricated hash
+      // matches neither the current hash nor the ring → skipped.
+      return e.hash === candidate.hash || (candidate.previousHashes ?? []).includes(e.hash);
+    });
+    if (!ev || !ev.hold) continue;
 
-    // Hash anti-hallusion: match by id AND hash. A hallucinated hash won't
-    // match and the entry is silently skipped.
-    const candidate = candidates.find((c) => c.id === ev.id && c.hash === ev.hash);
-    if (!candidate) continue;
-
-    // Topmost held guard wins — its reason is the one reported. Later held
-    // entries are not evaluated for the verdict (a single reason is enough
-    // to gate the turn; the agent re-runs the check after acting).
     ctx.core.verbose('prevent-stop', `guard #${candidate.id} held: ${ev.reason ?? '(no reason given)'}`);
     return {
       block: true,

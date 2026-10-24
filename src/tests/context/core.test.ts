@@ -361,21 +361,62 @@ describe('Core (Parent) - the denial ring', () => {
     // and the git-commit routing, so a malformed intent is refused as 'intent'
     // before the command itself is ever judged.
     // `git commit` is the `system` routing nudge (hard-blocked, no escape hatch),
-    // so it is recorded as 'dangerous'; without the escape PARAM the irreversible
-    // command is hard-blocked with a Socratic hint and never reaches [y/N].
+    // recorded with its OWN 'git-commit' kind so the analyzer can say "use
+    // git_commit" instead of a generic danger warning; the irreversible command
+    // is hard-blocked with a Socratic hint and never reaches [y/N].
     const irreversible = 'mk' + 'fs.ext4 /dev/sdb1';
     await core.requestGrant('bash', { command: irreversible, intent: 'DELETE DATA path=dev_sdb1 TO wipe the test disk' });
     await core.requestGrant('bash', { command: 'git commit -m "x"', intent: 'RUN SYSTEM TO commit changes' });
     await core.requestGrant('bash', { command: 'echo hi' }); // no intent → grammar rule
 
     const denials = core.getRecentDenials();
-    // Both "Command blocked:" reasons classify as 'dangerous' — classifyDenial
-    // keys on the word "blocked", so the git_commit routing nudge and the
-    // dangerous-command block share one structural kind by design.
-    expect(denials.map((d) => d.kind)).toEqual(['intent', 'dangerous', 'intent']);
+    // REGRESSION GUARD (review 2026-10-24): the dangerous-command block used to
+    // be classified 'intent' because its Socratic hint mentions "The Intent
+    // Lang provides a PARAM" — which made the hint round advise reformatting
+    // the intent instead of acknowledging a destructive command. And 'git-commit'
+    // was unreachable (the reason says "git_commit", the matcher looked for
+    // "git commit"). Both are asserted here.
+    expect(denials.map((d) => d.kind)).toEqual(['dangerous', 'git-commit', 'intent']);
     // bash targets the COMMAND, not a path.
     expect(denials[0].target).toBe(irreversible);
+    expect(denials[1].target).toBe('git commit -m "x"');
     expect(denials[2].target).toBe('echo hi');
+  });
+
+  it('classifies a HUMAN refusal as denied, never as the policy rule it overrides', async () => {
+    // bash-judge.ts emits "User denied the dangerous command (…)",
+    // "User denied the batch deletion" and "User denied the command". These all
+    // CONTAIN the danger/batch markers, so a danger-first classifier recorded a
+    // human "no" as a policy block and the hint round then advised retrying
+    // with `dangerous=i_know` — i.e. re-asking for what the human just refused.
+    const mod = await import('../../context/parent/core.js') as unknown as {
+      classifyDenialForTest: (r: string | undefined) => string;
+    };
+    const classify = mod.classifyDenialForTest;
+    expect(classify('User denied the dangerous command (Privileged deletion)')).toBe('denied');
+    expect(classify('User denied the batch deletion')).toBe('denied');
+    expect(classify('User denied the command')).toBe('denied');
+    // The Socratic hint for a dangerous block is NOT an intent-grammar failure,
+    // even though it mentions "The Intent Lang provides a PARAM".
+    expect(
+      classify('Command blocked: Filesystem formatting.\n\nDangerous commands are blocked by default. The Intent Lang provides a PARAM …'),
+    ).toBe('dangerous');
+    // The real grammar rejection still classifies as intent.
+    expect(classify('Error: [intent] the OBJECT token is missing')).toBe('intent');
+  });
+
+  it('clearDenials() drops the ring so stale evidence cannot outlive its context', async () => {
+    core.setMode('plan');
+    await core.requestGrant('write_file', { path: '/test/a.ts' });
+    expect(core.getRecentDenials()).toHaveLength(1);
+
+    core.clearDenials();
+    expect(core.getRecentDenials()).toEqual([]);
+
+    // The sequence token stays monotonic — it orders entries, it is not a count.
+    core.setMode('plan');
+    await core.requestGrant('write_file', { path: '/test/b.ts' });
+    expect(core.getRecentDenials()[0].seq).toBeGreaterThan(1);
   });
 
   it('derives the kind from the verdict REASON, not the command text', async () => {

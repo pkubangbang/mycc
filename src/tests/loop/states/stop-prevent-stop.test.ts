@@ -26,7 +26,7 @@ vi.mock('../../../context/shared/loader.js', () => ({
   loader: { getToolsForScope: vi.fn(() => [{ type: 'function', function: { name: 'bash' } }]) },
 }));
 
-import { parsePreventStopResult, checkPreventStop } from '../../../loop/states/stop-prevent-stop.js';
+import { parsePreventStopResult, checkPreventStop, extractJsonArrayCandidates } from '../../../loop/states/stop-prevent-stop.js';
 import { forkChat } from '../../../engine/chat-provider.js';
 import type { MachineEnv } from '../../../loop/state-machine.js';
 import type { TodoItem } from '../../../types.js';
@@ -221,5 +221,77 @@ describe('checkPreventStop', () => {
     vi.mocked(forkChat).mockResolvedValue(`[{"id":${c.id},"hash":"${c.hash}","hold":true,"reason":"x"}]`);
     await checkPreventStop(env);
     expect((env.ctx.todo as unknown as Record<string, unknown>).updateTodo).not.toHaveBeenCalled();
+  });
+});
+
+describe('checkPreventStop — hash echo and recovery (review 2026-10-24)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(forkChat).mockResolvedValue('[]');
+  });
+
+  it('should PRINT each guard hash so the evaluator can echo it (regression: guard was inert)', async () => {
+    // The evaluator cannot recall a hash from the transcript: hashes appear only
+    // in tool results and the throttled todo nudge, and compaction wipes the
+    // transcript entirely. The prompt must therefore carry them.
+    const c = guarded({ id: 7, hash: 'deadbeef', name: 'migrate', preventStop: 'until verified' });
+    vi.mocked(forkChat).mockResolvedValue('[]');
+    await checkPreventStop(makeEnv([c]));
+    const prompt = vi.mocked(forkChat).mock.calls[0][2] as string;
+    expect(prompt).toContain('[hash: deadbeef]');
+  });
+
+  it('should accept an honest hash taken from the prompt (end-to-end match)', async () => {
+    const c = guarded({ id: 7, hash: 'deadbeef' });
+    const env = makeEnv([c]);
+    // Simulate a model that copies the hash it was shown.
+    vi.mocked(forkChat).mockImplementation(async (_m, _t, prompt) => {
+      const shown = /\[hash: ([0-9a-f]+)\]/.exec(prompt as string)?.[1];
+      return `[{"id":7,"hash":"${shown}","hold":true,"reason":"still failing"}]`;
+    });
+    const verdict = await checkPreventStop(env);
+    expect(verdict.block).toBe(true);
+  });
+
+  it('should accept a STALE hash that the lineage ring knows', async () => {
+    // todo_update recomputes the hash; the model routinely holds the previous
+    // one. `previousHashes` is exactly that history, so a stale-but-honest echo
+    // must still gate the turn.
+    const c = guarded({ id: 4, hash: 'current1', previousHashes: ['stale001'] });
+    vi.mocked(forkChat).mockResolvedValue('[{"id":4,"hash":"stale001","hold":true,"reason":"r"}]');
+    const verdict = await checkPreventStop(makeEnv([c]));
+    expect(verdict.block).toBe(true);
+  });
+
+  it('should still reject a FABRICATED hash (anti-hallucination intact)', async () => {
+    const c = guarded({ id: 4, hash: 'current1', previousHashes: ['stale001'] });
+    vi.mocked(forkChat).mockResolvedValue('[{"id":4,"hash":"made-up","hold":true,"reason":"r"}]');
+    const verdict = await checkPreventStop(makeEnv([c]));
+    expect(verdict.block).toBe(false);
+  });
+
+  it('should report the TOPMOST guard in list order, not the reply order', async () => {
+    const first = guarded({ id: 1, hash: 'h1', name: 'first' });
+    const second = guarded({ id: 2, hash: 'h2', name: 'second' });
+    vi.mocked(forkChat).mockResolvedValue(
+      '[{"id":2,"hash":"h2","hold":true,"reason":"two"},{"id":1,"hash":"h1","hold":true,"reason":"one"}]',
+    );
+    const verdict = await checkPreventStop(makeEnv([first, second]));
+    expect(verdict.note).toContain('#1');
+  });
+});
+
+describe('parsePreventStopResult — balanced extraction (review 2026-10-24)', () => {
+  it('should parse an array followed by bracketed prose', async () => {
+    // Greedy /\[[\s\S]*\]/ spanned to the LAST bracket, JSON.parse threw, and the
+    // guard silently failed open.
+    const parsed = parsePreventStopResult('[{"id":1,"hash":"h","hold":true}]\nReasoning: [tests still fail]');
+    expect(parsed).toHaveLength(1);
+    expect(parsed?.[0].hold).toBe(true);
+  });
+
+  it('should ignore brackets inside JSON strings', () => {
+    const spans = extractJsonArrayCandidates('[{"id":1,"reason":"see [2] and ]"}], trailing ]');
+    expect(spans).toEqual(['[{"id":1,"reason":"see [2] and ]"}]']);
   });
 });

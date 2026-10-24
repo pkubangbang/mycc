@@ -417,6 +417,15 @@ export interface CoreModule {
    */
   resetConfusionIndex(): void;
   /**
+   * Drop the recorded grant refusals ("## Recent Permission Blocks" evidence).
+   *
+   * The ring is process-scoped, so a session-clearing or context-clearing
+   * operation must drop it: refusals recorded for the wiped conversation would
+   * otherwise keep being presented to the hint analyzer as current. No-op in
+   * contexts without a recorder (child/lite).
+   */
+  clearDenials(): void;
+  /**
    * Verbose logging - only outputs when -v flag is set
    * @param tool - Tool/module name
    * @param message - Log message

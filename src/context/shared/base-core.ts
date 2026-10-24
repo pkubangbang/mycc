@@ -98,6 +98,18 @@ export abstract class BaseCore {
   }
 
   /**
+   * Drop recorded grant refusals — no-op by default.
+   *
+   * Only the lead's `Core` keeps a denial ring, so every other context
+   * (child, lite, test doubles) inherits this. Defining it here rather than at
+   * each call site keeps the reset paths (/compact, fresh session) uniform:
+   * they can always call `core.clearDenials()` without capability checks.
+   */
+  clearDenials(): void {
+    // no recorder in this context
+  }
+
+  /**
    * Search the web for information
    * @param query - The search query
    */
