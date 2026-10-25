@@ -16,7 +16,7 @@ import { StreamAbortedError } from '../engine/chat-provider.js';
 import type { AgentContext } from '../types.js';
 import type { ToolCall } from '../types.js';
 import { buildNormalModePrompt } from '../loop/prompts/lead.js';
-import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildWikiDomainsMessages } from '../loop/prompt-populators.js';
+import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildWikiDomainsMessages, buildTodoMessages } from '../loop/prompt-populators.js';
 import { loadDomains } from './parent/wiki-utils.js';
 import { getTokenThreshold, getSessionContext, getSessionDir, setSessionContext, isVerbose } from '../config.js';
 import { TriologueLite } from '../loop/triologue-lite.js';
@@ -218,6 +218,14 @@ function createPersistentTriologue(name: string, assignedPath?: string): Triolog
   // loadDomains() at each rebuild boundary, keeping the prompt-cache prefix
   // stable between rebuilds; a zero-message no-op when no domain is registered.
   triologue.registerProjectContextPopulator(() => buildWikiDomainsMessages(loadDomains()));
+  // todo list — SHARED with the lead (buildPinnedTodoMessages is NOT registered
+  // here: pinning is lead-only). This is the teammate's only list view now that
+  // the loop's todo nudge is gone and the todo_* tools never echo the list.
+  // The closure reads the module-level `ctx` lazily, so it is correct whether or
+  // not registration precedes the `ctx = new ChildContext(...)` assignment —
+  // today handleSpawn assigns ctx before teammateLoop builds this triologue, so
+  // ctx is already set by the time the first rebuild runs here.
+  triologue.registerProjectContextPopulator(() => buildTodoMessages(ctx.todo));
   // Skill keywords are NO LONGER injected here as a project-context
   // populator. The available skill-keyword list is now passed into the
   // extractKeywords() LLM call (suggestSkill in collect.ts step 6) as
@@ -249,10 +257,6 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
   // Format chosen to be greppable: "[READY] triologue file: <path>".
   ctx.team.mailTo('lead', 'Teammate ready',
     `[READY] triologue file: ${triologuePath}\nname: ${teammateName}`);
-
-  // Todo nudging state (counter-based, same as lead agent)
-  let nextTodoNudge = 3;
-  let lastTodoState = '';
 
   // Confusion tracking
   let nextBriefNudge = 5;
@@ -383,19 +387,11 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         pendingModeChange = null;
       }
 
-      // 3. Todo nudging with counter and state tracking
-      if (ctx.todo.hasOpenTodo()) {
-        const currentTodoState = ctx.todo.printTodoList();
-        if (currentTodoState !== lastTodoState) {
-          nextTodoNudge = 3; // Reset for new todo state
-          lastTodoState = currentTodoState;
-        }
-        nextTodoNudge--;
-        if (nextTodoNudge === 0) {
-          triologue.note('REMINDER', `Update your todos. ${ctx.todo.printTodoList()}`);
-          nextTodoNudge = 3;
-        }
-      }
+      // 3. (removed) The former todo nudge is gone: the open todo list is
+      //    delivered by the todo project-context populator (buildTodoMessages)
+      //    and the todo_* tools report only the item they touched. A teammate
+      //    has no peer channels, so no channel nudge either — the numbered
+      //    steps below are unchanged.
 
       // 4. Time reminder if budget is set (every N rounds)
       if (budgetSent) {

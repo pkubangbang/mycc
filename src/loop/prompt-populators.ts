@@ -26,7 +26,7 @@ import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getShellInfo, type ShellKind } from '../utils/shell-detect.js';
-import type { Message } from '../types.js';
+import type { Message, TodoModule } from '../types.js';
 
 // ============================================================================
 // Platform Detection
@@ -375,6 +375,126 @@ export function buildCollaborationMessages(): Message[] {
         '(cross-machine via peer_connect), and compose (a declarative ' +
         'topology file) — and I will load the matching skill (coordination / ' +
         'mediator / mycc-compose) when I need to wire agents together.',
+    },
+  ];
+}
+
+// ============================================================================
+// Todo List (shared — lead and teammates)
+// ============================================================================
+
+/**
+ * Build the todo context as a projectContext deliverable: the task-tracking
+ * usage guidance PLUS a snapshot of the live todo list.
+ *
+ * Why a populator rather than the system prompt / a per-turn note:
+ *
+ *   - The todo USAGE prose ("## Task Management") used to live in the lead's
+ *     system prompt while teammates got none of it; a populator delivers one
+ *     identical copy to both agents from a single registration site.
+ *   - The previous "Update your todos." REMINDER nudge (COLLECT, every 3
+ *     passes) is gone, and `todo_create`/`todo_update`/`todo_pinning` no
+ *     longer echo the whole list in their results. This populator is now the
+ *     ONLY place the full list is rendered, which also means the list
+ *     survives auto-compaction: compact() calls rebuildProjectContext(), so
+ *     the snapshot is regenerated right after the transcript is summarised.
+ *
+ * Freshness contract: the snapshot is taken at REBUILD time only (startup,
+ * compact(), clear()) — never on a per-LLM-call path — so the prompt-cache
+ * prefix stays byte-stable between boundaries (the same invariant as every
+ * other populator here). Mid-turn staleness is harmless: each todo_* tool
+ * result carries the touched item and its current hash, and a stale hash is
+ * resolved to the live one by `findByPreviousHash` (todo_update warm hint).
+ *
+ * `/todos` (the user's slash command) is NOT an escape hatch for the AGENT: it
+ * is terminal-only input, and a teammate has no REPL at all. Any other writer
+ * that mutates the store outside a rebuild boundary — the slash command itself,
+ * the peer-wire pinned reminder (parent-context recordRemotePeerTodo) — must
+ * rebuild explicitly, or this section goes stale until the next boundary.
+ *
+ * Starts EMPTY by design: a fresh session renders `No todos.` until the agent
+ * creates one. `/clear` and the double-Ctrl+L clear both call ctx.todo.clear()
+ * BEFORE triologue.clear() (which triggers the rebuild), so the refreshed
+ * section is empty again rather than a resurrected list.
+ *
+ * Pinned todos / stop guard USAGE PROSE is NOT part of this deliverable — it is
+ * lead-only and ships in its own populator (buildPinnedTodoMessages). The list
+ * snapshot below is `printTodoList()` verbatim, so it DOES carry the 📌 marker
+ * and the `[preventStop: …]` tag for any guarded item: those markers are how the
+ * agent sees its own pinned reminders (this is now the only place the list is
+ * rendered). Only the lead can create such an item — `todo_pinning` is scope
+ * ['main'] — so a teammate's snapshot never contains one.
+ */
+export function buildTodoMessages(todo: TodoModule): Message[] {
+  const content =
+    `[System - Todo List]\n\n` +
+    `## Task Management\n` +
+    `Use issue_* for complex tasks (divide and conquer), todo_* for simple tracking.\n\n` +
+    `## Todo List\n` +
+    `${todo.printTodoList()}\n\n` +
+    `This snapshot is rebuilt only at compaction / clear boundaries, so it can lag ` +
+    `behind the current turn. Each todo_create / todo_update / todo_pinning result ` +
+    `reports the touched item with its current hash — update by that hash, not by ` +
+    `the list above. \`/todos\` is a USER-invoked slash command: mid-turn, rely on ` +
+    `the tool results.`;
+  return [
+    { role: 'user', content },
+    {
+      role: 'assistant',
+      content:
+        'Understood. I am tracking work in the todo list above and will update items ' +
+        'by the hash returned from each todo_* call.',
+    },
+  ];
+}
+
+// ============================================================================
+// Pinned Todos & Stop Guard (lead-only — teammates never see it)
+// ============================================================================
+
+/**
+ * Build the pinned-todo / stop-guard usage section as a projectContext
+ * deliverable. LEAD-ONLY: registered in agent-repl.ts, never in
+ * teammate-worker.ts — `todo_pinning` is `scope: ['main']` and the guard is
+ * evaluated by the lead's STOP stage (forkChat), so the prose would describe
+ * a capability a teammate does not have.
+ *
+ * The text is the former `buildPinnedTodoSection()` of prompts/common.ts,
+ * moved here verbatim: it is static reference material (no state read), so it
+ * belongs on the boundary-cadence channel with a built-in acknowledgement,
+ * not in the per-call system prompt.
+ *
+ * It deliberately does NOT re-render the pinned items — buildTodoMessages'
+ * snapshot already lists them with the 📌 marker and `[preventStop: …]` tag.
+ */
+export function buildPinnedTodoMessages(): Message[] {
+  const body = [
+      '### Pinned Todos',
+      'Regular todos are auto-cleared when all are completed. Pinned todos persist:',
+      '- Use `todo_pinning(id, hash, pinned=true)` to pin a todo after creating it with `todo_create`.',
+      '- Pinned todos are NOT removed when all todos are completed.',
+      '- Use pinned todos for persistent reminders (e.g., schema definitions, invariant rules, ' +
+      'materialized view refresh tasks).',
+      '',
+      '### Stop Guard',
+      'A pinned todo can carry a `preventStop` condition — a promise to yourself to keep working:',
+      '- Use `todo_pinning(id, hash, pinned=true, preventStop="<natural language condition>")` to set it.',
+      '- While the condition still holds you are NOT allowed to finish your turn: the turn continues, ' +
+      'with a SYSTEM note naming the guard and why it held.',
+      '- Leave it out, or unpin the todo (`pinned=false`), to let the turn end.',
+      '- Use it for long-horizon work whose completion you cannot judge in a single turn ' +
+      '(e.g. "until every test under src/loop passes", "until the migration is verified end-to-end").',
+      '- Example: `todo_pinning(id=2, hash="abc12345", pinned=true, ' +
+      'preventStop="until the users and orders migrations both pass their tests")`',
+    ].join('\n');
+  const content = `[System - Pinned Todos & Stop Guard]\n\n${body}`;
+  return [
+    { role: 'user', content },
+    {
+      role: 'assistant',
+      content:
+        'Understood. I will pin long-term todos and use a preventStop guard for work that ' +
+        'cannot be judged complete in one turn.',
     },
   ];
 }

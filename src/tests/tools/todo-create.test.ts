@@ -89,12 +89,17 @@ describe('todoCreateTool', () => {
     expect(mockTodo.createTodo).toHaveBeenCalledWith('Task', 'padded note');
   });
 
-  it('should include full todo list in output', () => {
+  it('should NOT echo the open todo list in output', () => {
     vi.mocked(mockTodo.createTodo).mockReturnValue({ id: 1, name: 'Task', done: false, hash: 'abc12345' });
+    // Set a REAL list so the text check has teeth: with the default 'No todos.'
+    // stub this assertion would pass even if the echo were re-added.
     vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [ ] 1. Task [hash: abc12345]');
 
     const result = todoCreateTool.handler(ctx, { name: 'Task' });
-    expect(result).toContain('Todo list:');
+    // The list is delivered by the todo project-context populator
+    // (buildTodoMessages) — the tool result carries only the touched item.
+    expect(result).not.toContain('Todo list:');
+    expect(mockTodo.printTodoList).not.toHaveBeenCalled();
   });
 
   it('should call brief with todo info', () => {
@@ -102,7 +107,7 @@ describe('todoCreateTool', () => {
     vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [ ] 1. My task [hash: abc12345]');
 
     todoCreateTool.handler(ctx, { name: 'My task' });
-    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'todo_create', expect.any(String), expect.stringContaining('My task'));
+    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'todo_create', expect.stringContaining('My task'));
   });
 
   // Tool metadata

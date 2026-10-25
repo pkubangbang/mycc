@@ -27,8 +27,8 @@ import type { Triologue } from '../../loop/triologue.js';
 export function createTurnVars(overrides: Partial<TurnVars> = {}): TurnVars {
   return {
     isFirstRound: true,
-    nextTodoNudge: 3,
-    lastTodoState: '',
+    nextChannelNudge: 3,
+    lastChannelState: '',
     nextBriefNudge: 5,
     lastUserQuery: '',
     lastBriefMessage: '',

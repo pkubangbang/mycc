@@ -19,6 +19,14 @@ export const todosCommand: SlashCommand = {
   handler: (context) => {
     const subCommand = context.args[1];
 
+    // NOTE: this command mutates the todo store from the SLASH state, which is
+    // NOT a project-context rebuild boundary — and it deliberately does NOT
+    // force one. A mid-run rebuild would re-render the populator output and
+    // break the cache-stable prompt prefix. The agent does not need it: the
+    // hint round (hint-round.ts buildStateSections) renders its own live,
+    // sanitized `## Todo List` from getItems() and covers the gap until the
+    // next natural boundary (compact / clear / startup).
+
     if (subCommand === 'add') {
       // Parse name and optional -n/--note
       const rest = context.args.slice(2);

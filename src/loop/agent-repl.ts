@@ -47,7 +47,7 @@ import { registerSignalHandlers } from './signal-handlers.js';
 import { initDaemonMode } from './daemon-init.js';
 import { ServeDetachedExitError } from '../serve/serve-errors.js';
 import { initHookSystem, buildHookInfoMessages } from './hook-bootstrap.js';
-import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildWikiDomainsMessages, buildCollaborationMessages } from './prompt-populators.js';
+import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildWikiDomainsMessages, buildCollaborationMessages, buildTodoMessages, buildPinnedTodoMessages } from './prompt-populators.js';
 import { loadDomains } from '../context/parent/wiki-utils.js';
 import { wireServeCallbacks } from './serve-wiring.js';
 
@@ -229,12 +229,15 @@ export async function main(): Promise<void> {
 
   // Set up double Ctrl+L callback for clearing conversation history
   agentIO.setDoubleCtrlLCallback(() => {
+    // Order matters: the todo store is emptied BEFORE triologue.clear() so the
+    // todo populator (buildTodoMessages), re-invoked by clear()'s
+    // rebuildProjectContext(), snapshots an EMPTY list. See slashes/clear.ts.
+    ctx.todo.clear();
     triologue.clear();
     // fullClear() resets EVERYTHING including turn.events[] and totalTurns —
     // double-Ctrl+L starts a completely fresh session.
     sequence.fullClear();
     clearWrapUp();
-    ctx.todo.clear();
     ctx.issue.clearAll();
     // The denial ring is process-scoped, so it must be dropped here too: a
     // refusal recorded for the conversation the user just wiped would
@@ -352,6 +355,32 @@ export async function main(): Promise<void> {
   //      others (tm_create/broadcast/peer_connect/mycc-compose up are
   //      lead-only), so the map would be misleading noise in a teammate.
   triologue.registerProjectContextPopulator(() => buildCollaborationMessages());
+
+  // (3f) Todo list — SHARED (lead + teammates). Delivers the task-management
+  //      usage plus a snapshot of the live todo list, so the list survives
+  //      auto-compaction (compact() rebuilds project context) even though the
+  //      todo_* tools no longer echo it and COLLECT no longer nudges it.
+  //      Read at rebuild time only — never per LLM call — to keep the prefix
+  //      cache-stable. ctx.todo is captured by the closure and is the same
+  //      module instance /clear resets BEFORE triologue.clear() runs, so the
+  //      post-clear snapshot is empty.
+  //
+  //      Mid-run staleness is COVERED, not rebuilt: writers that mutate the
+  //      store outside a rebuild boundary (the /todos slash, the peer-wire
+  //      pinned reminder) deliberately do NOT force a mid-run rebuild — that
+  //      would break the cache-stable prefix. The hint round (hint-round.ts
+  //      buildStateSections) renders its own live, sanitized `## Todo List`
+  //      from getItems() and closes the gap.
+  triologue.registerProjectContextPopulator(() => buildTodoMessages(ctx.todo));
+
+  // (3g) Pinned todos & stop guard — LEAD-ONLY. `todo_pinning` is
+  //      scope ['main'] and the guard is evaluated by the lead's STOP stage,
+  //      so a teammate must never receive this prose. Static content.
+  //      NOTE: registering this in teammate-worker.ts would be a silent
+  //      capability leak — no test asserts the separation, so keep the two
+  //      registration sites in step (agent-repl.ts HAS it, teammate-worker.ts
+  //      does NOT).
+  triologue.registerProjectContextPopulator(() => buildPinnedTodoMessages());
 
   // (3c) Skill keywords are NO LONGER injected here as a project-context
   //      populator. The available skill-keyword list is now passed into the

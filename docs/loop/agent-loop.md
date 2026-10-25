@@ -37,7 +37,7 @@ agent loop 已从早期的 `while(true)` 命令式循环重构为**显式状态�
 |------|------|--------|
 | `PROMPT` | 等待用户输入，新对话轮的起点 | `src/loop/states/prompt.ts` |
 | `SLASH` | 处理 `/` 斜杠命令 | `src/loop/states/slash.ts` |
-| `COLLECT` | LLM 前的预收集：子进程问题、邮件、hint round、todo nudge、brief nudge、worktree nudge、技能发现 | `src/loop/states/collect.ts` |
+| `COLLECT` | LLM 前的预收集：子进程问题、邮件、hint round、peer channel nudge、brief nudge、worktree nudge、技能发现 | `src/loop/states/collect.ts` |
 | `LLM` | 构建 system prompt、调用 LLM、auto-compact、crossroad 检测 | `src/loop/states/llm.ts` |
 | `HOOK` | 执行 hook，处理 hook 对 tool call 的拦截/增强 | `src/loop/states/hook.ts` |
 | `TOOL` | 顺序执行 tool calls，记录 sequence，语义重复检测 | `src/loop/states/tool.ts` |
@@ -49,7 +49,7 @@ agent loop 已从早期的 `while(true)` 命令式循环重构为**显式状态�
 状态机使用三层数据生命周期（`src/loop/state-machine.ts`）：
 
 - **MachineEnv**（机器生命周期）：构造一次，不重置。包含 `triologue`、`ctx`、`scope`、`conditions`、`sequence`、`hookExecutor`、`inputProvider`、`sessionFilePath`、`pendingSlashQuery`、`crossroadOccurred`、`requestEmbeddingTracker`、`nextWtNudge`。
-- **TurnVars**（轮生命周期）：从 STOP/startup 进入 PROMPT 时刷新，跨 COLLECT→LLM→HOOK 迭代保持。包含 `isFirstRound`、`nextTodoNudge`(初始 3)、`lastTodoState`、`nextBriefNudge`(初始 5)、`lastUserQuery`、`extractedKeywords`。
+- **TurnVars**（轮生命周期）：从 STOP/startup 进入 PROMPT 时刷新，跨 COLLECT→LLM→HOOK 迭代保持。包含 `isFirstRound`、`nextChannelNudge`(初始 3)、`lastChannelState`、`nextBriefNudge`(初始 5)、`lastUserQuery`、`extractedKeywords`。
 - **PassData**（pass 生命周期）：每次进入 COLLECT 时刷新，流经 LLM→HOOK→{TOOL|STOP}。包含 `abortController`、`rawToolCalls`、`assistantContent`、`assistantReasoningContent`、`augmentedCalls`、`hookResult`、`crossroadContinuation`、`deferredCompact`。
 
 ### 转移规则
@@ -79,27 +79,30 @@ agent loop 已从早期的 `while(true)` 命令式循环重构为**显式状态�
 3. 用摘要替换历史消息
 4. 重置 confusion index、sequence、crossroad cooldown（旧上下文已被摘要化）
 
-### Todo Nudging - 任务提醒
+### Todo List - 任务列表（projectContext populator，无 nudge）
 
-在 COLLECT 状态执行（`src/loop/states/collect.ts`）。每 3 次 pass 检查一次 open todos，提醒 agent 更新进度：
+todo 列表**不再被提醒（nudge）**，也**不再由工具结果回显**。它通过 projectContext
+populator 注入（`src/loop/prompt-populators.ts`），只在 `rebuildProjectContext()`
+即 startup / `compact()` / `/clear` 边界重建：
 
-```ts
-if (ctx.todo.hasOpenTodo() || activeChannels.length > 0) {
-  // 状态变化时重置计数器
-  if (compositeState !== turn.lastTodoState) {
-    turn.nextTodoNudge = 3;
-    turn.lastTodoState = compositeState;
-  }
-  turn.nextTodoNudge--;
-  if (turn.nextTodoNudge === 0) {
-    // COLLECT 只负责提醒；pinned todo 的 stop guard 在 STOP 阶段评估
-    triologue.note('REMINDER', `Update your todos. ${ctx.todo.printTodoList()}`);
-    turn.nextTodoNudge = 3;
-  }
-}
-```
+- `buildTodoMessages(todo)` — **lead 与 teammate 共享**，在 `agent-repl.ts` 与
+  `teammate-worker.ts` 都注册。内容 = `## Task Management` 用法 + `## Todo List`
+  快照（`todo.printTodoList()`，空列表渲染 `No todos.`）。因此列表在 auto-compact
+  之后依然存在（compact 会重建 projectContext）。
+- `buildPinnedTodoMessages()` — **仅 lead**（只在 `agent-repl.ts` 注册）：
+  `### Pinned Todos` + `### Stop Guard` 说明。teammate 没有 `todo_pinning`，
+  不能看到这段。
 
-注意：nudge 通过 `triologue.note('REMINDER', ...)` 注入，不再直接 push user 消息。当 todo 状态发生变化时计数器重置（避免在列表未变时重复 nudge）。同时检查 peer channel 状态并附加到同一 nudge。
+`todo_create` / `todo_update` / `todo_pinning` 只返回被操作的条目与它的当前 hash，
+不再附加整张列表；因此列表快照可能滞后于当前轮次（tool 结果里的 hash 才是最新的，
+陈旧 hash 由 `Todo.findByPreviousHash` 的 warm hint 纠正）。这条滞后**不靠 mid-run 重建去补**（重建会打破 cache-stable 的 prompt 前缀）：hint round 的 `buildStateSections()` 自带一份实时的 `## Todo List`（`getItems()` 渲染），足以补上这个缺口；`/todos` 只面向用户，agent 读不到。/clear 等边界之外的写入者（`/todos` slash、peer-wire pinned reminder）同样刻意不触发重建。
+
+**清除顺序很重要**：`/clear` 与 double-Ctrl+L 都先 `ctx.todo.clear()` 再
+`triologue.clear()` —— 后者会触发 `rebuildProjectContext()`，若顺序颠倒，新会话会
+带着清空前的列表。
+
+COLLECT 侧只剩下 **peer channel nudge**（`runChannelNudge`，`turn.nextChannelNudge`
+/ `turn.lastChannelState`），peer channel 状态变化时重置计数器。
 
 ### Brief Nudging - 进度报告提醒
 
@@ -126,21 +129,26 @@ return AgentState.PROMPT;  // 轮完成，回到提示
 
 ## COLLECT 状态详情
 
-COLLECT（`src/loop/states/collect.ts`）在每次 LLM 调用前执行预收集管线：
+COLLECT（`src/loop/states/collect.ts`）在每次 LLM 调用前执行预收集管线。编号对应 `handleCollect()`
+中的顺序（`collectMailsAndInput()` 内部展开为 1a–1e，其余各步平铺）：
 
-1. **处理子进程问题** — `ctx.team.handlePendingQuestions()`
-2. **收集邮件** — `ctx.mail.collectMails()`，通过 `triologue.note('MAIL', ...)` 注入。neglected mode 下标记为 URGENT。
-3. **注入团队状态** — `ctx.team.printTeam()`，非空时作为 SYSTEM note 注入。
-4. **Steering 队列**（webui）— `getServeHub().drainSteering()`，作为 REMINDER note 注入。
-5. **文件上传队列**（webui）— 保存到 `.mycc/uploaded/`，作为 REMINDER note 注入。
-6. **Hint round** — confusion index ≥ 10 且消息数 ≥ 6 时生成 hint（`CONFUSION_THRESHOLD = 10`，`MIN_MESSAGES_FOR_HINT = 6`）。整个特性由**进程级单例** `hintRound`（`src/loop/hint-round.ts`）持有：`AgentStateMachine` 构造时以 `hintRound.init(env)` 绑定 `MachineEnv`（仅 `scope === 'main'`，子进程走 `reset()` 且 `run()` 直接返回 `'continue'`），之后 COLLECT 只调用 `await hintRound.run(turn)`，由单例自行读取 triologue/ctx/sequence 并把 `[HINT]` note 推回 triologue。策略与机制（gate、状态快照、escAware、`generate`/`retryLoop`/wiki 预过滤）都在这一个模块里。
+1. **外部输入收集**（`collectMailsAndInput()`）— 全部以 note 注入 triologue，靠 auto-fix 保证 TP-safe：
+   1a. **Serve 状态监视** — `isWebUiUp()` 与模块级 `lastServeReported` 做边沿触发，只在 WebUI 启停时注入 SYSTEM note（steady state 静默）。`/clear` 后由 `reconcileServeStateAfterClear()` 重新武装。
+   1b. **处理子进程问题** — `ctx.team.handlePendingQuestions()`。
+   1c. **收集邮件** — `ctx.mail.collectMails()`，通过 `triologue.note('MAIL', ...)` 注入。neglected mode 下额外注入 `[URGENT]` ESC note；每条 mail 自带 `↳ Reply with mail_to(...)` 回复地址。
+   1d. **注入团队状态** — `ctx.team.printTeam()`，非空时作为 SYSTEM note 注入。
+   1e. **Steering 队列 / 文件上传队列**（webui）— steering 以 REMINDER note 注入并返回 `firstSteerNote`（step 5 的查询来源）；上传文件保存到 `.mycc/uploaded/` 后以 REMINDER note 注入。此外 `resolveHeadlessFirstQuery()` 用本次首个事件消解 headless 会话的 first_query 标记。
+2. **Hint round** — confusion index ≥ 10 且消息数 ≥ 6 时生成 hint（`CONFUSION_THRESHOLD = 10`，`MIN_MESSAGES_FOR_HINT = 6`）。整个特性由**进程级单例** `hintRound`（`src/loop/hint-round.ts`）持有：`AgentStateMachine` 构造时以 `hintRound.init(env)` 绑定 `MachineEnv`（仅 `scope === 'main'`，子进程走 `reset()` 且 `run()` 直接返回 `'continue'`），之后 COLLECT 只调用 `await hintRound.run(turn)`，由单例自行读取 triologue/ctx/sequence 并把 `[HINT]` note 推回 triologue。策略与机制（gate、状态快照、escAware、`generate`/`retryLoop`/wiki 预过滤）都在这一个模块里。
 
 分析 prompt 只携带**转录无法重建的带外状态**（`buildStateSections()`），前缀在 `## Conversation Context` 之前：`## Todo List`（`getItems()` 渲染，note/preventStop 经过 `sanitizeField()` 压缩与截断）、`## Mode & Write Scope`（**仅 plan 模式**，列出允许写入的文件）、`## Recent Permission Blocks`（**只来自精确记录**：`Core.requestGrant()` 在 grant chokepoint 用 `recordDenial()` 记下每次拒绝的 tool / target / reason，`kind` 在记录时由 reason 结构推导；`readRecentDenials()` 只读该记录，**没有 recorder 的上下文（child/lite/测试替身）整节省略** —— 旧的 `summarizePermissionBlocks()` 用正则匹配工具输出散文已被删除，因为它会把"引用了拦截信息"的普通输出误判为拒绝，且无从得知哪条规则、哪个 target；无记录时沉默是唯一诚实输出）、`## Loop Evidence`（`detectRepeatedActions()`；无重复时输出显式的 "No repeated-action evidence…" 中性行，避免 LLM 凭长度臆造循环）。**confusion score、assistant turn 数、tool error 数已移除**：它们是转录可推导的（turn 数还是 `Math.ceil(events.length / 3)` 的估算）；confusion index 仍然只负责**触发**该轮。`HINT_SCHEMA` 未变。
-7. **Todo nudging** — 见上文。
-8. **Brief nudging** — 见上文。
-9. **Worktree cleanup nudge** — `env.nextWtNudge` 为 0 时检查 worktree 列表，有则提醒清理。
-10. **技能发现** — 消费 `turn.extractedKeywords`，匹配已加载技能名称/关键词，作为 HINT note 注入。
-11. **详细日志** — verbose 模式下输出消息数和 token 利用率。
+
+3. **Peer-channel nudge** — `runChannelNudge()`，见上文「Todo List」；todo 列表不再有 nudge（由 projectContext populator 注入）。
+4. **Brief + worktree nudging** — `runBriefAndWorktreeNudges()`，见上文「Brief Nudging」；worktree 清理提醒由 `env.nextWtNudge` 为 0 时的哨兵触发。
+5. **技能发现** — `skillSuggester.suggestSkill()`：消费 `turn.extractedKeywords`（新查询优先取本轮的 `firstSteerNote`），匹配已加载技能名称/关键词，作为 HINT note 注入。
+6. **详细日志** — verbose 模式下输出消息数和 token 利用率（`logVerboseStats()`）。
+
+任一非瞬时异常都会结束本轮并回到 PROMPT；瞬态错误（网络抖动）则按 `turn.collectTransientRetries`
+（上限 `MAX_COLLECT_TRANSIENT_RETRIES = 3`）重入 COLLECT，超限后回落 PROMPT。
 
 ## System Prompt
 
@@ -148,7 +156,7 @@ COLLECT（`src/loop/states/collect.ts`）在每次 LLM 调用前执行预收集�
 
 - **Plan 模式** — `buildPlanModePrompt(workDir, hasTeam)`：Solo plan / Team plan
 - **Normal 模式** — `buildNormalModePrompt(workDir, identity?, hasTeam)`：
-  - **Solo normal**（无 team）：`"You are a coding agent at ${workDir}."` + 任务管理 + pinned todo + 知识边界 + 公共部分 + recap rewind
+  - **Solo normal**（无 team）：`"You are a coding agent at ${workDir}."` + 知识边界 + 公共部分 + recap rewind（任务管理 / todo 列表 / pinned todo 均已移出 system prompt，改由 projectContext populator 交付）
   - **Team normal (Lead)**：`"You are the lead of a coding agent team at ${workDir}."` + team workflow + issue 管理 + 通信规则 + 边界规则
   - **Teammate (Child)**：`"You are ${name}, a specialized agent working as part of a team, created by the \"lead\"."` + 三种通信方式 + 时间预算协议 + worktree 用法
 

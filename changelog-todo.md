@@ -34,6 +34,16 @@ When updating the changelog, use the following procedure:
 <!-- September 2026 entries rotated to changelog-202609.md on 2026-10-12. -->
 <!-- Add new (October 2026 onward) entries below this line. -->
 
+## 2026-10-25
+### Refactoring
+- **Todo system**: `todo_create` / `todo_update` / `todo_pinning` no longer echo the whole open list — each returns only the touched item with its current hash; the COLLECT todo nudge ("Update your todos.") is removed (the state is renamed `runTodoNudge` → `runChannelNudge`, keeping only the peer-channel nudge, and `TurnVars.nextTodoNudge`/`lastTodoState` → `nextChannelNudge`/`lastChannelState`; the teammate loop's duplicate nudge is deleted).
+- **Todo context populators**: new `buildTodoMessages()` (shared, `## Task Management` usage + live `## Todo List` snapshot, rebuilt at startup/compact/clear so the list survives auto-compaction, starts empty) and `buildPinnedTodoMessages()` (lead-only pinned-todo/stop-guard prose) in `src/loop/prompt-populators.ts`; `buildPinnedTodoSection()` is deleted from `prompts/common.ts` and its text no longer ships in the lead's system prompt.
+- **Clear ordering**: `/clear` and double-Ctrl+L now empty the todo store BEFORE `triologue.clear()`, so the post-clear populator snapshot renders `No todos.` instead of resurrecting the old list.
+### Fixes
+- **Todo staleness (covered, not rebuilt)**: with the nudge gone, the boundary-only snapshot can lag the store for writers that mutate it mid-run. This is deliberately NOT patched with a mid-run `rebuildProjectContext()` — that would re-render the populator output and break the cache-stable prompt prefix. Instead the hint round's `buildStateSections()` already renders its own live, sanitized `## Todo List` from `getItems()` (plus the `## Stop Guards (held)` evidence) and closes the gap until the next natural boundary. `/todos`, the peer-wire pinned reminder and `slashes/todos.ts` all rely on that, and each says so in a comment so nobody "helpfully" adds a rebuild later.
+- **Prompt**: `buildTodoMessages` no longer advertises `/todos` as an escape hatch (terminal-only — the agent cannot invoke a slash, and a teammate has no REPL); the two contradicting doc comments are reconciled — 📌/`[preventStop]` markers DO appear in the snapshot (`printTodoList()` verbatim), only the USAGE prose is lead-only.
+- **Tests**: add `todo-pinning.test.ts` (was absent — its no-echo change was completely unlocked, covering every happy/error branch + the brief arity); make `todo-create.test.ts`'s no-echo assertion non-vacuous (real list stub); replace the misleading `not.toContain('preventStop')` populator assertion with a positive guarded-item case plus a `/todos`-not-a-tool check; fix stale `nextTodoNudge`/`lastTodoState` references in `docs/`.
+
 ## 2026-08-29
 ### Chores
 - **Package**: Update package info.

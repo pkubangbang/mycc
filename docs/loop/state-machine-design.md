@@ -28,7 +28,7 @@ Three tiers with distinct lifetimes (`src/loop/state-machine.ts`):
 | Tier | Reset on | Contains |
 |------|----------|----------|
 | `MachineEnv` | never | `triologue`, `ctx` (AgentContext), `scope`, `conditions`, `sequence`, `hookExecutor`, `inputProvider`, `sessionFilePath`, `pendingSlashQuery`, `crossroadOccurred`, `requestEmbeddingTracker`, `nextWtNudge` |
-| `TurnVars` | entering **prompt** or **wait** (from STOP/startup, not from SLASH) | `isFirstRound`, `nextTodoNudge` (init 3), `lastTodoState`, `nextBriefNudge` (init 5), `lastUserQuery`, `extractedKeywords` |
+| `TurnVars` | entering **prompt** or **wait** (from STOP/startup, not from SLASH) | `isFirstRound`, `nextChannelNudge` (init 3), `lastChannelState`, `nextBriefNudge` (init 5), `lastUserQuery`, `extractedKeywords` |
 | `PassData` | entering **collect** | `abortController`, `rawToolCalls`, `assistantContent`, `assistantReasoningContent`, `augmentedCalls`, `hookResult`, `crossroadContinuation`, `deferredCompact` |
 
 Handler signature:

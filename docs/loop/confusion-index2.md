@@ -196,8 +196,8 @@ handler: (ctx, args) => {
 ```typescript
 interface TurnVars {
   isFirstRound: boolean;
-  nextTodoNudge: number;
-  lastTodoState: string;
+  nextChannelNudge: number;
+  lastChannelState: string;
   nextBriefNudge: number;  // init 5
   lastUserQuery: string;
   extractedKeywords: string[];

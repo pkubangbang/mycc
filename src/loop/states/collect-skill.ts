@@ -663,10 +663,10 @@ export const skillSuggester = new SkillSuggester();
  * an empty query source and skips extraction until a genuine new query
  * arrives (a fresh prompt resets them anyway via `turn.lastUserQuery = query`).
  *
- * The other TurnVars fields (nudges, todo cursor) are harmless to carry over —
- * a clear empties todos/issues, so the todo nudge simply re-arms on its own
- * cadence. Only the three "composite source" fields drive skill discovery and
- * must match the cleared conversation.
+ * The other TurnVars fields (nudges, channel cursor) are harmless to carry over —
+ * the channel nudge re-arms on its own state-change cadence, and the todo list
+ * is not nudged at all (it lives in project context). Only the three "composite
+ * source" fields drive skill discovery and must match the cleared conversation.
  *
  * @param turn - the live TurnVars instance to invalidate (same object the
  *        state machine holds, so the mutation is visible to the next COLLECT).

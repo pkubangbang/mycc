@@ -18,7 +18,6 @@ import {
   buildLaunchArgsSection,
   buildLeadAgentMemorySection,
   buildOutputBehaviorSection,
-  buildPinnedTodoSection,
   buildVerificationSection,
 } from './common.js';
 import { buildIntentLanguageSection } from './intent-lang.js';
@@ -162,11 +161,6 @@ ${buildLeadAgentMemorySection()}`;
 function buildSoloNormalPrompt(workDir: string): string {
   return `You are a coding agent at ${workDir}. Use tools to finish tasks.
 
-## Task Management
-Use issue_* for complex tasks (divide and conquer), todo_* for simple tracking.
-
-${buildPinnedTodoSection()}
-
 ## Team Mode
 If you see 3+ independent subtasks, consider spawning teammates via tm_create for parallel work.
 
@@ -182,11 +176,6 @@ ${buildLeadAgentMemorySection()}`;
 function buildTeamNormalPrompt(workDir: string): string {
   return `You are the lead of a coding agent team at ${workDir}.
 Your role: coordinate teammates, collect results, and ensure task completion.
-
-## Task Management
-Use issue_* for complex tasks (divide and conquer), todo_* for simple tracking.
-
-${buildPinnedTodoSection()}
 
 ## Team Workflow
 Issues are created in DRAFT status — they are NOT visible to teammates for auto-claim until finalized. This prevents teammates from grabbing a task before you finish setting it up (adding comments, dependencies, or an owner).
