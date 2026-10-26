@@ -24,7 +24,6 @@ import type { Core } from '../context/parent/core.js';
 import { agentIO } from '../loop/agent-io.js';
 import { MailBox } from '../context/shared/mail.js';
 import { findWorktreeByName } from '../context/worktree-store.js';
-import { isAllowAutoCommit, getAllowAutoCommitBranches } from '../config.js';
 import path from 'path';
 import { spawn } from 'child_process';
 
@@ -181,9 +180,17 @@ export const gitCommitTool: ToolDefinition = {
     // re-running `git rev-parse` later could observe a switched branch (TOCTOU)
     // and make the audit trail lie.
     let autoCommitBranch: string | null = null;
-    if (isAllowAutoCommit() && ctx.core.getAuto() && core.getMode() !== 'plan') {
+
+    // The allow-list is RUNTIME state owned by the context (seeded from
+    // `--allow-auto-commit` at construction, mutated in place by the
+    // human-typed `/auto-commit` slash command). Reading it HERE, per call,
+    // is what makes such an edit effective on the next commit without a
+    // restart. There is no `isAllowAutoCommit()` shortcut any more: the
+    // emptiness check is just `.length > 0` on this snapshot.
+    const allowList = ctx.core.getAllowAutoCommitBranches();
+    if (allowList.length > 0 && ctx.core.getAuto() && core.getMode() !== 'plan') {
       const branch = await currentBranch(commitCwd);
-      if (branch !== null && getAllowAutoCommitBranches().includes(branch)) {
+      if (branch !== null && allowList.includes(branch)) {
         autoApproved = true;
         autoCommitBranch = branch;
         ctx.core.brief(

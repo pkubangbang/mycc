@@ -402,6 +402,31 @@ export interface Teammate {
 export interface CoreModule {
   getWorkDir(): string;
   setWorkDir(dir: string): void;
+  /**
+   * Snapshot (copy) of the live auto-commit allow-list — branches whose
+   * `git_commit` may skip the interactive confirmation in auto mode.
+   *
+   * RUNTIME, session-scoped state owned by the context (next to `workDir`),
+   * NOT configuration: config.ts only parses `--allow-auto-commit` and the
+   * context seeds this list from it once at construction. Exact string match,
+   * no globs. Empty array = feature OFF. Never persisted.
+   */
+  getAllowAutoCommitBranches(): string[];
+  /**
+   * Add one branch to the live allow-list (`/auto-commit on <branch>`).
+   * Idempotent. @returns true when newly added.
+   */
+  addAllowAutoCommitBranch(branch: string): boolean;
+  /**
+   * Remove one branch from the live allow-list (`/auto-commit off <branch>`).
+   * @returns true when it was listed and was removed.
+   */
+  removeAllowAutoCommitBranch(branch: string): boolean;
+  /**
+   * Clear the live allow-list (`/auto-commit off --all`).
+   * @returns the branches that were cleared.
+   */
+  clearAllowAutoCommitBranches(): string[];
   getName(): string;
   brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean }): void;
   /**
