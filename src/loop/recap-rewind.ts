@@ -1,5 +1,5 @@
 /**
- * recap-rewind.ts - Recap span summarization + mindmap patch decision
+ * recap-rewind.ts - Recap isolation guard + mindmap patch decision
  *
  * recap is a META-TOOL: its tool definition exists for LLM visibility, but the
  * real work happens in the state machine (hook.ts) because it needs triologue
@@ -7,8 +7,9 @@
  *
  * The rewind itself (truncate at the last brief + append the merge note) lives
  * in the triologue facade — see Triologue.getLastBrief() / rewindToLastBrief().
- * This module only produces the TEXT that goes into that note, plus the
- * concurrent mindmap patch decision.
+ * This module guards the call shape (recap must run alone) and produces the ONE
+ * surviving fork: the mindmap patch decision. The note TEXT is the model's own
+ * `summary`, written by `states/hook.ts` — there is no summarization fork here.
  */
 
 import type { Message, Tool } from '../types.js';
@@ -40,142 +41,8 @@ export function validateRecapIsolation(toolCalls: Array<{ function: { name: stri
   return { valid: true };
 }
 
-/**
- * Build the summarization prompt, merged into the last user message of the
- * full triologue.
- *
- * CACHE INVARIANT — do NOT "optimize" the recap fork call by:
- *   - minifying/truncating the messages, or
- *   - dropping the tools array.
- * The recap fork reuses the prompt-cache prefix the main agent loop already
- * paid for. That cached prefix is the EXACT token sequence of
- *   system + projectContext + conversation messages + full tools schema.
- * Minifying rewrites the message sequence → cache miss; omitting tools drops
- * cached tokens → cache miss. Either forces a full recompute of the entire
- * conversation, far costlier than any request-size savings.
- *
- * The ONE safe knob is `toolChoice: 'none'` — it is a sampling parameter
- * (governs whether the model may EMIT tool calls), NOT part of the cached
- * prefix token sequence, so the tools schema stays cached while output is
- * constrained to text-only at the API level. The prompt still forbids tool
- * use in prose as a belt-and-suspenders measure.
- */
-function buildRecapPrompt(spanLength: number, lastUserQuery?: string): string {
-  const topicLine = lastUserQuery
-    ? `\n- **User's latest query**: "${lastUserQuery}" — mention it if it shaped the work.`
-    : '';
-
-  return `[RECAP] Collapse the conversation back to the brief that opens the last ${spanLength} message(s).
-
-You have access to the FULL conversation history above. Only the messages AFTER that brief are about to be deleted and replaced by your summary — the brief itself and everything before it stays in context, so summarize that span alone and use the earlier messages strictly as background.
-
-This is background for a mindmap decision, NOT the recap note: the note is written by the caller. Report what was learned so ONE mindmap node can be judged.
-
-### Exploration Coverage
-For EVERY file examined after the brief:
-- path → one-line key takeaway (what was learned, found, or decided)
-- Mark files that were ruled out as irrelevant with "(irrelevant)"
-
-### Key Discoveries
-Concrete findings with specificity: function names, line numbers, patterns identified, bugs found. Avoid vague descriptions.${topicLine}
-
-**CRITICAL RULES:**
-- The Exploration Coverage section is a "do not re-read" list — include every file
-- Output TEXT ONLY — do NOT use any tools. No preamble, no sign-off.`;
-}
-
-/**
- * Generate recap summary using LLM.
- * Uses the FULL triologue messages (pre-truncation) with all tools for prompt cache.
- * Produces a structured summary string.
- * Does NOT touch the triologue — callers own the context manipulation.
- *
- * CACHE: fullMessages + allTools MUST be the un-minified, full-tools array the
- * main loop uses, so the fork hits the cached prefix. toolChoice:'none' is passed
- * to constrain output to text-only without invalidating that cache (it is a
- * sampling parameter, not part of the cached token sequence). See the CACHE
- * INVARIANT on buildRecapPrompt for the full rationale.
- *
- * @param fullMessages - Full triologue messages before truncation (cache prefix)
- * @param span - The messages the rewind will delete; the summary covers ONLY these
- * @param allTools - All tools for prompt cache preservation
- * @param escAware - Optional ESC-aware wrapper for lead agent
- * @param lastUserQuery - The user's most recent query, embedded as context
- *                         (not a steering directive) after the summary.
- * @returns the `additionalMessage` half of the recap note — the triologue
- *          prepends the [RECAP] header and the quoted anchor brief.
- */
-/**
- * @deprecated NO PRODUCTION CALLER. `states/hook.ts` now uses `handleRecapSpan`
- * plus the model's own verbatim `summary`, so this summarization fork is dead
- * code kept only for the source-level emptiness test. Deleting it and that test
- * together is the follow-up; see src/tests/loop/states/recap-rewind-empty-summary.test.ts.
- */
-export async function handleRecap(
-  fullMessages: Message[],
-  span: Message[],
-  allTools: Tool[],
-  escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>,
-  lastUserQuery?: string,
-): Promise<string> {
-  if (fullMessages.length === 0) {
-    return '[RECAP] No messages to summarize.';
-  }
-
-  const recapPrompt = buildRecapPrompt(span.length, lastUserQuery);
-
-  let summary: string;
-  if (escAware) {
-    // Lead agent: use ESC-aware forkChat.
-    // toolChoice:'none' constrains output to text-only WITHOUT touching the
-    // cached prefix (it's a sampling param, not part of the cached token
-    // sequence) — see the CACHE INVARIANT above.
-    const result = await escAware(
-      async (abortController) => {
-        return await forkChat(fullMessages, allTools, recapPrompt, abortController.signal, 'none');
-      },
-      () => null as string | null
-    );
-    if (result === null) {
-      return `[RECAP] Cancelled: ESC pressed during summarization. Nothing was collapsed — the span is still in context.`;
-    }
-    summary = result;
-  } else {
-    // Teammate: regular forkChat (no ESC handling). Same toolChoice:'none'
-    // rationale as the lead branch.
-    summary = await forkChat(fullMessages, allTools, recapPrompt, undefined, 'none');
-  }
-
-  // NO placeholder substitution here. An empty fork result stays empty.
-  // NOTE: this function is unreachable from production (see @deprecated above), so
-  // it is NOT what protects the span — the floor in states/hook.ts refuses a short
-  // or empty summary on the live path. The rule is kept here so the legacy helper
-  // cannot start substituting a placeholder if it is ever revived.
-  summary = summary.trim();
-
-  // Assemble the `additionalMessage` half of the recap note.
-  // ORDERING (matters for LLM direction-following):
-  // The bare `[RECAP]` header + quoted anchor brief are prepended by
-  // Triologue.rewindToLastBrief() (it captures the anchor text BEFORE the truncation
-  // deletes the brief's own round-trip). The SUMMARY is the model's own text,
-  // copied verbatim — nothing here paraphrases it. Only context the deleted
-  // span held but the summary cannot restate is appended after it:
-  //   1. recap-summary    — verbatim (the model's record of what was found)
-  //   2. last-user-query  — context note: the user's most recent instruction
-  const parts: string[] = [];
-  parts.push('Some actions have been performed before this recap but the details have been omitted. Here is the summary:');
-  parts.push('');
-  parts.push(summary);
-  if (lastUserQuery) {
-    parts.push('');
-    parts.push(`**User's last query (context):** ${lastUserQuery}`);
-  }
-
-  return parts.join('\n');
-}
-
 // ============================================================================
-// MINDMAP PATCH: forkChat #2 — concurrent patch decision
+// MINDMAP PATCH: the one remaining forkChat — patch decision
 //
 // Each recap launches ONE forkChat call: the mindmap-patch decision
 // (generatePatchAction, below). It decides whether ONE mindmap node should be
@@ -406,9 +273,13 @@ export function parsePatchResponse(
  * explicit cancellation, because plain `null` means "the model said none" and
  * must not be confused with it.
  *
- * CACHE: same rationale as handleRecap — fullMessages + allTools must be the
- * un-minified, full-tools array so the fork hits the cached prefix. toolChoice
- * 'none' constrains output to text-only without invalidating the cache.
+ * CACHE INVARIANT: fullMessages + allTools must be the un-minified, full-tools
+ * array the main loop already paid for, so this fork hits the cached prefix
+ * (system + projectContext + messages + full tools schema). Minifying rewrites the
+ * sequence → cache miss; dropping the tools array drops cached tokens → cache miss;
+ * either forces a full recompute of the whole conversation. `toolChoice: 'none'`
+ * is a sampling parameter, not part of the cached token sequence, so it constrains
+ * the output to text-only WITHOUT invalidating the cache.
  *
  * @param fullMessages - Full triologue messages before truncation (cache prefix)
  * @param allTools - All tools for prompt cache preservation

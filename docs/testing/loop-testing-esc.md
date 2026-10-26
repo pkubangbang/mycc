@@ -1209,12 +1209,13 @@ it('should NOT trigger hint generation when message count < 6', async () => {
 
 **Branch**: `handleHook` — ESC during the recap forks
 
-**Code path under test** (current `handleRecapCall` — summary forks run through
-`handleRecapSpan`, which wraps BOTH forks in one spinner):
+**Code path under test** (current `handleRecapCall` — the mindmap-patch fork runs
+through `handleRecapSpan`, which wraps it in the spinner and reports the cancellation):
 ```typescript
-const { summary, patch, patchError } = await handleRecapSpan(
-  fullMessages, anchor.span, allTools, description, mindmap, escAware, comment, lastQueryForRecap,
+const { patch, patchError, escCancelled } = await handleRecapSpan(
+  fullMessages, allTools, mindmap, escAware,
 );
+if (escCancelled || agentIO.isNeglectedMode()) { /* refuse the rewind, return STOP */ }
 
 // Check for ESC cancellation — the triologue is still untouched at this point.
 if (summary.startsWith('[RECAP] Cancelled:')) {
@@ -1237,7 +1238,7 @@ if (summary.startsWith('[RECAP] Cancelled:')) {
 }
 ```
 
-**Mock setup**: Mock `handleRecap` from `../recap-rewind.js` to return `'[RECAP] Cancelled: ESC pressed'`. Mock `augmentToolCalls` to pass through. Mock `hookExecutor.processToolCalls` to return a result with a recap call. (`../checkpoint-recap.js` was split into `../recap-rewind.js` (recap) and `../recap-note.js`; the `checkpoint` half no longer exists.)
+**Mock setup**: Mock `handleRecapSpan` from `../recap-rewind.js` to resolve `{ patch: null, patchError: 'mindmap-patch fork aborted', escCancelled: true }`. Mock `augmentToolCalls` to pass through. Mock `hookExecutor.processToolCalls` to return a result with a recap call. (`handleRecap` — the old summarization fork — was deleted; `handleRecapSpan` is the only fork left.)
 
 ```typescript
 vi.mock('../../loop/agent-io.js', () => {
@@ -1252,7 +1253,6 @@ vi.mock('../../loop/agent-io.js', () => {
 });
 vi.mock('../../../loop/recap-rewind.js', () => ({
   validateRecapIsolation: vi.fn(() => ({ valid: true })),
-  handleRecap: vi.fn(async () => ({ cancelled: true, text: '[RECAP] Cancelled: ESC pressed during recap' })),
   handleRecapSpan: vi.fn(),
 }));
 vi.mock('../../hook/hook-preprocessor.js', () => ({
@@ -1265,7 +1265,7 @@ vi.mock('../../context/shared/loader.js', () => ({
 import { handleHook } from '../../loop/states/hook.js';
 import { AgentState } from '../../loop/state-machine.js';
 import { agentIO } from '../../loop/agent-io.js';
-import { handleRecap } from '../../../loop/recap-rewind.js';
+import { handleRecapSpan } from '../../../loop/recap-rewind.js';
 import { createMockToolCall, createMockHookResult, createTurnVars, createPassData, createMockMachineEnv } from '../esc-test-helpers.js';
 import { Triologue } from '../../loop/triologue.js';
 ```
@@ -1314,7 +1314,7 @@ it('should return PROMPT when ESC fires during recap and neglectedMode is true',
 ```typescript
 it('should return COLLECT when recap is cancelled but neglectedMode is false', async () => {
   // Same setup but neglectedMode stays false
-  // handleRecap still returns '[RECAP] Cancelled: ...'
+  // handleRecapSpan still reports escCancelled: true
   // Since isNeglectedMode() is false, the if-block doesn't fire
   // Falls through to turn.isFirstRound = false; return AgentState.COLLECT;
 

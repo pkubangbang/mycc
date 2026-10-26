@@ -54,7 +54,6 @@ vi.mock('../../../hook/hook-preprocessor.js', () => ({
 
 vi.mock('../../../loop/recap-rewind.js', () => ({
   validateRecapIsolation: vi.fn(() => ({ valid: true })),
-  handleRecap: vi.fn(),
   handleRecapSpan: vi.fn(),
 }));
 
