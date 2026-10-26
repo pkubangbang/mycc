@@ -6,7 +6,7 @@
  *
  *   1. the `brief` tool (+ the TOOL-stage plan-scope reflection) — the success
  *      result, whose FIRST LINE is the anchor line
- *      `[<hash>] ANCHOR — recap(target="<hash>") folds the work after this point`,
+ *      `[<hash>] ANCHOR — recap(target_brief="<hash>") folds the work after this point`,
  *      optionally followed by `· open: <hashes>` and by a section (plan scope);
  *   2. recap's rewind — it APPENDS the note under that fixed first line with
  *      `noteWithSummary()`, so the collapsed span's summary lives in a TOOL
@@ -19,7 +19,7 @@
  *
  * THE HASH — every brief result opens with "[<hash>] ", where `<hash>` is a
  * short, readable token identifying THAT brief (the first 8 characters of the
- * brief's tool-call id). It is the LLM's handle on an anchor: `recap(target=
+ * brief's tool-call id). It is the LLM's handle on an anchor: `recap(target_brief=
  * "<hash>")` rewinds to exactly that brief instead of the default (newest
  * solidified) one, and the model can see every candidate hash in the history
  * without the tool having to enumerate them. The hash is produced by
@@ -52,7 +52,7 @@ export const BRIEF_HASH_LENGTH = 8;
 
 /**
  * The hash shown for a brief call — a stable digest of its call id, never a
- * separate registry. `recap(target=…)` accepts either this hash or the full id
+ * separate registry. `recap(target_brief=…)` accepts either this hash or the full id
  * (see resolveBriefTarget), so a stale/partial id still lands.
  *
  * Lower-case hex, so the display is readable and the comparison in
@@ -86,7 +86,7 @@ export const BRIEF_OK = 'OK';
  * `OK` is the vocabulary of a tool RECEIPT — the model reads `[a1b2c3d4] OK.`
  * as "this call finished, nothing to do here" and files the hash away as
  * decoration. `ANCHOR` names the OBJECT the hash addresses, which is the only
- * in-transcript evidence that `recap(target="a1b2c3d4")` has anything to point
+ * in-transcript evidence that `recap(target_brief="a1b2c3d4")` has anything to point
  * at. It is the same three characters' worth of structure, a different
  * category in the model's vocabulary.
  */
@@ -95,7 +95,7 @@ export const BRIEF_ANCHOR_WORD = 'ANCHOR';
 /**
  * The fixed first line of every brief result:
  *
- *   [<hash>] ANCHOR — recap(target="<hash>") folds the work after this point
+ *   [<hash>] ANCHOR — recap(target_brief="<hash>") folds the work after this point
  *
  * LINE 1 IS STRUCTURE, NEVER CONTENT. It is written once and never rewritten:
  * the anchor's identity, its address and the shape of the call that uses it all
@@ -126,7 +126,7 @@ export function briefResultLine(callId: string | undefined): string {
  * drift apart.
  */
 export function foldCall(hash: string): string {
-  return `recap(target="${hash}")`;
+  return `recap(target_brief="${hash}")`;
 }
 
 /**
@@ -135,10 +135,10 @@ export function foldCall(hash: string): string {
  * Two callers hit this:
  *
  *   - a CHILD-scope brief: `brief` is `['main', 'child']` but `recap` is
- *     `['main']`, so a teammate that reads `recap(target=…)` is being told to
+ *     `['main']`, so a teammate that reads `recap(target_brief=…)` is being told to
  *     call a tool it does not have (see the audience note in src/tools/brief.ts);
  *   - a synthetic brief (crossroad, empty-output recovery): it is excluded from
- *     `store.briefIndices()`, so every `recap(target=…)` naming it is REFUSED.
+ *     `store.briefIndices()`, so every `recap(target_brief=…)` naming it is REFUSED.
  *
  * The hash stays at the front — `hashOf` / `stripHashPrefix` still read it — but
  * the line promises nothing. Before this line existed, those results were a
@@ -149,7 +149,7 @@ export function briefReceiptLine(callId: string | undefined): string {
 }
 
 /**
- * True when a first line still carries the `recap(target=…)` invitation —
+ * True when a first line still carries the `recap(target_brief=…)` invitation —
  * exactly the clause {@link withoutFoldInvitation} removes.
  *
  * Used by a rewind to decide whether the anchor line is a LIVE anchor line at
@@ -166,7 +166,7 @@ export function hasFoldInvitation(line: string | undefined): boolean {
  * The same first line, with the invitation retired: the hash and the ANCHOR word
  * stay (the anchor is still an anchor), the call shape and the verb go.
  *
- * `[<hash>] ANCHOR — recap(target="h") folds the work after this point`
+ * `[<hash>] ANCHOR — recap(target_brief="h") folds the work after this point`
  *   → `[<hash>] ANCHOR`
  */
 export function withoutFoldInvitation(line: string): string {
@@ -250,7 +250,7 @@ export function briefStampedLength(callId: string | undefined, openAnchors: read
 }
 
 /** The invitation clause of line 1 — ONE spelling, used to test and to remove. */
-const FOLD_INVITATION_RE = / — recap\(target="[^"]*"\)[^\n]*$/;
+const FOLD_INVITATION_RE = / — recap\(target_brief="[^"]*"\)[^\n]*$/;
 
 /** Marker opening the note text appended after the success result. */
 const NOTE_MARKER = 'Note, a recap has reset the conversation here with summary: ';
@@ -327,7 +327,7 @@ export function stripHashPrefix(content: string): string {
  */
 export function noteWithSummary(callId: string | undefined, body: string, firstLine?: string): string {
   // An id-less anchor renders no address rather than a fake one: `[] ANCHOR —
-  // recap(target="")` would offer a call that can never resolve.
+  // recap(target_brief="")` would offer a call that can never resolve.
   const fallback = callId ? briefResultLine(callId) : `[] ${BRIEF_ANCHOR_WORD}`;
   // LINE 1 IS STRUCTURE, LINE 2 IS THE RECAP. The caller passes the anchor
   // line the result already carries (the live first line, with its candidate
@@ -335,7 +335,7 @@ export function noteWithSummary(callId: string | undefined, body: string, firstL
   // instead of re-rendering — the anchor's identity must survive untouched.
   //
   // The one thing the rewind DOES change is the invitation: once this anchor is
-  // folded, "recap(target=…) folds the work after this point" names an empty span, so a
+  // folded, "recap(target_brief=…) folds the work after this point" names an empty span, so a
   // still-frozen call would fail the model on its own successful use.
   const anchorLine = firstLine ?? fallback;
   return `${withoutFoldInvitation(anchorLine)}\n${NOTE_MARKER}${body}`;
@@ -352,31 +352,6 @@ export function anchoredNoteLength(firstLine: string, body: string): number {
 /** Heading of the open-todo section appended to a recap note. */
 export const OPEN_TODOS_HEADING = '### Open todos';
 
-/**
- * The OPEN todos a recap should carry forward, rendered as the note's third
- * part — or `''` when there is nothing to say.
- *
- * WHY THE NOTE CARRIES THEM: a recap deletes the span above the anchor, and
- * the todo list is the one piece of working state that lives OUTSIDE the
- * transcript (it is the agent's own ledger, not a message). Without this
- * section the model resumes after a fold with no idea what it had promised to
- * keep doing — the checklist is gone from its context even though the todo
- * tools still report it.
- *
- * OPEN means `!done`, plus any PINNED item (pinned items are long-term
- * reminders; a pinned guard's condition is still relevant after it is done —
- * exactly the rule `Todo.hasOpenTodo` uses). DONE, unpinned items are omitted:
- * they are the part of the checklist that is already settled, and the recap
- * note is a budgeted tool result, not a mirror of the panel.
- *
- * Rendering is deliberately compact and hash-free — the model addresses an
- * item by its `#id` (the one handle `todo_update` / `todo_pin` take), so the
- * 8-char integrity hash would only cost tokens. `Todo.printTodoList()` is the
- * PROMPT renderer (markers, hashes, emoji); this is the folded-state renderer.
- *
- * `undefined`/empty → `''`, so a session with no todos produces a two-part
- * note exactly as before — the section never appears empty.
- */
 /** Per-row text budget for the recap section (mirrors serve-todos' MAX_TEXT_LEN). */
 const MAX_TODO_TEXT_LEN = 500;
 
@@ -457,6 +432,23 @@ function clampTodoText(value: string | undefined): string | undefined {
  *
  * `undefined`/empty → `''`, so a session with no todos produces a two-part note
  * exactly as before — the section never appears empty.
+ *
+ * ## Deliberately NOT built (recorded so they are not re-proposed)
+ *
+ * 1. A `todo_list` TOOL the model calls to refresh the list. REJECTED: this repo
+ *    already tried a proactive `checkpoint` tool and it failed for a reason that
+ *    generalises — the LLM never knew when to call it (pitfall `c5e0818f`:
+ *    "A manual 'checkpoint' tool failed: the LLM never knew to call it. Fix:
+ *    passive anchors…"). A tool whose only trigger is the model's own judgement
+ *    about its own attention is not a mechanism. Delivery must not depend on the
+ *    agent choosing to ask.
+ *
+ * 2. A PER-TURN injection of the list into the project context. REJECTED: the
+ *    project-context populators are frozen between `compact()`/`clear()`
+ *    boundaries ON PURPOSE — see `prompt-populators.ts` — because refreshing them
+ *    every turn invalidated the provider's prompt-cache prefix on each request.
+ *    `collect.ts` states the same rule independently: the list "must NOT be
+ *    re-injected as a per-turn REMINDER".
  */
 export function formatOpenTodos(
   items: readonly { id: number; name: string; done: boolean; pinned?: boolean; note?: string; preventStop?: string }[] | undefined,
@@ -532,7 +524,7 @@ export function buildRecapNote(
 }
 
 /**
- * Resolve a `recap(target=…)` argument to the brief it names.
+ * Resolve a `recap(target_brief=…)` argument to the brief it names.
  *
  * Accepts the hash shown in a brief result (`[<hash>] ANCHOR …`, see `briefHash`) or
  * the full tool-call id it was derived from. Returns null when `target` names

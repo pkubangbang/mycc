@@ -42,7 +42,7 @@ vi.mock('../../loop/agent-io.js', () => ({
 // named is gone), leaving `[<hash>] ANCHOR`. withNoteOnly therefore accepts both
 // shapes of line 1 and requires the marker on the following line — never a
 // particular hash value.
-const ANCHOR_LINE_RE = /^\[[A-Za-z0-9_-]+\] ANCHOR(?: — recap\(target="[A-Za-z0-9_-]*"\) folds the work after this point)?$/;
+const ANCHOR_LINE_RE = /^\[[A-Za-z0-9_-]+\] ANCHOR(?: — recap\(target_brief="[A-Za-z0-9_-]*"\) folds the work after this point)?$/;
 const NOTE_PREFIX = 'Note, a recap has reset the conversation here with summary: ';
 function withNoteOnly(content: string | undefined): boolean {
   if (!content) return false;
@@ -199,10 +199,10 @@ describe('recap rewind scenarios (anchor = non-synthetic brief with activity aft
   });
 
   // ---------------------------------------------------------------------
-  // Explicit `target` (recap(target="<hash>")) — the model chooses the
+  // Explicit `target` (recap(target_brief="<hash>")) — the model chooses the
   // position instead of guessing which brief the default rule will pick.
   // The hash shown on a brief's result is a digest of the call id (see
-  // briefHash); `recap(target=…)` accepts that hash or the full call id.
+  // briefHash); `recap(target_brief=…)` accepts that hash or the full call id.
   // ---------------------------------------------------------------------
   it('6. target rewinds to an EARLIER brief even when a newer solidified one exists', () => {
     const b1 = pushBrief(t, 'BRIEF ONE');

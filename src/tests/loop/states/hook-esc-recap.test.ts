@@ -137,9 +137,12 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
 
     // handleRecapSpan returns the cancelled summary (ESC during recap LLM call)
     // patch is null because getMindmap() returns null (no mindmap in mock env)
+    // `escCancelled` is the ONLY cancellation signal (see RecapWithPatchResult):
+    // a bare `patch: null` cannot be told apart from the model answering "none".
     vi.mocked(handleRecapSpan).mockResolvedValueOnce({
       patch: null,
       patchError: 'mindmap-patch fork aborted',
+      escCancelled: true,
     } as never);
     // ESC set neglected mode
     agentIO.setNeglectedMode(true);
@@ -167,6 +170,7 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
     vi.mocked(handleRecapSpan).mockResolvedValueOnce({
       patch: null,
       patchError: null,
+      escCancelled: false,
     } as never);
     // NOT in neglected mode — the aborted patch is reported, not fatal
     agentIO.setNeglectedMode(false);
@@ -193,6 +197,7 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
     vi.mocked(handleRecapSpan).mockResolvedValueOnce({
       patch: null,
       patchError: null,
+      escCancelled: false,
     } as never);
     // Make getMessages return identifiable content so we can assert it was passed
     const fakeMessages = [{ role: 'user', content: 'msg1' }];

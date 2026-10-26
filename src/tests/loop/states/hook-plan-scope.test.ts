@@ -4,7 +4,7 @@
  * The reflection is produced in the HOOK stage (states/hook.ts
  * handlePlanScopeBrief) and registered as the brief's own tool result:
  *
- *   tool('brief', "[<hash>] ANCHOR — recap(target=\"<hash>\") folds the work after this point
+ *   tool('brief', "[<hash>] ANCHOR — recap(target_brief=\"<hash>\") folds the work after this point
  *                 When thinking on the larger scope, …", callId)
  *
  * Why HOOK: this is the first point in the turn where the brief call exists in a
@@ -126,7 +126,7 @@ describe('HOOK-stage plan-mode scope reflection', () => {
     // they are addressable like any other — this path never reaches handleTool,
     // which is why the HOOK stage stamps it itself.
     const [line1, ...body] = (msgs[1].content as string).split('\n');
-    expect(line1).toMatch(/^\[[A-Za-z0-9_-]+\] ANCHOR — recap\(target="[A-Za-z0-9_-]*"\) folds the work after this point$/);
+    expect(line1).toMatch(/^\[[A-Za-z0-9_-]+\] ANCHOR — recap\(target_brief="[A-Za-z0-9_-]*"\) folds the work after this point$/);
     expect(body.join('\n')).toContain(PLAN_SCOPE_HEADING);
     expect(msgs[1].content).toContain('parser.ts');
   });

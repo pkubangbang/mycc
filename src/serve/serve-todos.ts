@@ -94,10 +94,18 @@ export type TodoSnapshotItem = {
 /** Per-entry text budget so one runaway item cannot bloat every frame. */
 const MAX_TEXT_LEN = 500;
 
-/** Clamp a free-form string (LLM-supplied tool args) to the wire budget. */
+/**
+ * Clamp a free-form string (LLM-supplied tool args) to the wire budget.
+ *
+ * CODE POINTS, not UTF-16 units (review NIT): `slice(0, MAX_TEXT_LEN)` can cut a
+ * surrogate pair in half, so a `📌`-class emoji at the boundary reaches the panel
+ * as U+FFFD. Spreading the string iterates code points (the string iterator is
+ * specified to), so keeping the first MAX_TEXT_LEN of them cannot split a pair.
+ */
 function clampText(value: string | undefined): string | undefined {
   if (!value) return undefined;
-  return value.length > MAX_TEXT_LEN ? `${value.slice(0, MAX_TEXT_LEN)}…` : value;
+  const points = [...value];
+  return points.length > MAX_TEXT_LEN ? `${points.slice(0, MAX_TEXT_LEN).join('')}…` : value;
 }
 
 /**
@@ -168,7 +176,7 @@ export function toTodoListPayload(items: readonly TodoSnapshotItem[]): TodoListP
  * The serve layer's registrations cannot carry this:
  *
  *   - `onServeHubReady` drains ONCE per process (`splice`), and
- *   - `onServeHubReRegistered` fires only from `registerServeHubFactory` — which
+ *   - the retired `onServeHubReRegistered` hook fired only from `registerServeHubFactory` — which
  *     `restartServe()` never calls, and which `ensureServeHub()` reaches only
  *     while `factory` is still unset.
  *
@@ -196,7 +204,7 @@ export function wireTodoSnapshot(
   // `activateServe()`). Do NOT also subscribe a registration hook here:
   //
   //   - `onServeHubReady` is one-shot per process, and
-  //   - `onServeHubReRegistered` only fires from `registerServeHubFactory`,
+  //   - the retired `onServeHubReRegistered` hook fired only from `registerServeHubFactory`,
   //     which `restartServe()` never calls and `ensureServeHub()` reaches only
   //     while `factory` is unset — so on a `stop()` → `/serve` RE-ENTRY in one
   //     process neither fires.

@@ -16,7 +16,7 @@
  * ## Why the seed is NOT a registration hook
  *
  * Earlier versions hung the seed off `onServeHubReady` and then off a bespoke
- * `onServeHubReRegistered`. Both failed, for reasons that are properties of the
+ * a re-registration hook (since removed). Both failed, for reasons that are properties of the
  * registry, not of this module:
  *
  *   - `onServeHubReady` drains ONCE per process (`splice`), and

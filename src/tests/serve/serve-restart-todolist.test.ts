@@ -17,7 +17,7 @@
  *   1. `stop()` gates the null on `!this.restarting`, so a recycle keeps the
  *      snapshot (a genuine shutdown still clears it).
  *   2. the seed re-syncs on every hub APPEARANCE via
- *      `onServeHubReRegistered`, not once per process.
+ *      the serve-start seam (`activateServe` → `resyncTodoSnapshot`), not once per process.
  *
  * These drive a REAL ServeHub with the heavy IO stubbed (no socket, no vite):
  * the subject is the snapshot's lifecycle, not the server.

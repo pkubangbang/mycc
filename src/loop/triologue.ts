@@ -1006,7 +1006,7 @@ export class Triologue {
   /**
    * Every real brief's displayed hash, oldest first.
    *
-   * `foldableOnly` restricts the list to the briefs `recap(target=…)` accepts
+   * `foldableOnly` restricts the list to the briefs `recap(target_brief=…)` accepts
    * right now — pass it when quoting the list as a set of usable targets (a
    * refusal message), never when asking what briefs exist.
    */
@@ -1015,7 +1015,7 @@ export class Triologue {
   }
 
   /**
-   * Why an explicit `recap(target=…)` could not be used: `'unknown'` (no brief
+   * Why an explicit `recap(target_brief=…)` could not be used: `'unknown'` (no brief
    * carries that hash or id) or `'nothing-after'` (it does — but nothing follows
    * it yet, which is true of every freshly printed anchor). Null when usable.
    *
@@ -1027,7 +1027,7 @@ export class Triologue {
   }
 
   /**
-   * The hashes an EXPLICIT `recap(target=…)` can fold to RIGHT NOW, NEWEST FIRST
+   * The hashes an EXPLICIT `recap(target_brief=…)` can fold to RIGHT NOW, NEWEST FIRST
    * — the `· open:` list rendered into a newly created brief's result.
    *
    * Uses `hasMessagesAtOrAfterBrief` — the rule `anchorIndexFor`'s `target`

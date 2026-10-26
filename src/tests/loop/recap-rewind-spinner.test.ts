@@ -126,7 +126,12 @@ describe('handleRecapSpan — recap wait indicator (spinner)', () => {
 
     await expect(
       handleRecapSpan(MESSAGES, TOOLS, MINDMAP),
-    ).resolves.toEqual({ patch: null, patchError: expect.stringContaining('network down') });
+    ).resolves.toEqual({
+      patch: null,
+      patchError: expect.stringContaining('network down'),
+      // A provider error is NOT a cancellation: the recap may proceed.
+      escCancelled: false,
+    });
 
     // A leaked spinner would leave the terminal line painted forever after a
     // failed recap — the exact stuck-looking state this fix removes.

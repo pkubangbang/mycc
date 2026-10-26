@@ -162,7 +162,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     // /^\[[A-Za-z0-9_-]+\]/ also accepts a token that names a DIFFERENT brief,
     // so a wrong-anchor bug (the exact failure a colliding hash used to cause)
     // would still pass.
-    // LINE 1 keeps the anchor (hash + word) but RETIRES the `recap(target=…)`
+    // LINE 1 keeps the anchor (hash + word) but RETIRES the `recap(target_brief=…)`
     // invitation — the span it named is exactly what this recap just deleted —
     // and LINE 2 is the recap summary.
     const content = msgs[2].content as string;

@@ -85,16 +85,22 @@ describe('system prompt: recap guidance is lead-only', () => {
     expect(section).toMatch(/only YOU \(the lead\)/i);
   });
 
-  it('recap guidance defaults to abandon and pops to a target', () => {
+  it('recap guidance teaches the two-field schema (target_brief + summary)', () => {
     const section = buildBriefRecapSection();
-    // The drift trigger + the cheap mode must be reachable from the always-on
-    // prompt; `abandon=true` is the DEFAULT because it forks nothing.
-    expect(section).toContain('recap(abandon=true)');
-    expect(section).toMatch(/default to/i);
-    // `target` addresses a frame by hash; a plain recap pops from the stack top.
-    expect(section).toContain('target="<hash>"');
-    expect(section).toMatch(/pops frames back to a target/i);
-    // Stale wording: recap is not limited to popping the topmost frame.
+    // The always-on prompt must teach the CURRENT argument names — the ones
+    // hook.ts actually reads — or the model copies a call that is refused.
+    expect(section).toContain('target_brief="<hash>"');
+    expect(section).toContain('summary="…"');
+    // An empty summary is the discard request; there is no `abandon` flag.
+    expect(section).toContain('summary: ""');
+    // The anchor line the model reads and the argument it names must agree.
+    expect(section).toContain('[<hash>] ANCHOR');
+    expect(section).toMatch(/pops frames back/i);
+    // The deleted API must never come back into the prompt.
+    expect(section).not.toMatch(/abandon=true/);
+    expect(section).not.toMatch(/target="<hash>"/);
+    expect(section).not.toMatch(/\bcomment\b/);
+    expect(section).not.toMatch(/description[=:]/);
     expect(section).not.toMatch(/pops the topmost frame/);
   });
 });

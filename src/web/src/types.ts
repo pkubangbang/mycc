@@ -75,6 +75,16 @@ export interface ChatMessage {
    *  frontend can key duplicate-text notes by id and target them for the
    *  boomerang 'steer-resolve' API. */
   steerId?: number;
+  /**
+   * The todo snapshot carried by a `type: 'todos'` frame
+   * (`{type, todos: TodoListEntry[]}`, see serve-todos.ts). Present ONLY on those
+   * frames; `parseTodoFrame` returns null for an unusable field so a malformed
+   * push keeps the current panel.
+   *
+   * DECLARED, not cast: reading it through `as` stayed green in tsc while the field
+   * was unrepresentable, which is how a silently-dropped panel state ships.
+   */
+  todos?: TodoListEntry[];
   // ── Card wire fields (top-level on an incoming 'card' message) ──
   // The backend broadcasts cards using the flat CardMessage shape
   // (serve-hub.ts: CardMessage has type/cardId/query/kind/options/...), so an

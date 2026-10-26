@@ -72,7 +72,7 @@ export const briefTool: ToolDefinition = {
     // Use core.brief to send the message via IPC to parent
     ctx.core.brief('info', 'brief', message, `confidence: ${confidence * 10}%`);
     // A plain success line, `OK`. The TOOL stage (states/tool.ts) replaces this
-    // ack with the ANCHOR LINE — `[<hash>] ANCHOR — recap(target="<hash>") to
+    // ack with the ANCHOR LINE — `[<hash>] ANCHOR — recap(target_brief="<hash>") to
     // folds the work after this point` — because only the loop knows the id the
     // hash is derived from (a handler receives no id), and only the loop can
     // see the brief stack the `· open:` candidates come from. The hash is the

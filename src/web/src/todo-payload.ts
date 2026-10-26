@@ -87,3 +87,34 @@ export function parseTodoFrame(raw: unknown): TodoListEntry[] | null {
   }
   return null;
 }
+
+/**
+ * Apply the `todos` field of a `/history` 200 to the panel — the CLIENT half of the
+ * seed contract, extracted so the rule has a callable identity.
+ *
+ * WHY EXTRACTED (review m1): this decision lived inline in `main.ts`, the browser
+ * entry (createApp / window / a bootstrap IIFE), which no node test can import.
+ * Deleting the guard therefore kept the ENTIRE web suite green — measured, not
+ * assumed — while reinstating the very bug this feature exists to fix: every reload
+ * wiped the panel. Same remedy as `session-reset.ts`.
+ *
+ * THE RULE — only a field that is PRESENT is authoritative:
+ *   - `undefined` → the server does not speak this contract → KEEP the rows.
+ *     `parseTodoList` collapses every unusable value to `[]`, and `[]` below means
+ *     "replace the panel with nothing", so reading a missing key through it turns a
+ *     protocol mismatch into a silent data wipe. (The server always emits the key —
+ *     `historyTodosField` returns `null`, never `undefined` — so this branch is
+ *     forward-compat, and it is exactly the branch a "simplify this" cleanup deletes.)
+ *   - `null` / `[]` → "this session has no list" → clear (authoritative empty).
+ *   - a bare array, or a `{todos:[…]}` wrapper → replace.
+ *
+ * In-place `splice`, never reassignment, so Pinia/Vue reactivity reaches the mounted
+ * `TodoCard` and any array identity a watcher holds survives.
+ */
+export function applyHistoryTodos(
+  store: { todos: TodoListEntry[] },
+  field: unknown,
+): void {
+  if (field === undefined) return;
+  store.todos.splice(0, store.todos.length, ...parseTodoList(field));
+}

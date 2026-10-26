@@ -16,11 +16,14 @@ import type { Mindmap, MindmapPatchAction, Node } from '../mindmap/types.js';
 import { get_node } from '../mindmap/get-node.js';
 import { forkChat } from '../engine/chat-provider.js';
 import { StreamAbortedError } from '../engine/chat-helpers.js';
+import { agentIO } from './agent-io.js';
 import { startSpinner, stopSpinner } from '../engine/chat-helpers.js';
 
 /**
  * Validate that recap is called alone (no other tools in same turn)
  */
+export { MIN_RECAP_SUMMARY_CHARS } from './states/hook.js';
+
 export function validateRecapIsolation(toolCalls: Array<{ function: { name: string } }>): { valid: boolean; message?: string } {
   const hasRecap = toolCalls.some(c => c.function.name === 'recap');
   if (!hasRecap) {
@@ -102,6 +105,12 @@ Concrete findings with specificity: function names, line numbers, patterns ident
  * @returns the `additionalMessage` half of the recap note — the triologue
  *          prepends the [RECAP] header and the quoted anchor brief.
  */
+/**
+ * @deprecated NO PRODUCTION CALLER. `states/hook.ts` now uses `handleRecapSpan`
+ * plus the model's own verbatim `summary`, so this summarization fork is dead
+ * code kept only for the source-level emptiness test. Deleting it and that test
+ * together is the follow-up; see src/tests/loop/states/recap-rewind-empty-summary.test.ts.
+ */
 export async function handleRecap(
   fullMessages: Message[],
   span: Message[],
@@ -137,10 +146,11 @@ export async function handleRecap(
     summary = await forkChat(fullMessages, allTools, recapPrompt, undefined, 'none');
   }
 
-  // NO placeholder substitution here. An empty fork result stays empty and the
-  // caller's summary floor (states/hook.ts hasUsableSummary) refuses the rewind,
-  // leaving the span in context. Substituting '(no summary)' would let an empty
-  // fork pass as a successful collapse and delete the span.
+  // NO placeholder substitution here. An empty fork result stays empty.
+  // NOTE: this function is unreachable from production (see @deprecated above), so
+  // it is NOT what protects the span — the floor in states/hook.ts refuses a short
+  // or empty summary on the live path. The rule is kept here so the legacy helper
+  // cannot start substituting a placeholder if it is ever revived.
   summary = summary.trim();
 
   // Assemble the `additionalMessage` half of the recap note.
@@ -167,13 +177,14 @@ export async function handleRecap(
 // ============================================================================
 // MINDMAP PATCH: forkChat #2 — concurrent patch decision
 //
-// Each recap launches TWO concurrent forkChat calls via Promise.all (see
-// handleRecapSpan). forkChat #1 (handleRecap, unchanged) produces the
-// recap summary. forkChat #2 (generatePatchAction, below) independently
-// decides whether ONE mindmap node should be added/updated/deleted.
+// Each recap launches ONE forkChat call: the mindmap-patch decision
+// (generatePatchAction, below). It decides whether ONE mindmap node should be
+// added/updated/deleted.
 //
-// Both calls fork from the SAME triologue messages → same prompt-cache prefix.
-// Neither depends on the other's output. See docs/mindmap/mindmap-redesign.md Part 2.
+// There is no summarization fork: since the two-field schema the note body is the
+// model's OWN `summary`, copied verbatim by the caller. The fork still reuses the
+// SAME triologue prefix the loop already paid for → same prompt-cache hit.
+// See docs/mindmap/mindmap-redesign.md Part 2.
 // ============================================================================
 
 /** Maximum retry attempts for an invalid patch response (beyond the first try). */
@@ -230,10 +241,9 @@ function generateTreeOutline(node: Node): string {
  * Build the patch-decision prompt for forkChat #2.
  *
  * This prompt is focused on a SINGLE objective: decide if ONE mindmap node
- * should be changed. It does NOT mix in summarization (that's forkChat #1's
- * job). Output is either "none" or a single JSON object.
+ * should be changed. The recap note is written by the CALLER, never here.
+ * Output is either "none" or a single JSON object.
  *
- * @param description - The recap label (focus context).
  * @param treeOutline - The path-only tree outline (from generateTreeOutline)
  * @param feedback - Optional validation error feedback from a prior invalid response
  * @returns The assembled prompt string
@@ -390,20 +400,22 @@ export function parsePatchResponse(
 /**
  * forkChat #2 — generate a patch decision concurrently with the recap summary.
  *
- * Forks from the same triologue messages as forkChat #1. Has its own retry
- * loop (up to PATCH_MAX_RETRIES additional attempts) for invalid responses.
- * If ESC is pressed (lead agent), returns null immediately (skip patch).
+ * Forks the triologue prefix the loop already paid for (prompt-cache hit). Has
+ * its own retry loop (up to PATCH_MAX_RETRIES additional attempts) for invalid
+ * responses. If ESC is pressed (lead agent) it THROWS StreamAbortedError — an
+ * explicit cancellation, because plain `null` means "the model said none" and
+ * must not be confused with it.
  *
  * CACHE: same rationale as handleRecap — fullMessages + allTools must be the
  * un-minified, full-tools array so the fork hits the cached prefix. toolChoice
  * 'none' constrains output to text-only without invalidating the cache.
  *
- * @param fullMessages - Full triologue messages before truncation (shared with #1)
- * @param allTools - All tools for prompt cache preservation (shared with #1)
- * @param description - Recap label (focus context)
+ * @param fullMessages - Full triologue messages before truncation (cache prefix)
+ * @param allTools - All tools for prompt cache preservation
  * @param mindmap - Current mindmap (for tree outline + path validation)
  * @param escAware - Optional ESC-aware wrapper (lead agent); teammates omit it
- * @returns A validated MindmapPatchAction, or null if none/invalid/ESC
+ * @returns A validated MindmapPatchAction, or null if none/invalid/retries exhausted
+ * @throws StreamAbortedError when the user pressed ESC
  */
 export async function generatePatchAction(
   fullMessages: Message[],
@@ -423,7 +435,11 @@ export async function generatePatchAction(
         async (ac) => forkChat(fullMessages, allTools, prompt, ac.signal, 'none'),
         () => null as string | null,
       );
-      if (result === null) return null;  // ESC pressed — skip patch
+      // ESC IS AN OUTCOME, NOT "NO PATCH". Returning null here made a cancelled
+      // recap indistinguishable from "the model said none" — and the caller then
+      // truncated the span the user had just asked to keep. Throwing routes it
+      // into handleRecapSpan's catch, which reports it as `escCancelled`.
+      if (result === null) throw new StreamAbortedError('[RECAP] ESC pressed during the mindmap patch');
       response = result;
     } else {
       response = await forkChat(fullMessages, allTools, prompt, undefined, 'none');
@@ -442,9 +458,7 @@ export async function generatePatchAction(
   return null;
 }
 
-/**
- * Result of handleRecapWithPatch: the recap summary + optional patch action.
- */
+/** What `handleRecapSpan` reports: the patch decision and its cancellation state. */
 export interface RecapWithPatchResult {
   /** The mindmap patch decision. The recap NOTE is not produced here: the
    *  model's own summary is copied verbatim by the caller. */
@@ -459,30 +473,27 @@ export interface RecapWithPatchResult {
    * used by teammate recaps.
    */
   patchError: string | null;
+  /**
+   * TRUE when the user pressed ESC during the patch fork. The caller MUST refuse
+   * the rewind: the span is still in context and the user asked to stop, so
+   * collapsing it would delete work they were trying to save.
+   */
+  escCancelled: boolean;
 }
 
 /**
- * Run both forkChat calls concurrently via Promise.all.
+ * Run the ONE surviving fork: the mindmap-patch decision.
  *
- * - forkChat #1 (handleRecap): recap summary — unchanged from existing behavior.
- * - forkChat #2 (generatePatchAction): patch decision — independent, concurrent.
- *
- * Both fork from the same triologue messages (shared prompt-cache prefix).
- * Neither receives the other's output. If mindmap is null/undefined, forkChat
- * #2 is skipped (returns null) and only the summary runs.
- *
- * Note on retries: if forkChat #2's first response is invalid, its retry loop
- * runs after Promise.all resolves the first attempt — by then forkChat #1 has
- * already completed. This is acceptable because retries are rare (the patch
- * prompt is simple) and the summary is already available for the caller.
+ * The note body is the model's own `summary`, copied verbatim by the caller, so no
+ * summarization fork exists and nothing here needs Promise.all. If mindmap is
+ * null/undefined the fork is skipped and `patch` is null.
  *
  * @param fullMessages - Full triologue messages before truncation (cache prefix)
- * @param span - The messages the rewind will delete; the ONLY region to summarize
  * @param allTools - All tools for prompt cache preservation
  * @param mindmap - Current mindmap (for patch decision); if absent, skip patch
  * @param escAware - Optional ESC-aware wrapper (lead agent)
- * @param lastUserQuery - The user's most recent query (context, not directive)
- * @returns { additionalMessage, patch } — additionalMessage always present, patch may be null
+ * @returns { patch, patchError, escCancelled } — the patch is best-effort; the
+ *          cancellation flag is what the caller must honour before rewinding
  */
 export async function handleRecapSpan(
   fullMessages: Message[],
@@ -513,28 +524,24 @@ export async function handleRecapSpan(
   let patch: MindmapPatchAction | null;
   // Set by the patch fork's catch — surfaced to the caller, never fatal.
   let patchError: string | null = null;
+  /**
+   * TRUE only when the user actually pressed ESC during the patch fork.
+   *
+   * NOT derivable from `patchError`: any aborted stream raises StreamAbortedError,
+   * including the teammate watchdog, so the error alone cannot tell a cancellation
+   * from a provider hiccup. Neglected mode is the ESC channel.
+   */
+  let escCancelled = false;
   try {
-    // ── Launch both forkChats concurrently via Promise.all ──
-    // Both fork from the same triologue messages — neither depends on the other's output.
+    // ── The lone surviving fork: the mindmap-patch decision ──
+    // The note body is the model's own `summary` (copied verbatim by the caller),
+    // so there is no summary fork to run — and therefore no Promise.all: a lone
+    // fork needs no concurrency scaffolding, and the spinner still wraps the wait.
     //
-    // forkChat only receives an AbortSignal via escAware (ESC), so a provider
-    // error on one fork does not cancel the other. We deliberately do NOT
-    // drain the abandoned sibling: awaiting it would block the finally — and
-    // therefore stopSpinner — for unbounded time if it never settles.
-    //
-    // REJECTION POLICY — the two forks are not equal:
-    //   • summary fork  — REQUIRED. Its rejection must reach the caller (it
-    //     becomes a failed recap), so it is awaited untouched.
-    //   • patch fork    — BEST-EFFORT. A mindmap patch is a nicety; letting it
-    //     reject would have Promise.all throw away the already-paid summary
-    //     and dump the turn to PROMPT. It is neutralised to `null` and only
-    //     logged. Neutralise means `.catch` returns a value, NOT that it
-    //     merely logs — a logging-only handler still leaves the rejection to
-    //     propagate through Promise.all.
-    // ONE fork remains: the mindmap-patch decision. The note body is the model's
-    // own `summary` (copied verbatim by the caller), so there is no summary fork
-    // to run — and therefore no Promise.all: a lone fork needs no concurrency
-    // scaffolding, and the spinner still wraps it for the wait.
+    // REJECTION POLICY: a mindmap patch is BEST-EFFORT. Letting it reject would
+    // dump the turn to PROMPT after the user already waited, so it is neutralised
+    // to `null` — and `.catch` must RETURN a value for that; a logging-only handler
+    // still leaves the rejection to propagate.
     patch = mindmap
       ? await generatePatchAction(fullMessages, allTools, mindmap, escAware).catch((err: unknown) => {
           // REACHABILITY: this branch is live but NARROW. escAware races
@@ -553,6 +560,10 @@ export async function handleRecapSpan(
           patchError = err instanceof StreamAbortedError
             ? 'mindmap-patch fork aborted'
             : `mindmap-patch fork failed: ${String(err)}`;
+          // A StreamAbortedError WHILE neglected mode is on is a real cancellation;
+          // anything else (watchdog, provider fault) is a failed patch that must
+          // not block a valid recap.
+          escCancelled = err instanceof StreamAbortedError && agentIO.isNeglectedMode();
           return null;
         })
       : null;
@@ -563,6 +574,6 @@ export async function handleRecapSpan(
     stopSpinner();
   }
 
-  return { patch, patchError };
+  return { patch, patchError, escCancelled };
 }
 

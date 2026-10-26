@@ -352,7 +352,7 @@ export async function handleLlm(
         const recoveryBrief = briefToolCall('Let me see what to do next.', 7, newBriefCallId('brief_recover'));
         triologue.agent('', [recoveryBrief], { synthetic: true });
         // A RECEIPT, not the anchor line: this brief is synthetic, so it is not in
-        // `store.briefIndices()` and every `recap(target=…)` naming it would be
+        // `store.briefIndices()` and every `recap(target_brief=…)` naming it would be
         // refused. Advertising the call here would be a false affordance.
         triologue.tool('brief', briefReceiptLine(recoveryBrief.id), recoveryBrief.id);
         continue; // Re-run the while loop and call LLM again with new context

@@ -6,7 +6,7 @@
  * asking whether that sub-problem is the right one. The loop therefore makes
  * every brief, while planning, carry one extra paragraph:
  *
- *   tool('brief', "[<hash>] ANCHOR — recap(target=\"<hash>\") …\nWhen thinking on the larger scope, …", callId)
+ *   tool('brief', "[<hash>] ANCHOR — recap(target_brief=\"<hash>\") …\nWhen thinking on the larger scope, …", callId)
  *
  * (The plan-scope paragraph is the SECOND line of the result; LINE 1 is the
  * fixed anchor line the TOOL stage writes.)

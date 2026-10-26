@@ -156,7 +156,7 @@ export class BriefStackManager {
    * Every real brief's displayed hash, oldest first.
    *
    * `foldableOnly` applies the EXPLICIT-target rule (`hasMessagesAtOrAfterBrief`)
-   * — the set `recap(target=…)` will actually accept. A refusal message MUST pass
+   * — the set `recap(target_brief=…)` will actually accept. A refusal message MUST pass
    * it: naming a hash the very next call refuses is the same false affordance as
    * a line 1 that advertises a call over an empty span. Without it the list is the
    * raw brief stack (used where "which briefs exist" is the question, not "which
@@ -173,7 +173,7 @@ export class BriefStackManager {
   }
 
   /**
-   * The hashes a `recap(target=…)` can fold to RIGHT NOW, NEWEST FIRST — the
+   * The hashes a `recap(target_brief=…)` can fold to RIGHT NOW, NEWEST FIRST — the
    * `· open:` list rendered into a freshly created brief's result.
    *
    * Uses `hasMessagesAtOrAfterBrief` — the EXPLICIT-target rule
@@ -454,7 +454,7 @@ export class BriefStackManager {
    *
    * so the history still ends on role:'tool' — the anchor's own result — the
    * same TP-parity handoff to the next real agent() as before. The hash line
-   * survives the rewrite, so the anchor stays addressable by `recap(target=…)`
+   * survives the rewrite, so the anchor stays addressable by `recap(target_brief=…)`
    * after being consumed.
    *
    * REWIND-BY-BRIEF (no target): the rewind leaves the anchor's round-trip last,
