@@ -93,6 +93,17 @@ export interface ServeHubLike {
   // ── broadcast ──
   broadcast(type: string, content: string, label?: string, detail?: string, synthetic?: boolean): void;
   broadcastExcept(sender: unknown, type: string, content: string, label?: string, detail?: string): void;
+
+  // ── todo list snapshot ──
+  /**
+   * Send the authoritative todo list to every client as ONE `type: 'todos'`
+   * message (see serve-todos.ts). A full replacement, not a diff. Also kept as
+   * the `/history` seed, so a reload rebuilds the panel without replaying
+   * todo briefs.
+   */
+  broadcastTodoList(payload: import('./serve-todos.js').TodoListPayload): void;
+  /** The last pushed todo snapshot, or null after a shutdown (no IO). */
+  getTodoSnapshot(): import('./serve-todos.js').TodoListPayload | null;
 }
 
 /** Factory + instance, both populated only once the serve layer loads. */
@@ -106,6 +117,35 @@ let instance: ServeHubLike | null = null;
  * before the serve layer loads; drained the moment the factory registers.
  */
 const readyCallbacks: Array<(hub: ServeHubLike) => void> = [];
+
+/**
+ * Callbacks that must run on every hub (re-)appearance, not once per process.
+ *
+ * `readyCallbacks` above drains exactly once (and `ensureServeHub()`
+ * short-circuits on `if (!factory)`, so nothing re-drains it). That is correct
+ * for a one-time PROVIDER registration, and wrong for anything that mirrors
+ * MUTABLE state which a stop/re-entry can clear — the todo snapshot is the
+ * first such consumer (`ServeHub.stop()` blanks it; see serve-todos.ts).
+ * These listeners are re-fired each time a factory (re-)registers.
+ */
+const hubAppearedListeners: Array<(hub: ServeHubLike) => void> = [];
+
+/**
+ * Run `cb` every time the hub appears — at registration now if one exists, and
+ * again on each subsequent {@link registerServeHubFactory}. Unlike
+ * {@link onServeHubReady}, this is NOT one-shot.
+ *
+ * A consumer that must re-sync state the hub can clear between appearances
+ * (e.g. the todo panel across a 重启 or a stop → `/serve` re-entry) uses this;
+ * a consumer registering a durable provider uses `onServeHubReady`.
+ */
+export function onServeHubReRegistered(cb: (hub: ServeHubLike) => void): void {
+  hubAppearedListeners.push(cb);
+  const hub = tryGetServeHub();
+  if (hub) {
+    try { cb(hub); } catch { /* best-effort — never break a registration */ }
+  }
+}
 
 /**
  * Register the concrete ServeHub accessor. Called by the serve layer
@@ -127,6 +167,13 @@ export function registerServeHubFactory(getInstance: () => ServeHubLike): void {
       for (const cb of pending) {
         try { cb(hub); } catch { /* best-effort: a bad provider must not break hub init */ }
       }
+    }
+  }
+  // NOT one-shot: state-mirroring consumers must re-sync on every appearance.
+  const live = tryGetServeHub();
+  if (live) {
+    for (const cb of [...hubAppearedListeners]) {
+      try { cb(live); } catch { /* best-effort */ }
     }
   }
 }

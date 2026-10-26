@@ -35,6 +35,8 @@ export type { CardMessage } from './serve-types.js';
 import { stripAnsi, detectLanIpv4, detectAllLanIpv4 } from './serve-utils.js';
 import { ClientRegistry } from './serve-clients.js';
 import { readHistory, computeHistoryVersion, etagMatchesIfNoneMatch } from './serve-history.js';
+import type { TodoListPayload } from './serve-todos.js';
+import { resyncTodoSnapshot } from './serve-todos.js';
 import { DisconnectTimer } from './serve-disconnect-timer.js';
 import { handleWsMessage, type HubHandler } from './serve-ws-handler.js';
 import { getPeerWireAcceptor } from './peer-wire.js';
@@ -46,6 +48,152 @@ import pkg from '../../package.json';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const WEB_ROOT = path.resolve(__dirname, '..', 'web');
+
+/**
+ * Fingerprint of the todo snapshot for the /history ETag.
+ *
+ * The todo list is a body field that lives ONLY here (never in `messageLog`),
+ * so without a token in the version a todo-only change would 304 and the
+ * client would keep rendering a stale panel.
+ *
+ * Every field the panel DRAWS must therefore take part, and it must hash the
+ * CONTENT, not a length: a length-based token collides for any rename of equal
+ * length ("Task A" → "Task B") and for any `note`/`preventStop` edit, which
+ * serves exactly the stale panel this term exists to prevent. `JSON.stringify`
+ * of the whitelisted rows is short, allocation-light and injective enough —
+ * this runs once per /history GET, not per keystroke.
+ *
+ * `null` (no mutation observed yet) has its own distinct token, so going back
+ * to "no list" is also a change.
+ *
+ * Exported so the regression tests can assert THIS function rather than a copy
+ * of its expression — a test that re-implements the token proves only that
+ * `JSON.stringify` works, and would stay green if this function regressed to
+ * the old length-based form.
+ */
+/**
+ * The `todos` body field for `GET /history`.
+ *
+ * A BARE array (or null), never the `{type:'todos', todos:[…]}` frame wrapper.
+ * That distinction is load-bearing: the client stores this straight into
+ * `store.todos` behind an `Array.isArray` check, so shipping the wrapper made
+ * every page reload wipe the panel — the original bug of this feature.
+ *
+ * Extracted so the regression test can assert the REAL handler value instead
+ * of re-implementing the expression (a test that re-declares the expression
+ * only proves the expression was typed twice, and stayed green when the bug
+ * was reintroduced).
+ */
+export function historyTodosField(todoList: TodoListPayload | null): TodoListPayload['todos'] | null {
+  return todoList?.todos ?? null;
+}
+
+export function todoEtagToken(todoList: TodoListPayload | null): string {
+  if (!todoList) return 'todo:null';
+  return `todo:${JSON.stringify(todoList.todos)}`;
+}
+
+/** Everything `GET /history` reads. Pure inputs, so the route is testable. */
+export interface HistoryRequestInput {
+  ifNoneMatch?: string;
+  transcriptPath: string | null;
+  messageLog: LogEntry[];
+  steeringLength: number;
+  steeringBuffer: unknown[];
+  isRunning: boolean;
+  todoList: TodoListPayload | null;
+  sessionId: string | null;
+}
+
+/** The HTTP surface `GET /history` writes. Narrowed so a test can fake it. */
+export interface HistoryResponseSink {
+  setHeader(name: string, value: string): void;
+  /** Returns the sink, so status/end can chain like Express. */
+  status(code: number): HistoryResponseSink;
+  end(body?: string): void;
+}
+
+/**
+ * The whole `GET /history` response, as a function of its inputs.
+ *
+ * EXTRACTED FROM THE ROUTE ON PURPOSE (round-2 review): the handler used to be an
+ * inline closure inside `start()`, which needs Vite + a bound socket to exist. That
+ * is why the only tests of this seam could either call the pure helpers directly
+ * (proving nothing about the wiring) or match strings in the source file (a fake
+ * guard). Neither would fail if the handler stopped calling the helpers — which is
+ * exactly how the round-1 bug shipped.
+ *
+ * As a plain function over plain data, a test can now assert the BYTES: the body
+ * carries `todos`, a todo-only change moves the ETag, and a session change moves it
+ * again. The route above is a three-line adapter, so there is no logic left in the
+ * untestable layer to drift.
+ */
+export function serveHistoryRequest(
+  input: HistoryRequestInput,
+  sink: HistoryResponseSink,
+): void {
+  const etag = computeHistoryVersion(
+    input.transcriptPath, input.messageLog,
+    input.steeringLength, input.isRunning,
+    // ── Body state not covered by any term above (review M9) ──
+    //
+    // Two independent fingerprints, because they answer different questions:
+    //
+    //   `todo:…`  — did the todo list change? It lives ONLY in memory (never in the
+    //               transcript or messageLog), so without this a todo-only change
+    //               would 304 and the client would keep rendering a stale panel.
+    //
+    //   `sid:…`   — WHICH SESSION is this body from? Without an identity term, two
+    //               sessions whose transcripts/logs/steering all coincided would
+    //               hash identically, and a NON-BROWSER consumer (curl, a proxy, a
+    //               future client) could be 304'd into validating another session's
+    //               body. The browser is already guarded client-side
+    //               (lastHistoryEtag is nulled on a session change, before any
+    //               conditional fetch), so this term is defence in depth for
+    //               everything that is not that one client.
+    //
+    // The todo token is CONTENT-only, so it adds no session discrimination on its
+    // own; the session term is what supplies that.
+    `${todoEtagToken(input.todoList)}|sid:${input.sessionId ?? 'none'}`,
+  );
+  sink.setHeader('ETag', etag);
+  sink.setHeader('Cache-Control', 'no-cache');
+  // If-None-Match match → 304 Not Modified, empty body. The client's hydrated copy
+  // stays on screen (lock-screen instant wake). The match uses RFC 7232 §3.2
+  // conditional semantics (weak comparison) via etagMatchesIfNoneMatch: it handles a
+  // comma-separated list of entity-tags and the `*` wildcard, and compares the opaque
+  // tags ignoring the weak/strong distinction (correct for If-None-Match). The prior
+  // `inm === etag` equality only handled the single-tag exact-string case and
+  // silently failed on multi-tag or strong/weak-equivalent headers.
+  if (etagMatchesIfNoneMatch(input.ifNoneMatch, etag)) {
+    sink.status(304).end();
+    return;
+  }
+  const history = readHistory(input.transcriptPath, input.messageLog);
+  // Content-Type is set HERE, not by the route (round-2 review, major #1). The
+  // extraction dropped it: `HistoryResponseSink` had no channel for it, so the
+  // adapter could not restore it and Express does not default it — a hand-built
+  // route with only `res.set('ETag',…)` serves `content-type: null`. The bundled
+  // client survives because `res.json()` ignores the header, but curl, a proxy or
+  // any Accept-aware consumer would get an untyped body. Keeping it in this
+  // function (rather than the adapter) also means the behavioural test asserts it.
+  sink.setHeader('Content-Type', 'application/json');
+  sink.status(200).end(JSON.stringify({
+    messages: history,
+    // steeringBuffer is {id,text}[] (plan §5 — C6 fix): the frontend types it
+    // SteeringNote[] (main.ts/types.ts) and uses the ids for per-note discard/send
+    // on the review card; serializing string[] lost the ids on every reconnect.
+    steeringBuffer: input.steeringBuffer,
+    isRunning: input.isRunning,
+    // The AUTHORITATIVE todo list, so a reloading client rebuilds the panel WITHOUT
+    // replaying `todo_*` briefs (one item touched three times used to render three
+    // rows). A BARE array (or null), never the `{type:'todos',…}` wrapper — see
+    // historyTodosField's doc for why that distinction is load-bearing. This key was
+    // documented and helper-tested but never actually emitted (review B1): the client
+    // read `undefined`, normalised it to `[]`, and wiped every row on each reload.
+    todos: historyTodosField(input.todoList),
+  }));
+}
 
 export class ServeHub implements HubHandler, ServeHubLike {
   private static instance: ServeHub | null = null;
@@ -93,6 +241,14 @@ export class ServeHub implements HubHandler, ServeHubLike {
   // ── Message log for reconnect replay ──
   private messageLog: LogEntry[] = [];
   private static readonly MAX_LOG_SIZE = 1000;
+
+  /**
+   * Last authoritative todo-list snapshot pushed by the todo tools
+   * (serve-todos.ts). Held so `/history` can hand a reloading client the list
+   * WITHOUT replaying `todo_*` briefs — which is what made one item render as
+   * several duplicate rows. Null until the first emit in this process.
+   */
+  private todoList: TodoListPayload | null = null;
 
   // ── Durable history source ──
   private transcriptPath: string | null = null;
@@ -408,37 +564,28 @@ export class ServeHub implements HubHandler, ServeHubLike {
       // fields (steering-length, isRunning) so a state flip is never masked by a
       // 304.
       this.expressApp.get('/history', (req, res) => {
-        const etag = computeHistoryVersion(
-          this.transcriptPath, this.messageLog,
-          getSteeringManager().peekNotes().length, this.agentRunning,
-        );
-        res.set('ETag', etag);
-        res.set('Cache-Control', 'no-cache');
-        // If-None-Match match → 304 Not Modified, empty body. The client's
-        // hydrated copy stays on screen (lock-screen instant wake). The match
-        // uses RFC 7232 §3.2 conditional semantics (weak comparison) via
-        // etagMatchesIfNoneMatch: it handles a comma-separated list of
-        // entity-tags and the `*` wildcard, and compares the opaque tags
-        // ignoring the weak/strong distinction (correct for If-None-Match).
-        // The prior `inm === etag` equality only handled the single-tag
-        // exact-string case and silently failed on multi-tag or
-        // strong/weak-equivalent headers.
-        const inm = req.headers['if-none-match'];
-        if (etagMatchesIfNoneMatch(typeof inm === 'string' ? inm : undefined, etag)) {
-          res.status(304).end();
-          return;
-        }
-        const history = readHistory(this.transcriptPath, this.messageLog);
-        const payload = JSON.stringify({
-          messages: history,
-          // steeringBuffer is now {id,text}[] (plan §5 — C6 fix): the frontend
-          // types it SteeringNote[] (main.ts/types.ts) and uses the ids for
-          // per-note discard/send on the review card; serializing string[] lost
-          // the ids on every reconnect.
-          steeringBuffer: getSteeringManager().peekNotes(),
+        // ADAPTER ONLY — every decision (ETag terms, 304, body shape) lives in
+        // serveHistoryRequest so it can be tested without booting Vite.
+        const sink: HistoryResponseSink = {
+          setHeader: (name, value) => { res.set(name, value); },
+          status: (code) => { res.status(code); return sink; },
+          end: (body) => { res.end(body); },
+        };
+        // One peek, used for both the ETag term and the body (round-2 review,
+        // minor #9): calling it twice was harmless (synchronous) but needless.
+        const notes = getSteeringManager().peekNotes();
+        serveHistoryRequest({
+          ifNoneMatch: typeof req.headers['if-none-match'] === 'string'
+            ? req.headers['if-none-match']
+            : undefined,
+          transcriptPath: this.transcriptPath,
+          messageLog: this.messageLog,
+          steeringLength: notes.length,
+          steeringBuffer: notes,
           isRunning: this.agentRunning,
-        });
-        res.status(200).set({ 'Content-Type': 'application/json' }).end(payload);
+          todoList: this.todoList,
+          sessionId: getWireHooks()?.getSessionId() ?? null,
+        }, sink);
       });
 
       // GET /config → client-facing runtime config (per-file upload cap +
@@ -580,6 +727,15 @@ export class ServeHub implements HubHandler, ServeHubLike {
       // note sent in the stop window was vacuumed before wrap-up could
       // deliver it).
       if (!this.restarting) { getSteeringManager().clear(); }
+      // The todo snapshot is authoritative UI state that lives only in memory, so
+      // a GENUINE teardown must drop it — otherwise a later `/serve` in the same
+      // process would serve the previous serve session's rows. GATED on
+      // `!this.restarting` for the same reason as the two clears above: a recycle
+      // must be INVISIBLE, and restartServe() re-publishes the snapshot through
+      // resyncTodoSnapshot() right after start(). (Review B3/M1: this clear was
+      // documented by serve-restart-todolist.test.ts but never written, which is
+      // why that test has failed since the commit that introduced it.)
+      if (!this.restarting) { this.todoList = null; }
       this.fileUploadQueue = [];
     } finally {
       this.stopping = false;
@@ -844,6 +1000,29 @@ export class ServeHub implements HubHandler, ServeHubLike {
     this.clients.broadcast(type, content, label, detail, synthetic, this.messageLog);
   }
 
+  /**
+   * Push the authoritative todo list to every client.
+   *
+   * Deliberately NOT written to `messageLog`: the list is a whole, replaceable
+   * snapshot, not a chat event. Persisting it would replay a stale list into
+   * the chat log on reconnect; `/history` ships the CURRENT one instead.
+   */
+  broadcastTodoList(payload: TodoListPayload): void {
+    this.todoList = payload;
+    this.clients.broadcastTodoList(payload);
+  }
+
+  /**
+   * The last snapshot this hub pushed, or null after a genuine shutdown.
+   *
+   * Read by the seed's re-sync so it can decide "the panel already shows this"
+   * instead of pushing a redundant frame (and so it can repair a snapshot a
+   * `stop()` legitimately cleared). Never triggers any IO.
+   */
+  getTodoSnapshot(): TodoListPayload | null {
+    return this.todoList;
+  }
+
   /** Broadcast to all clients EXCEPT the sender (multi-browser user-bubble sync). */
   broadcastExcept(sender: WebSocket, type: string, content: string, label?: string, detail?: string): void {
     this.clients.broadcastExcept(sender, type, content, label, detail);
@@ -875,6 +1054,19 @@ export class ServeHub implements HubHandler, ServeHubLike {
       try { if (this.autoStateProvider()) { ws.send(JSON.stringify({ type: 'auto', content: 'on' })); } } catch { /* ignore */ }
     }
     try { ws.send(JSON.stringify({ type: 'running', content: this.agentRunning ? 'on' : 'off' })); } catch { /* ignore */ }
+    // Send the current todo snapshot to the LATE JOINER (review B4). Without this a
+    // client that connected after the last mutation never saw the list: broadcasts
+    // reach only OPEN sockets, and the client fetches /history THEN connects, so a
+    // mutation landing in that window was sent to zero clients and stayed invisible
+    // until the next mutation. This also makes reconnect a recovery path that does
+    // not depend on /history at all.
+    //
+    // Sent as the full frame (`{type:'todos', todos}`) because that is what the live
+    // wire carries; the client's parseTodoFrame keeps the current panel on a
+    // malformed frame, so a `null` snapshot is simply omitted rather than broadcast.
+    if (this.todoList) {
+      try { ws.send(JSON.stringify(this.todoList)); } catch { /* ignore */ }
+    }
     ws.on('message', (data) => handleWsMessage(this, ws, data.toString()));
     ws.on('close', () => this.onWsClose(ws));
     ws.on('error', (err) => this.onWsError(ws, err));
@@ -947,6 +1139,18 @@ export class ServeHub implements HubHandler, ServeHubLike {
       // but a fresh start means the hub is a clean slate — re-wire explicitly
       // so the Web UI keeps receiving live updates after the recycle).
       wireOutputMirroring(this);
+      // Re-publish the todo snapshot (review B3). restartServe() is a recycle, so
+      // it does NOT go through activateServe() — the seam serve-todos.ts calls
+      // "the ONE seam that runs on every re-entry" — and therefore never re-seeded
+      // the panel. A Restart click used to survive only by accident: stop() had
+      // no todoList write at all, so the stale snapshot happened to still be
+      // there. Now that stop() correctly drops it (the `!this.restarting` gate in
+      // stop(), mirroring setWebUiUp/steering), the recycle MUST re-publish or the
+      // panel comes back empty. ORDER IS LOAD-BEARING: this call must exist BEFORE
+      // the stop() gate above, or a 重启 silently blanks the panel.
+      // Synchronous + idempotent: it compares against getTodoSnapshot() and
+      // pushes only on a difference, so a double call cannot emit two frames.
+      resyncTodoSnapshot(this);
       // A recycle ends with the WebUI reachable again on the same port, so the
       // serve-state flag must read "up" — stop() inside this method cleared it.
       setWebUiUp(true);

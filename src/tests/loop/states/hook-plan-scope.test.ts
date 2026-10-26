@@ -182,7 +182,7 @@ describe('HOOK-stage plan-mode scope reflection', () => {
     expect(anchor.message).toBe('recon done');
     expect(anchor.span.map((m) => m.content)).toEqual(['next step of the work']);
 
-    const rewound = triologue.rewindToLastBrief('collapse', 'SUMMARY BODY');
+    const rewound = triologue.rewindToLastBrief('SUMMARY BODY');
     expect(rewound).not.toBeNull();
     const noteSlot = triologue.getMessages().at(-1)!;
     expect(noteSlot.tool_name).toBe('brief');

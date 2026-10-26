@@ -84,13 +84,21 @@ describe('Todo', () => {
     expect(todo.updateTodo(a.id, a.hash, 'Renamed', true)).toBeNull();
   });
 
-  it('clear() should reset both items and nextId', () => {
+  it('clear() empties the items but keeps nextId monotonic', () => {
+    // nextId is deliberately NOT reset by clear(). Two reasons, both
+    // load-bearing:
+    //   1. The WebUI todo panel keys its rows by id, and the snapshot channel
+    //      pushes an empty list on clear — a reused id would collide with a
+    //      stale row if any frame were missed.
+    //   2. The LLM may still hold an id/hash reference to a now-cleared item;
+    //      reissuing #1 would silently attach that stale reference to new work.
+    // The auto-clear in updateTodo() documents the same rule.
     const todo = new Todo();
-    todo.createTodo('Task A');
+    const a = todo.createTodo('Task A');
     todo.clear();
     expect(todo.getItems().length).toBe(0);
     const b = todo.createTodo('Task B');
-    expect(b.id).toBe(1);
+    expect(b.id).toBe(a.id + 1);
   });
 
   // ── Pinned todos & stop guards ──

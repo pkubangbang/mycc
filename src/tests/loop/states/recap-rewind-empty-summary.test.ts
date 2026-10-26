@@ -37,7 +37,7 @@ async function recap(forkResult: string, escAware = true): Promise<string> {
   const wrapper = escAware
     ? async <T>(fn: (ac: AbortController) => Promise<T>): Promise<T> => fn(new AbortController())
     : undefined;
-  return handleRecap(messages, span, tools, 'explored the parser', wrapper, 'Next: fix it');
+  return handleRecap(messages, span, tools, wrapper, 'Next: fix it');
 }
 
 describe('handleRecap — empty summary is not substituted (H2 producer)', () => {
@@ -77,12 +77,12 @@ describe('handleRecap — empty summary is not substituted (H2 producer)', () =>
   it('ESC still returns the cancelled sentinel, not an empty note', async () => {
     const escAware = async <T>(): Promise<T> => null as T;
     vi.mocked(forkChat).mockResolvedValue('ignored');
-    const out = await handleRecap(messages, span, tools, 'd', escAware, 'c');
+    const out = await handleRecap(messages, span, tools, escAware, 'c');
     expect(out.startsWith('[RECAP] Cancelled:')).toBe(true);
   });
 
   it('empty history short-circuits before forking', async () => {
-    const out = await handleRecap([], span, tools, 'd', undefined, 'c');
+    const out = await handleRecap([], span, tools, undefined, 'c');
     expect(out).toBe('[RECAP] No messages to summarize.');
     expect(forkChat).not.toHaveBeenCalled();
   });

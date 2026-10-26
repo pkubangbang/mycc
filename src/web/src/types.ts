@@ -16,7 +16,37 @@ export type MessageType =
   | 'file-upload'
   | 'file-flush'
   | 'auto'
-  | 'running';
+  | 'running'
+  | 'todos';
+
+/**
+ * One row of the authoritative todo list — the payload the backend pushes as
+ * `type: 'todos'` and includes in `/history`. Mirrors
+ * `src/serve/serve-todos.ts` (TodoListEntry).
+ *
+ * The panel renders THIS, never the `todo_*` briefs in the chat stream: a
+ * brief is an EVENT (one item can be created, updated and pinned in a single
+ * turn), while this list has exactly one entry per todo id by construction.
+ */
+export interface TodoListEntry {
+  /** Stable row key — the todo id. */
+  id: number;
+  name: string;
+  done: boolean;
+  /** Long-term reminder: survives completion and the auto-clear. */
+  pinned: boolean;
+  /** Natural-language stop guard, when the item carries one. */
+  preventStop?: string;
+  note?: string;
+}
+
+/**
+ * NOTE: the WS frame type is `{type:'todos', todos: TodoListEntry[]}` — see
+ * `todo-payload.ts`, which also owns the runtime validation. There is
+ * deliberately no exported `TodoListPayload` interface here: the client never
+ * names the frame type (it parses it structurally), and a second declaration
+ * would drift from `src/serve/serve-todos.ts`.
+ */
 
 export interface ChatMessage {
   type: MessageType;
@@ -101,6 +131,16 @@ export interface SteeringNote {
  */
 export interface ChatState {
   messages: ChatMessage[];
+  /**
+   * The AUTHORITATIVE todo list (one entry per todo id), replaced wholesale by
+   * every `type: 'todos'` frame and by the `todos` field of `/history`.
+   *
+   * This is the todo panel's ONLY data source. The `todo_*` briefs living in
+   * `messages` are events and are rendered as ordinary chat lines — deriving
+   * the checklist from them made one item touched three times appear as three
+   * rows, which is the bug this snapshot replaced.
+   */
+  todos: TodoListEntry[];
   inputText: string;
   /** The single source of truth for the interaction state machine. */
   phase: WebuiPhase;

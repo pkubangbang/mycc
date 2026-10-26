@@ -83,6 +83,29 @@ export const todoUpdateTool: ToolDefinition = {
     }
 
     const status = updated.done ? 'completed' : 'updated';
+    // THE AUTO-CLEAR GHOST (review B6). `updateTodo` returns the edited item even
+    // when the same call's auto-clear PURGED it (it drops every non-pinned row once
+    // all of them are done). Reporting that item normally would tell the model it
+    // completed something and hand it a hash it can never use — the row is gone
+    // from `getItems()` and never returns to the prompt or the recap note. So
+    // verify the returned item against the LIVE list, and report the purge as a
+    // purge. The list itself is already correct (the emit carries the post-purge
+    // snapshot), so this is about the tool result not contradicting it.
+    const stillPresent = ctx.todo.getItems().some((i) => i.id === updated.id);
+    if (!stillPresent) {
+      const remaining = ctx.todo.getItems();
+      // Say ONE true thing about what remains (round-2 review, minor #5). The old
+      // wording asserted "the list is now empty" and then appended "N pinned
+      // reminder(s) remain" — a self-contradiction in a tool result the model
+      // treats as authoritative.
+      const pinnedNote = remaining.length > 0
+        ? `The ${remaining.length} pinned reminder(s) survive (pinned items are never auto-cleared).`
+        : 'No todos remain.';
+      ctx.core.brief('info', 'todo_update', `completed #${updated.id}: ${updated.name} (auto-cleared)`);
+      return `Completed todo #${updated.id} (${updated.name}) — this was the last open item, so every
+non-pinned todo was AUTO-CLEARED. ${pinnedNote}
+  The item and its hash no longer exist; do not try to update #${updated.id} again.`;
+    }
     // The open todo list is NOT echoed here: the list reaches the agent through
     // the todo project-context populator (buildTodoMessages) and the explicit
     // /todos slash command. Only the touched item + its new hash is returned.

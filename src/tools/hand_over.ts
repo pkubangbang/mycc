@@ -187,7 +187,26 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   // 3. Track session in todo
   // For an empty command (interactive shell), label it "(interactive shell)"
   // instead of leaving the todo body blank / showing "undefined".
-  ctx.todo.createTodo(`hand_over: [sessionName: ${sessionName}]`, command || '(interactive shell)');
+  //
+  // The todo is ANNOUNCED in the result (see `trackedSuffix`): creating it
+  // silently left the model unable to see or address the row — `todo_*` tools
+  // are write-only and the populator is frozen until the next compact/clear.
+  //
+  // DEFENSIVE capture: the announcement is a courtesy, not the task. If the todo
+  // module is absent or returns nothing, the handover must still succeed — a
+  // missing convenience line must never fail the terminal session the user asked
+  // for. (Same best-effort posture as the peer-wire bookmark.)
+  let trackedSuffix = '';
+  try {
+    const handOverTodo = ctx.todo.createTodo(
+      `hand_over: [sessionName: ${sessionName}]`,
+      command || '(interactive shell)',
+    );
+    if (handOverTodo) {
+      trackedSuffix =
+        `\n\nAlso tracked: #${handOverTodo.id} "hand_over: [sessionName: ${sessionName}]" [hash: ${handOverTodo.hash}]`;
+    }
+  } catch { /* best-effort — never break the handover */ }
 
   // 4. Open popup terminal (detached, returns immediately)
   const terminalArgs = parseTerminalArgs(terminalLauncher, sessionName);
@@ -241,7 +260,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
     const result =
       lines.length > 100 ? await summarizeOutput(output, command, 100) : output || '(empty output)';
 
-    return `User provided feedback: "${answer}"\n\nSession ${sessionName} is still running. Reattach with: tmux attach -t ${sessionName}\n\nOutput:\n${result}`;
+    return `User provided feedback: "${answer}"\n\nSession ${sessionName} is still running. Reattach with: tmux attach -t ${sessionName}${trackedSuffix}\n\nOutput:\n${result}`;
   }
 
   // Show closing notice based on user's choice
@@ -307,7 +326,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
     `${header}\n` +
     `${status}\n` +
     `${nextAction}\n` +
-    `\n` +
+    `${trackedSuffix}\n` +
     `Output (${lines.length} lines):\n\n${result}`
   );
 }

@@ -7,6 +7,7 @@
  */
 
 import { ensureServeHub } from './serve-registry.js';
+import { resyncTodoSnapshot } from './serve-todos.js';
 import { agentIO } from '../loop/agent-io.js';
 import { setWebUiUp } from '../loop/loop-events.js';
 import { setResultCallback } from '../utils/letter-box.js';
@@ -42,6 +43,13 @@ type ActivateHub = OutputMirroringHub & {
   getUrl(): string | null;
   getUrls(): { local: string; network: string[] } | null;
   start(port: number, host?: string | null): Promise<void>;
+  /**
+   * Todo-snapshot slice, used by the post-start re-sync (see
+   * `resyncTodoSnapshot`). Declared structurally like the rest of this type —
+   * it must not pull `serve-hub.ts` onto the boot path.
+   */
+  broadcastTodoList(payload: import('./serve-todos.js').TodoListPayload): void;
+  getTodoSnapshot(): import('./serve-todos.js').TodoListPayload | null;
 };
 
 /**
@@ -98,6 +106,17 @@ export async function activateServe(port: number, host?: string | null): Promise
 
   // Set up output + result mirroring to WebSocket (shared with restartServe).
   wireOutputMirroring(hub);
+
+  // ── Re-publish the todo snapshot ──
+  // This is the ONE seam that runs on BOTH the first start and every `/serve`
+  // RE-ENTRY. A registration hook cannot work here: `restartServe()` never
+  // calls `registerServeHubFactory`, and `ensureServeHub()` short-circuits on
+  // `if (!factory)`, so after a stop → `/serve` in one process NOTHING
+  // re-registers and the hub's snapshot stays null — `/history` then ships
+  // `todos: null` and the client authoritatively clears the panel while
+  // `TodoModule` still holds rows. Resyncing from here covers the start path
+  // and the re-entry path with one call site.
+  resyncTodoSnapshot(hub);
 
   // Record the WebUI as up for every loop/context consumer. This is the
   // serve layer's START seam — the ONLY writer family of this flag (see the

@@ -91,6 +91,16 @@ export class ParentContext implements AgentContext {
       // the reminder is best-effort and must not break the wire.
       recordRemotePeerTodo: ({ sid, endpoint, done }) => {
         try {
+          // NO ANNOUNCEMENT HERE, DELIBERATELY (unlike tm_create/hand_over).
+          //
+          // This site runs from the peer-wire callback — there is no model turn
+          // in flight and no tool result to append to, so "announce the todo"
+          // has nowhere to land. These rows are PINNED, which makes them visible
+          // by two other routes: the pinned-todo populator renders them at the
+          // next compact/clear boundary, and the recap note's `### Open todos`
+          // section carries every pinned row. So the model does learn about them
+          // — passively, at a boundary, rather than immediately. That is the
+          // correct trade for state that changes without the model acting.
           const openName = `remote peer ${sid} at ${endpoint} — wire, mail_to("${sid}/lead")`;
           const doneName = `remote peer ${sid} at ${endpoint} — wire disconnected (re-run peer_connect to reconnect)`;
           const existing = this.wireRemoteTodoIds.get(endpoint);

@@ -40,7 +40,7 @@ function closeDrawer(): void {
         :messages="state.messages"
         :state="state"
       />
-      <TodoCard :messages="state.messages" />
+      <TodoCard :todos="state.todos" />
       <TeammateCard
         v-if="!drawerOpen && state.teammateMessages.length > 0"
         :teammate-messages="state.teammateMessages"

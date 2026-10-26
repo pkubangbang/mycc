@@ -25,6 +25,7 @@ import type {
   ChatMessage,
   SteeringNote,
   FileInfo,
+  TodoListEntry,
   ConnectionStatus,
 } from '../types';
 
@@ -56,6 +57,14 @@ export const useChatStore = defineStore('chat', () => {
   const pendingSteeringReview = ref<SteeringNote[]>([]);
   const messages = ref<ChatMessage[]>([]);
   const teammateMessages = ref<ChatMessage[]>([]);
+  /**
+   * AUTHORITATIVE todo list — one entry per todo id. Replaced wholesale by a
+   * `type: 'todos'` frame (every todo mutation) and by the `todos` field of
+   * /history (page reload). The todo panel reads ONLY this; never derive the
+   * checklist from `todo_*` briefs — those are events, and one item touched
+   * three times would render as three rows.
+   */
+  const todos = ref<TodoListEntry[]>([]);
   // Monotonic counter incremented on every AUTHORITATIVE /history
   // replacement (a 200 that splices the chat arrays) and on a session-change
   // clear (fetchConfig detecting a new sessionId clears the arrays — also an
@@ -135,6 +144,7 @@ export const useChatStore = defineStore('chat', () => {
     pendingSteeringReview,
     messages,
     teammateMessages,
+    todos,
     historyRevision,
     inputText,
     pendingFiles,

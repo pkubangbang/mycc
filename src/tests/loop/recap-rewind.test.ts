@@ -104,7 +104,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     t.user('hello');
     expect(t.getLastBrief()).toBeNull();
     const before = t.getMessages().length;
-    expect(t.rewindToLastBrief('nothing', 'x')).toBeNull();
+    expect(t.rewindToLastBrief('nothing')).toBeNull();
     expect(t.getMessages().length).toBe(before);
   });
 
@@ -132,7 +132,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     t.agent('thinking');
     t.user('more work');
 
-    const result = t.rewindToLastBrief('collapse', 'SUMMARY BODY')!;
+    const result = t.rewindToLastBrief('SUMMARY BODY')!;
     expect(result.anchorMessage).toBe('mapped the parser');
     // The rewind can only ever ADD tokens when the collapsed span is smaller
     // than what replaces it: the result line is no longer a bare "OK" but the
@@ -168,7 +168,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     const content = msgs[2].content as string;
     const [line1, ...rest] = content.split('\n');
     expect(line1).toBe(`[${briefHash(anchorId)}] ANCHOR`);
-    expect(rest.join('\n')).toBe(`Note, a recap has reset the conversation here with summary: ${buildRecapNote('collapse', 'mapped the parser', 'SUMMARY BODY')}`);
+    expect(rest.join('\n')).toBe(`Note, a recap has reset the conversation here with summary: ${buildRecapNote('mapped the parser', 'SUMMARY BODY')}`);
     expect(msgs[2].content).toContain('SUMMARY BODY');
     expect(t.getLastRole()).toBe('tool'); // TP parity handoff to the next agent()
   });
@@ -176,14 +176,14 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
   it('a second recap at the SAME anchor overwrites the note (pure overwrite, no stacking)', () => {
     pushBrief(t, 'only anchor');
     t.agent('work');
-    t.rewindToLastBrief('one', 'summary one');
+    t.rewindToLastBrief('summary one');
     expect(t.getMessages().at(-1)!.content).toContain('summary one');
 
     // New activity after the anchor's round-trip re-arms the SAME brief (rule
     // 2 needs no "consumed" marker), so the second recap targets it again and
     // OVERWRITES its result rather than stacking a second note.
     t.agent('more work');
-    expect(t.rewindToLastBrief('two', 'summary two')!.anchorMessage).toBe('only anchor');
+    expect(t.rewindToLastBrief('summary two')!.anchorMessage).toBe('only anchor');
 
     const note = t.getMessages().at(-1)!.content;
     expect(note).toContain('summary two');
@@ -195,10 +195,11 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     pushBrief(t, 'mapped the parser');
     t.agent('work');
     t.agent('more work');
-    t.rewindToLastBrief('collapse', 'SUMMARY BODY\n\n**Next direction:** do X');
+    t.rewindToLastBrief('SUMMARY BODY\n\n**Next direction:** do X');
 
     const note = t.getMessages().at(-1)!.content;
-    expect(note).toContain('[RECAP] collapse');
+    expect(note).toContain('[RECAP]');
+    expect(note).not.toContain('[RECAP] collapse');
     expect(note).toContain('Rewound past the brief: "mapped the parser"');
     expect(note).toContain('SUMMARY BODY');
     expect(note.trimEnd().endsWith('**Next direction:** do X')).toBe(true);
@@ -211,13 +212,13 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     t.agent('work two');
 
     expect(t.getLastBrief()!.message).toBe('SECOND');
-    t.rewindToLastBrief('one', 'summary one');
+    t.rewindToLastBrief('summary one');
 
     // Recap left SECOND's round-trip LAST, so it now has nothing after it —
     // rule 2 alone moves the anchor back to FIRST.
     expect(t.getLastBrief()!.message).toBe('FIRST');
 
-    t.rewindToLastBrief('two', 'summary two');
+    t.rewindToLastBrief('summary two');
     const msgs = t.getMessages();
     // SECOND's round-trip is gone too; only its quoted text survives in note two,
     // written into FIRST's own result (nothing appended).
@@ -255,7 +256,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     // Right after a compaction the floor brief IS the last message pair, so
     // there is nothing below it to collapse yet.
     expect(t.getLastBrief()).toBeNull();
-    expect(t.rewindToLastBrief('post-compact', 'note')).toBeNull();
+    expect(t.rewindToLastBrief('post-compact note')).toBeNull();
 
     // The first real activity after the boundary arms the floor brief.
     t.user('next question');
@@ -263,7 +264,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     expect(peek.message).toBe('Re-orienting on the compacted summary to resume the in-flight task.');
     expect(peek.span.map((m) => m.content)).toEqual(['next question']);
 
-    const result = t.rewindToLastBrief('post-compact', 'note')!;
+    const result = t.rewindToLastBrief('post-compact note')!;
     expect(result.anchorMessage).toBe('Re-orienting on the compacted summary to resume the in-flight task.');
     const msgs = t.getMessages();
     expect(msgs[0].role).toBe('user'); // the compaction summary is preserved
@@ -278,7 +279,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     // Simulate an ESC wrap-up that started beyond the post-rewind length.
     t.beginWrapUp();
     const activeBefore = t.hasActiveWrapUp();
-    t.rewindToLastBrief('collapse', 'note');
+    t.rewindToLastBrief('note');
     expect(activeBefore).toBe(true);
     expect(t.hasActiveWrapUp()).toBe(false); // reset inside the facade
 
@@ -293,7 +294,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     pushBrief(t, 'anchor');
     for (let i = 0; i < 20; i++) t.agent(`filler ${i}`.repeat(20));
     // (20 fillers already follow the brief round-trip — it is an anchor.)
-    t.rewindToLastBrief('collapse', 'note');
+    t.rewindToLastBrief('note');
     const recount = (t as unknown as { store: MessageStore }).store;
     recount.recomputeTokenCount();
     expect(t.getTokenCount()).toBe(recount.tokenCount);
@@ -323,7 +324,7 @@ describe('P2 regressions: synthetic anchors, TOCTOU, span index space', () => {
     // The anchor is still the REAL brief, not the synthetic one right above.
     expect(t.getLastBrief()?.message).toBe('the real anchor');
 
-    const result = t.rewindToLastBrief('collapse', 'note')!;
+    const result = t.rewindToLastBrief('note')!;
     expect(result.anchorMessage).toBe('the real anchor');
     expect(t.getMessages().some(
       (m) => String(m.content ?? '').includes('Rewound past the brief: "the real anchor"'),
@@ -394,7 +395,7 @@ describe('P2 regressions: synthetic anchors, TOCTOU, span index space', () => {
     }], { synthetic: true });
     t.tool('brief', 'OK', `brief_${seq}`);
     expect(t.getLastBrief()).toBeNull();
-    expect(t.rewindToLastBrief('x', 'y')).toBeNull();
+    expect(t.rewindToLastBrief('y')).toBeNull();
   });
 
   it('refuses to truncate when the anchor moved since the peek (TOCTOU)', () => {
@@ -414,12 +415,12 @@ describe('P2 regressions: synthetic anchors, TOCTOU, span index space', () => {
 
     // The caller still holds the OLD id → rewind must be a no-op, not a
     // truncation at the NEW anchor (which was never summarized).
-    expect(t.rewindToLastBrief('collapse', 'note', staleId)).toBeNull();
+    expect(t.rewindToLastBrief('note', staleId)).toBeNull();
     expect(t.getMessages().length).toBe(len);
     expect(t.getLastBrief()?.message).toBe('SECOND');
 
     // With the current id the same call succeeds — at SECOND.
-    expect(t.rewindToLastBrief('collapse', 'note', t.getLastBrief()!.id)).not.toBeNull();
+    expect(t.rewindToLastBrief('note', t.getLastBrief()!.id)).not.toBeNull();
     expect(t.getMessages().at(-1)!.content).toContain('Rewound past the brief: "SECOND"');
   });
 
@@ -469,7 +470,7 @@ describe('H1 — a failed recap leaves no activity behind', () => {
     failRecap(t, 'recap_1', '[RECAP] Nothing to collapse — there is no new activity past your last brief.');
 
     expect(t.getLastBrief()).toBeNull();
-    expect(t.rewindToLastBrief('collapse', 'note')).toBeNull();
+    expect(t.rewindToLastBrief('note')).toBeNull();
   });
 
   it('a failure after real briefs does not move the anchor forward', () => {
@@ -525,7 +526,7 @@ describe('H1 — a failed recap leaves no activity behind', () => {
     const t = new Triologue();
     pushBrief(t, 'ANCHOR');
     t.user('work');
-    expect(t.rewindToLastBrief('collapse', 'SUMMARY')!.anchorMessage).toBe('ANCHOR');
+    expect(t.rewindToLastBrief('SUMMARY')!.anchorMessage).toBe('ANCHOR');
     // The note went into the BRIEF's tool result — no new message appeared.
     const last = t.getMessages().at(-1)!;
     expect(last.role).toBe('tool');
@@ -580,7 +581,7 @@ describe('M1 — anchor identity', () => {
     // guard passes. What contains the damage is that resolution never picks a
     // stale slot: the note lands in the NEWEST anchor (TWO) — the same span the
     // caller would have summarized — and ONE's round-trip survives above it.
-    expect(t.rewindToLastBrief('collapse', 'SUMMARY', first.id)).not.toBeNull();
+    expect(t.rewindToLastBrief('SUMMARY', first.id)).not.toBeNull();
     const msgs = t.getMessages();
     // ONE's round-trip and its work survive; only the span after TWO is gone.
     expect(msgs.map((m) => m.content)).toEqual([
@@ -613,7 +614,7 @@ describe('M2 — single anchor resolution', () => {
     t.tool('brief', 'OK TWO', 'brief_dup');
     t.user('activity 2');
 
-    expect(t.rewindToLastBrief('collapse', 'SUMMARY')).not.toBeNull();
+    expect(t.rewindToLastBrief('SUMMARY')).not.toBeNull();
     const msgs = t.getMessages();
     expect(msgs).toHaveLength(5);
     expect(msgs[1].content).toBe('OK ONE'); // the older result is untouched
@@ -661,7 +662,7 @@ describe('M2 — single anchor resolution', () => {
     // BEFORE: resolveAnchor accepted it, then rewindToLastBrief refused on its
     // own (resultIndex < 0) — after the caller had already paid for two forks.
     expect(t.getLastBrief()).toBeNull();
-    expect(t.rewindToLastBrief('collapse', 'note')).toBeNull();
+    expect(t.rewindToLastBrief('note')).toBeNull();
   });
 
   it('the span never starts with an unrelated tool result after the brief', () => {
@@ -685,7 +686,7 @@ describe('M2 — single anchor resolution', () => {
     t.user('q1');
     t.agent('', [{ id: 'bash_y', function: { name: 'bash', arguments: {} } }]);
     t.tool('bash', 'out', 'bash_y');
-    const result = t.rewindToLastBrief('collapse', 'SUMMARY')!;
+    const result = t.rewindToLastBrief('SUMMARY')!;
     expect(result).not.toBeNull();
     // anchor round-trip only: assistant(brief) + tool('brief', note)
     expect(t.getMessages().length).toBe(2);

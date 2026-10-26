@@ -61,7 +61,7 @@ describe('P2 regressions: synthetic anchors, TOCTOU, span index space', () => {
     // The anchor is still the REAL brief, not the synthetic one right above.
     expect(t.getLastBrief()?.message).toBe('the real anchor');
 
-    const result = t.rewindToLastBrief('collapse', 'note')!;
+    const result = t.rewindToLastBrief('note')!;
     expect(result.anchorMessage).toBe('the real anchor');
     expect(t.getMessages().some(
       (m) => String(m.content ?? '').includes('Rewound past the brief: "the real anchor"'),
@@ -132,7 +132,7 @@ describe('P2 regressions: synthetic anchors, TOCTOU, span index space', () => {
     }], { synthetic: true });
     t.tool('brief', 'OK', `brief_${seq}`);
     expect(t.getLastBrief()).toBeNull();
-    expect(t.rewindToLastBrief('x', 'y')).toBeNull();
+    expect(t.rewindToLastBrief('y')).toBeNull();
   });
 
   it('refuses to truncate when the anchor moved since the peek (TOCTOU)', () => {
@@ -152,12 +152,12 @@ describe('P2 regressions: synthetic anchors, TOCTOU, span index space', () => {
 
     // The caller still holds the OLD id → rewind must be a no-op, not a
     // truncation at the NEW anchor (which was never summarized).
-    expect(t.rewindToLastBrief('collapse', 'note', staleId)).toBeNull();
+    expect(t.rewindToLastBrief('note', staleId)).toBeNull();
     expect(t.getMessages().length).toBe(len);
     expect(t.getLastBrief()?.message).toBe('SECOND');
 
     // With the current id the same call succeeds — at SECOND.
-    expect(t.rewindToLastBrief('collapse', 'note', t.getLastBrief()!.id)).not.toBeNull();
+    expect(t.rewindToLastBrief('note', t.getLastBrief()!.id)).not.toBeNull();
     expect(t.getMessages().at(-1)!.content).toContain('Rewound past the brief: "SECOND"');
   });
 
@@ -207,7 +207,7 @@ describe('H1 — a failed recap leaves no activity behind', () => {
     failRecap(t, 'recap_1', '[RECAP] Nothing to collapse — there is no new activity past your last brief.');
 
     expect(t.getLastBrief()).toBeNull();
-    expect(t.rewindToLastBrief('collapse', 'note')).toBeNull();
+    expect(t.rewindToLastBrief('note')).toBeNull();
   });
 
   it('a failure after real briefs does not move the anchor forward', () => {
@@ -263,7 +263,7 @@ describe('H1 — a failed recap leaves no activity behind', () => {
     const t = new Triologue();
     pushBrief(t, 'ANCHOR');
     t.user('work');
-    expect(t.rewindToLastBrief('collapse', 'SUMMARY')!.anchorMessage).toBe('ANCHOR');
+    expect(t.rewindToLastBrief('SUMMARY')!.anchorMessage).toBe('ANCHOR');
     // The note went into the BRIEF's tool result — no new message appeared.
     const last = t.getMessages().at(-1)!;
     expect(last.role).toBe('tool');

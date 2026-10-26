@@ -41,6 +41,8 @@ vi.mock('../../engine/chat-provider.js', () => ({
 vi.mock('../../engine/chat-helpers.js', () => ({
   startSpinner: vi.fn(),
   stopSpinner: vi.fn(),
+  // The module under test imports the error class to LABEL a patch failure.
+  StreamAbortedError: class StreamAbortedError extends Error {},
 }));
 
 // --- Imports after mocks ----------------------------------------------------
@@ -54,12 +56,6 @@ import type { Message, Tool } from '../../types.js';
 // --- Fixtures ---------------------------------------------------------------
 
 const MESSAGES: Message[] = [
-  { role: 'user', content: 'do the thing' },
-  { role: 'assistant', content: 'working on it' },
-];
-
-/** The messages a rewind would delete — the region the summary covers. */
-const SPAN: Message[] = [
   { role: 'user', content: 'do the thing' },
   { role: 'assistant', content: 'working on it' },
 ];
@@ -105,10 +101,8 @@ describe('handleRecapSpan — recap wait indicator (spinner)', () => {
 
     const pending = handleRecapSpan(
       MESSAGES,
-      SPAN,
       TOOLS,
-      'explore the parser',
-      null, // no mindmap → single fork
+      MINDMAP, // the patch fork is the only fork left
     );
 
     // Let the startSpinner() + Promise.all setup run to the first await.
@@ -119,10 +113,10 @@ describe('handleRecapSpan — recap wait indicator (spinner)', () => {
     expect(startSpinner).toHaveBeenCalledTimes(1);
     expect(stopSpinner).not.toHaveBeenCalled();
 
-    gate.resolve('summary text');
+    gate.resolve('none');
     const result = await pending;
 
-    expect(result.summary).toContain('summary text');
+    expect(result.patch).toBeNull();
     // Spinner is cleared once, after the wait.
     expect(stopSpinner).toHaveBeenCalledTimes(1);
   });
@@ -131,8 +125,8 @@ describe('handleRecapSpan — recap wait indicator (spinner)', () => {
     vi.mocked(forkChat).mockRejectedValue(new Error('network down'));
 
     await expect(
-      handleRecapSpan(MESSAGES, SPAN, TOOLS, 'explore the parser', null),
-    ).rejects.toThrow('network down');
+      handleRecapSpan(MESSAGES, TOOLS, MINDMAP),
+    ).resolves.toEqual({ patch: null, patchError: expect.stringContaining('network down') });
 
     // A leaked spinner would leave the terminal line painted forever after a
     // failed recap — the exact stuck-looking state this fix removes.
@@ -140,20 +134,14 @@ describe('handleRecapSpan — recap wait indicator (spinner)', () => {
     expect(stopSpinner).toHaveBeenCalledTimes(1);
   });
 
-  it('starts exactly ONE spinner for the two concurrent forks (mindmap present)', async () => {
-    // Summary fork returns prose; patch fork returns "none" (no patch warranted).
+  it('starts exactly ONE spinner around the surviving mindmap fork', async () => {
+    // The patch fork returns "none" (no patch warranted). It is the only fork.
     vi.mocked(forkChat).mockResolvedValue('none');
 
-    await handleRecapSpan(
-      MESSAGES,
-      SPAN,
-      TOOLS,
-      'explore the parser',
-      MINDMAP,
-    );
+    await handleRecapSpan(MESSAGES, TOOLS, MINDMAP);
 
-    // Both forks ran (summary + patch decision)...
-    expect(forkChat).toHaveBeenCalledTimes(2);
+    // Only the patch fork runs now — the note body is the model's own text.
+    expect(forkChat).toHaveBeenCalledTimes(1);
     // ...behind a single spinner pair. Per-fork wrapping would double-start
     // (no-op) and double-stop (clearing the line mid-recap).
     expect(startSpinner).toHaveBeenCalledTimes(1);
@@ -171,14 +159,11 @@ describe('handleRecapSpan — recap wait indicator (spinner)', () => {
 
     const result = await handleRecapSpan(
       MESSAGES,
-      SPAN,
       TOOLS,
-      'explore the parser',
       MINDMAP,
       escAware,
     );
 
-    expect(result.summary).toContain('[RECAP] Cancelled');
     expect(result.patch).toBeNull();
     expect(startSpinner).toHaveBeenCalledTimes(1);
     expect(stopSpinner).toHaveBeenCalledTimes(1);

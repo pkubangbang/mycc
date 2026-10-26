@@ -17,8 +17,10 @@ import { createApp } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import type { App as VueApp } from 'vue';
 import App from './App.vue';
-import type { ChatMessage, CardOption, FileInfo, SteeringNote } from './types';
+import type { ChatMessage, CardOption, FileInfo, SteeringNote, TodoListEntry } from './types';
 import { applyServerMessage } from './message-dispatch';
+import { parseTodoList } from './todo-payload';
+import { resetSessionState } from './session-reset';
 import { registerDebugSeam } from './debug';
 import { ensureHighlighterReady } from './highlight';
 import { useChatStore } from './stores/chat-store';
@@ -296,7 +298,23 @@ async function fetchHistory(): Promise<boolean> {
     // applied (which would make the next If-None-Match 304 and freeze a stale
     // store until another history change).
     const etag = res.headers.get('ETag');
-    const data = await res.json() as { messages: ChatMessage[]; steeringBuffer?: SteeringNote[]; isRunning?: boolean };
+    const data = await res.json() as {
+      messages: ChatMessage[];
+      steeringBuffer?: SteeringNote[];
+      isRunning?: boolean;
+      /**
+       * The AUTHORITATIVE todo list, a BARE array (or null).
+       *
+       * DECLARED because leaving it out was the root cause of the review's
+       * headline bug: with the field absent from this type, the `as` cast at
+       * the read site below reached around the type system, so `tsc --noEmit`
+       * stayed green (the field was UNREPRESENTABLE, not merely unchecked) and
+       * `historyTodosField` could rot as exported dead code with no
+       * unused-symbol signal. The type is the seam — declare it and the
+       * compiler relates the two halves again.
+       */
+      todos?: TodoListEntry[] | null;
+    };
     // Empty-content prompts are "waiting for input" signals, not chat content.
     // Drop them from the visible record; non-empty prompts (e.g. 'Retry? [Y/n]')
     // remain visible. Also drop steer-echo/steer-flush entries — those belong
@@ -332,6 +350,27 @@ async function fetchHistory(): Promise<boolean> {
     // Replace, not append — on reconnect we want a clean, authoritative snapshot.
     store.messages.splice(0, store.messages.length, ...mainMsgs);
     store.teammateMessages.splice(0, store.teammateMessages.length, ...teammateMsgs);
+    // The AUTHORITATIVE todo list ships with /history so a reload rebuilds the
+    // panel without replaying todo briefs.
+    //
+    // THE ABSENT-vs-EMPTY DISTINCTION IS LOAD-BEARING. The parser collapses
+    // every unusable value to `[]`, and `[]` here means "replace the panel with
+    // nothing" — so reading a MISSING field through it would turn a protocol
+    // mismatch into a silent data wipe. That is exactly what shipped: the server
+    // emitted no `todos` key at all, and every reload cleared the panel.
+    //
+    // So: only a field that is PRESENT is authoritative.
+    //   - absent (`undefined`)      → the server does not speak this contract
+    //                                 → KEEP the current panel (never destroy on a
+    //                                 mismatch; the live wire still updates it).
+    //   - `null` / `[]`             → the server says "this session has no list"
+    //                                 → clear (authoritative empty).
+    //   - an array (bare or wrapped)→ replace.
+    // (The live WS path takes the same stance via parseTodoFrame → null → keep.)
+    if (data.todos !== undefined) {
+      const historyTodos = parseTodoList(data.todos);
+      store.todos.splice(0, store.todos.length, ...historyTodos);
+    }
     // Bump the history revision so the ChatLog collapse watcher resets its
     // x/t/trackingTail window — a 200 is an AUTHORITATIVE replacement, and
     // the new history may have the same filtered length as the old (e.g. the
@@ -429,11 +468,34 @@ async function fetchConfig(): Promise<boolean> {
     if (newSid !== sessionId) {
       sessionId = newSid;
       lastHistoryEtag = null;
-      // Drop the previous session's chatlog immediately. (Steering buffer +
-      // pendingSteeringReview are PROMPT-gated transient state cleared by
-      // ws.onclose / setPhase; they do not carry cross-session history.)
-      store.messages.splice(0, store.messages.length);
-      store.teammateMessages.splice(0, store.teammateMessages.length);
+      // RETIRE THE OLD SOCKET *BEFORE* CLEARING THE STORE (review M7).
+      //
+      // The clear below empties the store while the previous session's socket was
+      // still open and still the current `ws` — it was only retired later, inside
+      // connectWebSocket(), and `isCurrent()` is `ws === socket`. So a `todos`
+      // frame from the PREVIOUS session landing in that window ran
+      // `state.todos = todos` (message-dispatch) AFTER the clear and resurrected
+      // the old session's rows. The window was previously invisible only because
+      // no frame carried a usable list end-to-end (the B1 seed bug); fixing the
+      // seed would have unmasked it as a cross-session row bleed.
+      //
+      // Closing here makes the old socket inert (its onmessage bails on
+      // `!isCurrent()` once `ws` is reassigned by connectWebSocket) before any
+      // state is replaced, so no foreign frame can be applied after the clear.
+      // Best-effort: connectWebSocket() closes it again if this throws.
+      if (ws) {
+        try { ws.close(); } catch { /* already closing — its handlers are inert */ }
+      }
+      // Drop the previous session's state immediately — chatlog, teammate
+      // messages AND the todo panel. (Steering buffer + pendingSteeringReview
+      // are PROMPT-gated transient state cleared by ws.onclose / setPhase;
+      // they do not carry cross-session history.)
+      //
+      // The clear lives in `session-reset.ts` so it has a callable identity a
+      // test can hit. Inline here it was unguardable: main.ts is the browser
+      // entry (createApp / window / a bootstrap IIFE), so no node test can
+      // import it, and deleting the todos line left the whole suite green.
+      resetSessionState(store);
       // Bump the history revision — clearing the arrays is an authoritative
       // replacement (to empty), so the collapse watcher must reset its
       // window just as it does on a /history 200. See #22.

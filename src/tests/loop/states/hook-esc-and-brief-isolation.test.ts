@@ -70,6 +70,8 @@ vi.mock('../../../loop/triologue.js', () => {
     getLastRole = vi.fn(() => null);
     setSystemPrompt = vi.fn();
     getLastBrief = vi.fn(() => ({
+      hash: 'a1b2c3d4',
+      id: 'brief_1',
       message: 'explored the parser',
       confidence: 7,
       span: [{ role: 'tool', tool_name: 'bash', content: 'ls', tool_call_id: 'x' }],
@@ -193,9 +195,11 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
    * is a 'recap' tool call (so the recap dispatch branch fires).
    */
   function makeRecapEnv() {
+    // TWO ARGUMENTS: the anchor hash (omitted → newest foldable) and the
+    // summary the model wrote. Escaping the summary is now the abandon signal.
     const recapCall = createMockAugmentedToolCall('recap', {
-      description: 'explored the parser',
-      comment: 'Next: implement the fix in parser.ts',
+      target_brief: 'a1b2c3d4',
+      summary: 'Explored the parser; the fix goes in parser.ts next.',
     });
     const env = createMockMachineEnv({ triologue });
     // processToolCalls returns a hookResult containing the recap call
@@ -213,8 +217,8 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
     // handleRecapSpan returns the cancelled summary (ESC during recap LLM call)
     // patch is null because getMindmap() returns null (no mindmap in mock env)
     vi.mocked(handleRecapSpan).mockResolvedValueOnce({
-      summary: '[RECAP] Cancelled: ESC pressed during recap.',
       patch: null,
+      patchError: 'mindmap-patch fork aborted',
     } as never);
     // ESC set neglected mode
     agentIO.setNeglectedMode(true);
@@ -229,30 +233,30 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
     // The cancelled summary registered as the recap tool result
     expect(triologue.tool).toHaveBeenCalledWith(
       'recap',
-      '[RECAP] Cancelled: ESC pressed during recap.',
+      '[RECAP] Cancelled: ESC pressed. Nothing was collapsed.',
       recapCall.id,
     );
   });
 
-  it('should return COLLECT (not PROMPT) when recap cancelled but neglected mode is false', async () => {
+  it('should return COLLECT when the patch fork aborts but ESC is not pending', async () => {
     const { env, recapCall } = makeRecapEnv();
     const turn = createTurnVars();
     const chat = createChatData({ assistantContent: 'summarizing now' });
 
     vi.mocked(handleRecapSpan).mockResolvedValueOnce({
-      summary: '[RECAP] Cancelled: ESC pressed during recap.',
       patch: null,
+      patchError: null,
     } as never);
-    // NOT in neglected mode — the cancelled-but-not-neglected path
+    // NOT in neglected mode — the aborted patch is reported, not fatal
     agentIO.setNeglectedMode(false);
 
     const result = await handleHook(env, turn, chat);
 
     expect(result).toBe(AgentState.COLLECT);
-    // summary still registered as the recap tool result
-    expect(triologue.tool).toHaveBeenCalledWith(
+    // The span WAS collapsed: no cancellation sentinel was registered.
+    expect(triologue.tool).not.toHaveBeenCalledWith(
       'recap',
-      '[RECAP] Cancelled: ESC pressed during recap.',
+      expect.stringContaining('Cancelled'),
       recapCall.id,
     );
     // turn.isFirstRound flipped to false on the COLLECT branch
@@ -266,8 +270,8 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
 
     // Normal (non-cancelled) recap completion — no patch (getMindmap returns null)
     vi.mocked(handleRecapSpan).mockResolvedValueOnce({
-      summary: '[RECAP] Summary text here.',
       patch: null,
+      patchError: null,
     } as never);
     // Make getMessages return identifiable content so we can assert it was passed
     const fakeMessages = [{ role: 'user', content: 'msg1' }];
@@ -277,12 +281,10 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
 
     expect(handleRecapSpan).toHaveBeenCalledTimes(1);
     const callArgs = vi.mocked(handleRecapSpan).mock.calls[0];
-    // fullMessages, span, allTools, description, mindmap, escAware fn, comment, lastUserQuery
+    // fullMessages, allTools, mindmap, escAware fn
     expect(callArgs[0]).toEqual(fakeMessages); // fullMessages
-    expect(callArgs[1]).toEqual([{ role: 'tool', tool_name: 'bash', content: 'ls', tool_call_id: 'x' }]); // span
-    expect(callArgs[2]).toEqual([{ function: { name: 'bash' } }]); // allTools from loader
-    expect(callArgs[3]).toBe('explored the parser'); // description
-    expect(typeof callArgs[5]).toBe('function'); // escAware wrapper
-    expect(callArgs[7]).toBe('finish the task'); // lastUserQuery
+    // The span is no longer an argument: the note is the model's own summary.
+    expect(callArgs[1]).toEqual([{ function: { name: 'bash' } }]); // allTools from loader
+    expect(typeof callArgs[3]).toBe('function'); // escAware wrapper
   });
 });

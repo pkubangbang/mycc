@@ -33,6 +33,11 @@ export const todoCreateTool: ToolDefinition = {
     }
 
     const item = ctx.todo.createTodo(name.trim(), note?.trim() || undefined);
+    // The WebUI todo panel is NOT pushed here: TodoModule emits `todo_changed`
+    // on the loop event bus (subscribed once by the serve layer, see
+    // serve-todos.ts) from inside the mutation, so every mutation path —
+    // including /clear, the remote-peer reminder and tm_create/tm_remove —
+    // reaches the panel without each call site remembering to emit.
     // The open todo list is NOT echoed here: the list reaches the agent through
     // the todo project-context populator (buildTodoMessages) and the explicit
     // /todos slash command. Only the touched item + its hash is returned, which

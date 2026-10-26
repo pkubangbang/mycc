@@ -3,6 +3,7 @@
  */
 
 import { createHash } from 'crypto';
+import { loopEvents, type TodoChangedPayload } from '../../loop/loop-events.js';
 import type { TodoModule, TodoItem } from '../../types.js';
 
 /**
@@ -16,6 +17,25 @@ function computeHash(name: string, done: boolean, note?: string): string {
 
 /** Maximum number of previous hashes retained per item (lineage ring cap). */
 const LINEAGE_RING_CAP = 3;
+
+/**
+ * A caller-safe COPY of one item — the single place the copy contract is applied.
+ *
+ * WHY NOT `{ ...item }` (review M8): a shallow spread copies the `previousHashes`
+ * ARRAY BY REFERENCE, so a caller that retains the returned item watches the ring
+ * mutate under it later. `getItems()` documents exactly this hazard and deep-copies
+ * the ring; the four mutation return values did not, so the contract held at one of
+ * five sites. Routing every return through here means a new return site cannot
+ * reopen the hole.
+ *
+ * "Absent stays absent — do not materialise an empty ring", matching getItems().
+ */
+function cloneItem(item: TodoItem): TodoItem {
+  return {
+    ...item,
+    ...(item.previousHashes ? { previousHashes: [...item.previousHashes] } : {}),
+  };
+}
 
 /**
  * Record the item's CURRENT hash in its lineage ring (cap 3, oldest dropped
@@ -46,6 +66,30 @@ export class Todo implements TodoModule {
   private nextId: number = 1;
 
   /**
+   * Announce the new list on the loop event bus.
+   *
+   * Emitting from INSIDE the mutation is the point: every path — the todo
+   * tools, `/clear`, `/todos clear`, the double-Ctrl+L clear,
+   * `recordRemotePeerTodo`, `tm_create`/`tm_remove`, `hand_over` — reaches the
+   * bus without each call site remembering to emit, which is exactly how the
+   * WebUI panel drifted out of sync before.
+   *
+   * COST: when nobody listens this is a single `Map` lookup; the list is
+   * materialised only if `hasListeners('todo_changed')`. Without that guard
+   * `getItems()` would allocate a full copy of every item on EVERY mutation —
+   * including in a child process, which never serves and therefore never has a
+   * subscriber. Locked by `todo-onchange.test.ts` ("does not materialise the
+   * list when nobody listens", which spies on `getItems`).
+   *
+   * `getItems()` clones each item AND its `previousHashes` ring, so a listener
+   * may retain the payload without seeing later mutations through an alias.
+   */
+  private emitChanged(source: TodoChangedPayload['source']): void {
+    if (!loopEvents.hasListeners('todo_changed')) return;
+    loopEvents.emit('todo_changed', { items: this.getItems(), source } satisfies TodoChangedPayload);
+  }
+
+  /**
    * Create a new todo item
    * Assigns auto-increment id and computes integrity hash
    */
@@ -55,7 +99,8 @@ export class Todo implements TodoModule {
     const hash = computeHash(name, done, note);
     const item: TodoItem = { id, name, done, note, hash };
     this.items.push(item);
-    return { ...item };
+    this.emitChanged('create');
+    return cloneItem(item);
   }
 
   /**
@@ -92,11 +137,26 @@ export class Todo implements TodoModule {
     // reminders that survive completion. Keep nextId monotonic across the
     // session so IDs never collide with prior (now-cleared) hash references
     // the LLM may still hold in the triologue.
-    if (this.items.length > 0 && this.items.filter((i) => !i.pinned).every((i) => i.done)) {
+    const autoCleared = this.items.length > 0 && this.items.filter((i) => !i.pinned).every((i) => i.done);
+    if (autoCleared) {
       this.items = this.items.filter((i) => i.pinned);
     }
 
-    return { ...existing };
+    // Report the PURGE distinctly from the EDIT (review B6): when the auto-clear
+    // just removed the very item this call updated, returning it unchanged would
+    // hand the caller a GHOST — a successful result for a row the store no longer
+    // holds, whose hash can never be used again (findByPreviousHash scans
+    // `this.items`, and the recap's `formatOpenTodos` filters done non-pinned
+    // rows, so the item never re-enters the model's context either).
+    //
+    // The RETURN SHAPE is kept deliberately (a `TodoItem`, exactly as before):
+    // `updateTodo` is a shared API with several callers, and returning null here
+    // broke them all for a defect that is really about what the TOOL tells the
+    // model. So the purge is announced on the event bus instead, where a
+    // subscriber that renders the list can see it, and the caller decides what to
+    // say — `todo_update` compares the returned item against the live list.
+    this.emitChanged(autoCleared ? 'autoclear' : 'update');
+    return cloneItem(existing);
   }
 
   /**
@@ -133,14 +193,26 @@ export class Todo implements TodoModule {
    */
   clear(): void {
     this.items = [];
-    this.nextId = 1;
+    // nextId is deliberately NOT reset: ids must stay unique for the whole
+    // session. The auto-clear in updateTodo() documents the same rule — the
+    // LLM may still hold a hash/id reference for a now-cleared item, and the
+    // WebUI uses the id as a row key, so reusing #1 after a clear would both
+    // collide with the stale row and resurrect a dead reference.
+    this.emitChanged('clear');
   }
 
   /**
    * Get all items (for testing)
    */
   getItems(): TodoItem[] {
-    return this.items.map((i) => ({ ...i }));
+    return this.items.map((i) => ({
+      ...i,
+      // Deep-ish copy: the lineage ring is a mutable array shared with the live
+      // item, so a shallow spread would let a retained snapshot observe LATER
+      // mutations (the bus payload's `previousHashes` grew after it was
+      // emitted). Absent stays absent — do not materialise an empty ring.
+      ...(i.previousHashes ? { previousHashes: [...i.previousHashes] } : {}),
+    }));
   }
 
 
@@ -161,7 +233,8 @@ export class Todo implements TodoModule {
     // Un-pinning is the documented escape hatch: it is how the agent releases
     // a guard that would otherwise keep the turn from ending.
     existing.preventStop = pinned ? preventStop : undefined;
-    return { ...existing };
+    this.emitChanged('pin');
+    return cloneItem(existing);
   }
 
   /**
@@ -177,7 +250,7 @@ export class Todo implements TodoModule {
   findByPreviousHash(hash: string): TodoItem | null {
     const item = this.items.find((i) => i.previousHashes?.includes(hash));
     if (!item) return null;
-    return { ...item };
+    return cloneItem(item);
   }
 
   /**
@@ -189,6 +262,9 @@ export class Todo implements TodoModule {
   getPreventStopCandidates(): TodoItem[] {
     return this.items
       .filter((i) => i.pinned && !!i.preventStop?.trim())
-      .map((i) => ({ ...i }));
+      // cloneItem, not `{ ...i }` (round-2 review, minor #7): a shallow spread would
+      // alias the `previousHashes` ring — the same defect M8 fixed at the four
+      // mutation return sites. This was the fifth path.
+      .map((i) => cloneItem(i));
   }
 }

@@ -28,6 +28,15 @@ const POLL_INTERVAL = 5000; // 5 seconds
 const CONFUSION_THRESHOLD = 10; // Same as main process
 const MIN_MESSAGES_FOR_HINT = 6; // Same as main process
 
+/**
+ * Tool-call interval for the teammate's TODO reminder (step 3 of the loop).
+ *
+ * Deliberately the same value as the lead's brief-nudge interval: a teammate is
+ * a simpler agent, so it gets ONE plain reminder on the same rhythm rather than
+ * the lead's signal-gated variant. See the step-3 comment in the loop.
+ */
+const TODO_NUDGE_INTERVAL = 5;
+
 // State
 let teammateName = '';
 let teammateRole = '';
@@ -260,6 +269,15 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
   // Confusion tracking
   let nextBriefNudge = 5;
+  /**
+   * Calls until the teammate's TODO nudge fires (step 3 of the loop).
+   *
+   * Starts at the same cadence as the brief nudge but is checked FIRST, because
+   * the todo list is the teammate's working state and a stale checklist is worse
+   * than a missing status line. See the step-3 comment for why this stays plain
+   * (no recap teaching, no signal gating) — teammates are designed to be simple.
+   */
+  let nextTodoNudge = TODO_NUDGE_INTERVAL;
 
   // Tools that are purely exploratory (information gathering)
   const EXPLORATION_TOOLS = new Set([
@@ -387,11 +405,55 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         pendingModeChange = null;
       }
 
-      // 3. (removed) The former todo nudge is gone: the open todo list is
-      //    delivered by the todo project-context populator (buildTodoMessages)
-      //    and the todo_* tools report only the item they touched. A teammate
-      //    has no peer channels, so no channel nudge either — the numbered
-      //    steps below are unchanged.
+      // 3. TODO NUDGE — the FIRST nudge in a teammate's loop.
+      //
+      // DELIBERATELY SIMPLE, and deliberately different from the lead's.
+      //
+      // The lead has recap: it can fold finished work and the note re-surfaces
+      // the open list WITH hashes. Teammates have no recap (it is scope ['main']),
+      // so they get the plain, cheap instrument instead: "here is your list, keep
+      // it current". No recap teaching, no boundary tracking, no signal gating —
+      // a teammate is designed to be SIMPLE, and a sophisticated conditional
+      // nudge would be one more thing for it to reason about.
+      //
+      // It must come FIRST among the nudges: the todo list is the teammate's
+      // working state, and the failure this prevents (a teammate that has done
+      // six tool calls with a stale checklist) is more damaging than a missing
+      // brief.
+      //
+      // WHY PRINTING THE LIST HERE IS NOT DUPLICATE DELIVERY — the reason the
+      // former nudge was removed outright:
+      //   The project-context populator (buildTodoMessages) is FROZEN between
+      //   compact()/clear() boundaries on purpose, to keep the prompt-cache
+      //   prefix hot. So mid-task it shows a STALE list, or none at all on the
+      //   first task. This reminder is the only thing that puts the CURRENT list
+      //   in front of the teammate while it works. Printing it is therefore not
+      //   repetition of the populator — it is the correction OF it, and it is
+      //   transient (a triologue note), so it does not enter the cached prefix.
+      //
+      // The list is rendered from getItems() rather than printTodoList() so the
+      // note text a teammate sees is the same shape the lead renders, and stays
+      // free of the printer's raw `[hash: …]` tail (a teammate addresses items by
+      // id, not by the lead's hash lineage).
+      nextTodoNudge--;
+      if (nextTodoNudge <= 0) {
+        nextTodoNudge = TODO_NUDGE_INTERVAL;
+        let openTodos: ReturnType<typeof ctx.todo.getItems> = [];
+        try {
+          openTodos = ctx.todo.getItems().filter((i) => !i.done || i.pinned);
+        } catch { /* best-effort — a reminder must never break the loop */ }
+        const lines = openTodos.length > 0
+          ? openTodos.map((i) => {
+              const box = i.done ? '[x]' : '[ ]';
+              const pin = i.pinned ? ' 📌' : '';
+              return `- ${box}${pin} ${i.id}. ${i.name}${i.note ? ` — ${i.note}` : ''}`;
+            }).join('\n')
+          : '(no todos)';
+        triologue.note('REMINDER',
+          `Update your todos — keep your checklist current:\n${lines}\n\n` +
+          `Mark items done with todo_update as you finish them, and add new work with ` +
+          `todo_create. (This reminder repeats every ${TODO_NUDGE_INTERVAL} tool calls.)`);
+      }
 
       // 4. Time reminder if budget is set (every N rounds)
       if (budgetSent) {
