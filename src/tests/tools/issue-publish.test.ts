@@ -32,6 +32,11 @@ function createMockContext(issueModule: IssueModule): AgentContext {
   const core: CoreModule = {
     getWorkDir: () => '/tmp/test',
     setWorkDir: vi.fn(),
+    // Runtime auto-commit allow-list (BaseCore surface); empty = feature OFF.
+    getAllowAutoCommitBranches: () => [] as string[],
+    addAllowAutoCommitBranch: vi.fn(() => false),
+    removeAllowAutoCommitBranch: vi.fn(() => false),
+    clearAllowAutoCommitBranches: () => [] as string[],
     getName: () => 'test-agent',
     brief: vi.fn(),
     verbose: vi.fn(),
