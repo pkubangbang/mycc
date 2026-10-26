@@ -1,122 +1,126 @@
 <script setup lang="ts">
 /**
- * TodoCard.vue — floating, collapsible todo summary card.
+ * TodoCard.vue — floating, collapsible todo activity summary card.
  *
- * Replaces the inline `todo_create` / `todo_update` / `todo_pinning` log
- * bubbles in the chat stream. Instead of dumping the full `printTodoList()`
- * output every time a todo changes, this card:
- *   - tracks the LATEST todo-labeled message (the most recent state),
- *   - floats at the top-left of the chat area (top-right is reserved for
- *     TeammateCard, so the two never collide),
- *   - is COLLAPSED by default — showing only the last todo line,
- *   - expands downward on click to reveal the full list, while staying
- *     floating (position:absolute, never reflows the chat log),
- *   - hides entirely when there are no todos ("No todos." or no todo msg).
+ * The card is a compact VIEW over the `todo_create` / `todo_update` /
+ * `todo_pinning` briefs that already flow to the chat log. It floats at the
+ * top-left of the chat area (top-right is reserved for TeammateCard, so the
+ * two never collide) and:
+ *   - tracks the todo-labelled messages of the CURRENT turn (the turn the last
+ *     todo event belongs to) — the per-turn projection of the todo state,
+ *   - is COLLAPSED by default — the header shows the latest event
+ *     (e.g. "completed #2: add tests"),
+ *   - expands downward on click to reveal this turn's todo events, newest
+ *     first, while staying floating (position:absolute, never reflows chat),
+ *   - hides entirely while the turn has no todo events.
  *
- * The card is purely a frontend view over existing ChatMessages — no
- * backend state. See the "todo management" / brief() label convention in
- * MYCC.md: brief('info', 'todo_create'|'todo_update'|'todo_pinning', ...)
- * emits a labeled `log` message whose `content` is the printTodoList()
- * string.
+ * ## Why the brief's message, not a snapshot
+ *
+ * The todo tools no longer echo `printTodoList()` into the brief (commit
+ * 3b6c8bf moved the open list onto the project-context populator). Each brief
+ * carries exactly one line — `brief('info', 'todo_<op>', 'Created #1: <name>')`
+ * — and that line IS the event:
+ *
+ *   [HH:MM:SS] [todo_create]              ← header, built frontend-side
+ *   Created #1: backfill authorId         ← the todo event (brief content)
+ *
+ * The old implementation parsed `content` as a printTodoList() snapshot and
+ * rendered nothing once the tools stopped echoing it — every todo brief became
+ * an empty pill on screen. Both consumers now share `describeTodoEvent`.
+ *
+ * ## What the card does NOT know
+ *
+ * The backend sends no structured todo list to the WebUI — there is no
+ * "list current todos" channel (the full list only reaches the LLM through the
+ * populator, and the user through the terminal `/todos` slash command). The
+ * card therefore shows the turn's todo ACTIVITY — which is what the chat log
+ * is about — rather than a synthesised, potentially stale checklist. The card
+ * auto-collapses when the agent starts a new turn with todo events.
  */
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import type { ChatMessage } from '../types';
+import { describeTodoEvent } from './todo-activity';
+import type { TodoEvent } from './todo-activity';
 
 const props = defineProps<{ messages: ChatMessage[] }>();
 
-/** Labels that carry a todo-list snapshot in their `content`. */
-const TODO_LABELS = new Set(['todo_create', 'todo_update', 'todo_pinning']);
-
-/** The most recent todo-labeled message — the authoritative current state. */
+/** The latest todo-labelled message — the authoritative current state. */
 const latestTodoMsg = computed(() => {
   for (let i = props.messages.length - 1; i >= 0; i--) {
     const m = props.messages[i];
-    if (m.label && TODO_LABELS.has(m.label)) return m;
+    if (describeTodoEvent(m) !== null) return m;
   }
   return null;
 });
 
-/** Raw printTodoList() content of the latest todo message. */
-const rawContent = computed(() => latestTodoMsg.value?.content ?? '');
-
-interface ParsedTodo {
-  /** Original line (with leading whitespace trimmed). */
-  raw: string;
-  done: boolean;
-  pinned: boolean;
-  /** The "N. Name" body, stripped of markers/tags/hash. */
-  text: string;
-}
-
 /**
- * Parse a printTodoList() string into individual todo lines.
- * Format:
- *   Todo list:
- *     [x] 📌 1. Name (note) [reactivate: cond] [hash: xxx]
- *     [ ] 2. Other [hash: yyy]
- * The first non-empty line is the "Todo list:" header — skipped.
- * Each subsequent non-empty line is one todo item.
+ * Messages of the CURRENT turn carrying a todo event, NEWEST first, capped at
+ * MAX_EVENTS. A "turn" starts at the latest user bubble at or before the
+ * latest todo event (a user bubble is the only reliable turn boundary visible
+ * to the frontend — an assistant 'result' can also appear mid-turn for the ESC
+ * wrap-up letterbox). A turn with no user bubble (session start) keeps every
+ * prior todo event.
  */
-function parseTodos(content: string): ParsedTodo[] {
-  const lines = content.split('\n');
-  const items: ParsedTodo[] = [];
-  let sawHeader = false;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    if (!sawHeader) {
-      // First non-empty line is the "Todo list:" header.
-      sawHeader = true;
-      continue;
+const MAX_EVENTS = 8;
+const turnEvents = computed(() => {
+  const latest = latestTodoMsg.value;
+  if (!latest) return [];
+  const latestIdx = props.messages.indexOf(latest);
+  let start = 0;
+  for (let i = latestIdx; i >= 0; i--) {
+    if (props.messages[i].type === 'user') {
+      start = i;
+      break;
     }
-    // Marker: [x] or [ ]
-    const done = /^\[x\]/i.test(trimmed);
-    const pinned = trimmed.includes('📌');
-    // Strip "[x]"/"[ ]", the 📌 pin tag, and the trailing [hash: ...] so the
-    // summary reads cleanly. Keep the "N. Name (note) [reactivate: ...]" body.
-    const text = trimmed
-      .replace(/^\[[ xX]\]\s*/, '')
-      .replace(/📌\s*/, '')
-      .replace(/\s*\[hash:\s*[0-9a-f]+\]\s*$/i, '');
-    items.push({ raw: trimmed, done, pinned, text });
   }
-  return items;
-}
-
-const todos = computed<ParsedTodo[]>(() => parseTodos(rawContent.value));
-
-/** The last todo line — the one shown in the collapsed chip. */
-const lastTodo = computed(() => {
-  const list = todos.value;
-  return list.length > 0 ? list[list.length - 1] : null;
+  const events: TodoEvent[] = [];
+  for (let i = latestIdx; i >= start && events.length < MAX_EVENTS; i--) {
+    const parsed = describeTodoEvent(props.messages[i]);
+    if (parsed) events.push(parsed);
+  }
+  return events;
 });
 
-/** Whether there is anything to show (a real todo list, not "No todos."). */
-const hasTodos = computed(
-  () => latestTodoMsg.value !== null && todos.value.length > 0,
-);
+/** Whether there is anything to show. */
+const hasEvents = computed(() => turnEvents.value.length > 0);
 
-/** Collapse state: collapsed (true) shows only the last item; expanded
- *  (false) shows the full list. Defaults to collapsed. */
+/** The newest event — the one shown in the collapsed header. */
+const latestEvent = computed(() => turnEvents.value[0] ?? null);
+
+/** Collapse state: collapsed (true) shows only the latest event; expanded
+ *  (false) shows this turn's events. Defaults to collapsed. */
 const collapsed = ref(true);
 
 function toggle(): void {
   collapsed.value = !collapsed.value;
 }
+
+// A NEW turn's first todo event restores the default (collapsed) state, so the
+// card never stays expanded from the previous turn. Keyed on the session-wide
+// event count, not the turn-window length, so the shrink-then-grow of a
+// windowed turn cannot re-collapse it.
+const totalTodoEvents = computed(
+  () => props.messages.filter((m) => describeTodoEvent(m) !== null).length,
+);
+watch(totalTodoEvents, (next, prev) => {
+  if (next <= prev || !latestEvent.value) return;
+  const events = turnEvents.value;
+  // The window starts with a single fresh event → a new turn began.
+  if (events.length === 1) collapsed.value = true;
+});
 </script>
 
 <template>
-  <div v-if="hasTodos" class="todo-card" :class="{ collapsed }">
-    <button class="todo-card-header" type="button" @click="toggle" :title="collapsed ? '点击展开全部 todo' : '点击折叠'">
-      <span class="todo-icon" :class="{ done: lastTodo?.done }">{{ lastTodo?.done ? '☑' : '☐' }}</span>
-      <span v-if="lastTodo?.pinned" class="todo-pin" aria-hidden="true">📌</span>
-      <span class="todo-summary">{{ lastTodo?.text ?? 'Todo' }}</span>
+  <div v-if="hasEvents" class="todo-card" :class="{ collapsed }">
+    <button class="todo-card-header" type="button" @click="toggle" :title="collapsed ? '点击展开本轮 todo 记录' : '点击折叠'">
+      <span class="todo-icon" :class="{ done: latestEvent?.done }">{{ latestEvent?.icon }}</span>
+      <span class="todo-summary">{{ latestEvent?.text ?? 'Todo' }}</span>
+      <span v-if="turnEvents.length > 1" class="todo-count">×{{ turnEvents.length }}</span>
       <span class="todo-chevron" :class="{ open: !collapsed }" aria-hidden="true">▾</span>
     </button>
     <div v-if="!collapsed" class="todo-card-body">
-      <div v-for="(t, idx) in todos" :key="idx" class="todo-line" :class="{ done: t.done }">
-        <span class="todo-icon" :class="{ done: t.done }">{{ t.done ? '☑' : '☐' }}</span>
-        <span v-if="t.pinned" class="todo-pin" aria-hidden="true">📌</span>
+      <div v-for="t in turnEvents" :key="t.id" class="todo-line" :class="{ done: t.done }">
+        <span class="todo-icon" :class="{ done: t.done }">{{ t.icon }}</span>
         <span class="todo-text">{{ t.text }}</span>
       </div>
     </div>
@@ -181,15 +185,17 @@ function toggle(): void {
   color: var(--accent);
   opacity: 1;
 }
-.todo-pin {
-  flex-shrink: 0;
-}
 .todo-summary {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.todo-count {
+  flex-shrink: 0;
+  opacity: 0.7;
+  font-size: 12px;
 }
 .todo-chevron {
   flex-shrink: 0;

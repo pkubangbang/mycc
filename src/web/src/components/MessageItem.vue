@@ -5,6 +5,7 @@ import type { ChatMessage } from '../types';
 import { highlightCode, highlightBash } from '../highlight';
 import { PLAN_SCOPE_LOG_LABEL } from '../plan-scope';
 import PlanScopeCard from './PlanScopeCard.vue';
+import { describeTodoEvent } from './todo-activity';
 
 const props = defineProps<{
   message: ChatMessage;
@@ -38,16 +39,15 @@ const isBashCommand = computed(() =>
   props.message.type === 'log' && !!props.message.label && BASH_COMMAND_LABELS.has(props.message.label)
 );
 
-// Todo tool logs (todo_create / todo_update / todo_pinning) carry the full
-// printTodoList() snapshot as `content`. The list is "extracted" from these
-// bubbles and shown in the floating TodoCard (App.vue) instead, so the
-// inline bubble hides the list body entirely. Only the header
-// ([HH:MM:SS] [label]) and the `detail` summary (e.g. "Created #1: Name")
-// above render — all three todo tools always pass a detail string.
-const TODO_LABELS = new Set(['todo_create', 'todo_update', 'todo_pinning']);
-const isTodoCard = computed(() =>
-  props.message.type === 'log' && !!props.message.label && TODO_LABELS.has(props.message.label)
-);
+// Todo tool logs (todo_create / todo_update / todo_pinning) are single-line
+// briefs — brief('info', 'todo_<op>', '<summary>'), e.g. "Created #1: Name".
+// They carry NO printTodoList() snapshot any longer (commit 3b6c8bf moved the
+// list onto the project-context populator), so the old "extract the snapshot,
+// hide the body" treatment left an EMPTY pill on screen. The bubble now
+// renders the event itself via the shared classifier; TodoCard.vue keeps the
+// floating per-turn summary. See components/todo-activity.ts.
+const todoEvent = computed(() => describeTodoEvent(props.message));
+const isTodoCard = computed(() => todoEvent.value !== null);
 
 // PLAN-mode scope reflection (src/loop/plan-scope.ts), emitted by the hook
 // stage as brief('info', 'plan-scope', formatPlanScopeForDisplay(note)).
@@ -315,9 +315,13 @@ function quoteContent(): void {
           <div class="bash-command-html" v-html="bashHtml"></div>
         </template>
         <template v-else-if="isTodoCard">
-          <!-- Todo tool log: the full todoList snapshot is "extracted" into
-               the floating TodoCard, so the inline bubble hides the list
-               body entirely. Only the header + detail summary above render. -->
+          <!-- Todo tool log: ONE single-line event (icon + summary). The full
+               open list is not carried by the brief — it reaches the LLM via
+               the todo project-context populator and the user via /todos. -->
+          <div class="todo-event" :class="{ done: todoEvent?.done }">
+            <span class="todo-event-icon">{{ todoEvent?.icon }}</span>
+            <span class="todo-event-text">{{ todoEvent?.text }}</span>
+          </div>
         </template>
         <template v-else-if="isPlanScope">
           <!-- PLAN-mode scope reflection: a terminal-formatted block (ASCII
@@ -739,5 +743,25 @@ function quoteContent(): void {
 }
 .toolbar-btn:active {
   background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+/* Todo tool event line (label todo_create / todo_update / todo_pinning): one
+   icon + one summary line, mirroring the terminal brief. A completed item is
+   dimmed; the pin glyph marks a pin/unpin change. */
+.todo-event {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  line-height: 1.45;
+}
+.todo-event.done {
+  opacity: 0.65;
+}
+.todo-event-icon {
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+.todo-event-text {
+  min-width: 0;
+  word-break: break-word;
 }
 </style>
