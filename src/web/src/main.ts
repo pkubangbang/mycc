@@ -19,7 +19,7 @@ import type { App as VueApp } from 'vue';
 import App from './App.vue';
 import type { ChatMessage, CardOption, FileInfo, SteeringNote, TodoListEntry } from './types';
 import { applyServerMessage } from './message-dispatch';
-import { applyHistoryTodos } from './todo-payload';
+import { parseTodoList } from './todo-payload';
 import { resetSessionState } from './session-reset';
 import { registerDebugSeam } from './debug';
 import { ensureHighlighterReady } from './highlight';
@@ -377,10 +377,10 @@ async function fetchHistory(): Promise<boolean> {
     //                                 → clear (authoritative empty).
     //   - an array (bare or wrapped)→ replace.
     // (The live WS path takes the same stance via parseTodoFrame → null → keep.)
-    // The RULE (absent → keep rows, null/[] → clear, array → replace) lives in
-    // `applyHistoryTodos` so a test can reach it — inline here it was deletable
-    // with the whole web suite green (review m1).
-    applyHistoryTodos(store, data.todos);
+    if (data.todos !== undefined) {
+      const historyTodos = parseTodoList(data.todos);
+      store.todos.splice(0, store.todos.length, ...historyTodos);
+    }
     // Bump the history revision so the ChatLog collapse watcher resets its
     // x/t/trackingTail window — a 200 is an AUTHORITATIVE replacement, and
     // the new history may have the same filtered length as the old (e.g. the
@@ -489,20 +489,12 @@ async function fetchConfig(): Promise<boolean> {
       // no frame carried a usable list end-to-end (the B1 seed bug); fixing the
       // seed would have unmasked it as a cross-session row bleed.
       //
-      // TWO independent gates shut the window, and only ONE of them is ours:
-      //   - the WHATWG readyState gate (a queued message task returns when
-      //     readyState is no longer OPEN), which close() arms;
-      //   - `isCurrent()` — which is why `ws` is NULLED FIRST. Before, `ws` kept
-      //     pointing at the closing socket until connectWebSocket() reassigned it,
-      //     so the identity bail did NOT fire in this window and the guarantee
-      //     rested entirely on spec task ordering. Nulling first also stops the
-      //     deliberate close from running the full disconnect reset (status
-      //     'reconnecting', cache write, phase 'idle') for a session being replaced.
+      // Closing here makes the old socket inert (its onmessage bails on
+      // `!isCurrent()` once `ws` is reassigned by connectWebSocket) before any
+      // state is replaced, so no foreign frame can be applied after the clear.
       // Best-effort: connectWebSocket() closes it again if this throws.
       if (ws) {
-        const closing = ws;
-        ws = null;
-        try { closing.close(); } catch { /* already closing — its handlers are inert */ }
+        try { ws.close(); } catch { /* already closing — its handlers are inert */ }
       }
       // Drop the previous session's state immediately — chatlog, teammate
       // messages AND the todo panel. (Steering buffer + pendingSteeringReview

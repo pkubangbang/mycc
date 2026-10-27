@@ -117,12 +117,6 @@ export interface DispatchContext {
  * exhaustive and deterministic: id assignment uses `ctx.nextId()`, and the
  * steering review card population reads `steeringBuffer` at `prompt` time only.
  */
-/**
- * Frame types that carry PANEL state only: they change no phase and add no chat
- * content, so they must not overwrite the diagnostic `lastServerMsg` tag.
- */
-const TODOS_ONLY_FRAME_TYPES: ReadonlySet<string> = new Set(['todos']);
-
 export function applyServerMessage(
   state: DispatchState,
   msg: ChatMessage,
@@ -136,14 +130,7 @@ export function applyServerMessage(
   // branch — is observable in the ChatInput state-tag row (detailed-logs mode
   // only). This is the diagnostic hook for phase desync: the tag row shows
   // which message type last touched the phase after a 'prompt'.
-  //
-  // EXCEPT the panel-only frames (see TODOS_ONLY_FRAME_TYPES): they change no phase
-  // and carry no chat content, so recording them would MASK the last
-  // phase-relevant frame exactly when the tag row is consulted — and they fire on
-  // every todo mutation.
-  if (!TODOS_ONLY_FRAME_TYPES.has(msg.type)) {
-    state.lastServerMsg = { type: msg.type, at: Date.now() };
-  }
+  state.lastServerMsg = { type: msg.type, at: Date.now() };
 
   // A prompt message signals "work done, waiting for user input".
   if (msg.type === 'prompt') {
@@ -232,9 +219,7 @@ export function applyServerMessage(
     //
     // `parseTodoFrame` returns null for an unusable frame — keep the current
     // panel rather than blanking it on a malformed push.
-    // Declared on ChatMessage (types.ts), not cast: the cast is what let the field
-    // stay unrepresentable while tsc stayed green.
-    const todos = parseTodoFrame(msg.todos);
+    const todos = parseTodoFrame((msg as { todos?: unknown }).todos);
     if (todos) {
       state.todos = todos;
     }

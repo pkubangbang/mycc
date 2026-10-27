@@ -64,7 +64,7 @@ function briefAssistantContent(
  * so a note shorter than this is treated as "the fork produced no usable text"
  * rather than folded into the history as a successful collapse.
  */
-export const MIN_RECAP_SUMMARY_CHARS = 40;
+const MIN_RECAP_SUMMARY_CHARS = 40;
 
 /**
  * True when `summary` is real text a rewind may delete a span in favour of.
@@ -231,15 +231,6 @@ async function handleRecapCall(
     : undefined;
   const summaryText = typeof rawSummary === 'string' ? rawSummary.trim() : undefined;
 
-  // THE EMPTY STRING IS THE DISCARD REQUEST — a BLANK-BUT-NON-EMPTY summary is not.
-  //
-  // `summaryText` is TRIMMED, so `length === 0` cannot distinguish `""` (the
-  // documented way to discard the span) from `"   "` / `"\n"` — a model that meant
-  // to summarize but emitted only whitespace would silently DELETE the span and
-  // leave a placeholder note. Decided on the RAW field: only a literally empty
-  // string abandons; whitespace falls through to the length floor and is refused.
-  const rawSummaryIsEmpty = typeof rawSummary === 'string' && rawSummary.length === 0;
-
   // A refusal answers the call with a TOOL-CALL ERROR and COLLAPSES NOTHING:
   // the triologue is left byte-identical to before the attempt, and nothing is
   // written into any earlier brief's result. It needs no marking — anchor
@@ -260,28 +251,23 @@ async function handleRecapCall(
   if (summaryText === undefined) {
     return fail('Error: summary is required — pass your record of the span being folded, or "" to discard the span without a summary.');
   }
-  // Only a LITERALLY empty summary abandons (see rawSummaryIsEmpty above).
-  const abandon = rawSummaryIsEmpty;
+  const abandon = summaryText.length === 0;
 
   const anchor = triologue.getLastBrief(target);
 
   if (!anchor) {
-    // The hashes THIS message may quote — the set `target_brief` ACCEPTS (foldable
-    // only), not every brief that exists. Computed before the branches so every
-    // refusal below names a call the retry can actually make: none of them may
-    // fall back to "no target", because `target_brief` is never defaulted.
-    const known = triologue.listBriefHashes(true).map((b) => `[${b.hash}]`).join(', ');
     if (target && triologue.targetRefusal(target) === 'nothing-after') {
       // The hash DOES exist — it just has nothing after it yet (true of every
       // freshly printed anchor). Say that instead of "no brief matches", which
       // would deny the line the model is reading.
-      return fail(`Error: the brief [${target}] has nothing after it yet — recap folds the work that follows an anchor, so it becomes foldable once new work lands below it.${known ? ` Fold to an anchor that already has work after it: ${known}.` : ' No anchor is foldable yet — run brief and do some work first.'}`);
+      return fail(`Error: the brief [${target}] has nothing after it yet — recap folds the work that follows an anchor, so it becomes foldable once new work lands below it. Call recap without target to collapse the span after the newest foldable anchor.`);
     }
     if (target) {
       // An EXPLICIT target never falls back: collapsing somewhere the model did
       // not choose would delete a span it meant to keep. Quote the hashes that DO
-      // work — the set `target_brief` accepts, not every brief that exists — so the
+      // work — the set `target` accepts, not every brief that exists — so the
       // retry can pick a real anchor instead of a hash this same message refuses.
+      const known = triologue.listBriefHashes(true).map((b) => `[${b.hash}]`).join(', ');
       // Never claim there are no briefs when there ARE — only none foldable yet.
       const all = triologue.listBriefHashes();
       const tail = known
@@ -289,7 +275,7 @@ async function handleRecapCall(
         : all.length > 0
           ? '. The briefs in this conversation all have nothing after them yet, so none is foldable.'
           : ', and this conversation has no briefs yet';
-      return fail(`Error: No brief matches target_brief "${target}"${tail}. Pass one of the addressable hashes as target_brief.`);
+      return fail(`Error: No brief matches target "${target}"${tail}. Call recap without target to collapse to the newest foldable brief.`);
     }
     return fail('Error: No brief found to rewind to — nothing to collapse yet. Call brief first, then recap.');
   }
@@ -364,7 +350,7 @@ async function handleRecapCall(
   const lastQueryForRecap = turn.lastUserQuery || undefined;
 
   const mindmap = ctx.core.getMindmap();
-  const { patch, patchError, escCancelled } = await handleRecapSpan(
+  const { patch, patchError } = await handleRecapSpan(
     fullMessages,
     allTools,
     mindmap,
@@ -373,13 +359,7 @@ async function handleRecapCall(
 
   // Check for ESC cancellation — the triologue is still untouched at this point.
   // Only the mindmap fork can still be cancelled; the note itself needs no fork.
-  //
-  // KEYED ON `escCancelled`, NOT ON `patchError`. A bare patchError cannot tell a
-  // cancellation from a provider hiccup (the watchdog raises the same
-  // StreamAbortedError), and the sentinel path produced NO patchError at all — so
-  // the old condition let an ESC'd recap fall through and TRUNCATE the span.
-  // Neglected mode stays in the condition as "the user asked to stop".
-  if (escCancelled || agentIO.isNeglectedMode()) {
+  if (patchError === 'mindmap-patch fork aborted' && agentIO.isNeglectedMode()) {
     ctx.core.brief('warn', 'recap', 'Cancelled: ESC pressed during the mindmap patch. Nothing was collapsed — the span is still in context.');
     triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
       reasoningContent: chat.assistantReasoningContent,
@@ -388,12 +368,6 @@ async function handleRecapCall(
     // ESC pressed during recap - return STOP for centralized wrap-up
     // (stop.ts handles startWrapUp + auto-off + setNeglectedMode).
     return AgentState.STOP;
-  }
-  if (patchError) {
-    // Best-effort patch failed for a NON-ESC reason (provider, watchdog, invalid
-    // JSON after retries). The recap itself is still valid, so say what was lost
-    // and continue instead of failing silently.
-    ctx.core.brief('warn', 'mindmap-patch', `${patchError} — the recap itself will continue.`);
   }
 
   // ── SUMMARY FLOOR: a too-short summary must not truncate ──
@@ -661,7 +635,7 @@ export async function handleHook(
       const briefResult = chat.crossroadFilePath
         ? `A direction refinement was applied to your response. The full decision record is saved at: ${chat.crossroadFilePath} (you may replay it with mycc-pretty-print --type=crossroad <path> only if the user asks to see the full response).`
         // Synthetic (see crossroadBrief) — a receipt, never the anchor line: it
-        // is not addressable, so naming a `recap(target_brief=…)` call would lie.
+        // is not addressable, so naming a `recap(target=…)` call would lie.
         : briefReceiptLine(crossroadBrief.id);
       triologue.tool('brief', briefResult, crossroadBrief.id);
 

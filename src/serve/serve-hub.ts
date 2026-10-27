@@ -90,12 +90,7 @@ export function historyTodosField(todoList: TodoListPayload | null): TodoListPay
 
 export function todoEtagToken(todoList: TodoListPayload | null): string {
   if (!todoList) return 'todo:null';
-  // LENGTH-PREFIXED (review NIT): this token is folded next to other `key:value`
-  // terms joined by `|`, so a todo NAME containing `|running:0` could otherwise
-  // make two different lists hash identically — and a real change would 304 into a
-  // stale panel. The prefix keeps the encoding injective whatever the content.
-  const encoded = JSON.stringify(todoList.todos);
-  return `todo:${encoded.length}:${encoded}`;
+  return `todo:${JSON.stringify(todoList.todos)}`;
 }
 
 /** Everything `GET /history` reads. Pure inputs, so the route is testable. */
@@ -1013,17 +1008,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
    * the chat log on reconnect; `/history` ships the CURRENT one instead.
    */
   broadcastTodoList(payload: TodoListPayload): void {
-    // DEDUPE AT THE SINK (review MINOR-2). Two producers push here — the
-    // `todo_changed` listener (async: it awaits a dynamic import) and the
-    // synchronous resync from activateServe()/restartServe(). When they interleave,
-    // an identical frame arrives twice and `/history` can briefly answer with the
-    // OLDER list (a different ETag), which the panel renders as a flicker.
-    // Comparing here makes the push idempotent for EVERY caller instead of asking
-    // each one to remember.
-    const unchanged = this.todoList !== null
-      && JSON.stringify(this.todoList.todos) === JSON.stringify(payload.todos);
     this.todoList = payload;
-    if (unchanged) return;
     this.clients.broadcastTodoList(payload);
   }
 

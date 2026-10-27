@@ -273,7 +273,7 @@ describe('H1 — a failed recap leaves no activity behind', () => {
 });
 
 /**
- * R2 — a `recap(target_brief=…)` refusal must name the REAL reason. The hash a model
+ * R2 — a `recap(target=…)` refusal must name the REAL reason. The hash a model
  * most naturally tries is the one on the line it is reading, and that anchor has
  * nothing after it yet — saying "No brief matches target" there denies the
  * transcript the model is looking at.

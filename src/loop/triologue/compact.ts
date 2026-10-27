@@ -307,7 +307,7 @@ export function buildResumeRoundTrip(args: {
       role: 'tool',
       tool_name: 'brief',
       // The pristine success result - WITH its anchor hash, so the floor brief
-      // is addressable by recap(target_brief=...) from the first moment. Rendered by
+      // is addressable by recap(target=...) from the first moment. Rendered by
       // recap-note.ts briefResultLine (the same writer the TOOL stage stamps),
       // never hand-assembled. This brief is NOT synthetic — it is the only
       // anchor left after a compaction — so the invitation is truthful here.

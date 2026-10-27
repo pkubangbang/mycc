@@ -26,7 +26,7 @@ import {
  *                                   the invitation is retired
  *   Note, a recap …                  line 2, the recap's summary
  *
- * The hash is what `recap(target_brief=…)` accepts, so the rendering and the parsing
+ * The hash is what `recap(target=…)` accepts, so the rendering and the parsing
  * live in the SAME module and must agree — that is what most of these cases
  * pin down.
  *
@@ -108,7 +108,7 @@ describe('recap-note', () => {
       // '' must never read as a token that could resolve to some other brief.
       expect(briefHash(undefined)).toBe('');
       expect(briefHash('')).toBe('');
-      expect(briefResultLine(undefined)).toBe('[] ANCHOR — recap(target_brief="") folds the work after this point');
+      expect(briefResultLine(undefined)).toBe('[] ANCHOR — recap(target="") folds the work after this point');
     });
   });
 
@@ -121,7 +121,7 @@ describe('recap-note', () => {
     // uses it. It never changes — a recap appends below it (noteWithSummary).
     expect(BRIEF_OK).toBe('OK');
     expect(BRIEF_ANCHOR_WORD).toBe('ANCHOR');
-    expect(briefResultLine(ID)).toBe(`[${HASH}] ANCHOR — recap(target_brief="${HASH}") folds the work after this point`);
+    expect(briefResultLine(ID)).toBe(`[${HASH}] ANCHOR — recap(target="${HASH}") folds the work after this point`);
     expect(hashOf(briefResultLine(ID))).toBe(HASH);
   });
 
@@ -142,7 +142,7 @@ describe('recap-note', () => {
   });
 
   it('stamps a pristine brief result exactly once', () => {
-    expect(stampBriefResult('OK.', ID)).toBe(`[${HASH}] ANCHOR — recap(target_brief="${HASH}") folds the work after this point`);
+    expect(stampBriefResult('OK.', ID)).toBe(`[${HASH}] ANCHOR — recap(target="${HASH}") folds the work after this point`);
     // Idempotent: an already-stamped result is not stamped twice.
     const stamped = stampBriefResult('OK.', ID);
     expect(stampBriefResult(stamped, ID)).toBe(stamped);
@@ -153,7 +153,7 @@ describe('recap-note', () => {
   it('keeps the plan-scope section BELOW the anchor line', () => {
     const stamped = stampBriefResult(`OK. ${PLAN_SCOPE_HEADING}, decide the interface first.`, ID);
     const lines = stamped.split('\n');
-    expect(lines[0]).toBe(`[${HASH}] ANCHOR — recap(target_brief="${HASH}") folds the work after this point`);
+    expect(lines[0]).toBe(`[${HASH}] ANCHOR — recap(target="${HASH}") folds the work after this point`);
     expect(lines[1]).toBe(`${PLAN_SCOPE_HEADING}, decide the interface first.`);
     expect(hasPlanScopeSection(stamped)).toBe(true);
   });
@@ -162,7 +162,7 @@ describe('recap-note', () => {
     // Two briefs in one epoch no longer share a prefix, so a mismatch here is
     // visible: stamping with the other id must produce the other token.
     expect(stampBriefResult('OK', SAME_EPOCH_ID)).toBe(
-      `[${OTHER_HASH}] ANCHOR — recap(target_brief="${OTHER_HASH}") folds the work after this point`,
+      `[${OTHER_HASH}] ANCHOR — recap(target="${OTHER_HASH}") folds the work after this point`,
     );
     expect(stampBriefResult('OK', undefined)).toBe('OK');
   });
@@ -260,11 +260,11 @@ describe('recap-note', () => {
     const first = noteWithSummary(ID, 'first');
     const second = noteWithSummary(ID, 'second');
     // Line 1 keeps the hash and the ANCHOR word — the address survives — but
-    // retires the `recap(target_brief=…)` invitation: the span above this anchor is
+    // retires the `recap(target=…)` invitation: the span above this anchor is
     // exactly what the recap just deleted, so the call would be refused.
     const line1 = `[${HASH}] ANCHOR`;
     expect(first.split('\n')[0]).toBe(line1);
-    expect(first).not.toContain('recap(target_brief=');
+    expect(first).not.toContain('recap(target=');
     expect(first.split('\n')[1]).toBe('Note, a recap has reset the conversation here with summary: first');
     expect(second).not.toContain('first');
     expect(second.endsWith('summary: second')).toBe(true);

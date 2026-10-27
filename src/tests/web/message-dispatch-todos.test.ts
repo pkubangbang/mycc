@@ -28,8 +28,6 @@ function makeState(): DispatchState {
   const messages = reactive<ChatMessage[]>([]);
   const teammateMessages = reactive<ChatMessage[]>([]);
   const todos = reactive<TodoListEntry[]>([]);
-  // The diagnostic tag the ChatInput state-row renders (detailed-logs mode only).
-  const lastServerMsg = ref<{ type: string; at: number } | undefined>(undefined);
 
   return reactive({
     phase,
@@ -39,7 +37,6 @@ function makeState(): DispatchState {
     messages,
     teammateMessages,
     todos,
-    lastServerMsg,
     showRetry: ref(false),
     isWaiting: computed(() => false),
     isRunning: computed(() => phase.value === 'working'),
@@ -106,18 +103,5 @@ describe('applyServerMessage — todos snapshot', () => {
     applyServerMessage(state, { type: 'todos', content: '' } as unknown as ChatMessage, makeCtx());
 
     expect(state.todos?.map((t) => t.id)).toEqual([5]);
-  });
-});
-
-describe('applyServerMessage — a todos frame must not mask the phase-desync tag', () => {
-  it('leaves lastServerMsg alone, so the tag still names the last phase-relevant frame', () => {
-    const state = makeState();
-    // A `running` frame is the kind the diagnostic exists for...
-    applyServerMessage(state, { type: 'running', content: 'off' } as unknown as ChatMessage, makeCtx());
-    const afterRunning = state.lastServerMsg?.type;
-    // ...and a todo mutation must not hide it (todos fires on EVERY todo change).
-    applyServerMessage(state, todosFrame([row(1)]), makeCtx());
-    expect(state.lastServerMsg?.type).toBe(afterRunning);
-    expect(state.lastServerMsg?.type).not.toBe('todos');
   });
 });

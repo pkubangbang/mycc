@@ -215,10 +215,10 @@ anchor's line 1 is `[<hash>] ANCHOR`.
 The note is appended by `noteWithSummary()` in
 `src/loop/triologue/recap-note.ts` (the same module that renders line 1, so the
 marker and the anchor line cannot drift). It APPENDS: line 1 is kept, minus the
-`recap(target_brief=…)` invitation, which is retired because the span it names is now
+`recap(target=…)` invitation, which is retired because the span it names is now
 gone.
 
-### The brief result line: `[<hash>] ANCHOR — recap(target_brief="<hash>") folds the work after this point`
+### The brief result line: `[<hash>] ANCHOR — recap(target="<hash>") folds the work after this point`
 
 Every brief result starts with a short **hash** — 8 characters of a digest of
 the brief's tool-call id — followed by the call that folds to it. `briefResultLine()`
@@ -231,16 +231,16 @@ Two callers deliberately do NOT get that line, and render `briefReceiptLine()`
 - a **teammate's** brief — `brief` is `['main', 'child']` but `recap` is
   `['main']`, so a child must not be told to call a tool it does not have;
 - a **synthetic** brief (crossroad, empty-output recovery) — it is not in
-  `store.briefIndices()`, so every `recap(target_brief=…)` naming it is refused.
+  `store.briefIndices()`, so every `recap(target=…)` naming it is refused.
 
 The hash exists so the model can **name** an anchor: it is exactly the token
 `recap` takes in `target` (the shown hash or the full call id both resolve). A
-rewind APPENDS its note under line 1 and retires the `recap(target_brief=…)`
+rewind APPENDS its note under line 1 and retires the `recap(target=…)`
 invitation — `[<hash>] ANCHOR — recap(…)` becomes `[<hash>] ANCHOR` — because the
 span the call names is now gone. The hash survives, so a later recap can still
 address the same brief once new activity lands after it.
 
-### `recap(target_brief=…)`
+### `recap(target=…)`
 
 `recap` takes an optional `target`:
 

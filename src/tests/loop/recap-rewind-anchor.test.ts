@@ -123,7 +123,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     expect(peek.message).toBe('mapped the parser');
     expect(peek.confidence).toBe(7);
     expect(Object.keys(peek).sort()).toEqual(['confidence', 'hash', 'id', 'message', 'span']);
-    // The hash is the token recap(target_brief=...) takes, derived from the id —
+    // The hash is the token recap(target=...) takes, derived from the id —
     // never the id's raw prefix (ids share `brief_<epoch-ms>`, so a prefix cut
     // would name the oldest same-epoch brief instead of this one).
     expect(peek.hash).toBe(briefHash(peek.id));

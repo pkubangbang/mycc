@@ -33,7 +33,7 @@ Both arguments are REQUIRED. \`target_brief\` is the hash from the brief result 
     properties: {
       target_brief: {
         type: 'string',
-        description: 'REQUIRED. The hash of the brief to fold to — the token in `[<hash>] ANCHOR — recap(target_brief="<hash>") …`. Never omitted.',
+        description: 'REQUIRED. The hash of the brief to fold to — the token in `[<hash>] ANCHOR — recap(target="<hash>") …`. Never omitted.',
       },
       summary: {
         type: 'string',

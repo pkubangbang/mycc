@@ -60,8 +60,7 @@ async function setup() {
     ensureServeHub: async () => stubHub,
     tryGetServeHub: () => stubHub,
     onServeHubReady: () => {},
-    // `onServeHubReRegistered` used to be mocked here; the hook was removed when
-  // `activateServe()` → `resyncTodoSnapshot()` became the single re-sync seam.
+    onServeHubReRegistered: () => {},
     registerServeHubFactory: () => {},
   }));
   vi.doMock('../../loop/agent-io.js', () => ({

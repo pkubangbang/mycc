@@ -152,7 +152,7 @@ describe('handleLlm — empty output when lastRole === "tool" (img_describe regr
     expect(triologue.agent).toHaveBeenCalledTimes(1);
     expect(triologue.tool).toHaveBeenCalledTimes(1);
     // A synthetic RECOVERY brief is not addressable, so it gets a plain
-    // receipt — never the `recap(target_brief=…)` invitation.
+    // receipt — never the `recap(target=…)` invitation.
     expect(triologue.tool).toHaveBeenCalledWith('brief', expect.stringMatching(/^\[[A-Za-z0-9_-]+\] OK$/), expect.any(String));
   });
 
@@ -196,7 +196,7 @@ describe('handleLlm — empty output when lastRole === "tool" (img_describe regr
     expect(result).toBe(AgentState.HOOK);
     expect(triologue.agent).toHaveBeenCalledTimes(1);
     // A synthetic RECOVERY brief is not addressable, so it gets a plain
-    // receipt — never the `recap(target_brief=…)` invitation.
+    // receipt — never the `recap(target=…)` invitation.
     expect(triologue.tool).toHaveBeenCalledWith('brief', expect.stringMatching(/^\[[A-Za-z0-9_-]+\] OK$/), expect.any(String));
   });
 
