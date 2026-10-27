@@ -37,19 +37,14 @@ vi.mock('../../loop/agent-io.js', () => ({
   agentIO: { verbose: vi.fn(), log: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-// LINE 1 of a brief result is the anchor line (`[<hash>] ANCHOR — recap(…)`);
-// a recap APPENDS its note as LINE 2 and RETIRES the invitation (the span it
-// named is gone), leaving `[<hash>] ANCHOR`. withNoteOnly therefore accepts both
-// shapes of line 1 and requires the marker on the following line — never a
-// particular hash value.
-const ANCHOR_LINE_RE = /^\[[A-Za-z0-9_-]+\] ANCHOR(?: — recap\(target="[A-Za-z0-9_-]*"\) folds the work after this point)?$/;
-const NOTE_PREFIX = 'Note, a recap has reset the conversation here with summary: ';
+// Anchors are stamped with their hash ([<hash>] OK), so the note is matched by
+// its marker, not by a fixed success prefix.
+// Anchors are stamped with their hash (`[<hash>] OK`); the note itself starts at
+// the marker. withNoteOnly drops the hash line before matching, so the
+// check never depends on a particular hash value.
+const NOTE_PREFIX = 'OK Note, a recap has reset the conversation here with summary: ';
 function withNoteOnly(content: string | undefined): boolean {
-  if (!content) return false;
-  const [line1, ...rest] = content.split('\n');
-  if (!ANCHOR_LINE_RE.test(line1)) return false;
-  // A pristine anchor line is NOT a note.
-  return rest.length > 0 && rest[0].startsWith(NOTE_PREFIX);
+  return !!content && /^\[[A-Za-z0-9_-]+\] /.test(content) && content.replace(/^\[[A-Za-z0-9_-]+\] /, '').startsWith(NOTE_PREFIX);
 }
 
 let seq = 0;
@@ -201,8 +196,8 @@ describe('recap rewind scenarios (anchor = non-synthetic brief with activity aft
   // ---------------------------------------------------------------------
   // Explicit `target` (recap(target="<hash>")) — the model chooses the
   // position instead of guessing which brief the default rule will pick.
-  // The hash shown on a brief's result is a digest of the call id (see
-  // briefHash); `recap(target=…)` accepts that hash or the full call id.
+  // The hash shown on a brief's result (`[<hash>] OK`) is the call id's first
+  // 8 chars; `briefCall()` mints `brief_<n>`, so its hash is `brief_<n>` too.
   // ---------------------------------------------------------------------
   it('6. target rewinds to an EARLIER brief even when a newer solidified one exists', () => {
     const b1 = pushBrief(t, 'BRIEF ONE');

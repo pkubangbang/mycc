@@ -31,7 +31,7 @@ import { loader } from '../../context/shared/loader.js';
 import { handleCrossroad } from '../crossroad.js';
 import { loopEvents } from '../loop-events.js';
 import { briefToolCall, newBriefCallId } from '../triologue/brief.js';
-import { briefReceiptLine } from '../triologue/recap-note.js';
+import { briefResultLine } from '../triologue/recap-note.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getSessionContext, getSessionDir, isCrossroadDisabled } from '../../config.js';
@@ -351,10 +351,7 @@ export async function handleLlm(
         // this boilerplate brief. It is stripped from the provider payload.
         const recoveryBrief = briefToolCall('Let me see what to do next.', 7, newBriefCallId('brief_recover'));
         triologue.agent('', [recoveryBrief], { synthetic: true });
-        // A RECEIPT, not the anchor line: this brief is synthetic, so it is not in
-        // `store.briefIndices()` and every `recap(target=…)` naming it would be
-        // refused. Advertising the call here would be a false affordance.
-        triologue.tool('brief', briefReceiptLine(recoveryBrief.id), recoveryBrief.id);
+        triologue.tool('brief', briefResultLine(recoveryBrief.id), recoveryBrief.id);
         continue; // Re-run the while loop and call LLM again with new context
       }
 

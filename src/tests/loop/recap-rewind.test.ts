@@ -24,7 +24,6 @@ import { buildResumeRoundTrip } from '../../loop/triologue/compact.js';
 import { briefToolCall } from '../../loop/triologue/brief.js';
 import { briefHash, buildRecapNote } from '../../loop/triologue/recap-note.js';
 import { Triologue } from '../../loop/triologue.js';
-import { estimateTokens } from '../../utils/token.js';
 import type { Message, ToolCall } from '../../types.js';
 
 // agent-io writes to the terminal; keep the test output clean.
@@ -134,19 +133,12 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
 
     const result = t.rewindToLastBrief('collapse', 'SUMMARY BODY')!;
     expect(result.anchorMessage).toBe('mapped the parser');
-    // The rewind can only ever ADD tokens when the collapsed span is smaller
-    // than what replaces it: the result line is no longer a bare "OK" but the
-    // anchor line (plus the recap note appended as line 2), so the delta is
-    // span − (anchorLine + note). The two "thinking"/"more work" messages here
-    // are tiny, so a small GROWTH is the correct outcome — what must hold is
-    // that the span is gone (only growth from the note itself, not the span).
+    // Tokens must DROP only when the collapsed span outweighs the note itself
+    // (the note takes the pristine "OK" result's place, so the delta is
+    // span − note). The two "thinking"/"more work" messages here are tiny.
     const spanLen = result.tokensBefore;
-    // Measured with the SAME estimator the store uses, so the bound tracks the
-    // real contract: the collapsed span is gone and only the replacement result
-    // (anchor line + note) remains in its place.
-    const noteCost = estimateTokens(t.getMessages().at(-1)!);
     expect(result.tokensAfter).toBeGreaterThan(0);
-    expect(result.tokensAfter).toBeLessThan(spanLen + noteCost + 50);
+    expect(result.tokensAfter).toBeLessThan(spanLen + 100);
 
     // ['user','assistant(brief)','tool'] → everything AFTER the brief's
     // round-trip is truncated; the round-trip itself SURVIVES and its result is
@@ -162,13 +154,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     // /^\[[A-Za-z0-9_-]+\]/ also accepts a token that names a DIFFERENT brief,
     // so a wrong-anchor bug (the exact failure a colliding hash used to cause)
     // would still pass.
-    // LINE 1 keeps the anchor (hash + word) but RETIRES the `recap(target=…)`
-    // invitation — the span it named is exactly what this recap just deleted —
-    // and LINE 2 is the recap summary.
-    const content = msgs[2].content as string;
-    const [line1, ...rest] = content.split('\n');
-    expect(line1).toBe(`[${briefHash(anchorId)}] ANCHOR`);
-    expect(rest.join('\n')).toBe(`Note, a recap has reset the conversation here with summary: ${buildRecapNote('collapse', 'mapped the parser', 'SUMMARY BODY')}`);
+    expect(msgs[2].content).toBe(`[${briefHash(anchorId)}] OK Note, a recap has reset the conversation here with summary: ${buildRecapNote('collapse', 'mapped the parser', 'SUMMARY BODY')}`);
     expect(msgs[2].content).toContain('SUMMARY BODY');
     expect(t.getLastRole()).toBe('tool'); // TP parity handoff to the next agent()
   });

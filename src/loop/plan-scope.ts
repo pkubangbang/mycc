@@ -6,10 +6,7 @@
  * asking whether that sub-problem is the right one. The loop therefore makes
  * every brief, while planning, carry one extra paragraph:
  *
- *   tool('brief', "[<hash>] ANCHOR — recap(target=\"<hash>\") …\nWhen thinking on the larger scope, …", callId)
- *
- * (The plan-scope paragraph is the SECOND line of the result; LINE 1 is the
- * fixed anchor line the TOOL stage writes.)
+ *   tool('brief', "[<hash>] OK. When thinking on the larger scope, …", callId)
  *
  * WHY THE TOOL STAGE OWNS IT
  * A brief's RESULT is produced by execution, not by policy. Computing it here,
@@ -41,7 +38,7 @@
  */
 import type { Message, Tool } from '../types.js';
 import { forkChat } from '../engine/chat-provider.js';
-import { BRIEF_OK, PLAN_SCOPE_HEADING, briefStampedLength } from './triologue/recap-note.js';
+import { BRIEF_OK, PLAN_SCOPE_HEADING } from './triologue/recap-note.js';
 
 /** Head room for the fork's signal + the result threshold's own safety slack. */
 const SCOPE_NOTE_OVERHEAD_CHARS = 512;
@@ -134,10 +131,6 @@ export interface PlanScopeDeps {
   messages: Message[];
   tools: Tool[];
   briefMessage: string;
-  /** The brief's tool-call id — its anchor hash is part of the result budget. */
-  briefCallId: string;
-  /** The `· open:` candidates the TOOL stage will render into line 1 (same list). */
-  openAnchors: readonly string[];
   /** tool()'s result limit — the note must fit under it. */
   resultThreshold: number;
   /** ESC-aware runner owned by the caller (ctx.core.escAware): it gives the
@@ -152,14 +145,7 @@ export interface PlanScopeDeps {
  * Pure I/O: one forkChat, no triologue mutation.
  */
 export async function buildPlanScopeNote(deps: PlanScopeDeps): Promise<string | null> {
-  // Reserve what the result will ACTUALLY be: the anchor line (which the loop
-  // stamps, ~80-115 chars with its `· open:` list) + the `. ` separator + the
-  // reflection + the fixed overhead. Reserving only `BRIEF_OK.length` under-counted
-  // the line by two orders of magnitude and let a near-limit reflection push the
-  // composed result past `resultThreshold` — which `tool()` answers by dumping
-  // the whole brief to a file, losing the anchor.
-  const briefLine = briefStampedLength(deps.briefCallId, deps.openAnchors);
-  const budget = deps.resultThreshold - briefLine - 1 - 2 - SCOPE_NOTE_OVERHEAD_CHARS;
+  const budget = deps.resultThreshold - BRIEF_OK.length - 2 - SCOPE_NOTE_OVERHEAD_CHARS;
   if (budget < 200) return null; // no room worth writing — leave the brief plain
 
   const prompt = buildPrompt(deps.briefMessage);

@@ -1012,47 +1012,9 @@ export class Triologue {
   // The anchor rule, the span, the truncation and the note rewrite all live in
   // BriefStackManager (triologue/brief-stack.ts).
 
-  /**
-   * Every real brief's displayed hash, oldest first.
-   *
-   * `foldableOnly` restricts the list to the briefs `recap(target=…)` accepts
-   * right now — pass it when quoting the list as a set of usable targets (a
-   * refusal message), never when asking what briefs exist.
-   */
-  listBriefHashes(foldableOnly = false): Array<{ hash: string; message: string }> {
-    return this.briefStack.listBriefHashes(foldableOnly);
-  }
-
-  /**
-   * Why an explicit `recap(target=…)` could not be used: `'unknown'` (no brief
-   * carries that hash or id) or `'nothing-after'` (it does — but nothing follows
-   * it yet, which is true of every freshly printed anchor). Null when usable.
-   *
-   * The two cases get different words in the refusal: telling the model "no brief
-   * matches" about a hash it is reading in its own transcript is false evidence.
-   */
-  targetRefusal(target: string | undefined): 'unknown' | 'nothing-after' | null {
-    return this.briefStack.targetRefusal(target);
-  }
-
-  /**
-   * The hashes an EXPLICIT `recap(target=…)` can fold to RIGHT NOW, NEWEST FIRST
-   * — the `· open:` list rendered into a newly created brief's result.
-   *
-   * Uses `hasMessagesAtOrAfterBrief` — the rule `anchorIndexFor`'s `target`
-   * branch applies — because that is exactly what the listed hashes answer: a
-   * brief with nothing after it is not the DEFAULT anchor but IS a valid
-   * `target`, and leaving it out would advertise less than the tool accepts.
-   * The brief being created is excluded on its own: it is the newest message, so
-   * nothing follows it.
-   *
-   * A brief consumed by an earlier recap is gone from `briefIndices()` (the span
-   * above it was truncated), so this list cannot name an already-folded anchor.
-   *
-   * Information only — nothing here chooses, schedules or performs a recap.
-   */
-  listOpenAnchors(): string[] {
-    return this.briefStack.listOpenAnchors();
+  /** Every real brief's displayed hash, oldest first — for refusal messages. */
+  listBriefHashes(): Array<{ hash: string; message: string }> {
+    return this.briefStack.listBriefHashes();
   }
 
   /**

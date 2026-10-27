@@ -29,7 +29,6 @@ import { buildResumeRoundTrip } from '../../loop/triologue/compact.js';
 import { briefToolCall } from '../../loop/triologue/brief.js';
 import { briefHash } from '../../loop/triologue/recap-note.js';
 import { Triologue } from '../../loop/triologue.js';
-import { estimateTokens } from '../../utils/token.js';
 import type { Message, ToolCall } from '../../types.js';
 
 // agent-io writes to the terminal; keep the test output clean.
@@ -145,17 +144,11 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     const result = t.rewindToLastBrief('collapse', 'SUMMARY BODY')!;
     expect(result.anchorMessage).toBe('mapped the parser');
     // Tokens must DROP only when the collapsed span outweighs the note itself
-    // (the result line is no longer a bare "OK" — it is the anchor line plus the
-    // recap note appended as line 2, so the delta is span − (anchor + note)).
-    // The two "thinking"/"more work" messages here are tiny, so a small GROWTH
-    // is correct; what must hold is that the collapsed span itself is gone.
+    // (the note takes the pristine "OK" result's place, so the delta is
+    // span − note). The two "thinking"/"more work" messages here are tiny.
     const spanLen = result.tokensBefore;
-    // Measured with the SAME estimator the store uses, so the bound tracks the
-    // real contract: the collapsed span is gone and only the replacement result
-    // (anchor line + note) remains in its place.
-    const noteCost = estimateTokens(t.getMessages().at(-1)!);
     expect(result.tokensAfter).toBeGreaterThan(0);
-    expect(result.tokensAfter).toBeLessThan(spanLen + noteCost + 50);
+    expect(result.tokensAfter).toBeLessThan(spanLen + 100);
 
     // ['user','assistant(brief)','tool'] → everything AFTER the brief's
     // round-trip is truncated; the round-trip itself SURVIVES and its result is
@@ -166,9 +159,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     expect(msgs[1].tool_calls?.[0].function.name).toBe('brief');
     expect(msgs[2].tool_name).toBe('brief');
     expect(msgs[2].tool_call_id).toBe((msgs[1].tool_calls?.[0] as ToolCall).id);
-    // Line 1 is the fixed anchor line; the note is line 2.
-    // A folded anchor: the invitation is retired, the address and the note stay.
-    expect(msgs[2].content).toMatch(/^\[[A-Za-z0-9_-]+\] ANCHOR\nNote, a recap has reset the conversation here with summary: /);
+    expect(msgs[2].content).toMatch(/^\[[A-Za-z0-9_-]+\] OK Note, a recap has reset the conversation here with summary: /);
     expect(msgs[2].content).toContain('SUMMARY BODY');
     expect(t.getLastRole()).toBe('tool'); // TP parity handoff to the next agent()
   });

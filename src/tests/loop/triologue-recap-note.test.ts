@@ -11,20 +11,14 @@ import {
   resolveBriefTarget,
   buildRecapNote,
   noteWithSummary,
-  withOpenAnchors,
-  BRIEF_ANCHOR_WORD,
-  hasFoldInvitation,
   PLAN_SCOPE_HEADING,
 } from '../../loop/triologue/recap-note.js';
 
 /**
  * The brief result contract after the anchor-hash change:
  *
- *   [<hash>] ANCHOR — recap(…)       pristine success (lead scope)
- *   [<hash>] OK                      receipt (teammate / synthetic brief)
- *   [<hash>] ANCHOR                  folded anchor: line 1 keeps hash + word,
- *                                   the invitation is retired
- *   Note, a recap …                  line 2, the recap's summary
+ *   [<hash>] OK                      pristine success
+ *   [<hash>] OK Note, a recap …      consumed anchor (hash survives the rewrite)
  *
  * The hash is what `recap(target=…)` accepts, so the rendering and the parsing
  * live in the SAME module and must agree — that is what most of these cases
@@ -85,10 +79,8 @@ describe('recap-note', () => {
       const a = briefResultLine(ID);
       const b = briefResultLine(SAME_EPOCH_ID);
       expect(a).not.toBe(b);
-      expect(a.startsWith(`[${HASH}] `)).toBe(true);
-      expect(b.startsWith(`[${OTHER_HASH}] `)).toBe(true);
-      expect(hashOf(a)).toBe(HASH);
-      expect(hashOf(b)).toBe(OTHER_HASH);
+      expect(a).toBe(`[${HASH}] ${BRIEF_OK}`);
+      expect(b).toBe(`[${OTHER_HASH}] ${BRIEF_OK}`);
     });
 
     it('emits a fixed-length, readable, lower-case token', () => {
@@ -108,7 +100,7 @@ describe('recap-note', () => {
       // '' must never read as a token that could resolve to some other brief.
       expect(briefHash(undefined)).toBe('');
       expect(briefHash('')).toBe('');
-      expect(briefResultLine(undefined)).toBe('[] ANCHOR — recap(target="") folds the work after this point');
+      expect(briefResultLine(undefined)).toBe('[] OK');
     });
   });
 
@@ -116,54 +108,23 @@ describe('recap-note', () => {
   // render / stamp
   // ---------------------------------------------------------------------------
 
-  it('renders the FIXED first line: the hash, the word ANCHOR, and the call shape', () => {
-    // Line 1 is STRUCTURE: it names the object, its address and the call that
-    // uses it. It never changes — a recap appends below it (noteWithSummary).
+  it('renders the success line with the hash of the call id', () => {
     expect(BRIEF_OK).toBe('OK');
-    expect(BRIEF_ANCHOR_WORD).toBe('ANCHOR');
-    expect(briefResultLine(ID)).toBe(`[${HASH}] ANCHOR — recap(target="${HASH}") folds the work after this point`);
-    expect(hashOf(briefResultLine(ID))).toBe(HASH);
-  });
-
-  it('appends the open-anchor list only when other targets exist', () => {
-    const line = briefResultLine(ID);
-    expect(withOpenAnchors(line, [])).toBe(line);
-    expect(withOpenAnchors(line, [OTHER_HASH])).toBe(`${line} · open: ${OTHER_HASH}`);
-    // Bounded: an unbounded list turns the actionable clause into token soup.
-    const many = [OTHER_HASH, 'aaaa', 'bbbb', 'cccc', 'dddd'];
-    const rendered = withOpenAnchors(line, many);
-    // Above the cap the newest OPEN_LIST_MAX are still named (they ARE
-    // retrievable) and the tail is only a count — there is no tool that
-    // enumerates anchors, so a bare `(+2 more)` alone would be an unactionable
-    // invitation. Newest-first, so the default target reads first.
-    expect(rendered).toBe(`${line} · open: ${OTHER_HASH}, aaaa, bbbb (+2 more)`);
-    expect(rendered).toContain('open: ');
-    expect(rendered).not.toContain('cccc');
+    expect(briefResultLine(ID)).toBe(`[${HASH}] OK`);
   });
 
   it('stamps a pristine brief result exactly once', () => {
-    expect(stampBriefResult('OK.', ID)).toBe(`[${HASH}] ANCHOR — recap(target="${HASH}") folds the work after this point`);
+    expect(stampBriefResult('OK.', ID)).toBe(`[${HASH}] OK.`);
     // Idempotent: an already-stamped result is not stamped twice.
-    const stamped = stampBriefResult('OK.', ID);
-    expect(stampBriefResult(stamped, ID)).toBe(stamped);
+    expect(stampBriefResult(`[${HASH}] OK.`, ID)).toBe(`[${HASH}] OK.`);
     // Never labels a non-success result as an anchor.
     expect(stampBriefResult('Error: confidence is required', ID)).toBe('Error: confidence is required');
-  });
-
-  it('keeps the plan-scope section BELOW the anchor line', () => {
-    const stamped = stampBriefResult(`OK. ${PLAN_SCOPE_HEADING}, decide the interface first.`, ID);
-    const lines = stamped.split('\n');
-    expect(lines[0]).toBe(`[${HASH}] ANCHOR — recap(target="${HASH}") folds the work after this point`);
-    expect(lines[1]).toBe(`${PLAN_SCOPE_HEADING}, decide the interface first.`);
-    expect(hasPlanScopeSection(stamped)).toBe(true);
   });
 
   it('stamps the id it is GIVEN, not the one implied by an existing prefix', () => {
     // Two briefs in one epoch no longer share a prefix, so a mismatch here is
     // visible: stamping with the other id must produce the other token.
-    expect(stampBriefResult('OK', SAME_EPOCH_ID)).toBe(
-      `[${OTHER_HASH}] ANCHOR — recap(target="${OTHER_HASH}") folds the work after this point`,
-    );
+    expect(stampBriefResult('OK', SAME_EPOCH_ID)).toBe(`[${OTHER_HASH}] OK`);
     expect(stampBriefResult('OK', undefined)).toBe('OK');
   });
 
@@ -172,16 +133,9 @@ describe('recap-note', () => {
   // ---------------------------------------------------------------------------
 
   it('reads the hash back and strips it for display', () => {
-    const result = noteWithSummary(ID, 'body');
+    const result = `[${HASH}] OK Note, a recap has reset the conversation here with summary: body`;
     expect(hashOf(result)).toBe(HASH);
-    // Line 1 is structure, line 2 is the recap — stripping the prefix leaves
-    // the NOTE, not the anchor prose (the display shows what happened here).
-    expect(stripHashPrefix(result)).toBe('Note, a recap has reset the conversation here with summary: body');
-    // Either shape of line 1 — pristine (`ANCHOR — recap(…) …`) or folded
-    // (`ANCHOR`) — is a status line, not prose: the display shows the content
-    // below (here, the note).
-    expect(stripHashPrefix(result.split('\n')[0])).toBe('');
-    expect(stripHashPrefix(briefResultLine(ID))).toBe('');
+    expect(stripHashPrefix(result)).toBe('OK Note, a recap has reset the conversation here with summary: body');
     // No prefix → unchanged (the display must never lose what it cannot parse).
     expect(stripHashPrefix('OK')).toBe('OK');
     expect(hashOf('OK')).toBeNull();
@@ -256,36 +210,12 @@ describe('recap-note', () => {
   // recap note
   // ---------------------------------------------------------------------------
 
-  it('a note keeps the FIXED first line and appends the recap as line 2', () => {
+  it('a note keeps the hash line and is a pure overwrite', () => {
     const first = noteWithSummary(ID, 'first');
     const second = noteWithSummary(ID, 'second');
-    // Line 1 keeps the hash and the ANCHOR word — the address survives — but
-    // retires the `recap(target=…)` invitation: the span above this anchor is
-    // exactly what the recap just deleted, so the call would be refused.
-    const line1 = `[${HASH}] ANCHOR`;
-    expect(first.split('\n')[0]).toBe(line1);
-    expect(first).not.toContain('recap(target=');
-    expect(first.split('\n')[1]).toBe('Note, a recap has reset the conversation here with summary: first');
+    expect(first.startsWith(`[${HASH}] OK Note, a recap has reset the conversation here with summary: first`)).toBe(true);
     expect(second).not.toContain('first');
     expect(second.endsWith('summary: second')).toBe(true);
-  });
-
-  it('a note retires the WHOLE invitation clause, candidate list included', () => {
-    // The `· open:` tail lives inside the invitation clause: the same recap that
-    // empties the span above this anchor also consumes the anchors it lists.
-    const live = withOpenAnchors(briefResultLine(ID), [OTHER_HASH]);
-    const noted = noteWithSummary(ID, 'body', live);
-    expect(noted.split('\n')[0]).toBe(`[${HASH}] ANCHOR`);
-    expect(noted).not.toContain('open:');
-  });
-
-  it('a legacy one-line folded result is not mistaken for a live anchor line', () => {
-    // Restoring an old transcript can produce `[<hash>] OK Note, a recap …` on one
-    // line. It has a hash but no invitation, so a rewind must NOT keep it as
-    // line 1 — that would duplicate the old summary above the new note.
-    const legacy = `[${HASH}] ${BRIEF_OK} Note, a recap has reset the conversation here with summary: old`;
-    expect(hasFoldInvitation(legacy)).toBe(false);
-    expect(hasFoldInvitation(briefResultLine(ID))).toBe(true);
   });
 
   it('a note keeps the ORIGINAL hash, so the anchor stays addressable', () => {
@@ -296,7 +226,7 @@ describe('recap-note', () => {
     expect(hashOf(noted)).not.toBe(HASH);
   });
 
-  it('an overwrite replaces the plan-scope section (the note is this span record)', () => {
+  it('an overwrite also replaces a plan-scope section', () => {
     const withScope = stampBriefResult(`OK. ${PLAN_SCOPE_HEADING}, decide the interface first.`, ID);
     expect(hasPlanScopeSection(withScope)).toBe(true);
     const noted = noteWithSummary(ID, 'the summary');

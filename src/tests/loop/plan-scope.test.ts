@@ -35,10 +35,6 @@ const BASE = {
   messages,
   tools,
   briefMessage: 'recon done',
-  // The result's real first line is part of the budget: `OK` is stamped into an
-  // anchor line, so the note must reserve THAT length (see briefStampedLength).
-  briefCallId: 'brief_1792715569650_ab12cd',
-  openAnchors: [] as string[],
   resultThreshold: 25_000,
   escAware,
 };
