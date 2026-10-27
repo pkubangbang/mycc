@@ -7,6 +7,7 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { takeTodoModelRefresh } from '../context/shared/todo-model-refresh.js';
 import {
   briefMessageVerdict,
   briefOverTargetWarning,
@@ -107,6 +108,8 @@ export const briefTool: ToolDefinition = {
     // An over-target (but accepted) message carries its warning HERE, so the
     // model learns the cost of what it just wrote. The full text is still shown
     // to the user verbatim, never clipped.
-    return overTargetWarning ? `OK.${overTargetWarning}` : 'OK.';
+    const baseResult = overTargetWarning ? `OK.${overTargetWarning}` : 'OK.';
+    const todoRefresh = takeTodoModelRefresh(ctx.todo);
+    return todoRefresh ? `${baseResult}\n\n${todoRefresh}` : baseResult;
   },
 };
