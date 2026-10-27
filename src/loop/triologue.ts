@@ -1090,12 +1090,12 @@ export class Triologue {
    * (TOCTOU guard, inclusive lower bound, span sliced from the TRUE array).
    */
   rewindToLastBrief(
+    description: string,
     additionalMessage: string,
     expectedBriefCallId?: string,
     target?: string,
-    openTodos?: string,
   ): { anchorMessage: string; tokensBefore: number; tokensAfter: number } | null {
-    return this.briefStack.rewindToLastBrief(additionalMessage, expectedBriefCallId, target, openTodos);
+    return this.briefStack.rewindToLastBrief(description, additionalMessage, expectedBriefCallId, target);
   }
 
   /**
@@ -1108,13 +1108,8 @@ export class Triologue {
    * happens AFTER the truncation, an under-measure loses the span with the note
    * unrecorded. A pure peek: null when the anchor moved.
    */
-  recapNoteSize(
-    additionalMessage: string,
-    expectedBriefCallId?: string,
-    target?: string,
-    openTodos?: string,
-  ): number | null {
-    return this.briefStack.recapNoteSize(additionalMessage, expectedBriefCallId, target, openTodos);
+  recapNoteSize(description: string, additionalMessage: string, expectedBriefCallId?: string, target?: string): number | null {
+    return this.briefStack.recapNoteSize(description, additionalMessage, expectedBriefCallId, target);
   }
 
   /**

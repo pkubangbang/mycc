@@ -278,13 +278,15 @@ The SPA is a single full-viewport flex column (`App.vue`):
 | `App.vue` | `src/web/src/App.vue` | Root layout: StatusBar + ChatLog + ChatInput. Owns the `#ededed` background. |
 | `StatusBar.vue` | `src/web/src/components/StatusBar.vue` | Connection status dot/text, "mycc chat" title, Retry + 退出 buttons. |
 | `ChatLog.vue` | `src/web/src/components/ChatLog.vue` | Scrollable message list. Auto-scrolls if user is at bottom; shows ↓ button otherwise. Renders the 停止 (interrupt) button while `isRunning`. |
-| `MessageItem.vue` | `src/web/src/components/MessageItem.vue` | Single bubble. Renders markdown for `user`/`result`; plain monospace for `log`/`warn`/`error`. |
+| `MessageItem.vue` | `src/web/src/components/MessageItem.vue` | Single bubble. Renders markdown for `user`/`result`; plain monospace for `log`/`warn`/`error`; a todo tool log (`todo_create`/`todo_update`/`todo_pinning`) as one inline icon+summary event. |
 | `ChatInput.vue` | `src/web/src/components/ChatInput.vue` | Textarea + 发送 button. Enter sends, Shift+Enter newline. |
+| `TodoCard.vue` | `src/web/src/components/TodoCard.vue` | Floating, collapsible overview of the CURRENT turn's todo events (newest first); collapsed by default; hidden when the turn has none. |
+| `todo-activity.ts` | `src/web/src/components/todo-activity.ts` | Pure classifier shared by MessageItem + TodoCard: `TODO_EVENT_LABELS`, `describeTodoEvent` (brief log → `{op, icon, text, done}`), `todoEventFromLog` (transcript tool result). Unit-tested (`src/tests/web/todo-activity.test.ts`). |
 
 ### State (`src/web/src/types.ts`)
 
 ```ts
-type MessageType = 'user' | 'log' | 'warn' | 'error' | 'result' | 'prompt' | 'system' | 'card' | 'steer-echo' | 'steer-flush' | 'file-upload' | 'file-flush' | 'auto' | 'running' | 'todos';
+type MessageType = 'user' | 'log' | 'warn' | 'error' | 'result' | 'prompt' | 'system';
 
 interface ChatMessage {
   type: MessageType;
@@ -368,12 +370,14 @@ shows a Retry button (and the prompt bubble detects `/retry/i` to toggle
 |------|------|
 | `main.ts` | Entry. Owns reactive `ChatState` + WS (HMR-persistent). `fetchHistory()`, `connectWebSocket()`, `chatApi`. |
 | `style.css` | Global reset (`* { margin:0; padding:0; box-sizing:border-box }`, `html/body/#app height:100%`). |
-| `types.ts` | `ChatMessage`, `ChatState`, `MessageType`, `TodoListEntry`, `ConnectionStatus`. |
+| `types.ts` | `ChatMessage`, `ChatState`, `MessageType`, `ConnectionStatus`. |
 | `App.vue` | Root layout. |
 | `components/StatusBar.vue` | Status bar. |
 | `components/ChatLog.vue` | Scrollable message list + interrupt/scroll buttons. |
 | `components/MessageItem.vue` | Bubble rendering (markdown vs plain) + bubble styles. |
 | `components/ChatInput.vue` | Input textarea + send button. |
+| `components/TodoCard.vue` | Floating todo-activity card (current turn, collapsible). |
+| `components/todo-activity.ts` | Todo-event classifier (pure): label set + `describeTodoEvent` / `todoEventFromLog`. |
 
 ### Backend hooks (outside src/serve/)
 | File | Hook |

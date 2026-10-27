@@ -309,17 +309,15 @@ describe('recap-note', () => {
     expect(hasPlanScopeSection('OK.')).toBe(false);
   });
 
-  it('buildRecapNote heads with the bare [RECAP] marker and quotes the anchor brief', () => {
-    const note = buildRecapNote('the anchor text', 'BODY');
-    expect(note.startsWith('[RECAP]')).toBe(true);
-    // NO label: the header is the marker alone.
-    expect(note.split('\n')[0]).toBe('[RECAP]');
+  it('buildRecapNote heads with [RECAP] and quotes the anchor brief', () => {
+    const note = buildRecapNote('explore the loop', 'the anchor text', 'BODY');
+    expect(note.startsWith('[RECAP] explore the loop')).toBe(true);
     expect(note).toContain('Rewound past the brief: "the anchor text"');
     expect(note.endsWith('BODY')).toBe(true);
   });
 
   it('buildRecapNote omits the quote line for a brief with no message', () => {
-    const note = buildRecapNote('', 'BODY');
-    expect(note).toBe('[RECAP]\n\nBODY');
+    const note = buildRecapNote('explore the loop', '', 'BODY');
+    expect(note).toBe('[RECAP] explore the loop\n\nBODY');
   });
 });

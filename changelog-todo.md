@@ -34,6 +34,15 @@ When updating the changelog, use the following procedure:
 <!-- September 2026 entries rotated to changelog-202609.md on 2026-10-12. -->
 <!-- Add new (October 2026 onward) entries below this line. -->
 
+## 2026-10-26
+### Features
+- **`/auto-commit` slash command**: Human-typed control over the auto-commit allow-list at runtime — `/auto-commit` shows the current branches, `on <branch>` adds one, `off <branch>` removes one, `off --all` clears the list.
+### Refactoring
+- **Auto-commit store relocated to `ctx.core`**: the allow-list is runtime, session-scoped state (like `workDir`), so it now lives on `BaseCore` — `allowAutoCommitBranches` plus `getAllowAutoCommitBranches()` (copy) / `addAllowAutoCommitBranch()` / `removeAllowAutoCommitBranch()` / `clearAllowAutoCommitBranches()`, all also declared on the `CoreModule` interface so lead, teammate and mocks share one shape. `src/config.ts` is back to PARSE-ONLY: `isAllowAutoCommit()` and the mutable array are gone, replaced by `getAllowAutoCommitArg()` which only reports what `--allow-auto-commit` said on the command line; `BaseCore`'s constructor seeds the list from it once. `git_commit` now reads `ctx.core.getAllowAutoCommitBranches()` per call (no config import), so a slash edit is effective on the next commit with no restart. The "the agent can never self-grant" guarantee is unchanged — no tool reaches the list, only a human-typed slash command.
+- **`/reload` does NOT inherit runtime edits** (documented at both sites): `/reload` replays the original launch argv, so the respawned lead re-seeds from `--allow-auto-commit` alone — a runtime `on` is lost and a runtime `off --all` is undone. Nothing is persisted by design.
+### Tests
+- **Auto-commit**: new `src/tests/slashes/auto-commit-slash.test.ts` drives the REAL command end-to-end against a behavioural mock core (14 cases: display/OFF, add, dedupe, remove, absent no-op, clear, already-empty, usage on missing operand, unknown subcommand, case-insensitive, and "git_commit sees the slash edit immediately"). `tools/test-utils.ts` + `test-utils/mock-context.ts` gained a real mutable allow-list, `git-commit.test.ts` seeds the grant through `ctx.core` instead of a config mock, and `context/core.test.ts`'s config mock exports `getAllowAutoCommitArg`.
+
 ## 2026-10-25
 ### Refactoring
 - **Todo system**: `todo_create` / `todo_update` / `todo_pinning` no longer echo the whole open list — each returns only the touched item with its current hash; the COLLECT todo nudge ("Update your todos.") is removed (the state is renamed `runTodoNudge` → `runChannelNudge`, keeping only the peer-channel nudge, and `TurnVars.nextTodoNudge`/`lastTodoState` → `nextChannelNudge`/`lastChannelState`; the teammate loop's duplicate nudge is deleted).

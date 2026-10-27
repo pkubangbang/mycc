@@ -51,8 +51,7 @@
  *    server's subsequent `running:off` / `auto:off` / `prompt` broadcasts.
  */
 
-import type { ChatMessage, SteeringNote, TodoListEntry, WebuiPhase } from './types';
-import { parseTodoFrame } from './todo-payload';
+import type { ChatMessage, SteeringNote, WebuiPhase } from './types';
 
 /**
  * The minimal store surface `applyServerMessage` consumes. This is satisfied
@@ -75,15 +74,6 @@ export interface DispatchState {
   pendingSteeringReview: SteeringNote[];
   messages: ChatMessage[];
   teammateMessages: ChatMessage[];
-  /**
-   * AUTHORITATIVE todo list, replaced wholesale by a `todos` frame.
-   *
-   * REQUIRED (not `todos?:`): an optional field is what let the session-change
-   * clear skip the panel while every stub-based test still compiled. Any
-   * DispatchState implementer must now supply it, and the real Pinia store is
-   * covered by `chat-store-todos.test.ts`.
-   */
-  todos: TodoListEntry[];
   showRetry: boolean;
   lastServerMsg?: { type: string; at: number };
   setPhase: (newPhase: WebuiPhase) => void;
@@ -203,26 +193,6 @@ export function applyServerMessage(
     // (but NOT pendingSteeringReview — that is resolved explicitly via
     // steer-resolve, never by a flush). No phase change.
     state.steeringBuffer.splice(0, state.steeringBuffer.length);
-    return;
-  }
-
-  if (msg.type === 'todos') {
-    // AUTHORITATIVE todo list snapshot — a FULL replacement, never a merge.
-    // The backend pushes one after every todo mutation (a 	odo_changed event
-    // on the loop event bus, emitted inside the TodoModule mutation), so the
-    // panel always reflects current state rather
-    // than the sequence of briefs (a single item created + updated + pinned in
-    // one turn must stay ONE row).
-    //
-    // No phase change and no chat-log entry: the list is panel state, not
-    // conversation content. The `todo_*` briefs still flow as log lines.
-    //
-    // `parseTodoFrame` returns null for an unusable frame — keep the current
-    // panel rather than blanking it on a malformed push.
-    const todos = parseTodoFrame((msg as { todos?: unknown }).todos);
-    if (todos) {
-      state.todos = todos;
-    }
     return;
   }
 

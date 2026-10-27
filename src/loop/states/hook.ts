@@ -34,7 +34,7 @@ import { loopEvents } from '../loop-events.js';
 import { stripInternalMarkup } from '../../utils/letter-box.js';
 import { buildCandidatesBrief } from '../crossroad.js';
 import { briefToolCall, newBriefCallId, validateBriefIsolation } from '../triologue/brief.js';
-import { briefReceiptLine, formatOpenTodos, stampBriefResult } from '../triologue/recap-note.js';
+import { briefReceiptLine, stampBriefResult } from '../triologue/recap-note.js';
 import { buildPlanScopeNote, formatPlanScopeForDisplay, withPlanScopeNote } from '../plan-scope.js';
 
 /**
@@ -218,18 +218,17 @@ async function handleRecapCall(
   // Show assistant text content if any
   briefAssistantContent(ctx, chat.assistantContent);
 
-  // BOTH ARGUMENTS ARE REQUIRED, and neither defaults:
-  //   - `target_brief` must name an anchor explicitly (silently folding to the
-  //     newest brief would delete a span the model did not choose);
-  //   - `summary` must be PRESENT — the empty string is a deliberate "discard
-  //     the span", but a missing field is a malformed call, not a discard.
   const recapArgs = call.function.arguments as Record<string, unknown>;
-  const rawSummary = recapArgs.summary;
-  const rawTarget = recapArgs.target_brief;
-  const target = typeof rawTarget === 'string' && rawTarget.trim()
-    ? rawTarget.trim()
+  const description = typeof recapArgs.description === 'string' ? recapArgs.description.trim() : '';
+  const abandon = recapArgs.abandon === true;
+  // Optional anchor selector: the hash shown at the start of a brief result
+  // (`[<hash>] ANCHOR — …`). Absent/empty → the default (newest solidified) anchor.
+  const target = typeof recapArgs.target === 'string' && recapArgs.target.trim()
+    ? recapArgs.target.trim()
     : undefined;
-  const summaryText = typeof rawSummary === 'string' ? rawSummary.trim() : undefined;
+  const comment = typeof recapArgs.comment === 'string' && recapArgs.comment.trim()
+    ? recapArgs.comment.trim()
+    : undefined;
 
   // A refusal answers the call with a TOOL-CALL ERROR and COLLAPSES NOTHING:
   // the triologue is left byte-identical to before the attempt, and nothing is
@@ -245,16 +244,17 @@ async function handleRecapCall(
     return AgentState.COLLECT;
   };
 
-  if (!target) {
-    return fail('Error: target_brief is required — pass the hash from a brief result (e.g. `[a1b2c3d4] ANCHOR — …` → target_brief: "a1b2c3d4"). It is deliberately not defaulted: folding somewhere you did not choose would delete a span you meant to keep. Foldable briefs are listed in each brief result\'s `· open:` tail.');
+  if (!description) {
+    return fail('Error: description is required and must be a non-empty string.');
   }
-  if (summaryText === undefined) {
-    return fail('Error: summary is required — pass your record of the span being folded, or "" to discard the span without a summary.');
+
+  // comment is REQUIRED: it determines the direction of the next turn.
+  // (abandon path is exempt — it discards the span, no steering needed.)
+  if (!abandon && !comment) {
+    return fail('Error: comment is required (it determines the direction of the next turn). Provide a clear, actionable directive stating what should happen next.');
   }
-  const abandon = summaryText.length === 0;
 
   const anchor = triologue.getLastBrief(target);
-
   if (!anchor) {
     if (target && triologue.targetRefusal(target) === 'nothing-after') {
       // The hash DOES exist — it just has nothing after it yet (true of every
@@ -287,28 +287,24 @@ async function handleRecapCall(
     return fail('[RECAP] Nothing to collapse — no work has landed after the anchor yet.');
   }
 
-  // ---- abandon path: collapse without summarizing (summary left empty) ----
+  // ---- abandon path: collapse without summarizing ----
   if (abandon) {
-    // NO SUMMARY IS WRITTEN, so a short note is expected here — and it is why
-    // the abandon check comes BEFORE the summary floor: an empty summary is a
-    // REQUEST to discard, not a failed summarization.
-    const noteParts: string[] = ['The work after the brief above was discarded without being summarized.'];
+    const parts: string[] = ['The work after the brief above was discarded without being summarized.'];
     if (turn.lastUserQuery) {
-      noteParts.push('');
-      noteParts.push(`**User's last query (context):** ${turn.lastUserQuery}`);
+      parts.push('');
+      parts.push(`**User's last query (context):** ${turn.lastUserQuery}`);
     }
-    const abandonMessage = noteParts.join('\n');
-    // The note's third part: the OPEN todo list (see formatOpenTodos). Read
-    // ONCE and hand the SAME string to the size pre-check and to the rewind —
-    // the section is part of the note, so a check that omitted it would
-    // under-measure the string the rewrite stores.
-    const openTodos = formatOpenTodos(ctx.todo.getItems());
+    if (comment) {
+      parts.push('');
+      parts.push(`**Next direction (recap comment — follow this):** ${comment}`);
+    }
+    const abandonParts = parts.join('\n');
     // Size pre-check on the note that will ACTUALLY be written into the brief's
     // tool result (header + quoted anchor + body), not just the body: the write
     // happens AFTER the truncation, so an over-size note loses the span.
-    const abandonSize = triologue.recapNoteSize(abandonMessage, anchor.id, target, openTodos);
+    const abandonSize = triologue.recapNoteSize(description, abandonParts, anchor.id, target);
     if (abandonSize !== null && abandonSize > triologue.getResultThreshold()) {
-      return fail(`Error: the recap note is ${abandonSize} chars, over the ${triologue.getResultThreshold()}-char tool-result limit; nothing was discarded.`);
+      return fail(`Error: the recap note is ${abandonSize} chars, over the ${triologue.getResultThreshold()}-char tool-result limit; nothing was discarded. Re-run with a shorter comment.`);
     }
     // Announce the discard BEFORE it happens: the collapse below is synchronous
     // and only its RESULT is reported at the end, so without this line the work
@@ -316,7 +312,7 @@ async function handleRecapCall(
     // size gate on purpose — a rejected recap must not announce a discard that
     // never happens.
     ctx.core.brief('info', 'recap', 'Discarding the span after the anchor...');
-    const result = triologue.rewindToLastBrief(abandonMessage, anchor.id, target, openTodos);
+    const result = triologue.rewindToLastBrief(description, abandonParts, anchor.id, target);
     if (!result) {
       // The anchor moved between the peek at the top of this handler and here.
       // Answer the call rather than returning COLLECT with a dangling
@@ -325,7 +321,7 @@ async function handleRecapCall(
     }
     ctx.core.brief('info', 'recap',
       `(${chalk.yellow(result.tokensBefore.toLocaleString())} → ${chalk.green(result.tokensAfter.toLocaleString())} tokens)`,
-      `Abandoned (empty summary)`,
+      `Abandoned: ${description}${comment ? ` — ${comment}` : ''}`,
     );
     turn.lastBriefMessage = result.anchorMessage;
     turn.nextBriefNudge = 5;
@@ -333,14 +329,11 @@ async function handleRecapCall(
     return AgentState.COLLECT;
   }
 
-  // ---- normal path: the MODEL'S OWN summary, then collapse ----
-  // The note body is `summaryText`, copied VERBATIM — no summarization fork runs
-  // here. Only the mindmap-patch fork survives (forkChat #2): it decides whether
-  // ONE node of the knowledge tree should change, which is independent of the
-  // note's text.
-  //
+  // ---- normal path: summarize the span, then collapse ----
   // fullMessages + allTools form the cached prefix the main loop already paid
-  // for — pass both un-minified and complete so the patch fork hits that cache.
+  // for — pass both un-minified and complete so the fork hits that cache.
+  // (toolChoice:'none' is applied inside handleRecap; it constrains output to
+  // text-only without touching the cached prefix.)
   const fullMessages = [...triologue.getMessages()];
   const allTools = loader.getToolsForScope('main');
 
@@ -349,37 +342,50 @@ async function handleRecapCall(
   };
   const lastQueryForRecap = turn.lastUserQuery || undefined;
 
+  // The durable one-line trace: the spinner started inside handleRecapSpan is
+  // terminal-only (and cleared by its finally{}), so this brief is what
+  // survives in the logs / Web UI as the record of the recap's silent wait.
+  ctx.core.brief('info', 'recap', 'Summarizing the span after the anchor...');
   const mindmap = ctx.core.getMindmap();
-  const { patch, patchError } = await handleRecapSpan(
+  const { summary, patch, patchError } = await handleRecapSpan(
     fullMessages,
+    anchor.span,
     allTools,
+    description,
     mindmap,
     escAware,
+    comment,
+    lastQueryForRecap,
   );
 
   // Check for ESC cancellation — the triologue is still untouched at this point.
-  // Only the mindmap fork can still be cancelled; the note itself needs no fork.
-  if (patchError === 'mindmap-patch fork aborted' && agentIO.isNeglectedMode()) {
-    ctx.core.brief('warn', 'recap', 'Cancelled: ESC pressed during the mindmap patch. Nothing was collapsed — the span is still in context.');
+  if (summary.startsWith('[RECAP] Cancelled:')) {
     triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
       reasoningContent: chat.assistantReasoningContent,
     });
-    triologue.tool('recap', '[RECAP] Cancelled: ESC pressed. Nothing was collapsed.', call.id);
+    triologue.tool('recap', summary, call.id);
+    ctx.core.brief('warn', 'recap', summary);
     // ESC pressed during recap - return STOP for centralized wrap-up
     // (stop.ts handles startWrapUp + auto-off + setNeglectedMode).
-    return AgentState.STOP;
+    // Neglected mode is NOT cleared here. The cancelled note was already
+    // registered as a tool response above, so triologue parity is intact.
+    if (agentIO.isNeglectedMode()) {
+      return AgentState.STOP;
+    }
+    turn.isFirstRound = false;
+    return AgentState.COLLECT;
   }
 
-  // ── SUMMARY FLOOR: a too-short summary must not truncate ──
-  // (An EMPTY summary is not this case — it is the abandon path above.)
+  // ── SUMMARY FLOOR: an empty summary must not truncate ──
   // The upper-bound check below exists because an over-size note loses the span
   // without recording it. The mirror-image failure loses the span AND the
-  // knowledge: a summary of "ok" would still delete everything after the anchor
-  // and leave a note that records nothing. Refuse — nothing truncated — and let
-  // the model retry.
-  if (!hasUsableSummary(summaryText)) {
-    ctx.core.brief('warn', 'recap', 'Recap summary was too short — nothing was collapsed.');
-    return fail(`[RECAP] The summary is under ${MIN_RECAP_SUMMARY_CHARS} characters, so it would not record the discarded work. Nothing was collapsed. Run recap again with a fuller summary, or leave it empty to abandon the span.`);
+  // knowledge: a fork that returns '' (provider hiccup, refusal, truncated
+  // stream) would still delete everything after the anchor and leave a note
+  // holding nothing but the header. Refuse — nothing truncated — and let the
+  // model retry.
+  if (!hasUsableSummary(summary)) {
+    ctx.core.brief('warn', 'recap', 'Recap summary was empty — nothing was collapsed.');
+    return fail('[RECAP] The summarization produced no usable text, so nothing was collapsed. Run recap again.');
   }
 
   // ── SIZE PRE-CHECK: refuse an oversized note BEFORE touching the triologue ──
@@ -388,35 +394,25 @@ async function handleRecapCall(
   // untouched, so an oversized summary can never coexist with a truncation that
   // already threw the span away.
   const threshold = triologue.getResultThreshold();
-  // The note's third part: the OPEN todo list — the checklist lives OUTSIDE
-  // the transcript (in the todo module), so without it a fold would resume the
-  // model with no record of what it had promised to keep doing. ONE read for
-  // the size check AND the rewind: the section IS part of the measured string.
-  const openTodos = formatOpenTodos(ctx.todo.getItems());
-  // The note body: the model's OWN summary, verbatim (plus the user's last query
-  // as context, which the summary may not restate).
-  const noteBody = lastQueryForRecap
-    ? `${summaryText}\n\n**User's last query (context):** ${lastQueryForRecap}`
-    : summaryText;
-  const noteSize = triologue.recapNoteSize(noteBody, anchor.id, target, openTodos);
+  const noteSize = triologue.recapNoteSize(description, summary, anchor.id, target);
   if (noteSize !== null && noteSize > threshold) {
     ctx.core.brief('warn', 'recap',
       `Recap note too large (${noteSize} chars > ${threshold}). Nothing was collapsed.`,
     );
-    return fail(`Error: the recap note is ${noteSize} chars, over the ${threshold}-char tool-result limit; nothing was collapsed. Re-run recap with a shorter summary.`);
+    return fail(`Error: the recap note is ${noteSize} chars, over the ${threshold}-char tool-result limit; nothing was collapsed. Re-run recap with a shorter summary or comment.`);
   }
 
-  const result = triologue.rewindToLastBrief(noteBody, anchor.id, target, openTodos);
+  const result = triologue.rewindToLastBrief(description, summary, anchor.id, target);
   if (!result) {
-    // The anchor moved while the patch fork ran (a new brief landed) or vanished.
+    // The anchor moved while the forks ran (a new brief landed) or vanished.
     // Nothing was truncated and nothing was appended.
-    ctx.core.brief('warn', 'recap', 'Anchor moved during the recap — nothing was collapsed.');
-    return fail('Error: The last brief changed while the recap was running, so nothing was collapsed. Run recap again — it will rewind to the new anchor.');
+    ctx.core.brief('warn', 'recap', 'Anchor moved during summarization — nothing was collapsed.');
+    return fail('Error: The last brief changed while the recap was summarizing, so nothing was collapsed. Run recap again — it will rewind to the new anchor.');
   }
 
   ctx.core.brief('info', 'recap',
     `(${chalk.yellow(result.tokensBefore.toLocaleString())} → ${chalk.green(result.tokensAfter.toLocaleString())} tokens)`,
-    summaryText.split('\n')[0],
+    `${description}${comment ? ` — ${comment}` : ''}`,
   );
 
   // Resync the in-turn brief memory with the anchor that survived the rewind:

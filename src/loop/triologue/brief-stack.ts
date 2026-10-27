@@ -465,10 +465,10 @@ export class BriefStackManager {
    * Returns null when there is no brief to rewind to (nothing is modified).
    */
   rewindToLastBrief(
+    description: string,
     additionalMessage: string,
     expectedBriefCallId?: string,
     target?: string,
-    openTodos?: string,
   ): { anchorMessage: string; tokensBefore: number; tokensAfter: number } | null {
     // One resolution for every caller (see resolveAnchor) — including the
     // TOCTOU refusal, the message read that tolerates a string-shaped
@@ -506,7 +506,7 @@ export class BriefStackManager {
 
     const rewritten = this.store.rewriteToolResult(
       call.id,
-      noteWithSummary(id, buildRecapNote(anchorMessage, additionalMessage, openTodos), anchorLine),
+      noteWithSummary(id, buildRecapNote(description, anchorMessage, additionalMessage), anchorLine),
       resultIndex,
     );
     if (!rewritten) return null; // defensive: the result vanished in truncation
@@ -523,21 +523,12 @@ export class BriefStackManager {
    * bare summary under-measures by the header (description + quoted anchor) AND
    * by line 1 (which the rewind keeps), and since the rewrite happens AFTER the
    * truncation, an under-measure loses the span with the note unrecorded.
-   *
-   * `openTodos` is the recap note's third part (see formatOpenTodos). It MUST be
-   * the same string handed to rewindToLastBrief — the section is part of the
-   * note, so measuring without it under-measures by the whole checklist.
    */
-  recapNoteSize(
-    additionalMessage: string,
-    expectedBriefCallId?: string,
-    target?: string,
-    openTodos?: string,
-  ): number | null {
+  recapNoteSize(description: string, additionalMessage: string, expectedBriefCallId?: string, target?: string): number | null {
     // null when the anchor moved — the rewind will refuse for the same reason.
     const resolved = this.resolveAnchor(expectedBriefCallId, target);
     if (!resolved) return null;
-    const body = buildRecapNote(resolved.anchorMessage, additionalMessage, openTodos);
+    const body = buildRecapNote(description, resolved.anchorMessage, additionalMessage);
     // Measure the string the rewind ACTUALLY writes: the live first line (with
     // its frozen `· open:` list) plus the note marker plus the body — see
     // noteWithSummary / anchoredNoteLength. Sizing the body alone under-measures

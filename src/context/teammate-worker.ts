@@ -28,15 +28,6 @@ const POLL_INTERVAL = 5000; // 5 seconds
 const CONFUSION_THRESHOLD = 10; // Same as main process
 const MIN_MESSAGES_FOR_HINT = 6; // Same as main process
 
-/**
- * Tool-call interval for the teammate's TODO reminder (step 3 of the loop).
- *
- * Deliberately the same value as the lead's brief-nudge interval: a teammate is
- * a simpler agent, so it gets ONE plain reminder on the same rhythm rather than
- * the lead's signal-gated variant. See the step-3 comment in the loop.
- */
-const TODO_NUDGE_INTERVAL = 5;
-
 // State
 let teammateName = '';
 let teammateRole = '';
@@ -265,15 +256,6 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
   // Confusion tracking
   let nextBriefNudge = 5;
-  /**
-   * Calls until the teammate's TODO nudge fires (step 3 of the loop).
-   *
-   * Starts at the same cadence as the brief nudge but is checked FIRST, because
-   * the todo list is the teammate's working state and a stale checklist is worse
-   * than a missing status line. See the step-3 comment for why this stays plain
-   * (no recap teaching, no signal gating) — teammates are designed to be simple.
-   */
-  let nextTodoNudge = TODO_NUDGE_INTERVAL;
 
   // Tools that are purely exploratory (information gathering)
   const EXPLORATION_TOOLS = new Set([
@@ -401,19 +383,11 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         pendingModeChange = null;
       }
 
-      // 3. Todo nudging with counter and state tracking
-      if (ctx.todo.hasOpenTodo()) {
-        const currentTodoState = ctx.todo.printTodoList();
-        if (currentTodoState !== lastTodoState) {
-          nextTodoNudge = 3; // Reset for new todo state
-          lastTodoState = currentTodoState;
-        }
-        nextTodoNudge--;
-        if (nextTodoNudge === 0) {
-          triologue.note('REMINDER', `Update your todos. ${ctx.todo.printTodoList()}`);
-          nextTodoNudge = 3;
-        }
-      }
+      // 3. (removed) The former todo nudge is gone: the open todo list is
+      //    delivered by the todo project-context populator (buildTodoMessages)
+      //    and the todo_* tools report only the item they touched. A teammate
+      //    has no peer channels, so no channel nudge either — the numbered
+      //    steps below are unchanged.
 
       // 4. Time reminder if budget is set (every N rounds)
       if (budgetSent) {

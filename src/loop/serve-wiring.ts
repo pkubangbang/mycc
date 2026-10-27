@@ -13,17 +13,7 @@ import chalk from 'chalk';
 import { agentIO } from './agent-io.js';
 import { autoState } from './auto-state.js';
 import { tryGetServeHub, onServeHubReady } from '../serve/serve-registry.js';
-import { wireTodoSnapshot } from '../serve/serve-todos.js';
 import type { AgentContext } from '../types.js';
-
-/**
- * Whether {@link wireServeCallbacks} has already run in this process.
- *
- * Module-level, because the registrations it performs are process-wide
- * singletons: a second run would double-subscribe (review M6). See the guard at
- * the top of the function for why a duplicate is worse than a no-op.
- */
-let serveWiringDone = false;
 
 /**
  * Wire the serve/webui integration callbacks.
@@ -43,18 +33,6 @@ let serveWiringDone = false;
  *    --serve mode; the callback is queued until the serve layer loads.
  */
 export function wireServeCallbacks(ctx: AgentContext): void {
-  // IDEMPOTENCE GUARD (review M6). Every registration below mutates a process-wide
-  // singleton (agentIO's auto/flush callbacks, the peer channel hook, the hub
-  // providers, the loopEvents subscription), so a SECOND call would install a
-  // duplicate set: two `todo_changed` listeners ⇒ two identical `todos` frames per
-  // mutation, and no handle to detach either. wireTodoSnapshot returns an
-  // unsubscribe precisely so a caller can detach it, but the previous code
-  // discarded the handle — which made the duplicate undetectable AND
-  // undetachable. Guarding here is the correct fix: the wiring is once-per-process
-  // by contract, so make that contract structural instead of hoping.
-  if (serveWiringDone) return;
-  serveWiringDone = true;
-
   // ── onAutoChange: mirror auto-state flips to the webui ──
   // Previously agentIO.setAuto() called getServeHub().broadcastAuto directly;
   // now the singleton owns the flag and fires this callback on a real flip,
@@ -111,17 +89,6 @@ export function wireServeCallbacks(ctx: AgentContext): void {
     try { agentIO.abortAsk(); } catch { /* best-effort */ }
     try { tryGetServeHub()?.rejectInput(); } catch { /* best-effort */ }
   });
-
-  // ── todo snapshot channel: the WebUI todo panel ──
-  // ONE subscription to the repo's loop event bus (`todo_changed`) drives every
-  // `type: 'todos'` frame (serve-todos.ts). Not emitted per tool, because
-  // TodoModule is mutated from many paths a tool-level emitter misses: /clear,
-  // /todos clear, the double-Ctrl+L clear, the remote-peer reminder
-  // (recordRemotePeerTodo), tm_create/tm_remove worktree todos, and hand_over.
-  // The event fires inside the mutation itself, so a new mutation path cannot
-  // silently bypass the panel. The attach-time seed covers a mid-session
-  // `/serve` (the bus does not replay past events).
-  wireTodoSnapshot(() => ctx.todo.getItems());
 
   // ── enter-auto provider: the webui "enter auto" lightning-bolt button ──
   // Sends an 'auto' WS message; ServeHub calls this provider to flip autoState

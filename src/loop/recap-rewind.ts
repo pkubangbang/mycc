@@ -57,27 +57,36 @@ export function validateRecapIsolation(toolCalls: Array<{ function: { name: stri
  * constrained to text-only at the API level. The prompt still forbids tool
  * use in prose as a belt-and-suspenders measure.
  */
-function buildRecapPrompt(spanLength: number, lastUserQuery?: string): string {
+function buildRecapPrompt(description: string, spanLength: number, lastUserQuery?: string, comment?: string): string {
   const topicLine = lastUserQuery
-    ? `\n- **User's latest query**: "${lastUserQuery}" — mention it if it shaped the work.`
+    ? `\n- **User's latest query**: "${lastUserQuery}" — compare with the recap description; if they diverge, flag a topic change.`
     : '';
 
-  return `[RECAP] Collapse the conversation back to the brief that opens the last ${spanLength} message(s).
+  return `[RECAP] Collapse the conversation back to the brief that opens the last ${spanLength} message(s). Label: "${description}".
 
 You have access to the FULL conversation history above. Only the messages AFTER that brief are about to be deleted and replaced by your summary — the brief itself and everything before it stays in context, so summarize that span alone and use the earlier messages strictly as background.
 
-This is background for a mindmap decision, NOT the recap note: the note is written by the caller. Report what was learned so ONE mindmap node can be judged.
+Produce a concise structured note covering:
 
 ### Exploration Coverage
 For EVERY file examined after the brief:
 - path → one-line key takeaway (what was learned, found, or decided)
 - Mark files that were ruled out as irrelevant with "(irrelevant)"
+This section serves as a "do not re-read" list for subsequent turns.
 
 ### Key Discoveries
-Concrete findings with specificity: function names, line numbers, patterns identified, bugs found. Avoid vague descriptions.${topicLine}
+Concrete findings with specificity: function names, line numbers, patterns identified, bugs found. Avoid vague descriptions.
+
+### Current State
+What the agent now knows that it did NOT know before. This MUST be detailed enough that subsequent turns do NOT need to re-verify or re-investigate any findings already made. Think of this as the agent's updated "mental model" after the work.
+
+### Next Steps
+What still needs to be done, ordered by priority.${topicLine}
+${comment ? `\n**Direction comment (provided, will be placed last as the steering directive):** "${comment}" — make the Next Steps consistent with this direction.` : ''}
 
 **CRITICAL RULES:**
 - The Exploration Coverage section is a "do not re-read" list — include every file
+- The Current State section is a "do not re-verify" record — be specific
 - Output TEXT ONLY — do NOT use any tools. No preamble, no sign-off.`;
 }
 
@@ -96,9 +105,13 @@ Concrete findings with specificity: function names, line numbers, patterns ident
  * @param fullMessages - Full triologue messages before truncation (cache prefix)
  * @param span - The messages the rewind will delete; the summary covers ONLY these
  * @param allTools - All tools for prompt cache preservation
+ * @param description - Recap label (focus for summarization)
  * @param escAware - Optional ESC-aware wrapper for lead agent
+ * @param comment - REQUIRED for non-abandon recaps. The agent's directive that
+ *                   determines the direction of the next turn; placed LAST in the
+ *                   assembled note so it is the final steering instruction.
  * @param lastUserQuery - The user's most recent query, embedded as context
- *                         (not a steering directive) after the summary.
+ *                         (not a steering directive) between summary and comment.
  * @returns the `additionalMessage` half of the recap note — the triologue
  *          prepends the [RECAP] header and the quoted anchor brief.
  */
@@ -106,14 +119,16 @@ export async function handleRecap(
   fullMessages: Message[],
   span: Message[],
   allTools: Tool[],
+  description: string,
   escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>,
+  comment?: string,
   lastUserQuery?: string,
 ): Promise<string> {
   if (fullMessages.length === 0) {
     return '[RECAP] No messages to summarize.';
   }
 
-  const recapPrompt = buildRecapPrompt(span.length, lastUserQuery);
+  const recapPrompt = buildRecapPrompt(description, span.length, lastUserQuery, comment);
 
   let summary: string;
   if (escAware) {
@@ -145,13 +160,16 @@ export async function handleRecap(
 
   // Assemble the `additionalMessage` half of the recap note.
   // ORDERING (matters for LLM direction-following):
-  // The bare `[RECAP]` header + quoted anchor brief are prepended by
-  // Triologue.rewindToLastBrief() (it captures the anchor text BEFORE the truncation
-  // deletes the brief's own round-trip). The SUMMARY is the model's own text,
-  // copied verbatim — nothing here paraphrases it. Only context the deleted
-  // span held but the summary cannot restate is appended after it:
-  //   1. recap-summary    — verbatim (the model's record of what was found)
-  //   2. last-user-query  — context note: the user's most recent instruction
+  // The [RECAP] header + quoted anchor brief are prepended by
+  // Triologue.rewindToLastBrief() (it captures the anchor text BEFORE the
+  // truncation deletes the brief's own round-trip).
+  //   1. recap-summary    — the structured summary body (what was found)
+  //   3. last-user-query  — context note: the user's most recent instruction
+  //                         (background, not the steering directive)
+  //   4. recap-comment    — the agent's directive, placed LAST so it is the
+  //                         final thing the conversation sees before continuing.
+  //                         This is the most important field: it decides the
+  //                         direction of the next turn.
   const parts: string[] = [];
   parts.push('Some actions have been performed before this recap but the details have been omitted. Here is the summary:');
   parts.push('');
@@ -159,6 +177,10 @@ export async function handleRecap(
   if (lastUserQuery) {
     parts.push('');
     parts.push(`**User's last query (context):** ${lastUserQuery}`);
+  }
+  if (comment) {
+    parts.push('');
+    parts.push(`**Next direction (recap comment — follow this):** ${comment}`);
   }
 
   return parts.join('\n');
@@ -233,13 +255,13 @@ function generateTreeOutline(node: Node): string {
  * should be changed. It does NOT mix in summarization (that's forkChat #1's
  * job). Output is either "none" or a single JSON object.
  *
- * @param description - The recap label (focus context).
+ * @param description - The recap label (focus context)
  * @param treeOutline - The path-only tree outline (from generateTreeOutline)
  * @param feedback - Optional validation error feedback from a prior invalid response
  * @returns The assembled prompt string
  */
-function buildPatchPrompt(treeOutline: string, feedback: string): string {
-  return `[MINDMAP PATCH] You just completed a recap.
+function buildPatchPrompt(description: string, treeOutline: string, feedback: string): string {
+  return `[MINDMAP PATCH] You just completed a recap: "${description}".
 Review the conversation history since the brief that opened this recap.
 
 Here is the current mindmap tree (paths only, [M] = MYCC.md-sourced, [P] = patch-added):
@@ -408,6 +430,7 @@ export function parsePatchResponse(
 export async function generatePatchAction(
   fullMessages: Message[],
   allTools: Tool[],
+  description: string,
   mindmap: Mindmap,
   escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>,
 ): Promise<MindmapPatchAction | null> {
@@ -415,7 +438,7 @@ export async function generatePatchAction(
 
   for (let attempt = 0; attempt <= PATCH_MAX_RETRIES; attempt++) {
     const treeOutline = generateTreeOutline(mindmap.root);
-    const prompt = buildPatchPrompt(treeOutline, feedback);
+    const prompt = buildPatchPrompt(description, treeOutline, feedback);
 
     let response: string;
     if (escAware) {
@@ -446,8 +469,10 @@ export async function generatePatchAction(
  * Result of handleRecapWithPatch: the recap summary + optional patch action.
  */
 export interface RecapWithPatchResult {
-  /** The mindmap patch decision. The recap NOTE is not produced here: the
-   *  model's own summary is copied verbatim by the caller. */
+  /** The recap summary body produced by forkChat #1. Doubles as the
+   *  `additionalMessage` the caller hands to Triologue.rewindToLastBrief()
+   *  (the facade prepends the [RECAP] header + quoted anchor brief). */
+  summary: string;
   /** A validated patch action, or null if none was produced (from forkChat #2) */
   patch: MindmapPatchAction | null;
   /**
@@ -479,16 +504,22 @@ export interface RecapWithPatchResult {
  * @param fullMessages - Full triologue messages before truncation (cache prefix)
  * @param span - The messages the rewind will delete; the ONLY region to summarize
  * @param allTools - All tools for prompt cache preservation
+ * @param description - Recap label (what this collapse is about)
  * @param mindmap - Current mindmap (for patch decision); if absent, skip patch
  * @param escAware - Optional ESC-aware wrapper (lead agent)
+ * @param comment - REQUIRED for non-abandon recaps (steering directive)
  * @param lastUserQuery - The user's most recent query (context, not directive)
  * @returns { additionalMessage, patch } — additionalMessage always present, patch may be null
  */
 export async function handleRecapSpan(
   fullMessages: Message[],
+  span: Message[],
   allTools: Tool[],
+  description: string,
   mindmap: Mindmap | null | undefined,
   escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>,
+  comment?: string,
+  lastUserQuery?: string,
 ): Promise<RecapWithPatchResult> {
   // ── SPINNER: the caller owns the wait indicator ──
   // forkChat is permanently noSpinner (see its header), so retryChat paints
@@ -510,6 +541,7 @@ export async function handleRecapSpan(
   // resolves null — it only logs verbosely, so the spinner never hides an ESC
   // hint) and on a thrown error.
   startSpinner('Recapping context');
+  let summary: string;
   let patch: MindmapPatchAction | null;
   // Set by the patch fork's catch — surfaced to the caller, never fatal.
   let patchError: string | null = null;
@@ -531,12 +563,9 @@ export async function handleRecapSpan(
     //     logged. Neutralise means `.catch` returns a value, NOT that it
     //     merely logs — a logging-only handler still leaves the rejection to
     //     propagate through Promise.all.
-    // ONE fork remains: the mindmap-patch decision. The note body is the model's
-    // own `summary` (copied verbatim by the caller), so there is no summary fork
-    // to run — and therefore no Promise.all: a lone fork needs no concurrency
-    // scaffolding, and the spinner still wraps it for the wait.
-    patch = mindmap
-      ? await generatePatchAction(fullMessages, allTools, mindmap, escAware).catch((err: unknown) => {
+    const summaryFork = handleRecap(fullMessages, span, allTools, description, escAware, comment, lastUserQuery);
+    const patchFork: Promise<MindmapPatchAction | null> = mindmap
+      ? generatePatchAction(fullMessages, allTools, description, mindmap, escAware).catch((err: unknown) => {
           // REACHABILITY: this branch is live but NARROW. escAware races
           // forkChat against an ESC resolver (parent/core.ts:747); abort() fires
           // synchronously (:724) while the sentinel resolves only after
@@ -555,7 +584,8 @@ export async function handleRecapSpan(
             : `mindmap-patch fork failed: ${String(err)}`;
           return null;
         })
-      : null;
+      : Promise.resolve(null);
+    [summary, patch] = await Promise.all([summaryFork, patchFork]);
   } finally {
     // Cleared on success, on ESC, and on a thrown error. A still-running
     // sibling keeps streaming into a stopped spinner, which is harmless
@@ -563,6 +593,6 @@ export async function handleRecapSpan(
     stopSpinner();
   }
 
-  return { patch, patchError };
+  return { summary, patch, patchError };
 }
 

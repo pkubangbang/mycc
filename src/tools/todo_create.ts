@@ -33,7 +33,11 @@ export const todoCreateTool: ToolDefinition = {
     }
 
     const item = ctx.todo.createTodo(name.trim(), note?.trim() || undefined);
-    ctx.core.brief('info', 'todo_create', ctx.todo.printTodoList(), `Created #${item.id}: ${item.name}`);
+    // The open todo list is NOT echoed here: the list reaches the agent through
+    // the todo project-context populator (buildTodoMessages) and the explicit
+    // /todos slash command. Only the touched item + its hash is returned, which
+    // is all the caller needs to reference it later (todo_update/todo_pinning).
+    ctx.core.brief('info', 'todo_create', `Created #${item.id}: ${item.name}`);
 
     return `Created todo #${item.id}
   name: ${item.name}

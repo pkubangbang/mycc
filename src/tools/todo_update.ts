@@ -83,7 +83,10 @@ export const todoUpdateTool: ToolDefinition = {
     }
 
     const status = updated.done ? 'completed' : 'updated';
-    ctx.core.brief('info', 'todo_update', ctx.todo.printTodoList(), `${status} #${updated.id}: ${updated.name}`);
+    // The open todo list is NOT echoed here: the list reaches the agent through
+    // the todo project-context populator (buildTodoMessages) and the explicit
+    // /todos slash command. Only the touched item + its new hash is returned.
+    ctx.core.brief('info', 'todo_update', `${status} #${updated.id}: ${updated.name}`);
 
     return `Updated todo #${updated.id}
   name: ${updated.name}

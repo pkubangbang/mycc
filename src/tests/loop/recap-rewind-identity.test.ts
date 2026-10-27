@@ -60,7 +60,7 @@ describe('M1 — anchor identity', () => {
     // guard passes. What contains the damage is that resolution never picks a
     // stale slot: the note lands in the NEWEST anchor (TWO) — the same span the
     // caller would have summarized — and ONE's round-trip survives above it.
-    expect(t.rewindToLastBrief('SUMMARY', first.id)).not.toBeNull();
+    expect(t.rewindToLastBrief('collapse', 'SUMMARY', first.id)).not.toBeNull();
     const msgs = t.getMessages();
     // ONE's round-trip and its work survive; only the span after TWO is gone.
     expect(msgs.map((m) => m.content)).toEqual([
@@ -93,7 +93,7 @@ describe('M2 — single anchor resolution', () => {
     t.tool('brief', 'OK TWO', 'brief_dup');
     t.user('activity 2');
 
-    expect(t.rewindToLastBrief('SUMMARY')).not.toBeNull();
+    expect(t.rewindToLastBrief('collapse', 'SUMMARY')).not.toBeNull();
     const msgs = t.getMessages();
     expect(msgs).toHaveLength(5);
     expect(msgs[1].content).toBe('OK ONE'); // the older result is untouched
@@ -139,7 +139,7 @@ describe('M2 — single anchor resolution', () => {
     // BEFORE: resolveAnchor accepted it, then rewindToLastBrief refused on its
     // own (resultIndex < 0) — after the caller had already paid for two forks.
     expect(t.getLastBrief()).toBeNull();
-    expect(t.rewindToLastBrief('note')).toBeNull();
+    expect(t.rewindToLastBrief('collapse', 'note')).toBeNull();
   });
 
   it('the span never starts with an unrelated tool result after the brief', () => {
@@ -163,7 +163,7 @@ describe('M2 — single anchor resolution', () => {
     t.user('q1');
     t.agent('', [{ id: 'bash_y', function: { name: 'bash', arguments: {} } }]);
     t.tool('bash', 'out', 'bash_y');
-    const result = t.rewindToLastBrief('SUMMARY')!;
+    const result = t.rewindToLastBrief('collapse', 'SUMMARY')!;
     expect(result).not.toBeNull();
     // anchor round-trip only: assistant(brief) + tool('brief', note)
     expect(t.getMessages().length).toBe(2);

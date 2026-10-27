@@ -97,7 +97,7 @@ describe('recap rewind scenarios (anchor = non-synthetic brief with activity aft
     const b2 = pushBrief(t, 'BRIEF TWO');
     pushTool(t);
 
-    const result = t.rewindToLastBrief('summary of the span')!;
+    const result = t.rewindToLastBrief('collapse', 'summary of the span')!;
     expect(result.anchorMessage).toBe('BRIEF TWO');
 
     // b2's OWN result carries the note; everything after b2 is folded away.
@@ -115,11 +115,11 @@ describe('recap rewind scenarios (anchor = non-synthetic brief with activity aft
     const b2 = pushBrief(t, 'BRIEF TWO');
     pushTool(t);
 
-    expect(t.rewindToLastBrief('summary one')!.anchorMessage).toBe('BRIEF TWO');
+    expect(t.rewindToLastBrief('one', 'summary one')!.anchorMessage).toBe('BRIEF TWO');
 
     // Recap 1 truncated at b2's result, so b2 is the newest brief with nothing
     // after it — rule 2 skips it and b1 (which has b2 after it) anchors.
-    const second = t.rewindToLastBrief('summary two')!;
+    const second = t.rewindToLastBrief('two', 'summary two')!;
     expect(second.anchorMessage).toBe('BRIEF ONE');
     expect(withNoteOnly(resultOf(t, b1))).toBe(true);
     expect(resultOf(t, b1)).toContain('summary two');
@@ -134,14 +134,14 @@ describe('recap rewind scenarios (anchor = non-synthetic brief with activity aft
     const b2 = pushBrief(t, 'BRIEF TWO');
     pushTool(t);
 
-    expect(t.rewindToLastBrief('summary one')!.anchorMessage).toBe('BRIEF TWO');
+    expect(t.rewindToLastBrief('one', 'summary one')!.anchorMessage).toBe('BRIEF TWO');
 
     // Activity after b2's round-trip: "acting on the summary" + a tool result.
     t.agent('acting on the summary');
     pushTool(t);
 
     const len = t.getMessages().length;
-    const second = t.rewindToLastBrief('summary two')!;
+    const second = t.rewindToLastBrief('two', 'summary two')!;
     expect(second.anchorMessage).toBe('BRIEF TWO');
     expect(t.getMessages().length).toBeLessThan(len);
 
@@ -161,13 +161,13 @@ describe('recap rewind scenarios (anchor = non-synthetic brief with activity aft
     const b2 = pushBrief(t, 'BRIEF TWO');
     pushTool(t);
 
-    expect(t.rewindToLastBrief('summary one')!.anchorMessage).toBe('BRIEF TWO');
+    expect(t.rewindToLastBrief('one', 'summary one')!.anchorMessage).toBe('BRIEF TWO');
 
     // A lone brief3 has nothing after it yet — it stands where the conversation
     // is, so it is NOT an anchor. b2, with brief3 after it, anchors again;
     // brief3 is folded into the span.
     const b3 = pushBrief(t, 'BRIEF THREE');
-    const second = t.rewindToLastBrief('summary two')!;
+    const second = t.rewindToLastBrief('two', 'summary two')!;
     expect(second.anchorMessage).toBe('BRIEF TWO');
     expect(resultOf(t, b3)).toBeUndefined();
     expect(resultOf(t, b2)).toContain('summary two');
@@ -180,14 +180,14 @@ describe('recap rewind scenarios (anchor = non-synthetic brief with activity aft
     pushTool(t);
     const b2 = pushBrief(t, 'BRIEF TWO');
     pushTool(t);
-    expect(t.rewindToLastBrief('summary one')!.anchorMessage).toBe('BRIEF TWO');
+    expect(t.rewindToLastBrief('one', 'summary one')!.anchorMessage).toBe('BRIEF TWO');
 
     // brief3, then one more brief (brief4) after it — "even another brief"
     // counts as activity, so brief3 becomes an anchor.
     const b3 = pushBrief(t, 'BRIEF THREE');
     const b4 = pushBrief(t, 'BRIEF FOUR');
 
-    const second = t.rewindToLastBrief('summary two')!;
+    const second = t.rewindToLastBrief('two', 'summary two')!;
     expect(second.anchorMessage).toBe('BRIEF THREE');
     expect(withNoteOnly(resultOf(t, b3))).toBe(true);
     expect(resultOf(t, b3)).toContain('summary two');
@@ -215,7 +215,7 @@ describe('recap rewind scenarios (anchor = non-synthetic brief with activity aft
     expect(t.getLastBrief()!.id).toBe(b2);
     expect(t.getLastBrief(b1)!.id).toBe(b1);
 
-    const result = t.rewindToLastBrief('summary', undefined, `[${b1}]`)!;
+    const result = t.rewindToLastBrief('collapse', 'summary', undefined, `[${b1}]`)!;
     expect(result.anchorMessage).toBe('BRIEF ONE');
     // Everything after b1's round-trip is gone — including the newer b2.
     expect(resultOf(t, b2)).toBeUndefined();
@@ -230,7 +230,7 @@ describe('recap rewind scenarios (anchor = non-synthetic brief with activity aft
     const len = t.getMessages().length;
 
     expect(t.getLastBrief('nope12')).toBeNull();
-    expect(t.rewindToLastBrief('summary', undefined, 'nope12')).toBeNull();
+    expect(t.rewindToLastBrief('collapse', 'summary', undefined, 'nope12')).toBeNull();
     // No silent fallback to the default anchor: b1 is still pristine.
     expect(t.getMessages().length).toBe(len);
     expect(resultOf(t, b1)).toBe('OK');
@@ -243,7 +243,7 @@ describe('recap rewind scenarios (anchor = non-synthetic brief with activity aft
     pushTool(t);
 
     expect(t.getLastBrief(b2)!.id).toBe(b2);
-    expect(t.rewindToLastBrief('summary', undefined, b1)!.anchorMessage).toBe('BRIEF ONE');
+    expect(t.rewindToLastBrief('collapse', 'summary', undefined, b1)!.anchorMessage).toBe('BRIEF ONE');
     expect(resultOf(t, b2)).toBeUndefined();
     expect(withNoteOnly(resultOf(t, b1))).toBe(true);
   });
@@ -256,7 +256,7 @@ describe('recap rewind scenarios (anchor = non-synthetic brief with activity aft
 
     // b2 is the very last round-trip: there is no span beneath it.
     expect(t.getLastBrief(b2)).toBeNull();
-    expect(t.rewindToLastBrief('summary', undefined, b2)).toBeNull();
+    expect(t.rewindToLastBrief('collapse', 'summary', undefined, b2)).toBeNull();
     expect(t.getMessages().length).toBe(len);
     expect(resultOf(t, b1)).toBe('OK');
     expect(resultOf(t, b2)).toBe('OK');

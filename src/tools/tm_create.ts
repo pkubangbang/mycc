@@ -72,39 +72,25 @@ export const tmCreateTool: ToolDefinition = {
       // If a cwd (worktree) was assigned, create a cleanup-tracking todo so
       // the lead remembers to remove the worktree. The worktree itself is
       // tracked via `git worktree list` — no JSON persistence needed.
-      //
-      // The todo is ANNOUNCED in the result below (see `trackedLine`). This tool
-      // used to create it silently, which left the model holding a worktree it
-      // could not see in any list: `todo_*` tools are write-only and the
-      // populator is frozen until the next compact/clear boundary, so the next
-      // turn had no way to know the row existed — or to address it by hash.
-      let trackedLine = '';
       if (cwd) {
-        // DEFENSIVE: the announcement is a courtesy, not the task — a missing
-        // convenience line must never fail the teammate the user asked for.
-        try {
-          const todo = ctx.todo.createTodo(
-            `Remove worktree for teammate '${name}'`,
-            `cwd=${cwd}`
-          );
-          if (todo) {
-            trackedLine = `\nAlso tracked: #${todo.id} "Remove worktree for teammate '${name}'" [hash: ${todo.hash}]`;
-          }
-        } catch { /* best-effort */ }
+        ctx.todo.createTodo(
+          `Remove worktree for teammate '${name}'`,
+          `cwd=${cwd}`
+        );
       }
 
       // Check if this is the first teammate created
       const teammates = ctx.team.listTeammates();
       if (teammates.length === 1) {
         // First teammate - provide kickoff instructions
-        return `${result}${trackedLine}\n\n` +
+        return `${result  }\n\n` +
           `KICKOFF REQUIRED: You just created your first teammate. Your next steps:\n` +
           `1. Create more teammates if needed (you can continue using tm_create)\n` +
           `2. Write a kickoff todo list using todo_create to coordinate team work\n` +
           `3. Distribute tasks to teammates using mail_to`;
       }
 
-      return `${result}${trackedLine}`;
+      return result;
     } catch (error: unknown) {
       const err = error as Error;
       ctx.core.brief('error', 'tm_create', err.message);

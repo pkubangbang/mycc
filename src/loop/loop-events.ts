@@ -31,7 +31,6 @@ export const LOOP_EVENT_TYPES = [
   'esc_interrupt',
   'brief_message',
   'serve_state',
-  'todo_changed',
 ] as const;
 
 export type LoopEventType = (typeof LOOP_EVENT_TYPES)[number];
@@ -104,51 +103,6 @@ export interface BriefMessagePayload {
 }
 
 /**
- * The todo list changed — one event carrying the WHOLE list.
- *
- * Emitted from inside every `TodoModule` mutation (`create` / `update` / `pin`
- * / `clear`), which is what makes the WebUI panel impossible to bypass: a new
- * mutation path reaches the panel without anyone remembering to emit, because
- * the emit IS part of the mutation.
- *
- * Deliberately ONE `todo_changed` carrying the complete list rather than four
- * granular events:
- *   - the consumer (the WebUI panel, `serve-todos.ts`) needs the CURRENT LIST,
- *     not a diff — it renders a wholesale snapshot, exactly like `/history`;
- *   - granular events would push "reconstruct the list from events" back into
- *     the consumer, which is the bug this channel exists to kill (one item
- *     created + updated + pinned rendered as three rows);
- *   - `source` keeps the observability granularity would have bought — a test
- *     or debug listener can still tell a pin from a clear — for one field, with
- *     no second subscriber to keep in sync.
- *
- * `items` is `TodoModule.getItems()`: a per-item copy (the item object AND its
- * `previousHashes` ring are cloned), so a listener may retain it after the
- * mutation returns without observing later mutations through an alias.
- */
-export interface TodoChangedPayload {
-  /**
-   * Complete current list, ascending by id (a COPY — safe to retain).
-   *
-   * Structurally typed instead of importing `TodoItem` from `types.ts`: this
-   * module is deliberately a ZERO-IMPORT leaf (see the header), and a type-only
-   * import is still an edge that invites the next person to import a value.
-   * `TodoItem` satisfies this shape.
-   */
-  items: ReadonlyArray<{ id: number; name: string; done: boolean; note?: string; pinned?: boolean; preventStop?: string }>;
-  /**
-   * Which mutation produced this snapshot — for logging/tests, not rendering.
-   *
-   * `'autoclear'` is distinct from `'update'` on purpose (review B6): an update
-   * that completes the last open non-pinned item PURGES every non-pinned row, so
-   * its emitted list differs from the edited row. Collapsing that into 'update'
-   * made "one row changed" and "the checklist was emptied" indistinguishable to
-   * a subscriber.
-   */
-  source: 'create' | 'update' | 'pin' | 'clear' | 'autoclear';
-}
-
-/**
  * WebUI serve lifecycle flip — RETIRED as a signal.
  *
  * The flip now travels through the plain boolean holder at the bottom of this
@@ -178,8 +132,7 @@ export type LoopEventPayload =
   | TriologueEventPayload
   | EscInterruptPayload
   | BriefMessagePayload
-  | ServeStatePayload
-  | TodoChangedPayload;
+  | ServeStatePayload;
 
 // ============================================================================
 // Callback Type
@@ -223,28 +176,10 @@ class LoopEventEmitter {
   }
 
   /**
-   * `true` when at least one listener is subscribed to `event`.
-   *
-   * Lets a hot emitter SKIP building its payload when nobody listens — the
-   * caller can then avoid work (`Todo.emitChanged` materialises the whole
-   * list) instead of paying for a payload `emit()` would immediately discard.
-   */
-  hasListeners(event: LoopEventType): boolean {
-    const set = this.listeners.get(event);
-    return !!set && set.size > 0;
-  }
-
-  /**
    * Emit an event.
    *
    * No listeners: return before allocating an entry. With listeners, notify
    * them regardless of trace mode; retain entries only when tracing is enabled.
-   *
-   * LISTENER ISOLATION: a throwing listener is caught and reported, so it
-   * cannot abort the remaining listeners or propagate into the mutation that
-   * emitted. This matters for emitters called from inside state changes (e.g.
-   * `Todo.emitChanged` runs inside `createTodo`): without it, one bad
-   * subscriber would turn a successful mutation into a thrown error.
    */
   emit(event: LoopEventType, payload: unknown): void {
     const set = this.listeners.get(event);
@@ -252,15 +187,8 @@ class LoopEventEmitter {
 
     const entry: TraceEntry = { event, payload, timestamp: Date.now() };
     if (this.traceEnabled) this.trace.push(entry);
-    for (const cb of [...set]) {
-      try {
-        cb(payload, entry);
-      } catch (err) {
-        // Best-effort diagnostics only (verbose mode); never rethrow.
-        if (process.env.MYCC_DEBUG_ANSI === 'trace-listeners') {
-          console.error(`[loop-events] listener for '${event}' threw:`, err);
-        }
-      }
+    for (const cb of set) {
+      cb(payload, entry);
     }
   }
 

@@ -349,186 +349,22 @@ export function anchoredNoteLength(firstLine: string, body: string): number {
   return `${withoutFoldInvitation(firstLine)}`.length + 1 + NOTE_MARKER.length + body.length;
 }
 
-/** Heading of the open-todo section appended to a recap note. */
-export const OPEN_TODOS_HEADING = '### Open todos';
-
-/**
- * The OPEN todos a recap should carry forward, rendered as the note's third
- * part — or `''` when there is nothing to say.
- *
- * WHY THE NOTE CARRIES THEM: a recap deletes the span above the anchor, and
- * the todo list is the one piece of working state that lives OUTSIDE the
- * transcript (it is the agent's own ledger, not a message). Without this
- * section the model resumes after a fold with no idea what it had promised to
- * keep doing — the checklist is gone from its context even though the todo
- * tools still report it.
- *
- * OPEN means `!done`, plus any PINNED item (pinned items are long-term
- * reminders; a pinned guard's condition is still relevant after it is done —
- * exactly the rule `Todo.hasOpenTodo` uses). DONE, unpinned items are omitted:
- * they are the part of the checklist that is already settled, and the recap
- * note is a budgeted tool result, not a mirror of the panel.
- *
- * Rendering is deliberately compact and hash-free — the model addresses an
- * item by its `#id` (the one handle `todo_update` / `todo_pin` take), so the
- * 8-char integrity hash would only cost tokens. `Todo.printTodoList()` is the
- * PROMPT renderer (markers, hashes, emoji); this is the folded-state renderer.
- *
- * `undefined`/empty → `''`, so a session with no todos produces a two-part
- * note exactly as before — the section never appears empty.
- */
-/** Per-row text budget for the recap section (mirrors serve-todos' MAX_TEXT_LEN). */
-const MAX_TODO_TEXT_LEN = 500;
-
-/**
- * Total character budget for the rendered section.
- *
- * DERIVED FROM THE GATE IT PROTECTS, not a row count (round-2 review, major #2).
- * A fixed "40 rows" cap looked bounded but was not: 40 rows × 3 fields × 500 chars
- * ≈ 61 500 chars, against a default `getResultThreshold()` of 50 000 — so a session
- * with enough pinned, maximal-note rows still made EVERY recap permanently refused,
- * which is the exact failure this section was supposed to stop. Pinned rows never
- * auto-clear, so it only grows.
- *
- * Kept a little under the threshold to leave room for the note's other two parts
- * (the [RECAP] header and the span summary). `formatOpenTodos` is a pure renderer
- * with no access to the live threshold, so this is a deliberately conservative
- * constant; `recapNoteSize` remains the authoritative final check.
- */
-const MAX_TODO_SECTION_CHARS = 20_000;
-
-/** Flatten + clamp one free-form field so it cannot forge note structure. */
-function clampTodoText(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  // Collapse every line break and control char: a name containing "\n### " would
-  // otherwise forge a section heading inside a durable note the model reads as
-  // authoritative state (review m1).
-  const flat = value.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
-  if (!flat) return undefined;
-  return flat.length > MAX_TODO_TEXT_LEN ? `${flat.slice(0, MAX_TODO_TEXT_LEN)}…` : flat;
-}
-
-/**
- * The OPEN todos a recap should carry forward, rendered as the note's third
- * part — or `''` when there is nothing to say.
- *
- * ## Deliberately NOT built (recorded so they are not re-proposed)
- *
- * Two designs for "keep the todo list in front of the model" were considered and
- * rejected. Neither is an oversight; each has a concrete reason.
- *
- * 1. A `todo_list` TOOL the model calls to refresh the list. REJECTED: this repo
- *    already tried a proactive `checkpoint` tool and it failed for a reason that
- *    generalises — the LLM never knew when to call it (pitfall `c5e0818f`:
- *    "A manual 'checkpoint' tool failed: the LLM never knew to call it. Fix:
- *    passive anchors…"). A tool whose only trigger is the model's own judgement
- *    about its own attention is not a mechanism. Delivery must not depend on the
- *    agent choosing to ask.
- *
- * 2. A PER-TURN injection of the list into the project context. REJECTED: the
- *    project-context populators are frozen between `compact()`/`clear()`
- *    boundaries ON PURPOSE — see `prompt-populators.ts` — because refreshing them
- *    every turn invalidated the provider's prompt-cache prefix on each request.
- *    `collect.ts` states the same rule independently: the list "must NOT be
- *    re-injected as a per-turn REMINDER".
- *
- * What ships instead is a two-layer split, each layer honest about what it is:
- *   - the populator guarantees the list APPEARS, at boundaries, cached-cheap;
- *   - the transient per-N-calls REMINDER (collect.ts step 5a, teammate-worker
- *     step 3) is what makes it CURRENT mid-task, and it is a note so it never
- *     enters the cached prefix;
- *   - and `recap` is the checkpoint that folds finished work and re-surfaces the
- *     list — the note below IS that delivery channel, which is why the rewind path
- *     does NOT rebuild the project context (that is licensed at compact()/clear()
- *     only, where the prefix already changes).
- *
- * Note the OPENING rule above still applies: `!done || pinned`. That is NOT the
- * same predicate as `Todo.hasOpenTodo()` (`!done || (pinned && preventStop)`) —
- * a known, recorded inconsistency. It is left explicit at each call site rather
- * than unified: the looser rule is correct where a false positive is harmless
- * (mentioning that a list exists), and the stricter one is correct where the item
- * must be actionable. A shared helper was tried and removed — it had no callers
- * and documented three exceptions instead of removing them.
- *
- * Rendering is deliberately compact and hash-free — the model addresses an item
- * by its `#id` (the one handle `todo_update` / `todo_pin` take), so the 8-char
- * integrity hash would only cost tokens. `Todo.printTodoList()` is the PROMPT
- * renderer (markers, hashes, emoji); this is the folded-state renderer.
- *
- * `undefined`/empty → `''`, so a session with no todos produces a two-part note
- * exactly as before — the section never appears empty.
- */
-export function formatOpenTodos(
-  items: readonly { id: number; name: string; done: boolean; pinned?: boolean; note?: string; preventStop?: string }[] | undefined,
-): string {
-  const open = (items ?? []).filter((i) => !i.done || i.pinned);
-  if (open.length === 0) return '';
-  // BOUNDED (review M3). The whole list is re-serialised into a durable tool result
-  // whose size is pre-checked against the result threshold; an unbounded section can
-  // therefore make a recap PERMANENTLY IMPOSSIBLE once enough long rows accumulate
-  // (pinned rows never auto-clear, so it only grows). Truncating here keeps the
-  // note writable and says so explicitly, instead of silently failing every recap.
-  const shown: string[] = [];
-  let used = OPEN_TODOS_HEADING.length + 1;
-  let omitted = 0;
-  for (const i of open) {
-    const marker = i.done ? '[x]' : '[ ]';
-    const pin = i.pinned ? ' (pinned)' : '';
-    const guard = clampTodoText(i.preventStop);
-    const note = clampTodoText(i.note);
-    const line = `${marker} #${i.id} ${clampTodoText(i.name) ?? '(unnamed)'}${pin}`
-      + `${note ? ` (${note})` : ''}${guard ? ` [preventStop: ${guard}]` : ''}`;
-    // CHAR BUDGET, not a row count (round-2 review, major #2). Stop at the budget so
-    // the note stays writable regardless of how many maximal rows have accumulated.
-    if (used + line.length + 1 > MAX_TODO_SECTION_CHARS) {
-      omitted = open.length - shown.length;
-      break;
-    }
-    shown.push(line);
-    used += line.length + 1;
-  }
-  if (omitted > 0) {
-    shown.push(`… and ${omitted} more open todo(s) not shown (use \`/todos\` to list all).`);
-  }
-  return `${OPEN_TODOS_HEADING}\n${shown.join('\n')}`;
-}
-
 /**
  * Assemble the note BODY a recap writes into the anchor brief's tool result:
- * three parts, in this order —
- *
- *   1. the bare `[RECAP]` header (plus the quoted anchor brief),
- *   2. the caller's `additionalMessage` (the span summary / the discard note),
- *   3. the OPEN TODO LIST ({@link formatOpenTodos}), when there is one.
- *
- * The LIST COMES LAST because it is the live state the model resumes with; the
- * summary describes work that is already folded, so the checklist is what the
- * next turn should read before choosing its first action.
+ * the `[RECAP]` header (label + quoted anchor brief) followed by the caller's
+ * `additionalMessage`.
  *
  * SINGLE SOURCE OF TRUTH — both `Triologue.rewindToLastBrief` (which appends it
  * through `noteWithSummary`) and `Triologue.recapNoteSize` (which sizes it)
  * call this, so a caller's pre-check measures exactly the string the rewrite
- * will store. That is why the todo list is an ARGUMENT here rather than
- * something a caller splices into `additionalMessage` afterwards: a caller
- * that appended it on its own would be sized as if the section did not exist,
- * and an over-size note is written AFTER the truncation (the span is lost with
- * it).
+ * will store.
  */
-export function buildRecapNote(
-  anchorMessage: string,
-  additionalMessage: string,
-  openTodos?: string,
-): string {
-  // NO LABEL. The header is the bare `[RECAP]` marker and the body is the
-  // model's OWN summary, copied verbatim — recap no longer generates a digest,
-  // and the tool takes no label argument to render here.
+export function buildRecapNote(description: string, anchorMessage: string, additionalMessage: string): string {
   const header = [
-    '[RECAP]',
+    `[RECAP] ${description}`,
     anchorMessage ? `Rewound past the brief: "${anchorMessage}"` : '',
   ].filter(Boolean).join('\n');
-  const base = `${header}\n\n${additionalMessage}`;
-  const todos = openTodos?.trim() ? openTodos.trim() : '';
-  return todos ? `${base}\n\n${todos}` : base;
+  return `${header}\n\n${additionalMessage}`;
 }
 
 /**

@@ -12,7 +12,6 @@
 import { WebSocket } from 'ws';
 import { stripAnsi } from './serve-utils.js';
 import type { LogEntry } from './serve-types.js';
-import type { TodoListPayload } from './serve-todos.js';
 
 /** Capped in-memory log for reconnect replay (sibling of ServeHub.messageLog). */
 export interface MessageLogHolder {
@@ -41,19 +40,6 @@ export class ClientRegistry {
 
   get size(): number {
     return this.clients.size;
-  }
-
-  /**
-   * Send a todo-list snapshot to every OPEN client.
-   *
-   * Separate from {@link broadcast} because the payload is a STRUCTURED list,
-   * not the flat `{type, content}` chat frame. Not recorded in the message log:
-   * `/history` ships the current snapshot instead, so a reconnect never sees a
-   * stale copy replayed into the chat stream.
-   */
-  broadcastTodoList(payload: TodoListPayload): void {
-    const frame = JSON.stringify(payload);
-    this.forEachOpen((ws) => ws.send(frame));
   }
 
   /**

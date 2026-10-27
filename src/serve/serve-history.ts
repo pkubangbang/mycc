@@ -77,15 +77,6 @@ export function computeHistoryVersion(
   messageLog: LogEntry[],
   steeringLength: number,
   isRunning: boolean,
-  /**
-   * Opaque fingerprint of body state that none of the terms above covers —
-   * currently the todo snapshot (`todoEtagToken` in serve-hub.ts). The todo
-   * list lives only in memory (never in the transcript or messageLog), so
-   * without this a todo-only change would 304 and the client would keep a
-   * stale panel. Defaults to '' so a caller (or test) that omits it keeps the
-   * previous hash behaviour exactly.
-   */
-  extraToken: string = '',
 ): string {
   const parts: string[] = [];
   // Durable file fingerprint — mtimeMs + size. A missing file contributes
@@ -111,9 +102,6 @@ export function computeHistoryVersion(
   // Transient fields that live in the body but NOT in the durable files.
   parts.push(`steer:${steeringLength}`);
   parts.push(`running:${isRunning ? 1 : 0}`);
-  // Body state not covered by any term above (see `extraToken`). Omitted when
-  // empty, so an omitted token cannot change an existing fingerprint.
-  if (extraToken) parts.push(extraToken);
   return `W/"h${djb2(parts.join('|'))}"`;
 }
 
