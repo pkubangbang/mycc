@@ -135,11 +135,7 @@ CRITICAL INSTRUCTIONS:
    - Even when there are no blockers, fill wiki_query with keywords describing the current task so the search can surface relevant how-to knowledge.
 5. In the conversation context, tool calls tagged as ti[hook-name]|tool-name|args were injected by a hookish skill, NOT chosen by the agent. When diagnosing confusion, consider whether a hook is misbehaving — injecting the wrong tool, blocking spuriously, replacing incorrectly, or firing when it shouldn't. If a hook is the blocker, name the hook skill in the blocker field and describe what it is doing wrong.
 6. Cautious moves: if you notice the agent is making repeated single-tool-call turns where it could have batched independent calls (e.g. reading files one at a time, pinning todos one by one, creating issues one per turn), this is not a blocker but an efficiency gap. In that case set blocker to "no blockers" and put a concrete batch encouragement in next_step — tell the agent to emit all independent, dependency-free tool calls in a single response. Do NOT encourage batching when one call's arguments depend on another's result (e.g. creating a todo then pinning it by id, reading a file then editing it) or for brief and recap, which must each be called alone.
-7. JUDGE STUCK-NESS FROM EVIDENCE, NOT LENGTH. The prompt carries out-of-band state under "## Todo List", "## Mode & Write Scope", "## Recent Permission Blocks" and "## Loop Evidence". Never infer a blocker from how long the conversation is.
-   - Name the blocked todo (its number) in next_step when one is clearly the obstacle.
-   - When "## Recent Permission Blocks" is present, the goal is right but the REQUEST is wrong: name the rule and give the exact fix (reformat the intent to VERB OBJECT PARAM TO PURPOSE, switch off plan mode, call git_commit instead of bash git commit, or ask the lead to run it).
-   - "No repeated-action evidence in the recent window" is EVIDENCE OF ABSENCE: do not invent a tool loop; treat the blocker as an unresolved task.
-8. Reply with ONLY a JSON object. No commentary, no markdown fences.
+7. Reply with ONLY a JSON object. No commentary, no markdown fences.
 The schema is:
 ${JSON.stringify(HINT_SCHEMA, null, 2)}
 
@@ -307,10 +303,12 @@ export class HintRound {
     // Use brief for hint round notification (user-facing)
     ctx.core.brief('info', 'loop', 'Generating hint...');
     const pendingSkills = env.conditions.getPending();
+    const breakdown = generateBreakdown(confusionIndex, env.sequence.getEvents());
+
     // Use escAware for ESC-interruptible hint generation
     const result = await ctx.core.escAware(
       async (abortController) => {
-        return await this.generate(abortController, pendingSkills);
+        return await this.generate(abortController, confusionIndex, breakdown, pendingSkills);
       },
       () => {
         // ESC pressed during hint generation — return 'aborted' so the
@@ -358,14 +356,16 @@ export class HintRound {
    * `triologue.note('HINT', ...)`. Supports abort via AbortController for ESC.
    *
    * @param abortController - Abort controller for ESC handling
-   * The prompt is assembled from OUT-OF-BAND state only (state the transcript
-   * cannot reconstruct) plus the transcript view — see the buildStateSections() helper.
+   * @param confusionScore - Current confusion score
+   * @param confusionBreakdown - Human-readable breakdown of confusion factors
    * @param pendingSkills - Skills with 'when' but no compiled condition
    * @returns 'aborted' if ESC was pressed, 'failed' after bounded malformed-output retries,
    *   or a success object.
    */
   private async generate(
     abortController: AbortController,
+    confusionScore: number,
+    confusionBreakdown: string,
     pendingSkills?: string[],
   ): Promise<'aborted' | 'failed' | { status: 'success'; focusOn: string }> {
     const env = this.env;
@@ -419,9 +419,11 @@ export class HintRound {
     const duplicationReport = env.requestEmbeddingTracker.getDuplicationReport();
 
     const userPrompt = [
-      ...buildStateSections(env),
       '## Conversation Context',
       compactContext,
+      '',
+      `## Confusion Score: ${confusionScore}`,
+      confusionBreakdown,
       '',
       '## Available Wiki Domains',
       domainInfo,
@@ -687,171 +689,26 @@ export class HintRound {
 }
 
 /**
- * Summarize recent PERMISSION blocks as actionable evidence for the analyzer.
+ * Generate a human-readable breakdown of confusion factors.
  *
- * Grants keep no history — `judgeBash` / `evaluateGrant` return a verdict that
- * only survives as a TOOL-RESULT string — so the evidence is recovered by
- * classifying the trailing window of sequence events. Returns null when no
- * block is present, which makes the caller OMIT the section entirely (a clean
- * session must not pad the prompt).
- *
- * Exported for unit testing.
+ * Only the OBJECTIVE dead-loop evidence is kept — it names the tool, the
+ * repeat count and the shared error prefix, which is something the analyzer
+ * can act on. The "N assistant turns" estimate was derived from
+ * `Math.ceil(events.length / 3)` (a fabricated number) and the bare error
+ * count restated what the transcript already shows, so neither is emitted.
  */
-export function summarizePermissionBlocks(events: SequenceEvent[]): string | null {
-  if (events.length === 0) return null;
-  const window = events.slice(-10);
-  const counts = new Map<string, { count: number; sample: string }>();
-
-  for (const ev of window) {
-    const result = ev.result || '';
-    const lower = result.toLowerCase();
-    let label: string | null = null;
-    if (lower.startsWith('error: [intent]')) {
-      label = 'intent grammar rejected';
-    } else if (/cannot \w+ in plan mode/i.test(result) ||
-               lower.includes('operation not permitted in current mode')) {
-      // write.ts / edit.ts return grant.reason when present, else the generic
-      // fallback — BOTH plan-mode forms must match, or the most common block
-      // (a plain write in plan mode) would be invisible.
-      label = 'plan-mode block';
-    } else if (lower.includes('command blocked:')) {
-      label = 'dangerous-command block';
-    } else if (lower.includes('batch deletion')) {
-      label = 'batch-delete gate';
-    } else if (lower.includes('direct git commit is not allowed')) {
-      label = 'wrong-tool block (use git_commit)';
-    } else if (lower.includes('user denied')) {
-      label = 'human refusal';
-    }
-    if (!label) continue;
-
-    const entry = counts.get(label);
-    if (entry) {
-      entry.count++;
-    } else {
-      counts.set(label, { count: 1, sample: result.split('\n')[0].slice(0, 90) });
-    }
-  }
-
-  if (counts.size === 0) return null;
-  const lines: string[] = [
-    '## Recent Permission Blocks',
-    'These attempts were refused by the tool layer. Fix the REQUEST, not the goal:',
-  ];
-  for (const [label, { count, sample }] of counts) {
-    lines.push(`- ${label}${count > 1 ? ` ×${count}` : ''}: "${sample}"`);
-  }
-  return lines.join('\n');
-}
-
-/**
- * The neutral Loop Evidence line used when the recent window holds no
- * repeated-action evidence.
- *
- * This line is NOT optional filler: `getDuplicationReport()` only reports
- * pairs touching the last 5 entries, while the confusion index accumulates
- * every pair — so a round can legitimately fire on index >= 10 with an empty
- * duplication report. Without an explicit "no evidence" statement the
- * analyzer tends to invent a tool loop from conversation length alone, which
- * is exactly the failure mode the counters were removed to stop.
- */
-const NO_LOOP_EVIDENCE =
-  'No repeated-action evidence in the recent window — treat the current blocker as an unresolved task, not a duplicate tool loop.';
-
-/** Hard cap applied to any user/peer-authored text spliced into the prompt. */
-const INJECTED_FIELD_MAX = 60;
-
-/**
- * Sanitize a user- or peer-authored value before splicing it into the prompt.
- *
- * The todo list echoes `note` / `reactivate` conditions, which are natural
- * language written by the user or a peer — the transcript view never had this
- * exposure because it is minimised and truncated. Flatten newlines, collapse
- * whitespace and cap the length so a crafted todo cannot smuggle a heading or
- * an instruction into the analyzer's prompt.
- */
-function sanitizeField(value: string): string {
-  const flat = value.replace(/\s+/g, ' ').trim();
-  // ANALYSIS_INSTRUCTION must stay unique in the prompt (retryLoop splits on
-  // it), so a value containing it is defused rather than passed through.
-  const safe = flat.split(ANALYSIS_INSTRUCTION).join('[gap analysis]');
-  return safe.length > INJECTED_FIELD_MAX ? `${safe.slice(0, INJECTED_FIELD_MAX)}…` : safe;
-}
-
-/**
- * Build the OUT-OF-BAND state sections prefixed to the analysis prompt.
- *
- * The module's design rule: the prompt carries only state `minifyMessages`
- * cannot reconstruct from the transcript. Todos, the write scope and recent
- * permission blocks all qualify; counters do not, which is why the confusion
- * score / turn count / error count are absent.
- *
- * Every section self-omits when it has nothing to say, so a quiet session adds
- * little beyond `## Todo List`.
- */
-function buildStateSections(env: MachineEnv): string[] {
-  const parts: string[] = [];
-
-  // ── Todo List ──
-  // Rendered from getItems() rather than printTodoList(): the printer echoes
-  // the raw note + reactivate bodies, which are user/peer-authored.
-  let todos: ReturnType<MachineEnv['ctx']['todo']['getItems']> = [];
-  try {
-    todos = env.ctx.todo.getItems();
-  } catch {
-    todos = [];
-  }
-  const todoLines = ['## Todo List'];
-  if (todos.length === 0) {
-    todoLines.push('No todos — the task is not tracked; decide whether it needs one.');
-  } else {
-    for (const item of todos) {
-      const marker = item.done ? '[x]' : '[ ]';
-      const pin = item.pinned ? ' 📌' : '';
-      const note = item.note ? ` — ${sanitizeField(item.note)}` : '';
-      todoLines.push(`- ${marker}${pin} ${item.id}. ${sanitizeField(item.name)}${note}`);
-    }
-  }
-  parts.push(todoLines.join('\n'));
-
-  // ── Mode & Write Scope ──
-  // Plan mode only: "normal — writes permitted" is a constant and would be the
-  // no-signal padding this redesign exists to delete.
-  if (env.sequence.isPlanMode()) {
-    const core = env.ctx.core as unknown as { getAllowedFile?: () => string | undefined };
-    let allowed: string | undefined;
-    try {
-      allowed = core.getAllowedFile?.();
-    } catch {
-      allowed = undefined;
-    }
-    parts.push([
-      '## Mode & Write Scope',
-      `plan mode — writes are blocked except: ${allowed ? sanitizeField(allowed) : '(no file allowed)'}`,
-    ].join('\n'));
-  }
-
-  // ── Recent Permission Blocks ──
-  const permissionEvidence = summarizePermissionBlocks(env.sequence.getEvents());
-  if (permissionEvidence) parts.push(permissionEvidence);
-
-  // ── Loop Evidence ──
-  // detectRepeatedActions() names the tool, the repeat count and the shared
-  // error prefix — evidence, not a metric. It is the ONE piece of the old
-  // breakdown that survives: dead loops are the hint round's documented job.
-  parts.push([
-    '## Loop Evidence',
-    detectRepeatedActions(env.sequence.getEvents()) ?? NO_LOOP_EVIDENCE,
-  ].join('\n'));
-
-  return [...parts, ''];
+function generateBreakdown(
+  _confusionIndex: number,
+  events: SequenceEvent[]
+): string {
+  const repeated = detectRepeatedActions(events);
+  return repeated ?? 'No issues detected';
 }
 
 /**
  * Process-wide singleton. Owns the COLLECT step-3 hint-round policy AND
- * mechanism (gate + state sections + ESC wiring + outcome handling + LLM
- * analysis + [HINT] injection). Carries no mutable state besides the bound
- * env — the hint flow's only dedup is the cross-cutting confusion index on
- * `ctx.core`.
+ * mechanism (gate + breakdown + ESC wiring + outcome handling + LLM analysis +
+ * [HINT] injection). Carries no mutable state besides the bound env — the hint
+ * flow's only dedup is the cross-cutting confusion index on `ctx.core`.
  */
 export const hintRound = new HintRound();
