@@ -201,7 +201,7 @@ describe('todoUpdateTool', () => {
     vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [x] 1. Task A [hash: newhash10]');
 
     const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'abc12345', name: 'Task A', done: true });
-    expect(result).toContain('Todo list:');
+      expect(result).not.toContain('Todo list:');
   });
 
   it('should include new hash in output', () => {

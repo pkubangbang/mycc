@@ -94,7 +94,7 @@ describe('todoCreateTool', () => {
     vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [ ] 1. Task [hash: abc12345]');
 
     const result = todoCreateTool.handler(ctx, { name: 'Task' });
-    expect(result).toContain('Todo list:');
+      expect(result).not.toContain('Todo list:');
   });
 
   it('should call brief with todo info', () => {

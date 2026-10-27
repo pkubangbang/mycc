@@ -99,7 +99,7 @@ describe('todo-create', () => {
       vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [ ] 1. Task [hash: abc12345]');
 
       const result = todoCreateTool.handler(ctx, { name: 'Task' });
-      expect(result).toContain('Todo list:');
+      expect(result).not.toContain('Todo list:');
     });
 
     it('should call brief with todo info', () => {
@@ -333,7 +333,7 @@ describe('todo-update', () => {
       vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [x] 1. Task A [hash: newhash10]');
 
       const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'abc12345', name: 'Task A', done: true });
-      expect(result).toContain('Todo list:');
+      expect(result).not.toContain('Todo list:');
     });
 
     it('should include new hash in output', () => {

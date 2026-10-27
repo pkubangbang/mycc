@@ -38,8 +38,6 @@ export const todoCreateTool: ToolDefinition = {
     return `Created todo #${item.id}
   name: ${item.name}
   done: false${item.note ? `\n  note: ${item.note}` : ''}
-  hash: ${item.hash}
-
-${ctx.todo.printTodoList()}`;
+  hash: ${item.hash}`;
   },
 };

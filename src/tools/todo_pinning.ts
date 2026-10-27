@@ -93,8 +93,6 @@ export const todoPinningTool: ToolDefinition = {
     return `${action === 'pinned' ? 'Pinned' : 'Unpinned'} todo #${updated.id}
   name: ${updated.name}
   pinned: ${updated.pinned}${guardInfo}
-  hash: ${updated.hash}
-
-${ctx.todo.printTodoList()}`;
+  hash: ${updated.hash}`;
   },
 };

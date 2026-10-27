@@ -88,8 +88,6 @@ export const todoUpdateTool: ToolDefinition = {
     return `Updated todo #${updated.id}
   name: ${updated.name}
   done: ${updated.done}${updated.note ? `\n  note: ${updated.note}` : ''}
-  hash: ${updated.hash}
-
-${ctx.todo.printTodoList()}`;
+  hash: ${updated.hash}`;
   },
 };
