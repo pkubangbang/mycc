@@ -794,9 +794,7 @@ function buildStateSections(env: MachineEnv, turn?: TurnVars): string[] {
   // ── Todo List ──
   // Rendered from getItems() rather than printTodoList(): the printer echoes
   // the raw note + preventStop bodies, which are user/peer-authored.
-  // Declared without an initializer: both the try and the catch assign it, so
-  // a `= []` seed would be dead (no-useless-assignment).
-  let todos: ReturnType<MachineEnv['ctx']['todo']['getItems']>;
+  let todos: ReturnType<MachineEnv['ctx']['todo']['getItems']> = [];
   try {
     todos = env.ctx.todo.getItems();
   } catch {

@@ -4,7 +4,7 @@
  * Section builders used by both the lead prompts (lead.ts) and the teammate
  * prompt (teammate.ts). Role-specific prompt assembly lives in those files;
  * this module holds the reusable prose sections (output behavior,
- * verification, launch args), the Agent Memory section variants
+ * verification, launch args, pinned todos), the Agent Memory section variants
  * (lead/teammate) built on shared conceptual axes, and the
  * buildCommonSections assembly used by the normal-mode prompts. The
  * intent-language section lives in intent-lang.ts.
@@ -54,6 +54,32 @@ export function buildVerificationSection(): string {
     'skill_load(name="environment-detection")',
     '```',
     'It identifies repo type, project shape, and available executables.',
+  ].join('\n');
+}
+
+// ============================================================================
+// Pinned Todo & Stop Guard Section (lead-only — teammates never see it)
+// ============================================================================
+
+export function buildPinnedTodoSection(): string {
+  return [
+    '### Pinned Todos',
+    'Regular todos are auto-cleared when all are completed. Pinned todos persist:',
+    '- Use `todo_pinning(id, hash, pinned=true)` to pin a todo after creating it with `todo_create`.',
+    '- Pinned todos are NOT removed when all todos are completed.',
+    '- Use pinned todos for persistent reminders (e.g., schema definitions, invariant rules, ' +
+    'materialized view refresh tasks).',
+    '',
+    '### Stop Guard',
+    'A pinned todo can carry a `preventStop` condition — a promise to yourself to keep working:',
+    '- Use `todo_pinning(id, hash, pinned=true, preventStop="<natural language condition>")` to set it.',
+    '- While the condition still holds you are NOT allowed to finish your turn: the turn continues, ' +
+    'with a SYSTEM note naming the guard and why it held.',
+    '- Leave it out, or unpin the todo (`pinned=false`), to let the turn end.',
+    '- Use it for long-horizon work whose completion you cannot judge in a single turn ' +
+    '(e.g. "until every test under src/loop passes", "until the migration is verified end-to-end").',
+    '- Example: `todo_pinning(id=2, hash="abc12345", pinned=true, ' +
+    'preventStop="until the users and orders migrations both pass their tests")`',
   ].join('\n');
 }
 

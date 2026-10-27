@@ -80,8 +80,8 @@ export interface MachineEnv {
 /** Turn lifetime — fresh when entering PROMPT from STOP/startup, persists across COLLECT→LLM→HOOK iterations */
 export interface TurnVars {
   isFirstRound: boolean;
-  nextChannelNudge: number;
-  lastChannelState: string;
+  nextTodoNudge: number;
+  lastTodoState: string;
   nextBriefNudge: number;
   /** User's last real query, stored for recap to preserve across compression */
   lastUserQuery: string;
@@ -250,7 +250,7 @@ export class AgentStateMachine {
    * Errors propagate to the caller.
    */
   async run(): Promise<void> {
-    let turn: TurnVars = { isFirstRound: true, nextChannelNudge: 3, lastChannelState: '', nextBriefNudge: 5, lastUserQuery: '', lastBriefMessage: '', lastHintFocus: '', collectTransientRetries: 0, preventStopHolds: {} };
+    let turn: TurnVars = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', lastBriefMessage: '', lastHintFocus: '', collectTransientRetries: 0, preventStopHolds: {} };
     this.currentTurn = turn;
     skillSuggester.reset();
     let chat: ChatData = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null, deferredCompact: false };
@@ -270,7 +270,7 @@ export class AgentStateMachine {
       // AWAIT is also a turn boundary in auto mode: each autonomous cycle starts a
       // fresh turn (fresh nudges, lastUserQuery cleared). AWAIT never follows SLASH.
       if ((state === AgentState.PROMPT || state === AgentState.AWAIT) && prevState !== AgentState.SLASH) {
-        turn = { isFirstRound: true, nextChannelNudge: 3, lastChannelState: '', nextBriefNudge: 5, lastUserQuery: '', lastBriefMessage: '', lastHintFocus: '', collectTransientRetries: 0, preventStopHolds: {} };
+        turn = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', lastBriefMessage: '', lastHintFocus: '', collectTransientRetries: 0, preventStopHolds: {} };
         this.currentTurn = turn;
         // Reset the skill-discovery singleton's throttle state at the turn
         // boundary — the same lifecycle point where lastSkillY /

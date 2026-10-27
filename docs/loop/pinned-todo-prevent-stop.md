@@ -328,18 +328,9 @@ anti-hallucination check active.
 
 ## Agent Prompt Documentation
 
-The section lives in `buildPinnedTodoMessages()` (`src/loop/prompt-populators.ts`),
-delivered through the project-context populator registry and registered
-lead-only in `src/loop/agent-repl.ts` (never in `teammate-worker.ts` — a
-teammate has no `todo_pinning` and no STOP-stage guard). It used to be
-`buildPinnedTodoSection()` in `src/loop/prompts/common.ts`, inlined into the
-lead's system prompt; it moved to a populator so one boundary-cadence channel
-carries it (rebuilt at compact/clear, never per LLM call), leaving the system
-prompt byte-stable. The open todo list itself is delivered by the separate
-SHARED populator `buildTodoMessages()` (`same file`); the pinned populator
-deliberately does not re-render the items. It is written in the agent's own
-vocabulary — no state names, no `forkChat` — because the agent thinks in todos
-and turns:
+The section lives in `buildPinnedTodoSection()` (`src/loop/prompts/common.ts`),
+used by the lead-only prompts. It is written in the agent's own vocabulary —
+no state names, no `forkChat` — because the agent thinks in todos and turns:
 
 ```
 ### Stop Guard

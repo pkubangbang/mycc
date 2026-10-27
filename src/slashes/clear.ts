@@ -14,12 +14,6 @@ export const clearCommand: SlashCommand = {
   description: 'Clear conversation history, todos, issues, and start fresh',
   handler: (context) => {
     const triologue = context.triologue as Triologue;
-    // The todo store MUST be emptied BEFORE triologue.clear(): clear() calls
-    // rebuildProjectContext(), which re-invokes the todo populator
-    // (buildTodoMessages) and snapshots the list. Reversing the order leaves
-    // the fresh conversation carrying the pre-clear todos (the list would
-    // "survive" the very boundary meant to wipe it).
-    context.ctx.todo.clear();
     triologue.clear();
     // fullClear() resets EVERYTHING including turn.events[] and totalTurns —
     // /clear starts a completely fresh session. This is the one place where
@@ -30,6 +24,7 @@ export const clearCommand: SlashCommand = {
     // it was deduping against, but not the dedup set itself.
     context.hookExecutor?.resetTurn();
     clearWrapUp();
+    context.ctx.todo.clear();
     context.ctx.issue.clearAll();
     // Fresh-session primitive: reset the skill-discovery throttle AND
     // invalidate the stale TurnVars composite sources. /clear returns PROMPT

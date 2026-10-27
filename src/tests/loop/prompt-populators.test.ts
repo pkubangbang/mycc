@@ -21,8 +21,7 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildWikiDomainsMessages, buildCollaborationMessages, buildTodoMessages, buildPinnedTodoMessages } from '../../loop/prompt-populators.js';
-import type { TodoModule } from '../../types.js';
+import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildWikiDomainsMessages, buildCollaborationMessages } from '../../loop/prompt-populators.js';
 
 describe('buildPlatformCalendarMessages', () => {
   it('returns a user + assistant message pair', () => {
@@ -178,120 +177,5 @@ describe('buildCollaborationMessages', () => {
 
   it('is byte-stable across invocations (no dynamic content)', () => {
     expect(buildCollaborationMessages()).toEqual(buildCollaborationMessages());
-  });
-});
-
-// ============================================================================
-// Todo List populator (shared) + Pinned Todos populator (lead-only)
-// ============================================================================
-
-/**
- * Minimal TodoModule double: the populators only read `printTodoList()`
- * (buildTodoMessages) or nothing at all (buildPinnedTodoMessages).
- */
-function makeTodoStub(printed: string): TodoModule {
-  return {
-    createTodo: () => { throw new Error('not used'); },
-    updateTodo: () => { throw new Error('not used'); },
-    printTodoList: () => printed,
-    hasOpenTodo: () => printed !== 'No todos.',
-    clear: () => { /* not used */ },
-    getItems: () => [],
-    pinTodo: () => { throw new Error('not used'); },
-    findByPreviousHash: () => null,
-    getPreventStopCandidates: () => [],
-  };
-}
-
-describe('buildTodoMessages', () => {
-  it('returns a user + assistant message pair carrying the task-management usage', () => {
-    const messages = buildTodoMessages(makeTodoStub('No todos.'));
-    expect(messages).toHaveLength(2);
-    expect(messages[0].role).toBe('user');
-    expect(messages[1].role).toBe('assistant');
-    expect(messages[0].content).toContain('## Task Management');
-    expect(messages[0].content).toContain('issue_* for complex tasks');
-    expect(messages[0].content).toContain('todo_* for simple tracking');
-  });
-
-  it('starts empty — a fresh session renders "No todos."', () => {
-    const [user] = buildTodoMessages(makeTodoStub('No todos.'));
-    expect(user.content).toContain('## Todo List');
-    expect(user.content).toContain('No todos.');
-  });
-
-  it('snapshots the live todo list rendered by printTodoList()', () => {
-    const printed =
-      'Todo list:\n  [ ]  1. First task [hash: aaaaaaaa]\n  [x] 📌 2. Pinned item (note) [hash: bbbbbbbb]';
-    const [user] = buildTodoMessages(makeTodoStub(printed));
-    expect(user.content).toContain(printed);
-  });
-
-  it('does NOT carry the lead-only pinned-todo / stop-guard USAGE prose', () => {
-    const [user] = buildTodoMessages(makeTodoStub('No todos.'));
-    expect(user.content).not.toContain('### Pinned Todos');
-    expect(user.content).not.toContain('### Stop Guard');
-    expect(user.content).not.toContain('todo_pinning(id, hash, pinned=true)');
-  });
-
-  it('renders a guarded item\u2019s 📌 marker and [preventStop] tag verbatim', () => {
-    // The list snapshot IS printTodoList() verbatim, so pinned/guard markers do
-    // appear here even though the USAGE prose is lead-only. Only the lead can
-    // create such an item (todo_pinning is scope ['main']), so this is the lead's
-    // own reminder surfacing in its own snapshot — not a teammate leak.
-    const printed = 'Todo list:\n  [ ] 📌  2. Ship it [preventStop: until tests pass] [hash: bbbbbbbb]';
-    const [user] = buildTodoMessages(makeTodoStub(printed));
-    expect(user.content).toContain(printed);
-    expect(user.content).toContain('📌');
-    expect(user.content).toContain('[preventStop: until tests pass]');
-  });
-
-  it('states the staleness contract so the agent trusts tool-returned hashes', () => {
-    const [user] = buildTodoMessages(makeTodoStub('No todos.'));
-    expect(user.content).toContain('rebuilt only at compaction / clear boundaries');
-    // `/todos` must NOT be advertised as an agent escape hatch: it is a
-    // user-invoked slash command (terminal-only), and teammates have no REPL.
-    expect(user.content).toContain('/todos');
-    expect(user.content).toContain('USER-invoked');
-    expect(user.content).not.toContain('shows the live list on demand');
-  });
-
-  it('re-renders from the todo store on each call (rebuild boundary freshness)', () => {
-    // Simulates compact()/clear() calling rebuildProjectContext(): the same
-    // populator closure sees the CURRENT list, so the snapshot survives a
-    // compaction and is empty again after a clear.
-    const before = buildTodoMessages(makeTodoStub('Todo list:\n  [ ] 1. Work [hash: cccccccc]'));
-    const after = buildTodoMessages(makeTodoStub('No todos.'));
-    expect(before[0].content).toContain('1. Work');
-    expect(after[0].content).toContain('No todos.');
-  });
-});
-
-describe('buildPinnedTodoMessages', () => {
-  it('returns a user + assistant message pair', () => {
-    const messages = buildPinnedTodoMessages();
-    expect(messages).toHaveLength(2);
-    expect(messages[0].role).toBe('user');
-    expect(messages[1].role).toBe('assistant');
-  });
-
-  it('carries the pinned-todo and stop-guard usage prose', () => {
-    const [user] = buildPinnedTodoMessages();
-    expect(user.content).toContain('### Pinned Todos');
-    expect(user.content).toContain('todo_pinning(id, hash, pinned=true)');
-    expect(user.content).toContain('### Stop Guard');
-    expect(user.content).toContain('preventStop');
-    expect(user.content).toContain('until every test under src/loop passes');
-  });
-
-  it('does not duplicate the todo list or the shared usage section', () => {
-    const [user] = buildPinnedTodoMessages();
-    expect(user.content).not.toContain('## Todo List');
-    expect(user.content).not.toContain('## Task Management');
-    expect(user.content).not.toContain('No todos.');
-  });
-
-  it('is byte-stable across invocations (static, no state read)', () => {
-    expect(buildPinnedTodoMessages()).toEqual(buildPinnedTodoMessages());
   });
 });

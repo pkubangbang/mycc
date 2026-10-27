@@ -94,15 +94,12 @@ describe('todo-create', () => {
       expect(mockTodo.createTodo).toHaveBeenCalledWith('Task', 'padded note');
     });
 
-    it('should NOT echo the open todo list in output', () => {
+    it('should include full todo list in output', () => {
       vi.mocked(mockTodo.createTodo).mockReturnValue({ id: 1, name: 'Task', done: false, hash: 'abc12345' });
       vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [ ] 1. Task [hash: abc12345]');
 
       const result = todoCreateTool.handler(ctx, { name: 'Task' });
-      // The list is delivered by the todo project-context populator
-      // (buildTodoMessages) — the tool result carries only the touched item.
-      expect(result).not.toContain('Todo list:');
-      expect(mockTodo.printTodoList).not.toHaveBeenCalled();
+      expect(result).toContain('Todo list:');
     });
 
     it('should call brief with todo info', () => {
@@ -110,7 +107,7 @@ describe('todo-create', () => {
       vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [ ] 1. My task [hash: abc12345]');
 
       todoCreateTool.handler(ctx, { name: 'My task' });
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'todo_create', expect.stringContaining('My task'));
+      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'todo_create', expect.any(String), expect.stringContaining('My task'));
     });
 
     it('should have name as required field', () => {
@@ -207,8 +204,7 @@ describe('todo-update', () => {
 
       const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'abc12345', name: 'Task A', done: true });
       expect(result).toContain('done: true');
-      // The todo list is no longer passed as the brief's message — the detail line carries it.
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'todo_update', expect.stringMatching(/^(completed|updated) #\d+: Task A$/));
+      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'todo_update', expect.any(String), expect.stringContaining('completed'));
     });
 
     it('should show updated status when done is false', () => {
@@ -216,7 +212,7 @@ describe('todo-update', () => {
       vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [ ] 1. Task A [hash: newhash05]');
 
       todoUpdateTool.handler(ctx, { id: 1, hash: 'abc12345', name: 'Task A', done: false });
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'todo_update', expect.stringMatching(/^(completed|updated) #\d+: Task A$/));
+      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'todo_update', expect.any(String), expect.stringContaining('updated'));
     });
 
     // Hash validation
@@ -332,14 +328,12 @@ describe('todo-update', () => {
     });
 
     // Output formatting
-    it('should NOT echo the open todo list in output', () => {
+    it('should include full todo list in output', () => {
       vi.mocked(mockTodo.updateTodo).mockReturnValue({ id: 1, name: 'Task A', done: true, hash: 'newhash10' });
+      vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [x] 1. Task A [hash: newhash10]');
 
       const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'abc12345', name: 'Task A', done: true });
-      // The list is delivered by the todo project-context populator
-      // (buildTodoMessages) — the tool result carries only the touched item.
-      expect(result).not.toContain('Todo list:');
-      expect(mockTodo.printTodoList).not.toHaveBeenCalled();
+      expect(result).toContain('Todo list:');
     });
 
     it('should include new hash in output', () => {

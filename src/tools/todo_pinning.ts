@@ -82,17 +82,18 @@ export const todoPinningTool: ToolDefinition = {
 
     const action = pinned ? 'pinned' : 'unpinned';
     const guardInfo = updated.preventStop ? `\n  preventStop: ${updated.preventStop}` : '';
-    // Same rule as todo_create/todo_update: no open-list echo — the list is
-    // delivered by the todo project-context populator (buildTodoMessages).
     ctx.core.brief(
       'info',
       'todo_pinning',
+      ctx.todo.printTodoList(),
       `${action} #${updated.id}: ${updated.name}`,
     );
 
     return `${action === 'pinned' ? 'Pinned' : 'Unpinned'} todo #${updated.id}
   name: ${updated.name}
   pinned: ${updated.pinned}${guardInfo}
-  hash: ${updated.hash}`;
+  hash: ${updated.hash}
+
+${ctx.todo.printTodoList()}`;
   },
 };

@@ -73,8 +73,7 @@ describe('todoUpdateTool', () => {
 
     const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'abc12345', name: 'Task A', done: true });
     expect(result).toContain('done: true');
-    // The todo list is no longer passed as the brief's message — the detail line carries it.
-    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'todo_update', expect.stringMatching(/^(completed|updated) #\d+: Task A$/));
+    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'todo_update', expect.any(String), expect.stringContaining('completed'));
   });
 
   it('should show updated status when done is false', () => {
@@ -82,7 +81,7 @@ describe('todoUpdateTool', () => {
     vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [ ] 1. Task A [hash: newhash05]');
 
     todoUpdateTool.handler(ctx, { id: 1, hash: 'abc12345', name: 'Task A', done: false });
-    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'todo_update', expect.stringMatching(/^(completed|updated) #\d+: Task A$/));
+    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'todo_update', expect.any(String), expect.stringContaining('updated'));
   });
 
   // Hash validation
@@ -243,17 +242,12 @@ describe('todoUpdateTool', () => {
   });
 
   // Output formatting
-  it('should NOT echo the open todo list in output', () => {
+  it('should include full todo list in output', () => {
     vi.mocked(mockTodo.updateTodo).mockReturnValue({ id: 1, name: 'Task A', done: true, hash: 'newhash10' });
-    // Set a REAL list so the text check has teeth on its own, instead of
-    // depending on a stub that leaked from an earlier test.
     vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [x] 1. Task A [hash: newhash10]');
 
     const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'abc12345', name: 'Task A', done: true });
-    // The list is delivered by the todo project-context populator
-    // (buildTodoMessages) — the tool result carries only the touched item.
-    expect(result).not.toContain('Todo list:');
-    expect(mockTodo.printTodoList).not.toHaveBeenCalled();
+    expect(result).toContain('Todo list:');
   });
 
   it('should include new hash in output', () => {

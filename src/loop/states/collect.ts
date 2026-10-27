@@ -2,7 +2,7 @@
  * collect.ts - COLLECT state handler
  *
  * Pre-LLM pipeline: child questions, mail collection,
- * hint round, peer-channel nudging, brief nudging,
+ * hint round, todo nudging, brief nudging,
  * role sequence validation.
  */
 
@@ -245,17 +245,17 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
 }
 
 /**
- * Step 4: peer-channel nudging with state tracking.
+ * Step 4: todo + peer-channel nudging with state tracking.
  *
- * Fires only when there is an active peer channel (a joined channel with a
- * fresh peer) — there is no todo half any more: the open todo list is
- * delivered by the todo project-context populator (`buildTodoMessages`) and
- * must NOT be re-injected as a per-turn REMINDER.
+ * The guard fires when there are open todos OR an active peer channel (a
+ * joined channel with a fresh peer). Channel state is appended to the same
+ * nudge so the LLM sees peer context without a separate mechanism (keeps
+ * todo.ts pure — channel info comes from ctx.peer).
  *
- * Side effects on `turn`: `nextChannelNudge` (decremented / reset) and
- * `lastChannelState` (dedup cursor for the nudge).
+ * Side effects on `turn`: `nextTodoNudge` (decremented / reset) and
+ * `lastTodoState` (dedup cursor for the nudge).
  */
-async function runChannelNudge(env: MachineEnv, turn: TurnVars): Promise<void> {
+async function runTodoNudge(env: MachineEnv, turn: TurnVars): Promise<void> {
   const { triologue, ctx } = env;
   const activeChannels = ctx.peer.listChannels().filter(
     ch => ch.joined && ch.peerSessionId && ctx.peer.isFresh(ch.peerSessionId)
@@ -280,21 +280,27 @@ async function runChannelNudge(env: MachineEnv, turn: TurnVars): Promise<void> {
       `  channel=${ch.channelId}, topic=${ch.title ?? '(none)'}\n` +
       `  use mail_to(name="${peerSid}/lead", title="${ch.title ?? ''}:<subject>") to communicate`;
   };
-  if (activeChannels.length > 0) {
-    const currentChannelState = activeChannels
-      .map(ch => `[channel ${ch.channelId}] peer=${ch.peerSessionId} fresh=${ctx.peer.isFresh(ch.peerSessionId!)} title="${ch.title}"`)
-      .join('\n');
-    if (currentChannelState !== turn.lastChannelState) {
-      turn.nextChannelNudge = 3;
-      turn.lastChannelState = currentChannelState;
+  if (ctx.todo.hasOpenTodo() || activeChannels.length > 0) {
+    const currentTodoState = ctx.todo.printTodoList();
+    const channelState = activeChannels.length > 0
+      ? activeChannels.map(ch => `  [channel ${ch.channelId}] peer=${ch.peerSessionId} fresh=${ctx.peer.isFresh(ch.peerSessionId!)} title="${ch.title}"`).join('\n')
+      : '';
+    const compositeState = `${currentTodoState}\n${channelState}`;
+    if (compositeState !== turn.lastTodoState) {
+      turn.nextTodoNudge = 3;
+      turn.lastTodoState = compositeState;
     }
-    turn.nextChannelNudge--;
-    if (turn.nextChannelNudge === 0) {
+    turn.nextTodoNudge--;
+    if (turn.nextTodoNudge === 0) {
       // Pinned-todo guards are NOT evaluated here — the stop guard runs at
       // STOP (see states/stop-prevent-stop.ts), on every turn end, because it
-      // gates whether the turn may finish.
-      triologue.note('REMINDER', `Active channels:\n${activeChannels.map(channelLine).join('\n\n')}`);
-      turn.nextChannelNudge = 3;
+      // gates whether the turn may finish. COLLECT only nudges the list.
+      const nudgeParts = [`Update your todos. ${ctx.todo.printTodoList()}`];
+      if (activeChannels.length > 0) {
+        nudgeParts.push(`Active channels:\n${activeChannels.map(channelLine).join('\n\n')}`);
+      }
+      triologue.note('REMINDER', nudgeParts.join('\n'));
+      turn.nextTodoNudge = 3;
     }
   }
 }
@@ -399,9 +405,8 @@ export async function handleCollect(
     const hintSignal = await hintRound.run(turn);
     if (hintSignal === 'stop') return AgentState.STOP;
 
-    // 4. Peer-channel nudging (todo list lives in project context; stop
-    //    guards are evaluated at STOP, not here).
-    await runChannelNudge(env, turn);
+    // 4. Todo + peer-channel nudging (guards are evaluated at STOP, not here).
+    await runTodoNudge(env, turn);
 
     // 5. Brief + worktree cleanup nudges.
     await runBriefAndWorktreeNudges(env, turn);

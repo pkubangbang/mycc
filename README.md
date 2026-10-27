@@ -101,7 +101,7 @@ mycc -v --debug-tp --debug-eval
 
 See the following documentation for detailed explanations:
 
-- **Agent Loop**: `docs/loop/agent-loop.md` - STAR principle, microCompact, autoCompact, compaction
+- **Agent Loop**: `docs/loop/agent-loop.md` - STAR principle, microCompact, autoCompact, todo nudging
 - **Child Process Teammates**: `docs/context/child-context.md` - IPC, state machine, auto-claim
 - **Dynamic Loading**: `docs/tools/dynamic-loading.md` - Hot-reload, tool scopes, skill format
 - **Mindmap**: `docs/mindmap/mindmap-design.md` - Knowledge navigation, A-N-C-E summarization, process isolation

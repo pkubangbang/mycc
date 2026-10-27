@@ -152,10 +152,9 @@ describe('IdentityManager', () => {
 
   it('readIdentityMap() drops corrupt entries at the parse boundary', () => {
     // Regression for a COLLECT crash ("Cannot read properties of null (reading
-    // 'sessionId')" in runTodoNudge — the function is now runChannelNudge):
-    // identity.json held null values under
+    // 'sessionId')" in runTodoNudge): identity.json held null values under
     // synthetic keys. The guard lives at the PARSE stage, so every consumer —
-    // prune, name claims, listIdentities (→ the loop's channel nudge), isFresh,
+    // prune, name claims, listIdentities (→ the loop's todo nudge), isFresh,
     // getRemoteMailbox — sees only well-formed entries.
     const now = Date.now();
     fs.writeFileSync(identityFile(), JSON.stringify({
