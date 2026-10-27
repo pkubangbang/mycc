@@ -4,7 +4,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { briefTool } from '../../tools/brief.js';
-import { BRIEF_MESSAGE_TARGET_TOKENS, MAX_BRIEF_MESSAGE_TOKENS, estimateBriefMessageTokens } from '../../loop/triologue/brief.js';
 import { createMockContext, createTempDir, removeTempDir } from './test-utils.js';
 import type { AgentContext } from '../../types.js';
 
@@ -84,62 +83,6 @@ describe('briefTool', () => {
 
 
 
-  });
-
-  describe('message token cap', () => {
-    // Two tiers: <=100 tokens is silent, (100, 200] succeeds WITH a warning,
-    // >200 is a hard failure that records nothing. The estimator is
-    // `estimateTextTokens` (language-aware, ~1.33 tokens per word), so these
-    // fixtures are sized by GROWING a word list until the measured cost lands in
-    // the intended band — asserting on the band, not on a magic word count.
-    const words = (n: number) => Array.from({ length: n }, (_, i) => `word${i % 7}`).join(' ');
-    const sizedTo = (predicate: (cost: number) => boolean) => {
-      for (let n = 5; n < 400; n++) {
-        const candidate = words(n);
-        if (predicate(estimateBriefMessageTokens(candidate))) return candidate;
-      }
-      throw new Error('could not size a fixture into the intended token band');
-    };
-
-    it('accepts a short message with the plain OK result and no warning', () => {
-      const message = 'Checked the parser; the failure is a stale index.';
-      expect(estimateBriefMessageTokens(message)).toBeLessThanOrEqual(BRIEF_MESSAGE_TARGET_TOKENS);
-      const result = briefTool.handler(ctx, { message, confidence: 8 });
-      expect(result).toBe('OK.');
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', message, 'confidence: 80%');
-    });
-
-    it('accepts an over-target but under-limit message VERBATIM, with a warning in the result', async () => {
-      const message = sizedTo((c) => c > BRIEF_MESSAGE_TARGET_TOKENS + 10 && c <= MAX_BRIEF_MESSAGE_TOKENS - 10);
-
-      const result = await briefTool.handler(ctx, { message, confidence: 7 });
-
-      expect(result.startsWith('OK.')).toBe(true);
-      // The nudge names the problem and the fix; it quotes the TARGET (100) but
-      // never the hard ceiling, so the model cannot aim just under a limit.
-      expect(result).toContain('your message is longer than the limit (100 tokens)');
-      expect(result).toContain('please be concise next time');
-      expect(result).not.toMatch(/\b200\b/);
-      // SUCCESS means the whole message was still recorded and displayed —
-      // never silently clipped to fit the target.
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', message, 'confidence: 70%');
-      expect(ctx.peer.recordBrief).toHaveBeenCalledWith(message, 7);
-    });
-
-    it('rejects an over-limit message and records nothing', async () => {
-      const message = sizedTo((c) => c > MAX_BRIEF_MESSAGE_TOKENS + 20);
-
-      const result = await briefTool.handler(ctx, { message, confidence: 9 });
-
-      expect(result).toContain('Error: message too long');
-      expect(result).toContain('Nothing was recorded');
-      // No ceiling number: the model is nudged toward concision, not taught a
-      // threshold it could target.
-      expect(result).not.toMatch(/\b200\b/);
-      expect(ctx.core.brief).not.toHaveBeenCalled();
-      expect(ctx.peer.recordBrief).not.toHaveBeenCalled();
-      expect(ctx.core.increaseConfusionIndex).not.toHaveBeenCalled();
-    });
   });
 
   describe('tool metadata and integration', () => {

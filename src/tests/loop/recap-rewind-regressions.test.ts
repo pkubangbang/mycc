@@ -273,5 +273,37 @@ describe('H1 — a failed recap leaves no activity behind', () => {
 });
 
 /**
+ * R2 — a `recap(target_brief=…)` refusal must name the REAL reason. The hash a model
+ * most naturally tries is the one on the line it is reading, and that anchor has
+ * nothing after it yet — saying "No brief matches target" there denies the
+ * transcript the model is looking at.
+ */
+describe('target refusal reason', () => {
+  it('a freshly printed anchor is refused as nothing-after, not as unknown', () => {
+    const t = new Triologue();
+    t.user('plan');
+    pushBrief(t, 'ANCHOR'); // its round-trip is the last thing in the store
+    const hash = t.listBriefHashes()[0].hash;
+    expect(t.getLastBrief(hash)).toBeNull(); // it is not foldable yet …
+    expect(t.targetRefusal(hash)).toBe('nothing-after'); // … but it EXISTS
+  });
+
+  it('an unknown hash is unknown', () => {
+    const t = new Triologue();
+    pushBrief(t, 'ANCHOR');
+    t.user('work');
+    expect(t.targetRefusal('deadbeef')).toBe('unknown');
+  });
+
+  it('a foldable anchor needs no refusal, and no target means no refusal either', () => {
+    const t = new Triologue();
+    pushBrief(t, 'ANCHOR');
+    t.user('work');
+    expect(t.targetRefusal(t.listBriefHashes()[0].hash)).toBeNull();
+    expect(t.targetRefusal(undefined)).toBeNull();
+  });
+});
+
+/**
  * M1 — the anchor fingerprint is (call id, args), never the array index.
  */

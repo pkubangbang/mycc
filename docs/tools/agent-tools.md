@@ -1,7 +1,7 @@
 ---
 updated_at: 2026-10-13
 changelog:
-  - "2026-10-27: **`recap` META-TOOL deleted** — context folding is now lead-only **auto-recap**, decided outside the conversation (HOOK step 4a of a brief turn, before that brief is registered) by the recap signal (`src/loop/recap-signal.ts`, forced `decide_recap` tool) and executed by `handleRecapForks()` + `Triologue.rewindToLastBrief()`. Model-facing anchor vocabulary (`[<hash>] ANCHOR`, `recap(target_brief=…)`, `· open:`) is gone: a brief result is a plain `OK.`. New OFF switch `--disable-recap` / `MYCC_NO_RECAP=1`. Tool count 49 → 48 (lead 49 → 48). See docs/loop/brief-and-recap-rewind.md and docs/loop/auto-recap-plan.md."
+  - "2026-10-27: **`recap` META-TOOL deleted** — context folding is now lead-only **auto-recap**, decided outside the conversation (HOOK step 4a of a brief turn, before that brief is registered) by the recap signal (`src/loop/recap-signal.ts`, forced `decide_recap` tool) and executed by `handleRecapForks()` + `Triologue.rewindToLastBrief()`. Model-facing anchor vocabulary (`[<hash>] ANCHOR`, `recap(target_brief=…)`, `· open:`) is gone: a brief result is a plain `OK.`. New OFF switch `--no-recap` / `MYCC_NO_RECAP=1`. Tool count 49 → 48 (lead 49 → 48). See docs/loop/brief-and-recap-rewind.md and docs/loop/auto-recap-plan.md."
   - "2026-10-13: Refined against src — fixed renamed/nonexistent peer tools (`peers` → `peer_list` + `peer_connect` + `peer_disconnect`); tool count 48 → 50"
   - "2026-08-13: Updated tool count from 45 to 48, version from v0.7.0 to v0.10.1"
   - "2026-08-13: Removed nonexistent tools: wt_create, wt_remove, wt_enter, wt_leave, wt_print, todo_write, order, time"
@@ -1120,7 +1120,7 @@ The lead loop folds on its own, decided outside the conversation:
   summary and the mindmap patch under one `Summarizing last N chunks…` spinner,
   then `Triologue.rewindToLastBrief()` truncates and rewrites the anchor brief's
   own tool result with the `[RECAP]` note.
-* OFF switch: `--disable-recap` / `MYCC_NO_RECAP=1` (`shouldDisableRecap()`).
+* OFF switch: `--no-recap` / `MYCC_NO_RECAP=1` (`shouldNoRecap()`).
 * Gate: lead scope, unblocked brief, not neglected, no pending compaction, at
   least one fold candidate.
 

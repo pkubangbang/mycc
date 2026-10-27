@@ -5,7 +5,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { todoUpdateTool } from '../../tools/todo_update.js';
 import { createMockContext } from './test-utils.js';
-import { Todo } from '../../context/shared/todo.js';
 import type { AgentContext, TodoModule } from '../../types.js';
 
 function createMockTodoContext(): { ctx: AgentContext; mockTodo: TodoModule } {
@@ -165,52 +164,7 @@ describe('todoUpdateTool', () => {
 
   it('should return error for non-boolean done', () => {
     const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'abc12345', name: 'Task', done: 'yes' as unknown as boolean });
-    expect(result).toBe('Error: done must be a boolean (omit it to keep the current value).');
-  });
-
-  // ── Issue #6: the pivot defect. A note-only update OMITTED `done` and was
-  //    hard-rejected ("Error: done must be a boolean."), which taught the model
-  //    the update path was closed — so it created a COPY of the item and closed
-  //    the copy, leaving the original open and stale. Omission must PRESERVE the
-  //    item's current state instead of failing.
-  describe('omitted `done` preserves the current state (issue #6)', () => {
-    it('applies a note-only update using the item\'s existing done value', () => {
-      // Item #1 in the fixture list is open (done: false).
-      vi.mocked(mockTodo.updateTodo).mockReturnValue({ id: 1, name: 'Task A', done: false, hash: 'newhash09', note: 'progress' });
-
-      const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'abc12345', name: 'Task A', note: 'progress' });
-
-      // The handler did NOT invent `done`: it read the live item and passed it through.
-      expect(mockTodo.updateTodo).toHaveBeenCalledWith(1, 'abc12345', 'Task A', false, 'progress');
-      expect(result).toContain('Updated todo #1');
-    });
-
-    it('preserves done:true for an already-completed item', () => {
-      // Item #2 in the fixture list is done: true.
-      vi.mocked(mockTodo.updateTodo).mockReturnValue({ id: 2, name: 'Task B', done: true, hash: 'newhash10', note: 'n' });
-
-      todoUpdateTool.handler(ctx, { id: 2, hash: 'def67890', name: 'Task B', note: 'n' });
-
-      expect(mockTodo.updateTodo).toHaveBeenCalledWith(2, 'def67890', 'Task B', true, 'n');
-    });
-
-    it('reports #id not found instead of crashing when the item is absent', () => {
-      const result = todoUpdateTool.handler(ctx, { id: 99, hash: 'abc12345', name: 'Ghost', note: 'n' });
-      expect(result).toBe('Error: Todo item #99 not found. Use the current todo list to find the correct id.');
-      expect(mockTodo.updateTodo).not.toHaveBeenCalled();
-    });
-
-    it('still rejects a present-but-wrong-typed done', () => {
-      const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'abc12345', name: 'Task A', done: 'false' as unknown as boolean });
-      expect(result).toBe('Error: done must be a boolean (omit it to keep the current value).');
-      expect(mockTodo.updateTodo).not.toHaveBeenCalled();
-    });
-
-    it('keeps the hash gate authoritative — a stale hash still fails even when done is omitted', () => {
-      vi.mocked(mockTodo.updateTodo).mockReturnValue(null);
-      const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'STALE123', name: 'Task A', note: 'n' });
-      expect(result).toContain('Hash mismatch for todo #1');
-    });
+    expect(result).toBe('Error: done must be a boolean.');
   });
 
   it('should trim whitespace from hash', () => {
@@ -267,104 +221,11 @@ describe('todoUpdateTool', () => {
     expect(todoUpdateTool.scope).toEqual(['main', 'child']);
   });
 
-  it('should have id, hash, name as required fields — done is OPTIONAL (issue #6)', () => {
+  it('should have id, hash, name, done as required fields', () => {
     const required = todoUpdateTool.input_schema.required;
     expect(required).toContain('id');
     expect(required).toContain('hash');
     expect(required).toContain('name');
-    // `done` is deliberately NOT required: a note-only edit must not have to
-    // restate the completion state. Requiring it is what produced the hard
-    // rejection that pushed the model into creating duplicate todos.
-    expect(required).not.toContain('done');
-  });
-
-  it('TELLS the model it may omit done — an undiscoverable optional field is the same trap', () => {
-    const props = todoUpdateTool.input_schema.properties as Record<string, { description?: string }>;
-    expect(props.done.description).toMatch(/omit/i);
-    expect(todoUpdateTool.description).toMatch(/omit/i);
-  });
-});
-
-// ── Issue #6, lead-requested checks 1-3, against the REAL Todo module ────────
-// A mocked `updateTodo` cannot prove the preserve-stale-hash and auto-clear
-// interactions, because both live in the module, not the tool. These use the
-// real implementation.
-describe('todoUpdateTool against the real Todo module (issue #6)', () => {
-  function makeRealCtx() {
-    const ctx = createMockContext('/tmp/test-issue6');
-    ctx.todo = new Todo();
-    return ctx;
-  }
-
-  it('an omitted done NEVER bypasses the hash gate (stale hash is still rejected)', () => {
-    const ctx = makeRealCtx();
-    const item = ctx.todo.createTodo('ship it');
-    // The item's hash is now stale (something else updated it).
-    ctx.todo.updateTodo(item.id, item.hash, 'ship it', false, 'moved on');
-
-    const result = todoUpdateTool.handler(ctx, {
-      id: item.id,
-      hash: item.hash,          // STALE on purpose
-      name: 'ship it',
-      note: 'sneaky note',      // and no `done` at all
-    });
-
-    expect(result).toContain('Hash mismatch');
-    // The stale write did not land — the note is still the newer one.
-    expect(ctx.todo.getItems()[0].note).toBe('moved on');
-  });
-
-  it('#id not found outranks the omitted-done path (never "done must be a boolean")', () => {
-    const ctx = makeRealCtx();
-    ctx.todo.createTodo('only item');
-
-    const result = todoUpdateTool.handler(ctx, { id: 999, hash: 'deadbeef', name: 'ghost', note: 'n' });
-
-    expect(result).toBe('Error: Todo item #999 not found. Use the current todo list to find the correct id.');
-    expect(result).not.toContain('done must be a boolean');
-  });
-
-  it('a note-only edit preserving done does NOT flip the list into the auto-clear purge', () => {
-    const ctx = makeRealCtx();
-    const a = ctx.todo.createTodo('task A');
-    ctx.todo.createTodo('task B');            // both OPEN → no purge condition
-
-    const result = todoUpdateTool.handler(ctx, { id: a.id, hash: a.hash, name: 'task A', note: 'still open' });
-
-    expect(result).toContain('Updated todo #1');
-    // Both rows survive: preserving done:false must not complete anything.
-    expect(ctx.todo.getItems()).toHaveLength(2);
-    expect(ctx.todo.getItems().every((i) => !i.done)).toBe(true);
-    expect(ctx.todo.getItems()[0].note).toBe('still open');
-  });
-
-  it('a note-only edit preserving done:true does NOT trigger the purge either', () => {
-    const ctx = makeRealCtx();
-    const a = ctx.todo.createTodo('task A');
-    const b = ctx.todo.createTodo('task B');
-    // Complete A, leave B open — one open row means no purge.
-    const doneA = ctx.todo.updateTodo(a.id, a.hash, 'task A', true)!;
-
-    const result = todoUpdateTool.handler(ctx, { id: doneA.id, hash: doneA.hash, name: 'task A', note: 'annotated' });
-
-    expect(result).toContain('Updated todo #1');
-    expect(result).toContain('done: true');
-    // Nothing was purged: B is still open, so the list still holds both rows.
-    expect(ctx.todo.getItems()).toHaveLength(2);
-    expect(ctx.todo.getItems().find((i) => i.id === b.id)?.done).toBe(false);
-  });
-
-  it('null and "" are NOT accepted absences — only undefined is', () => {
-    const ctx = makeRealCtx();
-    const item = ctx.todo.createTodo('task');
-
-    for (const bad of [null, '']) {
-      const result = todoUpdateTool.handler(ctx, {
-        id: item.id, hash: item.hash, name: 'task', done: bad as unknown as boolean,
-      });
-      expect(result).toBe('Error: done must be a boolean (omit it to keep the current value).');
-    }
-    // Nothing was written by either rejected call.
-    expect(ctx.todo.getItems()[0].note).toBeUndefined();
+    expect(required).toContain('done');
   });
 });

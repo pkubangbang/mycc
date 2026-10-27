@@ -16,7 +16,7 @@ import { agentIO } from './agent-io.js';
 import { TpAutoFixer } from './triologue/tp-fix.js';
 import { loopEvents } from './loop-events.js';
 import type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } from './triologue/types.js';
-import { type PieceKind, type RecapAuditFields, RECAP_AUDIT_KIND, buildRecapAuditLine } from './triologue/transcript.js';
+import { type PieceKind } from './triologue/transcript.js';
 import { BriefStackManager } from './triologue/brief-stack.js';
 
 export type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } from './triologue/types.js';
@@ -432,37 +432,6 @@ export class Triologue {
     // 'prompt' is journaled as the 'user' kind (the journal kind is named for
     // the RECORD, not for the submission source); only notes stay 'steer'.
     this.emit({ role: 'user', content: text }, source === 'steer' ? 'steer' : 'user', { userOrigin: true });
-  }
-
-  /**
-   * Journal the AUTO-RECAP AUDIT TRAIL: one `recap_audit` transcript record
-   * per completed fold, and nothing else.
-   *
-   * WHY NOT `submitUser(…, 'steer')` (the shape this replaced): `'steer'` is
-   * the user-input journal, and the transcript is the single source of truth
-   * for WebUI right-side user bubbles — so every past fold re-appeared as
-   * something the user had typed after a serve reload. `'steer'` is ALSO the
-   * kind carried by genuine typed steering notes, so dropping `'steer'` from
-   * the serve projection would have deleted real user bubbles instead. A fold
-   * has no user behind it (the decision is made outside the conversation), so
-   * it needs a kind of its own that BOTH projections skip.
-   *
-   * Like `submitUser`, this is journal-only: no store push, no ledger touch,
-   * no `lastUserQuery` write, therefore no TP-parity risk mid-turn. Unlike
-   * `submitUser`, it stamps NO `user_origin` and NO `role` — a record with a
-   * role could be rendered as a message, which is the defect being fixed.
-   *
-   * `buildContent(fields)` renders the human-readable line; `fields` is the
-   * same data in structured form, so an auditor can grep either the prose or
-   * the JSON fields.
-   */
-  journalRecapAudit(fields: RecapAuditFields): void {
-    const content = buildRecapAuditLine(fields);
-    if (content.trim() === '') return; // nothing to journal
-    this.options.onMessage(
-      { kind: RECAP_AUDIT_KIND, content, audit: fields } as unknown as Message,
-      () => this.store.getRaw(),
-    );
   }
 
   /**
@@ -1044,6 +1013,49 @@ export class Triologue {
   // BriefStackManager (triologue/brief-stack.ts).
 
   /**
+   * Every real brief's displayed hash, oldest first.
+   *
+   * `foldableOnly` restricts the list to the briefs `recap(target_brief=…)` accepts
+   * right now — pass it when quoting the list as a set of usable targets (a
+   * refusal message), never when asking what briefs exist.
+   */
+  listBriefHashes(foldableOnly = false): Array<{ hash: string; message: string }> {
+    return this.briefStack.listBriefHashes(foldableOnly);
+  }
+
+  /**
+   * Why an explicit `recap(target_brief=…)` could not be used: `'unknown'` (no brief
+   * carries that hash or id) or `'nothing-after'` (it does — but nothing follows
+   * it yet, which is true of every freshly printed anchor). Null when usable.
+   *
+   * The two cases get different words in the refusal: telling the model "no brief
+   * matches" about a hash it is reading in its own transcript is false evidence.
+   */
+  targetRefusal(target: string | undefined): 'unknown' | 'nothing-after' | null {
+    return this.briefStack.targetRefusal(target);
+  }
+
+  /**
+   * The hashes an EXPLICIT `recap(target_brief=…)` can fold to RIGHT NOW, NEWEST FIRST
+   * — the `· open:` list rendered into a newly created brief's result.
+   *
+   * Uses `hasMessagesAtOrAfterBrief` — the rule `anchorIndexFor`'s `target`
+   * branch applies — because that is exactly what the listed hashes answer: a
+   * brief with nothing after it is not the DEFAULT anchor but IS a valid
+   * `target`, and leaving it out would advertise less than the tool accepts.
+   * The brief being created is excluded on its own: it is the newest message, so
+   * nothing follows it.
+   *
+   * A brief consumed by an earlier recap is gone from `briefIndices()` (the span
+   * above it was truncated), so this list cannot name an already-folded anchor.
+   *
+   * Information only — nothing here chooses, schedules or performs a recap.
+   */
+  listOpenAnchors(): string[] {
+    return this.briefStack.listOpenAnchors();
+  }
+
+  /**
    * The fold candidates for auto-recap, TIMELY ORDER (oldest → newest).
    *
    * This is the auto-recap replacement for "the model reads hashes and picks
@@ -1146,7 +1158,7 @@ export class Triologue {
    * a longtext file instead. Exposed so a caller that is ABOUT to hand over a
    * large result can refuse it before mutating anything — `tool()` throws
    * after its ledger bookkeeping, so "append then catch" cannot roll back
-   * cleanly. See recap-rewind.ts handleRecapForks.
+   * cleanly. See handleRecapCall.
    */
   getResultThreshold(): number {
     return this.options.resultThreshold;

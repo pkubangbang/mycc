@@ -41,17 +41,10 @@ export const BOOLEAN_FLAGS: string[] = [
   'v', 'verbose', 'skip-healthcheck', 'setup',
   'debug-eval', 'debug-tp', 'disable-crossroad', 'auto',
   'debug-autofly', 'allow-plan-off', 'debug-wire', 'debug-ansi',
-  // --disable-recap: kill-switch for automatic span folding (auto-recap). A
-  // NEGATIVE boolean whose absence means "feature ON", mirroring
-  // 'disable-crossroad'.
-  //
-  // The name must NOT start with `no-`: minimist treats a `boolean` flag named
-  // `no-<x>` as the NEGATION of `<x>` (argv-parser's special case), so a flag
-  // declared `'no-recap'` never exists in the parsed object — `--no-recap`
-  // yields `{recap: false}` while `DEFAULTS['no-recap']` supplies `false`, and
-  // any reader of `args['no-recap'] === true` could never fire. Renaming it
-  // keeps the off switch the help text advertises actually working.
-  'disable-recap',
+  // --no-recap: kill-switch for automatic span folding (auto-recap). A NEGATIVE
+  // boolean whose absence means "feature ON" — mirroring 'disable-crossroad',
+  // which is declared here even though its DEFAULTS entry stays false.
+  'no-recap',
 ];
 
 /** Flags that always take a value. */
@@ -85,9 +78,9 @@ export const DEFAULTS: Record<string, boolean | null> = {
   'disable-crossroad': false,
   'debug-autofly': false,
   'allow-plan-off': false,
-  // Absence means "auto-recap ON"; `--disable-recap` sets it true. Declared so
+  // Absence means "auto-recap ON"; `--no-recap` sets it true. Declared so
   // minimist never swallows the next token as its value.
-  'disable-recap': false,
+  'no-recap': false,
 };
 
 /**
@@ -151,10 +144,10 @@ export const ARG_ENV_MAP: Record<string, string> = {
   'disable-crossroad': 'MYCC_DISABLE_CROSSROAD',
   'debug-autofly': 'MYCC_DEBUG_AUTOfLY',
   'allow-plan-off': 'MYCC_ALLOW_PLAN_OFF',
-  // --disable-recap: mirrors MYCC_NO_RECAP ('1' = off). The reader treats BOTH
-  // the CLI flag and the env var as "disable", so a stale env var can still
-  // switch the feature off; only ENABLING is CLI-only (the default).
-  'disable-recap': 'MYCC_NO_RECAP',
+  // --no-recap: mirrors MYCC_NO_RECAP ('1' = off). The reader treats BOTH the
+  // CLI flag and the env var as "disable", so a stale env var can still switch
+  // the feature off; only ENABLING is CLI-only (the default).
+  'no-recap': 'MYCC_NO_RECAP',
   // --allow-auto-commit: auto-mode peers may commit WITHOUT the interactive
   // confirmation, but only on the branches listed here, only in NORMAL mode,
   // and only with an audit trailer. Pair with CI on protected branches (the

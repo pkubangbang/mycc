@@ -8,7 +8,7 @@
  *     → evaluateRecapSignal(candidates, usage, escAware)  // the OBSERVER
  *     → handleRecapForks({ fullMessages, allTools, mindmap, chunks })
  *     → triologue.rewindToLastBrief(body, anchor.id, hash, openTodos)
- *     → ctx.core.brief('info', 'recap', …) + journalRecapAudit(fields)
+ *     → ctx.core.brief('info', 'recap', …) + submitUser(audit, 'steer')
  *
  * The fold is decided OUTSIDE the conversation: the model never sees a target,
  * a hash or a note slot, and a brief turn is the only trigger. Everything below
@@ -97,9 +97,6 @@ vi.mock('../../../loop/triologue.js', () => {
     ]);
     // The audit record of a fold (journal-only; never a store message).
     submitUser = vi.fn();
-    // The auto-recap AUDIT TRAIL writer: a `recap_audit` transcript record,
-    // explicitly NOT the user-input journal (see transcript.ts).
-    journalRecapAudit = vi.fn();
     skipPendingTools = vi.fn();
   }
   return { Triologue: TriologueStub };
@@ -244,19 +241,11 @@ describe('handleHook — auto-recap (fold decided outside the conversation)', ()
       'a1b2c3d4',
       expect.any(String),
     );
-    // The audit is its OWN record kind — never the user-input journal
-    // ('steer'), which the serve projection would render as a user bubble.
-    expect(triologue.journalRecapAudit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        foldedMessages: 1,
-        spanTokens: 20,
-        reason: 'span complete',
-        summary: 'The parser was mapped; the fix goes in parser.ts next.',
-      }),
+    // The audit record is a synthesized 'steer' — journal-only, never a message.
+    expect(triologue.submitUser).toHaveBeenCalledWith(
+      expect.stringContaining('[RECAP] Folded 1 message(s)'),
+      'steer',
     );
-    expect(triologue.journalRecapAudit).toHaveBeenCalledTimes(1);
-    // The fold must NOT reach the user journal — that was the bug.
-    expect(triologue.submitUser).not.toHaveBeenCalled();
     // A fold answers this turn's context: the plan-scope reflection is skipped.
     expect(chat.autoRecapFolded).toBe(true);
     // The in-turn brief memory is resynced to the anchor that survived.
@@ -278,12 +267,12 @@ describe('handleHook — auto-recap (fold decided outside the conversation)', ()
 
     expect(triologue.rewindToLastBrief).not.toHaveBeenCalled();
     expect(triologue.submitUser).not.toHaveBeenCalled();
-    expect(triologue.journalRecapAudit).not.toHaveBeenCalled();
     expect(chat.autoRecapFolded).toBeFalsy();
-    // ESC is an OUTCOME the turn must honour: STOP owns wrap-up and returns the
-    // model to PROMPT, so the user is not left waiting for work they aborted.
-    expect(result).toBe(AgentState.STOP);
-    expect(env.ctx.core.brief).toHaveBeenCalledWith('warn', 'recap', expect.stringContaining('Cancelled'));
+    // The fold returns void: a cancelled fold is just "don't fold" — the brief
+    // turn proceeds to TOOL and the user's ESC is honoured by the layer that
+    // already owns it (the current turn was never registered here, so nothing
+    // was summarised away).
+    expect(result).toBe(AgentState.TOOL);
   });
 
   it('folds NOTHING when the summary fork fails — the span keeps its detail', async () => {
@@ -301,7 +290,6 @@ describe('handleHook — auto-recap (fold decided outside the conversation)', ()
 
     expect(triologue.rewindToLastBrief).not.toHaveBeenCalled();
     expect(triologue.submitUser).not.toHaveBeenCalled();
-    expect(triologue.journalRecapAudit).not.toHaveBeenCalled();
   });
 
   it('folds NOTHING and reports the skip when the signal declines', async () => {
@@ -328,7 +316,7 @@ describe('handleHook — auto-recap (fold decided outside the conversation)', ()
     expect(result).toBe(AgentState.TOOL);
   });
 
-  it('skips the whole fold under MYCC_NO_RECAP=1 (the env half of the off switch)', async () => {
+  it('skips the whole fold under --no-recap / MYCC_NO_RECAP=1', async () => {
     const prev = process.env.MYCC_NO_RECAP;
     process.env.MYCC_NO_RECAP = '1';
     try {

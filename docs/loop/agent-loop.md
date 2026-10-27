@@ -112,7 +112,7 @@ COLLECT 状态中每 5 次 pass 提醒一次使用 brief 工具（`turn.nextBrie
 
 - **触发**：HOOK 阶段 4a，仅在 lead 的 **brief 回合**，且在该 brief 注册到 triologue **之前**
   （`handleAutoRecap()`，`src/loop/states/hook.ts`）。当前 brief 因此成为新 chunk 的第一条消息。
-- **门控**：`scope === 'main'`、`!shouldDisableRecap()`（`--disable-recap` / `MYCC_NO_RECAP=1`）、
+- **门控**：`scope === 'main'`、`!shouldNoRecap()`（`--no-recap` / `MYCC_NO_RECAP=1`）、
   该回合的 brief 未被拦截、非 neglected 模式、无 `compactRequested` / `deferredCompact`、
   `getFoldCandidates().length > 0`。
 - **判定**：`evaluateRecapSignal()`（`src/loop/recap-signal.ts`）——独立的 `retryChat`，

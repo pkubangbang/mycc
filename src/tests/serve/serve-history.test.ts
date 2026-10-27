@@ -8,17 +8,15 @@
  * readHistory is now sourced from the triologue transcript journal alone
  * (the serve-only user.jsonl side file was deleted): right-side user
  * bubbles come from kind:'user'|'steer' records stamped user_origin:true,
- * while marker-less 'new' user records (injected notes), 'merge'
- * fragments and kind:'recap_audit' fold-audit records never render.
- * Untimestamped legacy lines inherit the previous positive timestamp
- * (emission order) rather than sorting to the head.
+ * while marker-less 'new' user records (injected notes) and 'merge'
+ * fragments never render. Untimestamped legacy lines inherit the previous
+ * positive timestamp (emission order) rather than sorting to the head.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { roleToType, roleToLabel, readHistory } from '../../serve/serve-history.js';
-import { buildRecapAuditLine } from '../../loop/triologue/transcript.js';
 
 describe('roleToType', () => {
   it('maps known roles to their LogEntry types', () => {
@@ -95,43 +93,6 @@ describe('readHistory (transcript journal projection)', () => {
     const history = readHistory(transcriptPath, []);
     expect(history).toHaveLength(1);
     expect(history[0]).toEqual({ type: 'user', content: 'stop and reconsider', timestamp: 50 });
-  });
-
-  it('does NOT render an auto-recap audit record as a user bubble', () => {
-    // The bug this guards: the fold audit used to be journaled as
-    // kind:'steer' (the user-input journal), so after a serve restart every
-    // past fold was reconstructed as something the user had typed. It now has
-    // its own kind, which /history must ignore — while a genuine 'steer'
-    // note in the SAME transcript keeps its bubble.
-    const audit = {
-      foldedMessages: 18,
-      spanTokens: 14200,
-      tokensBefore: 47812,
-      tokensAfter: 12040,
-      reason: 'span complete',
-      targetBrief: 'explored the parser',
-      summary: 'The parser was mapped.',
-    };
-    fs.writeFileSync(
-      transcriptPath,
-      JSON.stringify({ role: 'user', content: 'real question', kind: 'user', user_origin: true, timestamp: 100 }) + '\n' +
-      JSON.stringify({ role: 'assistant', content: 'working', kind: 'new', timestamp: 200 }) + '\n' +
-      JSON.stringify({ kind: 'recap_audit', content: buildRecapAuditLine(audit), audit, timestamp: 300 }) + '\n' +
-      JSON.stringify({ role: 'user', content: 'typed steer note', kind: 'steer', user_origin: true, timestamp: 400 }) + '\n' +
-      JSON.stringify({ role: 'assistant', content: 'done', kind: 'new', timestamp: 500 }) + '\n',
-      'utf-8',
-    );
-
-    const history = readHistory(transcriptPath, []);
-    const contents = history.map((e) => e.content);
-
-    // No bubble for the fold — the whole point of the fix.
-    expect(contents.some((c) => c.includes('[RECAP]'))).toBe(false);
-    expect(contents.some((c) => c.includes('Fold '))).toBe(false);
-    // The genuine submissions and the surrounding turns survive intact.
-    expect(contents).toEqual(['real question', 'working', 'typed steer note', 'done']);
-    expect(history.filter((e) => e.type === 'user').map((e) => e.content))
-      .toEqual(['real question', 'typed steer note']);
   });
 
   it('never renders an injected note: marker-less new-user and merge records are skipped', () => {

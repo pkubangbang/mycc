@@ -10,7 +10,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { MessageStore } from '../../loop/triologue/store.js';
 import { Triologue } from '../../loop/triologue.js';
-import type { Message, ToolCall } from '../../types.js';
+import type { Message } from '../../types.js';
 
 // agent-io writes to the terminal; keep the test output clean.
 vi.mock('../../loop/agent-io.js', () => ({
@@ -140,48 +140,6 @@ describe('M2 — single anchor resolution', () => {
     // own (resultIndex < 0) — after the caller had already paid for two forks.
     expect(t.getLastBrief()).toBeNull();
     expect(t.rewindToLastBrief('note')).toBeNull();
-  });
-
-  it('an orphan brief is not offered as a FOLD CANDIDATE either (MEDIUM-5)', () => {
-    // The auto-recap signal decides from getFoldCandidates(); resolveAnchor then
-    // applies. BEFORE, the candidate list filtered only on "has messages after
-    // it", which an orphan brief passes — so the signal was shown a target it
-    // could pick (and the prompt tells it to prefer the OLDEST), and the fold
-    // was refused afterwards with 'anchor vanished before folding'. Every brief
-    // turn then degraded to a permanent skip.
-    //
-    // Built directly in the store: the public agent()/tool() API's TP fixer
-    // answers a dangling tool_call with a synthetic result, so it cannot produce
-    // an orphan; a restored/replayed transcript can.
-    const t = new Triologue();
-    const internal = t as unknown as {
-      store: MessageStore;
-      briefStack: { getFoldCandidates: () => Array<{ id: string; spanMessages: number }> };
-    };
-    internal.store.replaceAll([
-      { role: 'assistant', content: '', tool_calls: [{ id: 'brief_orphan', function: { name: 'brief', arguments: { message: 'ORPHAN' } } }] as ToolCall[] },
-      { role: 'user', content: 'activity without an answer' },
-      { role: 'user', content: 'more activity' },
-    ] as Message[]);
-
-    // The orphan is not advertised...
-    expect(internal.briefStack.getFoldCandidates()).toEqual([]);
-
-    // ...and a real, answerable brief IS, so the filter does not swallow
-    // legitimate candidates. It is appended after the orphan (true-array index 3).
-    internal.store.push({
-      role: 'assistant',
-      content: '',
-      tool_calls: [{ id: 'brief_ok', function: { name: 'brief', arguments: { message: 'REAL' } } }] as ToolCall[],
-    });
-    internal.store.push({ role: 'tool', tool_name: 'brief', content: 'OK', tool_call_id: 'brief_ok' });
-    internal.store.push({ role: 'user', content: 'even more activity' });
-
-    const candidates = internal.briefStack.getFoldCandidates();
-    expect(candidates.map((c) => c.id)).toEqual(['brief_ok']);
-    // The advertised span is the region a rewind would actually delete (the
-    // message after the brief's result — never the orphan's bogus fallback).
-    expect(candidates[0].spanMessages).toBe(1);
   });
 
   it('the span never starts with an unrelated tool result after the brief', () => {

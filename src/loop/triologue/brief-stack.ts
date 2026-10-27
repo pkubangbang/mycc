@@ -5,7 +5,8 @@
  * current rewind ANCHOR, how the span under it is sliced, and how a recap
  * collapses the history back onto it. Extracted from triologue.ts (Rewind
  * (recap) region); the facade now delegates every public member here with
- * ZERO API change (`getLastBrief`, `rewindToLastBrief`, `recapNoteSize`).
+ * ZERO API change (`getLastBrief`, `rewindToLastBrief`, `recapNoteSize`,
+ * `listBriefHashes`).
  *
  * WHY THE STORE IS THE FIRST ARGUMENT (the user's requirement): every rule in
  * this file is a rule about MESSAGES — which assistant records carry a
@@ -152,6 +153,53 @@ export class BriefStackManager {
   }
 
   /**
+   * Every real brief's displayed hash, oldest first.
+   *
+   * `foldableOnly` applies the EXPLICIT-target rule (`hasMessagesAtOrAfterBrief`)
+   * — the set `recap(target_brief=…)` will actually accept. A refusal message MUST pass
+   * it: naming a hash the very next call refuses is the same false affordance as
+   * a line 1 that advertises a call over an empty span. Without it the list is the
+   * raw brief stack (used where "which briefs exist" is the question, not "which
+   * can I fold to").
+   */
+  listBriefHashes(foldableOnly = false): Array<{ hash: string; message: string }> {
+    const out: Array<{ hash: string; message: string }> = [];
+    for (const index of this.store.briefIndices()) {
+      if (foldableOnly && !this.hasMessagesAtOrAfterBrief(index)) continue;
+      const call = this.briefCallAt(index);
+      if (call) out.push({ hash: briefHash(call.id), message: readBriefMessage(call) });
+    }
+    return out;
+  }
+
+  /**
+   * The hashes a `recap(target_brief=…)` can fold to RIGHT NOW, NEWEST FIRST — the
+   * `· open:` list rendered into a freshly created brief's result.
+   *
+   * Uses `hasMessagesAtOrAfterBrief` — the EXPLICIT-target rule
+   * (`anchorIndexFor`'s `target` branch) — because that is the only rule the
+   * listed hashes answer: a brief with nothing after it is not the default
+   * anchor but IS a valid `target`, and leaving it out would advertise less
+   * than the tool accepts. The brief being created is automatically excluded:
+   * it is the newest message, so nothing follows it.
+   *
+   * A brief a previous recap folded is gone from `briefIndices()` (the span
+   * above it was truncated), so this list cannot name a consumed anchor.
+   *
+   * Pure read — no truncation, no rewriting, no recap. This is evidence the
+   * model sees; the decision remains its own tool call.
+   */
+  listOpenAnchors(): string[] {
+    const out: string[] = [];
+    for (const index of this.store.briefIndices()) {
+      if (!this.hasMessagesAtOrAfterBrief(index)) continue;
+      const call = this.briefCallAt(index);
+      if (call) out.push(briefHash(call.id));
+    }
+    return out.reverse();
+  }
+
+  /**
    * The fold candidates an auto-recap signal may choose from, in TIMELY ORDER
    * (oldest → newest).
    *
@@ -194,19 +242,9 @@ export class BriefStackManager {
       const call = this.briefCallAt(index);
       const id = call?.id ?? '';
       if (!call || !id) continue;
-      // ORPHAN FILTER (MEDIUM-5): `hasMessagesAtOrAfterBrief` above tolerates a
-      // brief whose tool result is MISSING — it falls back to `index` and merely
-      // asks whether anything follows. `resolveAnchor` does NOT: it requires
-      // `findToolResultIndex(...) >= 0` and refuses an orphan outright. Without
-      // this guard the candidate would be ADVERTISED to the signal and then
-      // REFUSED after an LLM call, so every brief turn degrades into a permanent
-      // `'anchor vanished before folding'` skip — and the signal prompt tells the
-      // model to prefer the OLDEST candidate, i.e. the unusable one. Filtering
-      // here makes "advertised" and "foldable" the same set, and it is why
-      // `start` can be derived from a guaranteed result index.
       const resultIdx = this.store.findToolResultIndex(id, index + 1, 'brief');
-      if (resultIdx < 0) continue;
-      const span = this.store.sliceFrom(resultIdx + 1);
+      const start = (resultIdx >= 0 ? resultIdx : index) + 1;
+      const span = this.store.sliceFrom(start);
       const chars = span.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
       out.push({
         hash: briefHash(id),
@@ -233,6 +271,22 @@ export class BriefStackManager {
     if (!match) return null;
     const call = this.briefCallAt(match.index);
     return call ? { index: match.index, call } : null;
+  }
+
+  /**
+   * WHY an explicit `target` could not be used — the two cases need different
+   * words: the hash names no brief at all, or it names one that has nothing after
+   * it yet (every freshly printed anchor, until new work lands below it). Saying
+   * "no brief matches" for the second case tells the model its own transcript is
+   * wrong.
+   *
+   * Null when the target IS usable (or when no target was given).
+   */
+  targetRefusal(target: string | undefined): 'unknown' | 'nothing-after' | null {
+    if (!target) return null;
+    const candidate = this.resolveTargetCall(target);
+    if (!candidate) return 'unknown';
+    return this.hasMessagesAtOrAfterBrief(candidate.index) ? null : 'nothing-after';
   }
 
   /**
@@ -274,11 +328,6 @@ export class BriefStackManager {
     const after = this.store.firstMessageIndexAfter(resultIdx >= 0 ? resultIdx : index);
     if (after >= this.store.length) return false;
 
-    // The recap-tool exemption. Kept because the FAILURE branch is still
-    // reachable in a LIVE conversation: a `recap` tool result the model itself
-    // sees is gone, but an assistant `recap(...)` call and its error result can
-    // still be present in a RESUMED transcript (and are replayed by the legacy
-    // read shape), so an old failed recap must not arm the previous brief.
     const first = this.store.at(after);
     const recapCall = (first?.tool_calls as ToolCall[] | undefined)?.find((tc) => tc.function?.name === 'recap');
     if (first?.role === 'assistant' && recapCall) {

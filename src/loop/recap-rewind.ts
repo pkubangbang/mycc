@@ -33,6 +33,8 @@ import { agentIO } from './agent-io.js';
 import { startSpinner, stopSpinner } from '../engine/chat-helpers.js';
 import { MIN_RECAP_SUMMARY_CHARS } from './states/hook.js';
 
+export { MIN_RECAP_SUMMARY_CHARS };
+
 // ============================================================================
 // MINDMAP PATCH: fork #2 — one node add/update/delete per fold
 //
@@ -298,8 +300,8 @@ export async function generatePatchAction(
       );
       // ESC IS AN OUTCOME, NOT "NO PATCH". Returning null here made a cancelled
       // recap indistinguishable from "the model said none" — and the caller then
-      // truncated the span the user had just asked to keep. Throwing surfaces it
-      // to handleRecapForks' catch, which reports it as `escCancelled`.
+      // truncated the span the user had just asked to keep. Throwing routes it
+      // into handleRecapSpan's catch, which reports it as `escCancelled`.
       if (result === null) throw new StreamAbortedError('[RECAP] ESC pressed during the mindmap patch');
       response = result;
     } else {
@@ -354,15 +356,6 @@ export interface RecapFoldInput {
 
   /** How many chunks (brief-delimited spans) this fold collapses; drives the spinner text. */
   chunks: number;
-
-  /**
-   * The lead's ESC-aware runner. WITHOUT it the forks run uninterruptibly for
-   * 1 + 3×10–60 s (summary, then up to three patch attempts) and the ESC is
-   * only noticed afterwards — by which time the fold is discarded and the whole
-   * wait was wasted. With it, each fork call is abortable and an ESC unwinds
-   * immediately, reported as `escCancelled`.
-   */
-  escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>;
 }
 
 /** What a fold's forks produced. */
@@ -395,7 +388,7 @@ export interface RecapForkResult {
  * cancellation as a shrug. It is tracked explicitly and checked at the end.
  */
 export async function handleRecapForks(input: RecapFoldInput): Promise<RecapForkResult> {
-  const { fullMessages, allTools, mindmap, chunks, escAware } = input;
+  const { fullMessages, allTools, mindmap, chunks } = input;
   const chunkWord = chunks === 1 ? '1 chunk' : `${chunks} chunks`;
   startSpinner(`Summarizing last ${chunkWord}`);
   let summary: string | null = null;
@@ -404,19 +397,19 @@ export async function handleRecapForks(input: RecapFoldInput): Promise<RecapFork
   let patch: MindmapPatchAction | null;
 
   try {
-    const summaryTask = runSummaryFork(fullMessages, allTools, escAware)
+    const summaryTask = forkChat(fullMessages, allTools, buildSummaryPrompt(), undefined, 'none')
       .catch((err: unknown) => {
         summaryError = err instanceof StreamAbortedError
           ? 'summary fork aborted'
-          : `summary fork failed: ${describeCause(err)}`;
+          : `summary fork failed: ${String(err)}`;
         return null;
       });
 
     const patchTask = mindmap
-      ? generatePatchAction(fullMessages, allTools, mindmap, escAware).catch((err: unknown) => {
+      ? generatePatchAction(fullMessages, allTools, mindmap).catch((err: unknown) => {
           patchError = err instanceof StreamAbortedError
             ? 'mindmap-patch fork aborted'
-            : `mindmap-patch fork failed: ${describeCause(err)}`;
+            : `mindmap-patch fork failed: ${String(err)}`;
           return null;
         })
       : Promise.resolve(null);
@@ -438,48 +431,11 @@ export async function handleRecapForks(input: RecapFoldInput): Promise<RecapFork
     stopSpinner();
   }
 
-  // ESC IS AN OUTCOME, not "no summary": escAware resolves its cleanup value on
-  // abort, and treating that as a failed fork would report a cancellation as a
-  // shrug. Both fork failures (`*Error === '... aborted'`, set by the catches
-  // above) and neglected mode mean the same thing: fold nothing, tell the caller.
-  const escCancelled =
-    summaryError === 'summary fork aborted'
-    || patchError === 'mindmap-patch fork aborted'
-    || agentIO.isNeglectedMode();
+  const escCancelled = agentIO.isNeglectedMode();
   if (escCancelled) {
     agentIO.verbose('recap', `fold cancelled: ${summaryError ?? patchError ?? 'ESC'}`);
   }
   return { summary, summaryError, patch, patchError, escCancelled };
-}
-
-/**
- * The summary fork itself.
- *
- * With an `escAware` runner the call is abortable: the cleanup value (`null`) is
- * turned into a StreamAbortedError so a cancellation is DISTINGUISHABLE from
- * "the model returned nothing", which is what the caller needs to fold nothing.
- */
-async function runSummaryFork(
-  fullMessages: Message[],
-  allTools: Tool[],
-  escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>,
-): Promise<string | null> {
-  const prompt = buildSummaryPrompt();
-  if (!escAware) return forkChat(fullMessages, allTools, prompt, undefined, 'none');
-  const result = await escAware(
-    (ac) => forkChat(fullMessages, allTools, prompt, ac.signal, 'none'),
-    () => null as string | null,
-  );
-  if (result === null) throw new StreamAbortedError('[RECAP] ESC pressed during the summary fork');
-  return result;
-}
-
-/** One short cause string for a failed fork (a bare `String(err)` loses `name`). */
-function describeCause(err: unknown): string {
-  if (err instanceof Error) {
-    return err.name && err.name !== 'Error' ? `${err.name}: ${err.message}` : err.message;
-  }
-  return String(err);
 }
 
 /**

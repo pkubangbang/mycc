@@ -26,7 +26,7 @@
 | C11 | **信号判定是外部权威**：折叠与否由 recap-signal（只读 brief 栈 + token 用量）决定；模型永远看不到 hash、`recap(...)`、`[<hash>] ANCHOR` 或 `· open:` | `recap-signal.ts` `evaluateRecapSignal()` | `recap-signal.test.ts`（待补） |
 | C12 | **未知目标降级为 skip**：`recap: true` 但 `target_brief` 缺失/无效/不在候选表 ⇒ `skip`，绝不回退到默认目标 | `recap-signal.ts` `parseVerdict()` | `recap-signal.test.ts`（待补） |
 | C13 | **只在 brief 回合触发，且在该 brief 注册之前**：当前 brief 因此成为新 chunk 的首条消息；`blockedCalls`、neglected 模式、`compactRequested`/`deferredCompact`、空候选表都折叠 0 次 | `hook.ts` `handleAutoRecap()` | `hook-esc-and-brief-isolation.test.ts` |
-| C14 | **lead only + 可关闭**：`scope !== 'main'` 或 `--disable-recap` / `MYCC_NO_RECAP=1` 时整段短路 | `hook.ts` `handleAutoRecap()` + `config.ts` `shouldDisableRecap()` | `hook-brief-isolation.test.ts` |
+| C14 | **lead only + 可关闭**：`scope !== 'main'` 或 `--no-recap` / `MYCC_NO_RECAP=1` 时整段短路 | `hook.ts` `handleAutoRecap()` + `config.ts` `shouldNoRecap()` | `hook-brief-isolation.test.ts` |
 | C15 | **一次折叠只留一条审计**：可见 `[recap]` 块 + 恰好一条 `{kind:'steer', role:'user'}` JSONL 记录；信号/分叉期间不追加任何记录 | `hook.ts` `handleAutoRecap()` + `triologue.submitUser(..., 'steer')` | `transcript-recap-audit.test.ts`（待补） |
 | C16 | **折叠后同回合不再触发 plan-scope 反思**：`chat.autoRecapFolded = true` 让 `handlePlanScopeBrief` 返回 null | `hook.ts` `handlePlanScopeBrief()` | `hook-plan-scope.test.ts` |
 | C17 | **brief 必须独占一个回合**：与其它工具同批 ⇒ 整回合被拒（`Brief must be called alone.`）。理由收窄为：loop 的切片算术（`resolveAnchor` → `resultIndex + 1` → `sliceFrom`）需要干净的 brief 边界，且 4a 依赖「当前 brief 尚未注册」 | `src/loop/triologue/brief.ts` `validateBriefIsolation()` | `triologue-brief-isolation.test.ts` |

@@ -251,7 +251,7 @@ export function isCrossroadDisabled(): boolean {
 
 /**
  * Check if automatic span folding (auto-recap) is disabled
- * (`--disable-recap` flag or `MYCC_NO_RECAP=1`).
+ * (`--no-recap` flag or `MYCC_NO_RECAP=1`).
  *
  * Auto-recap is ON by default: on every lead `brief` turn the recap-signal
  * decides whether the work since an earlier brief should be folded into a
@@ -262,15 +262,9 @@ export function isCrossroadDisabled(): boolean {
  * Reads BOTH the parsed CLI arg and the env var (mirrored by ARG_ENV_MAP), so a
  * relaunch that lost its argv (daemon restart, peer spawn) still honours the
  * operator's choice to disable.
- *
- * The CLI flag is named `--disable-recap`, NOT `--no-recap`: minimist parses a
- * boolean flag named `no-<x>` as the NEGATION of `<x>`, so `--no-recap` lands
- * as `{recap: false}` and never sets a `'no-recap'` key — the documented off
- * switch silently did nothing. The env var keeps the historical MYCC_NO_RECAP
- * name so existing .env files and compose specs stay valid.
  */
-export function shouldDisableRecap(): boolean {
-  return args['disable-recap'] === true || process.env.MYCC_NO_RECAP === '1';
+export function shouldNoRecap(): boolean {
+  return args['no-recap'] === true || process.env.MYCC_NO_RECAP === '1';
 }
 
 /**
@@ -614,6 +608,27 @@ export function getOllamaApiKey(): string | undefined {
  */
 export function getOllamaModel(): string {
   return process.env.OLLAMA_MODEL || 'glm-5:cloud';
+}
+
+/**
+ * Get DeepSeek API host
+ */
+export function getDeepSeekHost(): string {
+  return process.env.DEEPSEEK_HOST || 'https://api.deepseek.com';
+}
+
+/**
+ * Get DeepSeek API key
+ */
+export function getDeepSeekApiKey(): string | undefined {
+  return process.env.DEEPSEEK_API_KEY;
+}
+
+/**
+ * Get DeepSeek model name
+ */
+export function getDeepSeekModel(): string {
+  return process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro';
 }
 
 /**

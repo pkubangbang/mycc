@@ -7,12 +7,10 @@
  * answers `recap` / `skip` / `failed`. Nothing here reads the conversation, and
  * nothing here throws: a failed signal must leave the brief turn intact.
  *
- * The four verdicts are deliberately distinguishable:
+ * The three verdicts are deliberately distinguishable:
  *   - `skip`   — a settled decision (also the safe degradation for an
  *                unaddressable target, and the short-circuit for zero candidates);
- *   - `failed` — the call threw: NOT a decision, and it CARRIES the cause so the
- *                one diagnostic channel is not a bare "failed";
- *   - `esc`    — the user pressed ESC: also not a decision, and neither a fault;
+ *   - `failed` — the call threw / the user pressed ESC: NOT a decision;
  *   - `recap`  — fold to `target`, ALWAYS a hash from the candidate list.
  *
  * MOCK NOTE: `evaluateRecapSignal` builds its request BEFORE awaiting, so a
@@ -37,14 +35,6 @@ vi.mock('../../engine/chat-provider.js', () => ({
 vi.mock('../../engine/chat-helpers.js', () => ({
   startSpinner: startSpinnerMock,
   stopSpinner: stopSpinnerMock,
-  // The signal classifies an abort to tell ESC from a provider fault; the real
-  // class is a plain Error subclass, so the stub keeps `instanceof` meaningful.
-  StreamAbortedError: class StreamAbortedError extends Error {
-    constructor(message = 'stream aborted') {
-      super(message);
-      this.name = 'StreamAbortedError';
-    }
-  },
 }));
 
 import { evaluateRecapSignal, type FoldCandidate } from '../../loop/recap-signal.js';
@@ -166,25 +156,15 @@ describe('evaluateRecapSignal — an unaddressable target is a SKIP, never a def
 });
 
 describe('evaluateRecapSignal — failures are observable, not decisions', () => {
-  it('reports failed WITH the cause when the call rejects', async () => {
+  it('reports failed when the call rejects', async () => {
     retryChatMock.mockRejectedValueOnce(new Error('network down'));
 
     const result = await evaluateRecapSignal(CANDIDATES, USAGE);
 
-    // The cause is carried: this is the only channel that can diagnose why the
-    // signal never decided (auth error, wrong model, 402 were all identical).
-    expect(result).toEqual({ status: 'failed', reason: 'network down' });
+    expect(result).toEqual({ status: 'failed' });
   });
 
-  it('carries the error NAME, so a typed fault stays recognisable', async () => {
-    retryChatMock.mockRejectedValueOnce(new TypeError('boom'));
-
-    const result = await evaluateRecapSignal(CANDIDATES, USAGE);
-
-    expect(result).toEqual({ status: 'failed', reason: 'TypeError: boom' });
-  });
-
-  it('reports esc when ESC cancels the call (escAware cleanup path)', async () => {
+  it('reports failed when ESC cancels the call (escAware cleanup path)', async () => {
     // escAware wraps the provider call; on ESC it runs the cleanup and returns
     // the cleanup value, never the provider answer.
     const escAware = vi.fn(async <T,>(_fn: (ac: AbortController) => Promise<T>, cleanup: () => unknown) => cleanup());
@@ -193,18 +173,7 @@ describe('evaluateRecapSignal — failures are observable, not decisions', () =>
     const result = await evaluateRecapSignal(CANDIDATES, USAGE, escAware as never);
 
     expect(escAware).toHaveBeenCalledTimes(1);
-    // A cancellation is its OWN verdict: the caller sends the model to PROMPT.
-    expect(result).toEqual({ status: 'esc' });
-  });
-
-  it('reports esc when the stream is aborted mid-flight', async () => {
-    // ESC during streaming surfaces as a THROWN abort, not as the cleanup value.
-    const abort = Object.assign(new Error('stream aborted'), { name: 'StreamAbortedError' });
-    retryChatMock.mockRejectedValueOnce(abort);
-
-    const result = await evaluateRecapSignal(CANDIDATES, USAGE);
-
-    expect(result).toEqual({ status: 'esc' });
+    expect(result).toEqual({ status: 'failed' });
   });
 
   it('reports failed when the escAware runner rejects (provider fault)', async () => {
@@ -212,8 +181,7 @@ describe('evaluateRecapSignal — failures are observable, not decisions', () =>
     // provider fault reaches the signal's catch — it must degrade to `failed`.
     const escAware = vi.fn(<T,>(_fn: (ac: AbortController) => Promise<T>) => Promise.reject(new TypeError('boom')));
 
-    await expect(evaluateRecapSignal(CANDIDATES, USAGE, escAware as never))
-      .resolves.toEqual({ status: 'failed', reason: 'TypeError: boom' });
+    await expect(evaluateRecapSignal(CANDIDATES, USAGE, escAware as never)).resolves.toEqual({ status: 'failed' });
   });
 
   it('never throws, whatever the provider does', async () => {
@@ -221,18 +189,7 @@ describe('evaluateRecapSignal — failures are observable, not decisions', () =>
     // yields a verdict instead of propagating.
     retryChatMock.mockRejectedValueOnce(new TypeError('boom'));
 
-    await expect(evaluateRecapSignal(CANDIDATES, USAGE))
-      .resolves.toEqual({ status: 'failed', reason: 'TypeError: boom' });
-  });
-
-  it('skips (never fails) on a non-object JSON verdict body', async () => {
-    // `JSON.parse('null')` succeeds; the property reads would then throw a
-    // TypeError and be misreported as a fault instead of the documented skip.
-    retryChatMock.mockResolvedValueOnce(verdict('null'));
-
-    const result = await evaluateRecapSignal(CANDIDATES, USAGE);
-
-    expect(result).toEqual({ status: 'skip', reason: 'signal returned a non-object verdict' });
+    await expect(evaluateRecapSignal(CANDIDATES, USAGE)).resolves.toEqual({ status: 'failed' });
   });
 });
 

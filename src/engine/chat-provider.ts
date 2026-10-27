@@ -68,7 +68,7 @@ export type { RetryConfig, ErrorType } from './chat-helpers.js';
  * keeping the tools schema cached. Use it for text-only forks (recap, crossroad).
  *
  * Used by:
- * - generatePatchAction (via handleRecapForks) — decide the ONE mindmap node a
+ * - generatePatchAction (via handleRecapSpan) — decide the ONE mindmap node a
  *   recap should change (context compression)
  * - crossroad — generate/select continuation candidates (toolChoice:'none')
  *

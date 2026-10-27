@@ -52,10 +52,10 @@ function pushBrief(t: Triologue, message: string): void {
 }
 
 const OPEN_ITEMS = [
-  { id: 1, name: 'wire the todo list', done: false, hash: 'aa11bb22' },
-  { id: 2, name: 'already settled', done: true, hash: 'cc33dd44' },
-  { id: 3, name: 'pinned guard', done: false, hash: 'ee55ff66', pinned: true, preventStop: 'until tests pass' },
-  { id: 4, name: 'pinned but done', done: true, hash: '778899aa', pinned: true },
+  { id: 1, name: 'wire the todo list', done: false },
+  { id: 2, name: 'already settled', done: true },
+  { id: 3, name: 'pinned guard', done: false, pinned: true, preventStop: 'until tests pass' },
+  { id: 4, name: 'pinned but done', done: true, pinned: true },
 ];
 
 describe('formatOpenTodos', () => {
@@ -81,22 +81,10 @@ describe('formatOpenTodos', () => {
     expect(text.indexOf('#3')).toBeLessThan(text.indexOf('#4'));
   });
 
-  it('carries BOTH handles every todo_* write requires — the #id and the hash', () => {
-    // Issue #6: `todo_update` / `todo_pinning` reject a call that has the id but
-    // not the CURRENT hash, so a hash-free row here advertises an address the
-    // model cannot use. After a fold this section is the ONLY view of the list,
-    // which is why the missing hash turned "close the item" into "create a copy".
-    const text = formatOpenTodos([{ id: 42, name: 'x', done: false, hash: 'ab12cd34' }]);
+  it('carries the id (the model\'s only handle) and never the integrity hash', () => {
+    const text = formatOpenTodos([{ id: 42, name: 'x', done: false }]);
     expect(text).toContain('#42');
-    expect(text).toContain('[hash: ab12cd34]');
-  });
-
-  it('omits the hash tag when the row carries no hash (renderer stays total)', () => {
-    // Defensive: the type allows a hash-less row (older callers/tests build the
-    // shape by hand). Never print `[hash: undefined]`.
-    const text = formatOpenTodos([{ id: 7, name: 'y', done: false }]);
-    expect(text).toContain('#7');
-    expect(text).not.toContain('hash:');
+    expect(text).not.toMatch(/hash:/);
   });
 });
 
@@ -113,9 +101,9 @@ describe('buildRecapNote — three parts, in order', () => {
         'SUMMARY BODY',
         '',
         `${OPEN_TODOS_HEADING}`,
-        '[ ] #1 wire the todo list [hash: aa11bb22]',
-        '[ ] #3 pinned guard (pinned) [preventStop: until tests pass] [hash: ee55ff66]',
-        '[x] #4 pinned but done (pinned) [hash: 778899aa]',
+        '[ ] #1 wire the todo list',
+        '[ ] #3 pinned guard (pinned) [preventStop: until tests pass]',
+        '[x] #4 pinned but done (pinned)',
       ].join('\n'),
     );
     // ORDER, stated as a fact rather than implied by the fixture:

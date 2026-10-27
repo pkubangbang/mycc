@@ -24,83 +24,6 @@
  */
 
 import type { ToolCall } from '../../types.js';
-import { estimateTextTokens } from '../../utils/token.js';
-
-/**
- * The brief-message cap is TWO-TIER, and the tiers exist because they answer
- * different failures:
- *
- *   ≤ HARD (100 tokens)   → accepted silently, no note in the conversation.
- *   (HARD, SOFT] (≤200)   → accepted, but the brief's tool result says it was
- *                           over the target. Still a SUCCESS: the message is
- *                           kept verbatim, so a model that overshoots once
- *                           loses nothing.
- *   > SOFT (200 tokens)   → HARD FAILURE: the call is rejected and nothing is
- *                           recorded. Not clipped — a silently shortened
- *                           status line is how an agent misleads its reader
- *                           about how much it actually said; a rejection it
- *                           must act on is the honest outcome.
- *
- * WHY A CAP AT ALL — a brief is stored TWICE in the conversation: as the
- * assistant message's tool-call arguments (so the model re-reads its own words
- * on every subsequent call) and, after a fold, as the quoted anchor line of the
- * `[RECAP]` note. A brief is a status line, not a working note: detail belongs
- * in the tool result that carries it, or in the recap summary. Without a
- * ceiling one "status update" can spend thousands of tokens of every future
- * call and inflate the fold note past the result threshold.
- *
- * WHY ESTIMATED TOKENS, NOT CHARACTERS — the budget protected is the token
- * budget (`TOKEN_THRESHOLD`), and `estimateTextTokens` is the same estimator
- * that budget is computed with, so the cap and the accounting cannot disagree.
- * It is language-aware: 100 tokens is ~130 English words and ~50 CJK chars.
- */
-export const BRIEF_MESSAGE_TARGET_TOKENS = 100;
-export const MAX_BRIEF_MESSAGE_TOKENS = 200;
-
-/**
- * Estimate a brief message's cost ON THE SAME SCALE as the caps.
- *
- * Exported so the tool handler, the HOOK-stage producer and the tests all read
- * the threshold exactly as the enforcement does — no second, drifting
- * definition of "how long is too long".
- */
-export function estimateBriefMessageTokens(message: string): number {
-  return estimateTextTokens(message);
-}
-
-/**
- * The tier a brief message falls into. `'warn'` is still a SUCCESS — the
- * caller keeps the message and only annotates the tool result.
- */
-export type BriefMessageVerdict = 'ok' | 'warn' | 'fail';
-
-export function briefMessageVerdict(message: string): BriefMessageVerdict {
-  const cost = estimateBriefMessageTokens(message);
-  if (cost <= BRIEF_MESSAGE_TARGET_TOKENS) return 'ok';
-  if (cost <= MAX_BRIEF_MESSAGE_TOKENS) return 'warn';
-  return 'fail';
-}
-
-/**
- * The appended note when a brief is LONGER than the target but still accepted.
- *
- * WORDING — it must read as a push toward concision, never as a rule recital:
- * the model should internalize "briefs are short", not learn a threshold it can
- * aim just under. So it names the problem (too long) and the fix (be concise),
- * and quotes neither the target nor the ceiling number.
- */
-export function briefOverTargetWarning(): string {
-  return ' (noted. However your message is longer than the limit (100 tokens), please be concise next time.)';
-}
-
-/**
- * The rejection text for a brief past the hard limit. Same stance as the
- * warning: no ceiling number — just what to do, plus the fact that nothing was
- * recorded (the model must know, or it will assume the update went out).
- */
-export function briefTooLongError(): string {
-  return 'Error: message too long. Please rewrite it as a short status line — the conclusion in one or two sentences — and record it with a new brief. Nothing was recorded for this one; put the detail in your next tool result.';
-}
 
 /** The provider-neutral shape we accept for a brief call's `function`. */
 export type BriefCallLike = {
@@ -190,13 +113,6 @@ export function newBriefCallId(prefix = 'brief'): string {
 /**
  * Build a brief tool call from parts — the single writer for every producer
  * (recovery, crossroad, compact floor), so the shape cannot drift.
- *
- * SYNTHETIC PRODUCERS ARE EXEMPT FROM THE CAP: their message is fixed
- * boilerplate this repo owns (`Let me see what to do next.`, the compact
- * resume line), so it cannot grow with the agent's verbosity — the cap exists
- * to bound MODEL-authored text, and only the tool handler enforces it. The
- * message is passed through untouched, which also keeps the fold FLOOR
- * (compact.ts) byte-identical to what tests pin.
  */
 export function briefToolCall(
   message: string,

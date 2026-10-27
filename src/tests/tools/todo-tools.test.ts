@@ -296,7 +296,7 @@ describe('todo-update', () => {
 
     it('should return error for non-boolean done', () => {
       const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'abc12345', name: 'Task', done: 'yes' as unknown as boolean });
-      expect(result).toBe('Error: done must be a boolean (omit it to keep the current value).');
+      expect(result).toBe('Error: done must be a boolean.');
     });
 
     it('should trim whitespace from hash', () => {
@@ -344,12 +344,12 @@ describe('todo-update', () => {
       expect(result).toContain('hash: newhash10');
     });
 
-    it('should have id, hash, name as required fields — done is OPTIONAL (issue #6)', () => {
+    it('should have id, hash, name, done as required fields', () => {
       const required = todoUpdateTool.input_schema.required;
       expect(required).toContain('id');
       expect(required).toContain('hash');
       expect(required).toContain('name');
-      expect(required).not.toContain('done');
+      expect(required).toContain('done');
     });
   });
 });

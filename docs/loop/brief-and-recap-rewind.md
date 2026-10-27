@@ -106,7 +106,7 @@ the current brief's round-trip is registered with the triologue.
 The gate — every condition must hold:
 
 - `env.scope === 'main'` (lead only; teammates run their own loop)
-- `!shouldDisableRecap()` (`--disable-recap` / `MYCC_NO_RECAP=1`)
+- `!shouldNoRecap()` (`--no-recap` / `MYCC_NO_RECAP=1`)
 - the turn contains a `brief` call that was **not blocked**
 - not in neglected (ESC) mode
 - no `compactRequested` / `chat.deferredCompact` — a compaction is about to
@@ -316,7 +316,7 @@ is exactly the shape of "no message of its own to append".
 
 | Flag | Env | Effect |
 |---|---|---|
-| `--disable-recap` | `MYCC_NO_RECAP=1` | suppresses the signal and the fold entirely |
+| `--no-recap` | `MYCC_NO_RECAP=1` | suppresses the signal and the fold entirely |
 
 ## Implementation files
 
@@ -331,7 +331,7 @@ is exactly the shape of "no message of its own to append".
 | `src/loop/triologue/store.ts` | `MessageStore.briefIndices()`, `findToolResultIndex()`, `firstMessageIndexAfter()`, `rewriteToolResult()` |
 | `src/loop/triologue/brief.ts` | The ONE way to read/build/merge a brief call, plus `validateBriefIsolation()` |
 | `src/tools/brief.ts` | Brief tool; its description teaches that briefs divide the session and must be called alone |
-| `src/utils/arg-canonical.ts` / `src/config.ts` / `src/help.ts` | `--disable-recap` / `MYCC_NO_RECAP` |
+| `src/utils/arg-canonical.ts` / `src/config.ts` / `src/help.ts` | `--no-recap` / `MYCC_NO_RECAP` |
 
 There is **no** `src/tools/recap.ts`.
 

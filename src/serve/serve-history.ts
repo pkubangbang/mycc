@@ -225,10 +225,9 @@ export function readHistory(
       // yields the RIGHT-SIDE USER BUBBLES too — a genuine submission is
       // journaled as a 'user'|'steer' record (or a marker-bearing 'new' user
       // piece), which the projection keeps one-to-one, while injected notes
-      // ('merge' fragments, unmarked user pieces) AND the auto-recap audit
-      // trail ('recap_audit' — a fold has no user behind it) are dropped. This
-      // is why history no longer depends on the serve-only user.jsonl side
-      // file: the transcript is written on every turn, terminal mode included.
+      // ('merge' fragments, unmarked user pieces) are dropped. This is why
+      // history no longer depends on the serve-only user.jsonl side file:
+      // the transcript is written on every turn, terminal mode included.
       // Legacy tolerance: pre-piece full-snapshot lines have no `kind`, so
       // readTranscript treats each as a 'new' plain Message — their existing
       // {A, AB} duplicates in old files are preserved on read (zero

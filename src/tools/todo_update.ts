@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const todoUpdateTool: ToolDefinition = {
   name: 'todo_update',
-  description: 'Update an existing todo item by id. You MUST provide the item\'s current hash — the update is rejected if the hash doesn\'t match (prevents stale updates). Get the hash from todo_create output, the todo list, or the recap note. OMIT `done` to keep the item\'s current completion state (e.g. when only adding a note).',
+  description: 'Update an existing todo item by id. You MUST provide the item\'s current hash — the update is rejected if the hash doesn\'t match (prevents stale updates). Get the hash from todo_create output or the todo list.',
   input_schema: {
     type: 'object',
     properties: {
@@ -26,22 +26,21 @@ export const todoUpdateTool: ToolDefinition = {
       },
       done: {
         type: 'boolean',
-        description: 'Whether the item is completed. OMIT to leave the current state unchanged ' +
-          '(the tool preserves it) — you do not need to restate it just to edit a note.',
+        description: 'Whether the item is completed',
       },
       note: {
         type: 'string',
         description: 'Optional note for the item',
       },
     },
-    required: ['id', 'hash', 'name'],
+    required: ['id', 'hash', 'name', 'done'],
   },
   scope: ['main', 'child'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
     const id = args.id as number;
     const hash = args.hash as string;
     const name = args.name as string;
-    const doneArg = args.done;
+    const done = args.done as boolean;
     const note = args.note as string | undefined;
 
     if (typeof id !== 'number' || !Number.isInteger(id) || id <= 0) {
@@ -56,28 +55,8 @@ export const todoUpdateTool: ToolDefinition = {
       return 'Error: name is required and must be a non-empty string.';
     }
 
-    // `done` is OPTIONAL: omission means "leave the completion state alone".
-    //
-    // WHY (transcript-verified defect, issue #6). The schema declared `done`
-    // required, so a note-only update had to restate it — and a real call omitted
-    // it entirely (arguments carried id/hash/name/note, no `done`), producing the
-    // hard error "done must be a boolean." That error taught the model the update
-    // path was closed, so it created a COPY of the item and closed the copy
-    // instead, leaving the original open and stale. A legitimate update must
-    // never be rejected for not repeating state the module already holds: we
-    // read the current value off the item (which the hash gate has not yet
-    // proven live, so the mismatch path below is unchanged).
-    let done: boolean;
-    if (doneArg === undefined) {
-      const current = ctx.todo.getItems().find((i) => i.id === id);
-      if (!current) {
-        return `Error: Todo item #${id} not found. Use the current todo list to find the correct id.`;
-      }
-      done = current.done;
-    } else if (typeof doneArg !== 'boolean') {
-      return 'Error: done must be a boolean (omit it to keep the current value).';
-    } else {
-      done = doneArg;
+    if (typeof done !== 'boolean') {
+      return 'Error: done must be a boolean.';
     }
 
     const updated = ctx.todo.updateTodo(id, hash.trim(), name.trim(), done, note?.trim() || undefined);

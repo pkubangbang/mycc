@@ -400,44 +400,6 @@ describe('arg-canonical: spawn rendering preserves secrets', () => {
   });
 });
 
-describe('arg-canonical: the --disable-recap off switch (P0 regression)', () => {
-  // The bug: the flag was named `no-recap` and declared in `BOOLEAN_FLAGS`.
-  // minimist treats a boolean flag whose name starts with `no-` as the NEGATION
-  // of the rest, so `--no-recap` produced `{recap: false}` — the key
-  // `'no-recap'` never existed, config.ts's `args['no-recap'] === true` was
-  // always false, and the documented off switch did nothing. Meanwhile the
-  // instance published `(none)` while a compose spec rendered `--no-recap`,
-  // so argsMatch() reported a permanent mismatch.
-  it('minimist parses --disable-recap as a true flag (not a negation)', () => {
-    const parsed = minimistParse('--disable-recap');
-    expect(parsed['disable-recap']).toBe(true);
-    // No stray negation key is invented.
-    expect(parsed.recap).toBeUndefined();
-  });
-
-  it('leaves the flag false when absent, so the default stays "auto-recap ON"', () => {
-    expect(minimistParse('')['disable-recap']).toBe(false);
-    expect(minimistParse('--auto')['disable-recap']).toBe(false);
-  });
-
-  it('round-trips through the parser, the formatter and the env mirror', () => {
-    const parsed = parseArgString('--disable-recap --auto');
-    expect(parsed['disable-recap']).toBe(true);
-    // ORDER-PRESERVING render: the spawn side emits exactly what the spec said,
-    // and the published side reads it back the same way → argsMatch converges.
-    expect(formatLaunchArgs(parsed)).toBe('--disable-recap --auto');
-    expect(argsMatch(formatLaunchArgs(parsed), '--auto --disable-recap')).toBe(true);
-    // The env mirror keeps the historical MYCC_NO_RECAP name ('1' = off).
-    expect(buildCmdArgsEnv(parsed).MYCC_NO_RECAP).toBe('true');
-    expect(buildCmdArgsEnv(parseArgString('--auto')).MYCC_NO_RECAP).toBeUndefined();
-  });
-
-  it('keeps `no-recap` OUT of the boolean table (the negation trap)', () => {
-    expect(BOOLEAN_FLAGS).not.toContain('no-recap');
-    expect(Object.keys(DEFAULTS)).not.toContain('no-recap');
-  });
-});
-
 describe('arg-canonical: buildCmdArgsEnv', () => {
   it('maps set flags to MYCC_/provider env keys as strings', () => {
     const env = buildCmdArgsEnv(parseArgString('--auto --skip-healthcheck --token-threshold 80000'));
