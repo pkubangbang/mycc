@@ -26,7 +26,7 @@ vi.mock('../../../context/shared/loader.js', () => ({
   loader: { getToolsForScope: vi.fn(() => [{ type: 'function', function: { name: 'bash' } }]) },
 }));
 
-import { parsePreventStopResult, checkPreventStop, extractJsonArrayCandidates } from '../../../loop/states/stop-prevent-stop.js';
+import { parsePreventStopResult, checkPreventStop } from '../../../loop/states/stop-prevent-stop.js';
 import { forkChat } from '../../../engine/chat-provider.js';
 import type { MachineEnv, TurnVars } from '../../../loop/state-machine.js';
 import type { TodoItem } from '../../../types.js';

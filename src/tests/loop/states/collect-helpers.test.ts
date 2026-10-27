@@ -34,27 +34,27 @@ function ev(tool: string, result: string): SequenceEvent {
 
 describe('parsePreventStopResult', () => {
   it('should parse a clean JSON array', () => {
-    const raw = '[{"id":2,"hash":"abc12345","hold":true,"reason":"users table changed"}]';
+    const raw = '[{"id":2,"hash":"abc12345","reopen":true,"reason":"users table changed"}]';
     const result = parsePreventStopResult(raw);
     expect(result).toEqual([
-      { id: 2, hash: 'abc12345', hold: true, reason: 'users table changed' },
+      { id: 2, hash: 'abc12345', reopen: true, reason: 'users table changed' },
     ]);
   });
 
   it('should parse multiple entries', () => {
-    const raw = '[{"id":1,"hash":"h1","hold":false,"reason":"no change"},{"id":2,"hash":"h2","hold":true,"reason":"changed"}]';
+    const raw = '[{"id":1,"hash":"h1","reopen":false,"reason":"no change"},{"id":2,"hash":"h2","reopen":true,"reason":"changed"}]';
     const result = parsePreventStopResult(raw);
     expect(result).toEqual([
-      { id: 1, hash: 'h1', hold: false, reason: 'no change' },
-      { id: 2, hash: 'h2', hold: true, reason: 'changed' },
+      { id: 1, hash: 'h1', reopen: false, reason: 'no change' },
+      { id: 2, hash: 'h2', reopen: true, reason: 'changed' },
     ]);
   });
 
   it('should extract a JSON array from surrounding noise text', () => {
-    const raw = 'Here is my evaluation:\n[{"id":2,"hash":"abc","hold":true,"reason":"x"}]\nHope that helps!';
+    const raw = 'Here is my evaluation:\n[{"id":2,"hash":"abc","reopen":true,"reason":"x"}]\nHope that helps!';
     const result = parsePreventStopResult(raw);
     expect(result).toEqual([
-      { id: 2, hash: 'abc', hold: true, reason: 'x' },
+      { id: 2, hash: 'abc', reopen: true, reason: 'x' },
     ]);
   });
 
@@ -65,30 +65,30 @@ describe('parsePreventStopResult', () => {
   });
 
   it('should return null for JSON that is not an array', () => {
-    expect(parsePreventStopResult('{"id":2,"hold":true}')).toBeNull();
+    expect(parsePreventStopResult('{"id":2,"reopen":true}')).toBeNull();
     expect(parsePreventStopResult('"just a string"')).toBeNull();
     expect(parsePreventStopResult('42')).toBeNull();
   });
 
   it('should return null for malformed JSON array (unclosed)', () => {
-    expect(parsePreventStopResult('[{"id":2,"hold":true')).toBeNull();
+    expect(parsePreventStopResult('[{"id":2,"reopen":true')).toBeNull();
   });
 
   it('should tolerate whitespace around the JSON array', () => {
-    const raw = '   \n  [{"id":5,"hash":"h","hold":false,"reason":"skip"}]  \n  ';
+    const raw = '   \n  [{"id":5,"hash":"h","reopen":false,"reason":"skip"}]  \n  ';
     const result = parsePreventStopResult(raw);
     expect(result).toEqual([
-      { id: 5, hash: 'h', hold: false, reason: 'skip' },
+      { id: 5, hash: 'h', reopen: false, reason: 'skip' },
     ]);
   });
 
   it('should keep entries even if some fields are missing (caller guards per-entry)', () => {
     // The parser only checks Array.isArray; per-entry type validation is done
     // by the caller. So a partially-shaped entry passes through the parser.
-    const raw = '[{"id":2,"hash":"abc","hold":true}]';
+    const raw = '[{"id":2,"hash":"abc","reopen":true}]';
     const result = parsePreventStopResult(raw);
     expect(result).toEqual([
-      { id: 2, hash: 'abc', hold: true, reason: undefined },
+      { id: 2, hash: 'abc', reopen: true, reason: undefined },
     ]);
   });
 });

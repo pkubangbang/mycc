@@ -65,7 +65,6 @@ export const contextFactories = {
       getConfusionIndex: () => 0,
       increaseConfusionIndex: () => {},
       resetConfusionIndex: () => {},
-      clearDenials: () => {},
       escAware: (async (fn: (ac: AbortController) => Promise<unknown>) => fn(new AbortController())) as never,
     },
     todo: {} as never,

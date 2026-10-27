@@ -35,10 +35,6 @@ export const compactCommand: SlashCommand = {
       // away). compactReset() clears session.* ONLY — turn.events[] and
       // totalTurns survive (a turn spans across compaction).
       context.ctx.core.resetConfusionIndex();
-      // The denial ring is process-scoped, so compaction must drop it too —
-      // otherwise refusals from the summarized-away context keep being shown
-      // as "## Recent Permission Blocks" evidence.
-      context.ctx.core.clearDenials();
       context.sequence?.compactReset();
       // Reset hook dedup so a stop+replace hook suppressed by the per-turn cap
       // can re-fire after /compact — compactReset() resets the session.*

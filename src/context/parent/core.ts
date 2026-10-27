@@ -26,11 +26,8 @@ import { atomicWrite } from '../../utils/atomic-write.js';
  * unrelated tool result can be mistaken for a refusal.
  */
 export interface GrantDenial {
-  /**
-   * Which tool was refused. `read_file` / `grep` appear only for an
-   * out-of-workspace path the human declined (see recordExternalDenial).
-   */
-  tool: 'write_file' | 'edit_file' | 'bash' | 'read_file' | 'grep';
+  /** Which tool was refused. */
+  tool: 'write_file' | 'edit_file' | 'bash';
   /** The refused target: a path, or the command for bash. */
   target: string;
   /** Verdict reason (already user-facing prose from the gate). */
@@ -47,48 +44,19 @@ const MAX_RECENT_DENIALS = 8;
 /**
  * Classify a refusal reason into a structural kind.
  *
- * Order matters, and it is NOT arbitrary — several reason strings overlap:
- *
- *  - HUMAN REFUSALS COME FIRST. bash-judge.ts emits "User denied the
- *    dangerous command (…)", "User denied the batch deletion" and "User
- *    denied the command". Those contain the danger/batch markers, so a
- *    danger-first order recorded a human "no" as a POLICY rule — and the hint
- *    round then advised retrying with `dangerous=i_know`, i.e. re-asking for
- *    exactly what the human had refused. A human refusal is its own kind.
- *  - `[intent]` IS BRACKETED ON PURPOSE. The dangerous-command Socratic hint
- *    (bash-judge.ts `dangerousSocraticHint`) ends with "The Intent Lang
- *    provides a PARAM …", so a bare `includes('intent')` swallowed every
- *    dangerous block into 'intent' and the analyzer advised reformatting the
- *    intent instead of acknowledging the command was refused as destructive.
- *    The intent GRAMMAR rejection is the only thing tagged `[intent]`.
- *  - `git[_ ]commit` accepts both spellings: the recorded reason is "Use
- *    git_commit tool instead" (underscore), while the prose form uses a space.
+ * Order matters: the most specific markers first. These mirror the reason
+ * strings produced by bash-judge.ts and this file's plan-mode branch.
  */
 function classifyDenial(reason: string | undefined): GrantDenial['kind'] {
   const r = (reason || '').toLowerCase();
-  if (r.startsWith('user denied') || r.includes('user denied')) return 'denied';
   if (r.includes('plan mode')) return 'plan-mode';
-  if (r.includes('[intent]')) return 'intent';
-  if (/git[_ ]commit/.test(r)) return 'git-commit';
-  if (r.includes('batch deletion') || r.includes('batch delete')) return 'batch-delete';
-  // 'modify state' / 'modifies state' both occur (bash-judge.ts judge fallback
-  // vs. prompt prose); 'safety' covers "Unable to determine command safety".
-  if (r.includes('blocked') || r.includes('dangerous') || r.includes('modify state') || r.includes('modifies state')) {
-    return 'dangerous';
-  }
-  if (r.includes('safety')) return 'dangerous';
+  if (r.includes('[intent]') || r.includes('intent')) return 'intent';
+  if (r.includes('git commit')) return 'git-commit';
+  if (r.includes('batch deletion')) return 'batch-delete';
+  if (r.includes('blocked') || r.includes('dangerous') || r.includes('modifies state')) return 'dangerous';
   if (r.includes('denied') || r.includes('not permitted')) return 'denied';
   return 'other';
 }
-
-/**
- * Test hook for {@link classifyDenial}.
- *
- * Exported so the precedence rules that were WRONG (human-refusal vs. policy
- * rule; `[intent]` vs. the Socratic hint's prose) can be locked by a unit test
- * without driving a full grant flow. Not for production use.
- */
-export const classifyDenialForTest = classifyDenial;
 
 /**
  * Grant scope for external path access
@@ -694,25 +662,6 @@ export class Core extends BaseCore implements CoreModule {
   }
 
   /**
-   * Drop every recorded refusal.
-   *
-   * The ring is process-scoped (Core is built once per process), so without
-   * this it outlives the conditions that produced it: a plan-mode refusal from
-   * an earlier session is still rendered as "## Recent Permission Blocks …
-   * Fix the REQUEST, not the goal" long after the user left plan mode, while
-   * `## Mode & Write Scope` is (correctly) omitted — the analyzer then chases
-   * a block that no longer applies.
-   *
-   * Callers: the fresh-session path (double-Ctrl+L) and `/compact`, i.e. the
-   * same places that already reset the confusion index and the session
-   * sequence. `denialSeq` is deliberately NOT reset — it is a monotonic
-   * ordering token, not a count.
-   */
-  clearDenials(): void {
-    this.recentDenials.length = 0;
-  }
-
-  /**
    * Request access to a file/directory outside the workspace.
    *
    * Checks existing grants first (session-scoped, one-way open).
@@ -756,7 +705,6 @@ export class Core extends BaseCore implements CoreModule {
         return { approved: true, resolvedPath: requestedPath };
       } else {
         // 3 or any other response → deny
-        this.recordExternalDenial(tool, requestedPath);
         return { approved: false, resolvedPath: requestedPath, reason: 'Access denied by user' };
       }
     }
@@ -788,35 +736,7 @@ export class Core extends BaseCore implements CoreModule {
       return { approved: true, resolvedPath: requestedPath };
     } else {
       // 4 or any other response → deny
-      this.recordExternalDenial(tool, requestedPath);
       return { approved: false, resolvedPath: requestedPath, reason: 'Access denied by user' };
-    }
-  }
-
-  /**
-   * Record a refusal that happens AFTER `requestGrant` already returned
-   * approved — an out-of-workspace path the human declined.
-   *
-   * Without this the hint round's "## Recent Permission Blocks" section says
-   * nothing while the agent is genuinely walled off: the old (now deleted)
-   * prose classifier used to catch these as 'user denied'. `tool` is widened
-   * to the read-only tools here; `GrantDenial.tool` already carries the
-   * refusal, so the analyzer can tell a refused READ from a refused WRITE.
-   */
-  private recordExternalDenial(
-    tool: 'read_file' | 'write_file' | 'edit_file' | 'grep',
-    requestedPath: string,
-  ): void {
-    this.denialSeq += 1;
-    this.recentDenials.push({
-      tool,
-      target: requestedPath,
-      reason: 'Access denied by user',
-      kind: 'denied',
-      seq: this.denialSeq,
-    });
-    if (this.recentDenials.length > MAX_RECENT_DENIALS) {
-      this.recentDenials.shift();
     }
   }
 

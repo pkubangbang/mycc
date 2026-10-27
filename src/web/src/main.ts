@@ -217,11 +217,15 @@ function wsSend(data: object): boolean {
 }
 
 // ── Unconfirmed steer-resolve ──
-// A 'steer-resolve' is TERMINAL server-side (the queue is drained atomically
-// on receipt), so the client must never assume delivery from `ws.send()`
-// alone: on a half-open socket send() succeeds into the void, wsSend returns
-// true, and the notes were already cleared optimistically — they then come
-// back at the next PROMPT and can be submitted twice (the original bug).
+//
+// A `steer-resolve` is TERMINAL server-side (the queue is drained atomically
+// on receipt), so the client may never infer delivery from `ws.send()` alone:
+// on a HALF-OPEN socket the send succeeds into the void, `wsSend()` reports
+// success, the notes are already gone from the card, and the next PROMPT
+// brings them back for a second submission. The server broadcasts the positive
+// ack (`steer-flush` on both terminal drain paths), so a resolve stays
+// UNCONFIRMED until that ack lands; if it never lands we restore the snapshot
+// and force an authoritative /history re-read.
 //
 // The decision logic lives in resolve-guard.ts (DOM-free, unit-tested); this
 // file only supplies the three effects it needs.
@@ -255,7 +259,6 @@ function clearPendingResolve(): void {
 function armPendingResolve(notes: SteeringNote[]): void {
   resolveGuard.arm(notes);
 }
-
 /**
  * Fetch the message history from /history BEFORE establishing the WebSocket.
  * This populates the chat record first, so live WS updates layer cleanly on
@@ -530,53 +533,24 @@ function connectWebSocket(): void {
     reconnectTimer = null;
   }
 
-  // Retire the previous socket BEFORE replacing it.
-  //
-  // Without this the 300ms recovery reconnect (see resolveSteering) leaves the
-  // old socket alive: it may still be CONNECTING (so both sockets end up open
-  // and every broadcast is applied twice), and its late onclose would run the
-  // global disconnect reset — wiping exactly the notes the recovery path just
-  // restored. Closing it first, plus the per-socket identity guards below,
-  // makes the OLD socket's events inert.
-  const previous = ws;
-  if (previous && previous.readyState !== WebSocket.CLOSED) {
-    try {
-      previous.close();
-    } catch {
-      // already closing — onclose may still fire, and will be ignored
-    }
-  }
-
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const socket = new WebSocket(`${protocol}//${location.host}/ws`);
-  ws = socket;
+  ws = new WebSocket(`${protocol}//${location.host}/ws`);
 
-  /**
-   * True when `socket` is still the CURRENT connection.
-   *
-   * Every handler below bails out when this is false: a retired socket's
-   * onclose/onmessage must not touch the shared store (double dispatch,
-   * spurious phase reset, re-clearing restored steering notes).
-   */
-  const isCurrent = (): boolean => ws === socket;
-
-  socket.onopen = () => {
-    if (!isCurrent()) return;
+  ws.onopen = () => {
     store.connectionStatus = 'connected';
   };
 
-  socket.onmessage = (event) => {
-    if (!isCurrent()) return; // retired socket — ignore its backlog
+  ws.onmessage = (event) => {
     let msg: ChatMessage;
     try {
       msg = JSON.parse(event.data) as ChatMessage;
     } catch {
       return; // ignore malformed messages
     }
-    // A 'steer-flush' is also the POSITIVE ACK for a pending resolve: the
+    // A `steer-flush` is also the POSITIVE ACK for a pending resolve: the
     // server drains the steering queue atomically before broadcasting it, so
     // receipt proves the resolve landed. Disarm the unconfirmed-resolve timer
-    // before dispatching. A 'prompt' is equally terminal for the queue (the
+    // before dispatching. A `prompt` is equally terminal for the queue (the
     // dispatch below rebuilds the card from it), so it disarms too — see
     // isResolveAck().
     if (isResolveAck(msg.type)) clearPendingResolve();
@@ -586,8 +560,7 @@ function connectWebSocket(): void {
     applyServerMessage(store, msg, { nextId, chatApi });
   };
 
-  socket.onclose = () => {
-    if (!isCurrent()) return; // retired socket — its close is not our concern
+  ws.onclose = () => {
     store.connectionStatus = 'reconnecting';
     // Persist the chatlog on disconnect — a WS drop is often a precursor to
     // the user locking the screen / the tab being backgrounded, so capture
@@ -609,10 +582,6 @@ function connectWebSocket(): void {
     // captured before the drop may have since been consumed by the agent, so
     // resurfacing them would be misleading. Drop them.
     store.pendingSteeringReview.splice(0);
-    // A resolve in flight can no longer be confirmed on this socket; the
-    // reconnect's /history + prompt re-population rebuilds the card from the
-    // authoritative queue instead.
-    clearPendingResolve();
     // Do NOT reset isAutoMode here: it is a durable session-level flag the
     // server resends on reconnect (see the on-connect broadcast in
     // serve-hub.ts). Clearing it would flicker the chat input box disabled
@@ -629,8 +598,7 @@ function connectWebSocket(): void {
     }, 1500);
   };
 
-  socket.onerror = () => {
-    if (!isCurrent()) return;
+  ws.onerror = () => {
     // Let onclose handle the reconnect scheduling; just update status.
     store.connectionStatus = 'reconnecting';
   };
@@ -873,8 +841,7 @@ export const chatApi = {
   resolveSteering(sendIds: number[]): void {
     // The card is PROMPT-gated and the user may retry, so snapshot FIRST:
     // every note the user wants to SEND (by value, so a later re-population
-    // from the server cannot change what is restored). This snapshot is the
-    // recovery payload if the resolve is never acknowledged.
+    // from the server cannot change what is restored).
     const toSend = store.pendingSteeringReview.filter((n) => sendIds.includes(n.id));
     // Local optimistic clear: the card disappears and the input box re-enables.
     store.pendingSteeringReview.splice(0);
@@ -883,20 +850,24 @@ export const chatApi = {
     // message (no separate discard-then-input ordering problem).
     const sent = wsSend({ type: 'steer-resolve', sendIds });
     if (!sent) {
-      // The socket was KNOWN-closed, so the backend never received
-      // 'steer-resolve' — these notes are NOT consumed (the server still has
-      // them queued). Undo the optimistic clear so they stay in review, mark
-      // historyDirty so the next fetch cannot 304, and reconnect now.
+      // DOUBLE-INJECTION GUARD. The socket was not OPEN, so the backend never
+      // received 'steer-resolve' — these notes are NOT consumed (the server
+      // still has them queued). Undo the optimistic clear so they stay in
+      // review instead of vanishing, and force an authoritative /history
+      // fetch: `steer-resolve` is terminal server-side (the queue is drained
+      // atomically on receipt), and a note the server already drained must
+      // never be sent twice. Marking historyDirty drops the ETag so the next
+      // fetch cannot 304, then reconnect immediately (not after the normal
+      // 1.5s backoff) so the review card reflects the backend's real queue.
       store.pendingSteeringReview.splice(0, store.pendingSteeringReview.length, ...toSend);
       historyDirty = true;
-      connectWebSocket();
-      return;
+      if (!reconnectTimer) {
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          void reconnect();
+        }, 300);
+      }
     }
-    // `wsSend` returning true is NOT proof of delivery — on a half-open socket
-    // send() succeeds into the void. So confirm against the server's
-    // 'steer-flush' ack (see armPendingResolve / clearPendingResolve); only
-    // after it arrives may the notes be considered consumed.
-    armPendingResolve(toSend);
   },
   sendExit(): void {
     wsSend({ type: 'exit' });
