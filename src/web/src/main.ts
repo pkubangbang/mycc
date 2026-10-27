@@ -31,7 +31,6 @@ import {
 } from './chatlog-cache';
 import type { ChatlogCacheRecord } from './chatlog-cache';
 import './style.css';
-import { createResolveGuard, isResolveAck } from './resolve-guard';
 
 // Pinia + chat store — survives HMR (module-level, not in any component).
 // useChatStore() runs here OUTSIDE any component setup, so Pinia requires an
@@ -227,12 +226,35 @@ function wsSend(data: object): boolean {
 // UNCONFIRMED until that ack lands; if it never lands we restore the snapshot
 // and force an authoritative /history re-read.
 //
-// The decision logic lives in resolve-guard.ts (DOM-free, unit-tested); this
-// file only supplies the three effects it needs.
-const resolveGuard = createResolveGuard<SteeringNote>({
-  onUnconfirmed(notes) {
-    // Re-offer the notes the server may still hold. Dedupe by id — the card
-    // may already hold some of them (a /history repopulation raced us).
+// The server already broadcasts the positive ack we need: 'steer-flush' fires
+// on BOTH terminal drain paths (seam delivery and resolveSteering). So a
+// resolve stays UNCONFIRMED until that ack arrives; if it does not arrive in
+// time, we restore the snapshot and force an authoritative /history re-read.
+let pendingResolve: { notes: SteeringNote[]; timer: ReturnType<typeof setTimeout> } | null = null;
+
+/** How long a resolve may stay unacknowledged before we distrust the socket. */
+const RESOLVE_ACK_TIMEOUT_MS = 2500;
+
+/** The ack arrived (or the socket is gone) — stop waiting. */
+function clearPendingResolve(): void {
+  if (!pendingResolve) return;
+  clearTimeout(pendingResolve.timer);
+  pendingResolve = null;
+}
+
+/**
+ * Arm the ack timer for a just-sent resolve. `notes` is the snapshot to
+ * restore if the ack never comes. Any previous unconfirmed resolve is
+ * superseded (its notes are still in the new snapshot by construction).
+ */
+function armPendingResolve(notes: SteeringNote[]): void {
+  clearPendingResolve();
+  const timer = setTimeout(() => {
+    pendingResolve = null;
+    // No ack: either the socket is half-open (send() "succeeded" into the
+    // void) or the message was dropped. Treat the resolve as NOT delivered —
+    // the server may still hold these notes, and re-offering them is always
+    // safer than silently losing an instruction.
     for (const note of notes) {
       if (!store.pendingSteeringReview.some((n) => n.id === note.id)) {
         store.pendingSteeringReview.push(note);
@@ -240,24 +262,9 @@ const resolveGuard = createResolveGuard<SteeringNote>({
     }
     // Force a real 200 (never a 304) so the card reflects the server's queue.
     historyDirty = true;
-  },
-  reconnect() {
     connectWebSocket();
-  },
-});
-
-/** The ack arrived (or the socket is gone) — stop waiting. */
-function clearPendingResolve(): void {
-  resolveGuard.clear();
-}
-
-/**
- * Arm the ack timer for a just-sent resolve. `notes` is the snapshot to
- * restore if the ack never comes. Any previous unconfirmed resolve is
- * superseded.
- */
-function armPendingResolve(notes: SteeringNote[]): void {
-  resolveGuard.arm(notes);
+  }, RESOLVE_ACK_TIMEOUT_MS);
+  pendingResolve = { notes, timer };
 }
 /**
  * Fetch the message history from /history BEFORE establishing the WebSocket.
@@ -550,10 +557,8 @@ function connectWebSocket(): void {
     // A `steer-flush` is also the POSITIVE ACK for a pending resolve: the
     // server drains the steering queue atomically before broadcasting it, so
     // receipt proves the resolve landed. Disarm the unconfirmed-resolve timer
-    // before dispatching. A `prompt` is equally terminal for the queue (the
-    // dispatch below rebuilds the card from it), so it disarms too — see
-    // isResolveAck().
-    if (isResolveAck(msg.type)) clearPendingResolve();
+    // (see confirmResolve below) before dispatching.
+    if (msg.type === 'steer-flush') clearPendingResolve();
     // Delegate the pure state-transition logic to the DOM-free dispatch module.
     // The store is the single mutation surface; applyServerMessage calls
     // store.setPhase() / store.setAutoMode() per the transition table.

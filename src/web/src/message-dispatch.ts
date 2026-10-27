@@ -165,17 +165,7 @@ export function applyServerMessage(
       if (state.isAutoMode) {
         state.steeringBuffer.splice(0, state.steeringBuffer.length);
       } else {
-        // DEDUPE BY ID. A note already in the card can be re-echoed: the server
-        // still holds it (never consumed), so a reconnect's /history refills
-        // the buffer, or the recovery path restores it, and the follow-up
-        // prompt would push a SECOND row with the same id — the same
-        // instruction offered for submission twice, and a duplicate v-for
-        // :key. Ids are monotonic for the life of the server process, so id
-        // identity is the correct key.
-        const already = new Set(state.pendingSteeringReview.map((n) => n.id));
-        for (const note of state.steeringBuffer) {
-          if (!already.has(note.id)) state.pendingSteeringReview.push(note);
-        }
+        state.pendingSteeringReview.push(...state.steeringBuffer);
         state.steeringBuffer.splice(0, state.steeringBuffer.length);
       }
     }
