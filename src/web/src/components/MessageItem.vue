@@ -38,6 +38,16 @@ const isBashCommand = computed(() =>
   props.message.type === 'log' && !!props.message.label && BASH_COMMAND_LABELS.has(props.message.label)
 );
 
+// Todo tool logs (todo_create / todo_update / todo_pinning) carry the full
+// printTodoList() snapshot as `content`. The list is "extracted" from these
+// bubbles and shown in the floating TodoCard (App.vue) instead, so the
+// inline bubble hides the list body entirely. Only the header
+// ([HH:MM:SS] [label]) and the `detail` summary (e.g. "Created #1: Name")
+// above render — all three todo tools always pass a detail string.
+const TODO_LABELS = new Set(['todo_create', 'todo_update', 'todo_pinning']);
+const isTodoCard = computed(() =>
+  props.message.type === 'log' && !!props.message.label && TODO_LABELS.has(props.message.label)
+);
 
 // PLAN-mode scope reflection (src/loop/plan-scope.ts), emitted by the hook
 // stage as brief('info', 'plan-scope', formatPlanScopeForDisplay(note)).
@@ -304,7 +314,11 @@ function quoteContent(): void {
           <!-- eslint-disable-next-line vue/no-v-html -->
           <div class="bash-command-html" v-html="bashHtml"></div>
         </template>
-
+        <template v-else-if="isTodoCard">
+          <!-- Todo tool log: the full todoList snapshot is "extracted" into
+               the floating TodoCard, so the inline bubble hides the list
+               body entirely. Only the header + detail summary above render. -->
+        </template>
         <template v-else-if="isPlanScope">
           <!-- PLAN-mode scope reflection: a terminal-formatted block (ASCII
                rule + aligned label columns) that markdown mangles. Rendered
@@ -726,5 +740,4 @@ function quoteContent(): void {
 .toolbar-btn:active {
   background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
-
 </style>

@@ -1,101 +1,123 @@
 <script setup lang="ts">
 /**
- * TodoCard.vue — floating, collapsible TODO LIST panel.
+ * TodoCard.vue — floating, collapsible todo summary card.
  *
- * Renders the AUTHORITATIVE todo list: one row per todo id, exactly as the
- * backend holds it (`ctx.todo.getItems()` → `type: 'todos'` frame + the
- * `todos` field of /history).
+ * Replaces the inline `todo_create` / `todo_update` / `todo_pinning` log
+ * bubbles in the chat stream. Instead of dumping the full `printTodoList()`
+ * output every time a todo changes, this card:
+ *   - tracks the LATEST todo-labeled message (the most recent state),
+ *   - floats at the top-left of the chat area (top-right is reserved for
+ *     TeammateCard, so the two never collide),
+ *   - is COLLAPSED by default — showing only the last todo line,
+ *   - expands downward on click to reveal the full list, while staying
+ *     floating (position:absolute, never reflows the chat log),
+ *   - hides entirely when there are no todos ("No todos." or no todo msg).
  *
- * ## Why not the todo briefs
- *
- * This card used to reconstruct the list by parsing the `todo_create` /
- * `todo_update` / `todo_pinning` briefs that flow to the chat log. Those briefs
- * are EVENTS, not state: creating, updating and pinning one item in a single
- * turn produced three briefs, so the same todo rendered as three rows (the
- * `📌 pinned #7` + `☐ updated #7` + `☐ created #7` duplication). There is no
- * way to dedupe that honestly — two identical `updated #7` events are
- * genuinely two events.
- *
- * The backend now pushes a full snapshot on every mutation, and the panel
- * treats each frame as a REPLACEMENT. One id, one row, always current. The
- * briefs are untouched and still render as ordinary chat lines (MessageItem).
- *
- * ## Behaviour
- *   - collapsed by default — the header summarises progress (`n/m done`),
- *   - expands to list every todo, open items first, then completed ones
- *     (pinned is shown by the 📌 glyph and bold weight, not by the order),
- *   - hides entirely while the list is empty,
- *   - re-collapses when a todo is added (a new item starts a fresh view)
- *     without fighting the user's manual toggle otherwise.
+ * The card is purely a frontend view over existing ChatMessages — no
+ * backend state. See the "todo management" / brief() label convention in
+ * MYCC.md: brief('info', 'todo_create'|'todo_update'|'todo_pinning', ...)
+ * emits a labeled `log` message whose `content` is the printTodoList()
+ * string.
  */
-import { computed, ref, watch } from 'vue';
-import type { TodoListEntry } from '../types';
-import { todoHeader } from '../todo-header';
+import { computed, ref } from 'vue';
+import type { ChatMessage } from '../types';
 
 const props = defineProps<{ todos: TodoListEntry[] }>();
 
-/** Open items first (the work in flight), then completed ones; id ascending
- *  within each group so a row never jumps when its neighbours change. */
-const rows = computed(() => {
-  const byId = [...props.todos].sort((a, b) => a.id - b.id);
-  return [...byId.filter((t) => !t.done), ...byId.filter((t) => t.done)];
+/** Labels that carry a todo-list snapshot in their `content`. */
+const TODO_LABELS = new Set(['todo_create', 'todo_update', 'todo_pinning']);
+
+/** The most recent todo-labeled message — the authoritative current state. */
+const latestTodoMsg = computed(() => {
+  for (let i = props.messages.length - 1; i >= 0; i--) {
+    const m = props.messages[i];
+    if (m.label && TODO_LABELS.has(m.label)) return m;
+  }
+  return null;
 });
 
-const hasRows = computed(() => rows.value.length > 0);
+/** Raw printTodoList() content of the latest todo message. */
+const rawContent = computed(() => latestTodoMsg.value?.content ?? '');
+
+interface ParsedTodo {
+  /** Original line (with leading whitespace trimmed). */
+  raw: string;
+  done: boolean;
+  pinned: boolean;
+  /** The "N. Name" body, stripped of markers/tags/hash. */
+  text: string;
+}
 
 /**
- * Progress summary for the collapsed header: `TODO 2/6 done (pinned x1)`.
- *
- * The FORMAT lives in `todo-header.ts`, not here — this file has no test
- * harness, and a user-visible string that only a template can reach is a
- * string nobody locks. Keep the glyph OUT of the summary: the template renders
- * `span.todo-icon` (📋) beside it.
+ * Parse a printTodoList() string into individual todo lines.
+ * Format:
+ *   Todo list:
+ *     [x] 📌 1. Name (note) [reactivate: cond] [hash: xxx]
+ *     [ ] 2. Other [hash: yyy]
+ * The first non-empty line is the "Todo list:" header — skipped.
+ * Each subsequent non-empty line is one todo item.
  */
-const summary = computed(() => todoHeader(props.todos));
+function parseTodos(content: string): ParsedTodo[] {
+  const lines = content.split('\n');
+  const items: ParsedTodo[] = [];
+  let sawHeader = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (!sawHeader) {
+      // First non-empty line is the "Todo list:" header.
+      sawHeader = true;
+      continue;
+    }
+    // Marker: [x] or [ ]
+    const done = /^\[x\]/i.test(trimmed);
+    const pinned = trimmed.includes('📌');
+    // Strip "[x]"/"[ ]", the 📌 pin tag, and the trailing [hash: ...] so the
+    // summary reads cleanly. Keep the "N. Name (note) [reactivate: ...]" body.
+    const text = trimmed
+      .replace(/^\[[ xX]\]\s*/, '')
+      .replace(/📌\s*/, '')
+      .replace(/\s*\[hash:\s*[0-9a-f]+\]\s*$/i, '');
+    items.push({ raw: trimmed, done, pinned, text });
+  }
+  return items;
+}
 
-/** Collapse state: collapsed shows only the summary. Defaults to collapsed. */
+const todos = computed<ParsedTodo[]>(() => parseTodos(rawContent.value));
+
+/** The last todo line — the one shown in the collapsed chip. */
+const lastTodo = computed(() => {
+  const list = todos.value;
+  return list.length > 0 ? list[list.length - 1] : null;
+});
+
+/** Whether there is anything to show (a real todo list, not "No todos."). */
+const hasTodos = computed(
+  () => latestTodoMsg.value !== null && todos.value.length > 0,
+);
+
+/** Collapse state: collapsed (true) shows only the last item; expanded
+ *  (false) shows the full list. Defaults to collapsed. */
 const collapsed = ref(true);
 
 function toggle(): void {
   collapsed.value = !collapsed.value;
 }
-
-// A GROWTH in the item count re-collapses the panel: a freshly added item is the
-// agent starting new work, so the previous expansion no longer describes the
-// list. A SHRINK must not — the auto-clear after everything is done would
-// otherwise re-collapse a panel the user just opened.
-const count = computed(() => props.todos.length);
-watch(count, (next, prev) => {
-  if (next > prev) collapsed.value = true;
-});
-
-/** Row glyph: 📌 pinned reminder, ☑ done, ☐ open. */
-function icon(t: TodoListEntry): string {
-  if (t.pinned) return '📌';
-  return t.done ? '☑' : '☐';
-}
 </script>
 
 <template>
-  <div v-if="hasRows" class="todo-card" :class="{ collapsed }">
-    <button class="todo-card-header" type="button" @click="toggle" :title="collapsed ? '点击展开 todo 列表' : '点击折叠'">
-      <span class="todo-icon">📋</span>
-      <span class="todo-summary">{{ summary }}</span>
+  <div v-if="hasTodos" class="todo-card" :class="{ collapsed }">
+    <button class="todo-card-header" type="button" @click="toggle" :title="collapsed ? '点击展开全部 todo' : '点击折叠'">
+      <span class="todo-icon" :class="{ done: lastTodo?.done }">{{ lastTodo?.done ? '☑' : '☐' }}</span>
+      <span v-if="lastTodo?.pinned" class="todo-pin" aria-hidden="true">📌</span>
+      <span class="todo-summary">{{ lastTodo?.text ?? 'Todo' }}</span>
       <span class="todo-chevron" :class="{ open: !collapsed }" aria-hidden="true">▾</span>
     </button>
     <div v-if="!collapsed" class="todo-card-body">
-      <div
-        v-for="t in rows"
-        :key="t.id"
-        class="todo-line"
-        :class="{ done: t.done, pinned: t.pinned }"
-        :title="t.note ?? undefined"
-      >
-        <span class="todo-icon" :class="{ done: t.done }">{{ icon(t) }}</span>
-        <span class="todo-text">
-          <span class="todo-id">#{{ t.id }}</span> {{ t.name }}
-          <span v-if="t.preventStop" class="todo-guard">[guard: {{ t.preventStop }}]</span>
-        </span>
+      <div v-for="(t, idx) in todos" :key="idx" class="todo-line" :class="{ done: t.done }">
+        <span class="todo-icon" :class="{ done: t.done }">{{ t.done ? '☑' : '☐' }}</span>
+        <span v-if="t.pinned" class="todo-pin" aria-hidden="true">📌</span>
+        <span class="todo-text">{{ t.text }}</span>
       </div>
     </div>
   </div>
@@ -159,6 +181,9 @@ function icon(t: TodoListEntry): string {
   color: var(--accent);
   opacity: 1;
 }
+.todo-pin {
+  flex-shrink: 0;
+}
 .todo-summary {
   flex: 1;
   min-width: 0;
@@ -211,12 +236,5 @@ function icon(t: TodoListEntry): string {
 .todo-line .todo-text {
   min-width: 0;
   word-break: break-word;
-}
-.todo-id {
-  opacity: 0.6;
-}
-.todo-guard {
-  opacity: 0.75;
-  font-style: italic;
 }
 </style>

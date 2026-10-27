@@ -278,9 +278,8 @@ The SPA is a single full-viewport flex column (`App.vue`):
 | `App.vue` | `src/web/src/App.vue` | Root layout: StatusBar + ChatLog + ChatInput. Owns the `#ededed` background. |
 | `StatusBar.vue` | `src/web/src/components/StatusBar.vue` | Connection status dot/text, "mycc chat" title, Retry + 退出 buttons. |
 | `ChatLog.vue` | `src/web/src/components/ChatLog.vue` | Scrollable message list. Auto-scrolls if user is at bottom; shows ↓ button otherwise. Renders the 停止 (interrupt) button while `isRunning`. |
-| `MessageItem.vue` | `src/web/src/components/MessageItem.vue` | Single bubble. Renders markdown for `user`/`result`; plain monospace for `log`/`warn`/`error`. Todo briefs (`todo_create`/`todo_update`/`todo_pinning`) render as ordinary labelled log lines — the dedicated inline todo renderer was removed with `todo-activity.ts`. |
+| `MessageItem.vue` | `src/web/src/components/MessageItem.vue` | Single bubble. Renders markdown for `user`/`result`; plain monospace for `log`/`warn`/`error`. |
 | `ChatInput.vue` | `src/web/src/components/ChatInput.vue` | Textarea + 发送 button. Enter sends, Shift+Enter newline. |
-| `TodoCard.vue` | `src/web/src/components/TodoCard.vue` | Floating, collapsible TODO LIST panel over the authoritative `todos` snapshot (one row per todo id, ordered open-first then done, each group id-ascending; a pinned row is marked with 📌 and bold weight, not by its position); collapsed by default; hidden when the list is empty. |
 
 ### State (`src/web/src/types.ts`)
 
@@ -375,7 +374,6 @@ shows a Retry button (and the prompt bubble detects `/retry/i` to toggle
 | `components/ChatLog.vue` | Scrollable message list + interrupt/scroll buttons. |
 | `components/MessageItem.vue` | Bubble rendering (markdown vs plain) + bubble styles. |
 | `components/ChatInput.vue` | Input textarea + send button. |
-| `components/TodoCard.vue` | Floating TODO LIST panel — renders the authoritative `todos` snapshot (one row per todo id), pushed as a `type:'todos'` frame by `src/serve/serve-todos.ts` on every `TodoModule` mutation (the `todo_changed` event on `loopEvents`, subscribed once by `wireServeCallbacks`) and seeded from the `/history` body field `todos` (a BARE `TodoListEntry[]`, normalised by `src/web/src/todo-payload.ts`). |
 
 ### Backend hooks (outside src/serve/)
 | File | Hook |
