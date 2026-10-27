@@ -5,6 +5,7 @@
 import { createHash } from 'crypto';
 import { loopEvents, type TodoChangedPayload } from '../../loop/loop-events.js';
 import type { TodoModule, TodoItem } from '../../types.js';
+import { sanitizeTodoField } from './todo-render.js';
 
 /**
  * Compute integrity hash for a todo item
@@ -171,9 +172,12 @@ export class Todo implements TodoModule {
     for (const item of this.items) {
       const marker = item.done ? '[x]' : '[ ]';
       const pinTag = item.pinned ? '📌' : '';
-      const reactTag = item.preventStop ? ` [preventStop: ${item.preventStop}]` : '';
-      const note = item.note ? ` (${item.note})` : '';
-      lines.push(`  ${marker} ${pinTag} ${item.id}. ${item.name}${note}${reactTag} [hash: ${item.hash}]`);
+      const name = sanitizeTodoField(item.name) ?? '(unnamed)';
+      const noteText = sanitizeTodoField(item.note);
+      const guard = sanitizeTodoField(item.preventStop);
+      const reactTag = guard ? ` [preventStop: ${guard}]` : '';
+      const note = noteText ? ` (${noteText})` : '';
+      lines.push(`  ${marker} ${pinTag} ${item.id}. ${name}${note}${reactTag} [hash: ${item.hash}]`);
     }
     return lines.join('\n');
   }
@@ -247,8 +251,8 @@ export class Todo implements TodoModule {
    * by `todo_update` to emit a warm hint with the current hash on a lineage
    * match; the integrity gate in `updateTodo` is unchanged.
    */
-  findByPreviousHash(hash: string): TodoItem | null {
-    const item = this.items.find((i) => i.previousHashes?.includes(hash));
+  findByPreviousHash(hash: string, id?: number): TodoItem | null {
+    const item = this.items.find((i) => (id === undefined || i.id === id) && i.previousHashes?.includes(hash));
     if (!item) return null;
     return cloneItem(item);
   }

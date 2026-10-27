@@ -23,6 +23,7 @@ import { TriologueLite } from '../loop/triologue-lite.js';
 import { JsonlTranscriptWriter, asAppendablePiece } from '../loop/triologue/transcript.js';
 import { ipc, sendStatus } from './child/ipc-helpers.js';
 import { parseIntent, isReadOnlyVerb } from '../context/grant/intent-parser.js';
+import { sanitizeTodoField } from './shared/todo-render.js';
 
 const POLL_INTERVAL = 5000; // 5 seconds
 const CONFUSION_THRESHOLD = 10; // Same as main process
@@ -431,10 +432,9 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       //   repetition of the populator — it is the correction OF it, and it is
       //   transient (a triologue note), so it does not enter the cached prefix.
       //
-      // The list is rendered from getItems() rather than printTodoList() so the
-      // note text a teammate sees is the same shape the lead renders, and stays
-      // free of the printer's raw `[hash: …]` tail (a teammate addresses items by
-      // id, not by the lead's hash lineage).
+      // Render the live list from getItems() because the project-context list is
+      // frozen for cache stability. Use the shared field sanitizer, and include
+      // each row's current hash: todo_update requires id + hash for teammates too.
       nextTodoNudge--;
       if (nextTodoNudge <= 0) {
         nextTodoNudge = TODO_NUDGE_INTERVAL;
@@ -446,7 +446,11 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           ? openTodos.map((i) => {
               const box = i.done ? '[x]' : '[ ]';
               const pin = i.pinned ? ' 📌' : '';
-              return `- ${box}${pin} ${i.id}. ${i.name}${i.note ? ` — ${i.note}` : ''}`;
+              const name = sanitizeTodoField(i.name) ?? '(unnamed)';
+              const note = sanitizeTodoField(i.note);
+              const guard = sanitizeTodoField(i.preventStop);
+              const hash = i.hash ? ` [hash: ${i.hash}]` : '';
+              return `- ${box}${pin} ${i.id}. ${name}${note ? ` — ${note}` : ''}${guard ? ` [preventStop: ${guard}]` : ''}${hash}`;
             }).join('\n')
           : '(no todos)';
         triologue.note('REMINDER',

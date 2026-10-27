@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { sanitizeTodoField } from '../../context/shared/todo-render.js';
 
 /**
  * recap-note.ts - The ONE renderer of a folded span's note, plus the helpers
@@ -118,114 +119,30 @@ export function anchoredNoteLength(body: string): number {
 }
 
 /**
- * Per-row text budget for the open-todo section (mirrors serve-todos' MAX_TEXT_LEN).
- */
-const MAX_TODO_TEXT_LEN = 500;
-
-/**
- * Total character budget for the rendered section.
+ * Render the complete open/pinned checklist appended to a recap note.
  *
- * DERIVED FROM THE GATE IT PROTECTS, not a row count: 40 rows × 3 fields × 500
- * chars ≈ 61 500 chars, against a default `getResultThreshold()` of 50 000 — a
- * session with enough pinned, maximal-note rows made EVERY fold permanently
- * refused. Kept a little under the threshold to leave room for the marker and
- * the summary; `recapNoteSize` remains the authoritative final check.
- */
-const MAX_TODO_SECTION_CHARS = 20_000;
-
-/** Flatten + clamp one free-form field so it cannot forge note structure. */
-function clampTodoText(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  // Collapse every line break and control char: a name containing "\n### "
-  // would otherwise forge a section heading inside a durable note the model
-  // reads as authoritative state.
-  const flat = value.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
-  if (!flat) return undefined;
-  return flat.length > MAX_TODO_TEXT_LEN ? `${flat.slice(0, MAX_TODO_TEXT_LEN)}…` : flat;
-}
-
-/**
- * Render the open-todo section appended to a note.
- *
- * The checklist lives OUTSIDE the transcript (in the todo module), so without
- * this section a fold would resume the model with no record of what it had
- * promised to keep doing. This is now the ONLY delivery channel for the list —
- * the fold happens with no model involvement, so the note must carry it.
- *
- * OPENING RULE: `!done || pinned` — deliberately NOT the same predicate as
- * `Todo.hasOpenTodo()` (`!done || (pinned && preventStop)`). The looser rule is
- * correct where a false positive is harmless (mentioning that a todo exists);
- * the stricter one is correct where the item must be actionable. Recorded as a
- * known inconsistency, left explicit at each call site.
- *
- * Rendering carries `#id` AND the 8-char `[hash: …]`: `todo_update` / `todo_pinning`
- * require BOTH (id **and** the current hash — the hash gate is the anti-stale
- * write), so a hash-free row would advertise an address the model cannot use.
- * That was a real defect (issue #6): after a fold this section is the ONLY view
- * of the list, the model read `[ ] #1 …` with no hash, could not call
- * `todo_update`, and created COPIES of the open items instead — closing the
- * copies while the originals stayed open and stale. The hash is part of the
- * handle, not decoration, so it must ride here. Cost: 8-16 chars per row,
- * against a per-row clamp and the section budget below; `recapNoteSize` remains
- * the authoritative final size check before any truncation.
- *
- * `undefined`/empty → `''`, so a session with no todos produces a two-part note
- * (marker + summary) and the section never appears empty.
- *
- * ## Deliberately NOT built (recorded so they are not re-proposed)
- *
- * 1. A `todo_list` TOOL the model calls to refresh the list. REJECTED: this
- *    repo already tried a proactive `checkpoint` tool and it failed for a
- *    reason that generalises — the LLM never knew when to call it (pitfall
- *    `c5e0818f`). Delivery must not depend on the agent choosing to ask.
- * 2. A PER-TURN injection of the list into the project context. REJECTED: the
- *    project-context populators are frozen between `compact()`/`clear()`
- *    boundaries ON PURPOSE, because refreshing them every turn invalidated the
- *    provider's prompt-cache prefix on each request.
+ * The list is never truncated, and fields are never length-clamped. If a
+ * complete note cannot fit the configured result-size gate, the caller refuses
+ * that fold rather than silently dropping actionable state.
  */
 export function formatOpenTodos(
   items: readonly { id: number; name: string; done: boolean; hash?: string; pinned?: boolean; note?: string; preventStop?: string }[] | undefined,
 ): string {
   const open = (items ?? []).filter((i) => !i.done || i.pinned);
   if (open.length === 0) return '';
-  // BOUNDED: the whole list is re-serialised into a durable tool result whose
-  // size is pre-checked against the result threshold, so an unbounded section
-  // can make a fold PERMANENTLY IMPOSSIBLE once enough long rows accumulate
-  // (pinned rows never auto-clear, so it only grows). Truncating here keeps the
-  // note writable and says so explicitly.
-  const shown: string[] = [];
-  let used = OPEN_TODOS_HEADING.length + 1;
-  let omitted = 0;
-  for (const i of open) {
+
+  const lines = open.map((i) => {
     const marker = i.done ? '[x]' : '[ ]';
     const pin = i.pinned ? ' (pinned)' : '';
-    const guard = clampTodoText(i.preventStop);
-    const note = clampTodoText(i.note);
-    const line = `${marker} #${i.id} ${clampTodoText(i.name) ?? '(unnamed)'}${pin}`
+    const name = sanitizeTodoField(i.name) ?? '(unnamed)';
+    const note = sanitizeTodoField(i.note);
+    const guard = sanitizeTodoField(i.preventStop);
+    return `${marker} #${i.id} ${name}${pin}`
       + `${note ? ` (${note})` : ''}${guard ? ` [preventStop: ${guard}]` : ''}`
       + `${i.hash ? ` [hash: ${i.hash}]` : ''}`;
-    // CHAR BUDGET, not a row count: stop at the budget so the note stays
-    // writable regardless of how many maximal rows have accumulated.
-    if (used + line.length + 1 > MAX_TODO_SECTION_CHARS) {
-      omitted = open.length - shown.length;
-      break;
-    }
-    shown.push(line);
-    used += line.length + 1;
-  }
-  if (omitted > 0) {
-    shown.push(`… and ${omitted} more open todo(s) not shown (use \`/todos\` to list all).`);
-  }
-  return `${OPEN_TODOS_HEADING}\n${shown.join('\n')}`;
+  });
+  return `${OPEN_TODOS_HEADING}\n${lines.join('\n')}`;
 }
-
-/**
- * The plan-scope section heading, still recognised in a brief result.
- *
- * The heading is the WHOLE detection rule: `plan-scope.ts` imports it and
- * matches it directly. There is no helper function around it.
- */
-export const PLAN_SCOPE_HEADING = 'When thinking on the larger scope';
 
 /**
  * Resolve a hash or call id to the candidate it names.

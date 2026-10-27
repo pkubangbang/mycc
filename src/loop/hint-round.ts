@@ -62,6 +62,7 @@ import { retryChat, MODEL } from '../engine/chat-provider.js';
 import type { NoteCategory, WikiModule, SearchResult } from '../types.js';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { agentIO } from './agent-io.js';
+import { sanitizeTodoField } from '../context/shared/todo-render.js';
 
 /** Signal returned by HintRound.run to steer the orchestrator. */
 export type HintSignal = 'continue' | 'stop';
@@ -770,7 +771,7 @@ const INJECTED_FIELD_MAX = 60;
  * an instruction into the analyzer's prompt.
  */
 function sanitizeField(value: string): string {
-  const flat = value.replace(/\s+/g, ' ').trim();
+  const flat = sanitizeTodoField(value) ?? '';
   // ANALYSIS_INSTRUCTION must stay unique in the prompt (retryLoop splits on
   // it), so a value containing it is defused rather than passed through.
   const safe = flat.split(ANALYSIS_INSTRUCTION).join('[gap analysis]');
@@ -792,8 +793,8 @@ function buildStateSections(env: MachineEnv, turn?: TurnVars): string[] {
   const parts: string[] = [];
 
   // ── Todo List ──
-  // Rendered from getItems() rather than printTodoList(): the printer echoes
-  // the raw note + preventStop bodies, which are user/peer-authored.
+  // Render from getItems() to keep this analysis-specific row layout, using
+  // the shared field sanitizer for user/peer-authored todo text.
   // Declared without an initializer: both the try and the catch assign it, so
   // a `= []` seed would be dead (no-useless-assignment).
   let todos: ReturnType<MachineEnv['ctx']['todo']['getItems']>;

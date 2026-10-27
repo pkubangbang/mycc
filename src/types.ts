@@ -644,7 +644,7 @@ export interface TodoModule {
    * hash of a live item. It never mutates state and never accepts a stale
    * write — the integrity gate in `updateTodo` is unchanged.
    */
-  findByPreviousHash(hash: string): TodoItem | null;
+  findByPreviousHash(hash: string, id?: number): TodoItem | null;
   /** Pinned todos carrying a stop guard — candidates whose condition gates the turn end. */
   getPreventStopCandidates(): TodoItem[];
 }
