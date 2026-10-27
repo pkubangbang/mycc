@@ -98,6 +98,21 @@ describe('formatOpenTodos', () => {
     expect(text).toContain('#7');
     expect(text).not.toContain('hash:');
   });
+  it('never truncates open rows or their field text', () => {
+    const longName = 'full-field-'.repeat(80);
+    const rows = Array.from({ length: 40 }, (_, index) => ({
+      id: index + 1,
+      name: `task ${index + 1}: ${longName}`,
+      done: false,
+      hash: `hash${String(index + 1).padStart(4, '0')}`,
+    }));
+
+    const text = formatOpenTodos(rows);
+    expect(text.length).toBeGreaterThan(20_000);
+    expect(text).toContain(`#40 task 40: ${longName}`);
+    expect(text).not.toContain('more open todo(s) not shown');
+    expect(text).not.toContain('…');
+  });
 });
 
 describe('buildRecapNote — three parts, in order', () => {

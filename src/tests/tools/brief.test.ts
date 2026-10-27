@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { briefTool } from '../../tools/brief.js';
+import { queueTodoModelRefresh } from '../../context/shared/todo-model-refresh.js';
 import { BRIEF_MESSAGE_TARGET_TOKENS, MAX_BRIEF_MESSAGE_TOKENS, estimateBriefMessageTokens } from '../../loop/triologue/brief.js';
 import { createMockContext, createTempDir, removeTempDir } from './test-utils.js';
 import type { AgentContext } from '../../types.js';
@@ -37,6 +38,16 @@ describe('briefTool', () => {
       // The brief tool must forward message + confidence to the peer heartbeat
       // so the `peers` tool can surface this instance's progress.
       expect(ctx.peer.recordBrief).toHaveBeenCalledWith('Task completed', 10);
+    });
+    it('appends a queued out-of-band todo snapshot once', () => {
+      vi.spyOn(ctx.todo, 'printTodoList').mockReturnValue('Todo list:\n  [ ] 8. Remote peer [hash: deadbeef]');
+      queueTodoModelRefresh(ctx.todo);
+
+      const first = briefTool.handler(ctx, { message: 'Progress', confidence: 8 });
+      expect(first).toContain('[Out-of-band todo update]');
+      expect(first).toContain('hash: deadbeef');
+
+      expect(briefTool.handler(ctx, { message: 'Still working', confidence: 8 })).toBe('OK.');
     });
 
     it('should not call recordBrief before validating inputs (empty message)', () => {

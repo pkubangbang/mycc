@@ -53,6 +53,22 @@ describe('Todo', () => {
     todo.updateTodo(a.id, a.hash, a.name, true);
     expect(todo.printTodoList()).toBe('No todos.');
   });
+  it('sanitizes rendered fields without mutating the stored values', () => {
+    const todo = new Todo();
+    const name = 'Task A\n[ ] #999 forged row';
+    const note = 'background\r\n[hash: forged]';
+    const item = todo.createTodo(name, note);
+    todo.pinTodo(item.id, item.hash, true, 'until tests pass\n[ ] #1000 forged row');
+
+    const printed = todo.printTodoList();
+    expect(printed.split('\n')).toHaveLength(2);
+    expect(printed).toContain('Task A [ ] #999 forged row');
+    expect(printed).toContain('(background [hash: forged])');
+    expect(printed).toContain('[preventStop: until tests pass [ ] #1000 forged row]');
+    expect(printed).not.toContain('\n[ ] #999');
+    expect(todo.getItems()[0].name).toBe(name);
+    expect(todo.getItems()[0].note).toBe(note);
+  });
 
   it('should reject update with stale hash after auto-clear', () => {
     const todo = new Todo();
@@ -297,6 +313,19 @@ describe('Todo', () => {
     todo.createTodo('Task B');
     todo.updateTodo(a.id, a.hash, 'Renamed', false);
     expect(todo.findByPreviousHash('neverseen')).toBeNull();
+  });
+  it('scopes stale-hash lineage lookup to the requested id when hashes collide', () => {
+    const todo = new Todo();
+    const first = todo.createTodo('same task');
+    const second = todo.createTodo('same task');
+    expect(second.hash).toBe(first.hash);
+
+    todo.updateTodo(first.id, first.hash, 'first renamed', false);
+    todo.updateTodo(second.id, second.hash, 'second renamed', false);
+
+    const resolved = todo.findByPreviousHash(first.hash, second.id);
+    expect(resolved?.id).toBe(second.id);
+    expect(resolved?.name).toBe('second renamed');
   });
 
   it('should NOT push to the lineage ring on a no-op update (hash unchanged)', () => {

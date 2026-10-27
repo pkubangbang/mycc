@@ -100,6 +100,8 @@ describe('todoPinningTool', () => {
     const result = todoPinningTool.handler(ctx, { id: 1, hash: 'stalehash', pinned: true });
 
     expect(result).toContain('Hash mismatch');
+    expect(result).toContain('hash: livehash');
+    expect(result).toContain('Retry using the current hash above.');
     expect(result).not.toContain('Todo list:');
     expect(mockTodo.printTodoList).not.toHaveBeenCalled();
   });

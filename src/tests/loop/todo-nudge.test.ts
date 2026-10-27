@@ -59,8 +59,10 @@ describe('TEAMMATE todo nudge (teammate-worker.ts step 3) — LOAD-BEARING', () 
     expect(todoAt).toBeLessThan(briefAt);
   });
 
-  it('prints the OPEN list (done+unpinned filtered out)', () => {
+  it('prints the OPEN list with sanitized fields and current hashes', () => {
     expect(src).toContain("getItems().filter((i) => !i.done || i.pinned)");
+    expect(src).toContain('sanitizeTodoField(i.name)');
+    expect(src).toContain('[hash: ${i.hash}]');
   });
 
   it('does NOT teach recap — recap is scope [main]', () => {

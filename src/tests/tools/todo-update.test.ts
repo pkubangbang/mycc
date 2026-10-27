@@ -93,7 +93,9 @@ describe('todoUpdateTool', () => {
     ]);
 
     const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'wrong!!!!', name: 'Task A', done: true });
-    expect(result).toBe('Error: Hash mismatch for todo #1. The item may have been updated since you last read it. Check the current todo list for the latest hash.');
+    expect(result).toContain('Error: Hash mismatch for todo #1.');
+    expect(result).toContain('hash: abc12345');
+    expect(result).toContain('Retry using the current hash above.');
   });
 
   it('should emit a warm hint with the current hash on a lineage match (stale write still rejected)', () => {
@@ -110,8 +112,9 @@ describe('todoUpdateTool', () => {
 
     const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'old12345', name: 'Renamed', done: true });
     expect(mockTodo.updateTodo).toHaveBeenCalledWith(1, 'old12345', 'Renamed', true, undefined);
-    expect(mockTodo.findByPreviousHash).toHaveBeenCalledWith('old12345');
-    expect(result).toBe('Error: Hash mismatch for todo #1. This item was updated since you last saw it — the current hash is curr00099. Retry todo_update with the current hash.');
+    expect(mockTodo.findByPreviousHash).toHaveBeenCalledWith('old12345', 1);
+    expect(result).toContain('hash: curr00099');
+    expect(result).toContain('Retry using the current hash above.');
   });
 
   it('should stay silent (generic mismatch) when the stale hash is not in any lineage ring', () => {
@@ -122,7 +125,9 @@ describe('todoUpdateTool', () => {
     vi.mocked(mockTodo.findByPreviousHash).mockReturnValue(null);
 
     const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'totallyunknown', name: 'Task A', done: true });
-    expect(result).toBe('Error: Hash mismatch for todo #1. The item may have been updated since you last read it. Check the current todo list for the latest hash.');
+    expect(result).toContain('Error: Hash mismatch for todo #1.');
+    expect(result).toContain('hash: abc12345');
+    expect(result).toContain('Retry using the current hash above.');
   });
 
   it('should return error on unknown id', () => {
@@ -193,6 +198,20 @@ describe('todoUpdateTool', () => {
       todoUpdateTool.handler(ctx, { id: 2, hash: 'def67890', name: 'Task B', note: 'n' });
 
       expect(mockTodo.updateTodo).toHaveBeenCalledWith(2, 'def67890', 'Task B', true, 'n');
+    });
+    it('preserves the existing note when note is omitted', () => {
+      vi.mocked(mockTodo.getItems).mockReturnValue([
+        { id: 1, name: 'Task A', done: false, hash: 'abc12345', note: 'existing context' },
+        { id: 2, name: 'Task B', done: false, hash: 'def67890' },
+      ]);
+      vi.mocked(mockTodo.updateTodo).mockReturnValue({
+        id: 1, name: 'Task A', done: false, hash: 'newhash11', note: 'existing context',
+      });
+
+      const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'abc12345', name: 'Task A', done: false });
+
+      expect(mockTodo.updateTodo).toHaveBeenCalledWith(1, 'abc12345', 'Task A', false, 'existing context');
+      expect(result).toContain('note: existing context');
     });
 
     it('reports #id not found instead of crashing when the item is absent', () => {
