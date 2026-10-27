@@ -101,7 +101,7 @@ describe('Todo', () => {
     expect(b.id).toBe(a.id + 1);
   });
 
-  // ── Pinned todos & stop guards ──
+  // ── Pinned todos & reactivation ────────────────────────────────────────
 
   it('should NOT auto-clear pinned items when all todos are done', () => {
     const todo = new Todo();
@@ -160,35 +160,34 @@ describe('Todo', () => {
     expect(todo.getItems()[0].pinned).toBeUndefined();
   });
 
-  it('pinTodo should set pinned and preventStop, without changing the hash', () => {
+  it('pinTodo should set pinned and reactivate, without changing the hash', () => {
     const todo = new Todo();
     const a = todo.createTodo('Task A');
     const before = a.hash;
     const result = todo.pinTodo(a.id, a.hash, true, 'when base table changes');
     expect(result).not.toBeNull();
     expect(result!.pinned).toBe(true);
-    expect(result!.preventStop).toBe('when base table changes');
-    // Hash unchanged — pinned/preventStop are NOT part of the integrity signature
+    expect(result!.reactivate).toBe('when base table changes');
+    // Hash unchanged — pinned/reactivate are NOT part of the integrity signature
     expect(result!.hash).toBe(before);
   });
 
-  it('un-pinning should clear preventStop', () => {
+  it('un-pinning should clear reactivate', () => {
     const todo = new Todo();
     const a = todo.createTodo('Task A');
     todo.pinTodo(a.id, a.hash, true, 'when base table changes');
     const result = todo.pinTodo(a.id, todo.getItems()[0].hash, false);
     expect(result).not.toBeNull();
     expect(result!.pinned).toBe(false);
-    expect(result!.preventStop).toBeUndefined();
+    expect(result!.reactivate).toBeUndefined();
   });
 
-  it('getPreventStopCandidates should return pinned items carrying a guard, done or not', () => {
+  it('getReactivationCandidates should return only pinned+done+reactivate items', () => {
     const todo = new Todo();
-    const a = todo.createTodo('Open pinned w/ guard');
-    const b = todo.createTodo('Done pinned w/ guard');
-    const c = todo.createTodo('Done pinned w/o guard');
-    const d = todo.createTodo('Done non-pinned w/ guard');
-    todo.pinTodo(a.id, a.hash, true, 'cond-a');
+    todo.createTodo('Open task'); // not done
+    const b = todo.createTodo('Done pinned w/ reactivate');
+    const c = todo.createTodo('Done pinned w/o reactivate');
+    const d = todo.createTodo('Done non-pinned w/ reactivate');
     todo.pinTodo(b.id, b.hash, true, 'cond-b');
     todo.pinTodo(c.id, c.hash, true);
     todo.pinTodo(d.id, d.hash, false, 'cond-d');
@@ -196,36 +195,27 @@ describe('Todo', () => {
     todo.updateTodo(c.id, todo.getItems().find((i) => i.id === c.id)!.hash, c.name, true);
     todo.updateTodo(d.id, todo.getItems().find((i) => i.id === d.id)!.hash, d.name, true);
 
-    // `done` is NOT a filter: a guard is a property of the condition, so both
-    // the open and the done pinned items qualify. Non-pinned (#d) and
-    // guard-less (#c) items never do.
-    const candidates = todo.getPreventStopCandidates();
-    expect(candidates.map((i) => i.id)).toEqual([a.id, b.id]);
+    const candidates = todo.getReactivationCandidates();
+    expect(candidates.length).toBe(1);
+    expect(candidates[0].id).toBe(b.id);
   });
 
-  it('getPreventStopCandidates should exclude pinned items with an empty guard', () => {
-    const todo = new Todo();
-    const a = todo.createTodo('Task A');
-    todo.pinTodo(a.id, a.hash, true, '   ');
-    expect(todo.getPreventStopCandidates()).toEqual([]);
-  });
-
-  it('hasOpenTodo should be true when a completed pinned todo has a stop guard', () => {
+  it('hasOpenTodo should be true when a completed pinned todo has a reactivation condition', () => {
     const todo = new Todo();
     const a = todo.createTodo('Task A');
     todo.pinTodo(a.id, a.hash, true, 'when X');
     todo.updateTodo(a.id, todo.getItems()[0].hash, a.name, true);
-    // a is done + pinned + guarded — the list keeps nudging so the guard stays visible
+    // a is done + pinned + reactivate — counts as open for the nudge/reactivation pass
     expect(todo.hasOpenTodo()).toBe(true);
   });
 
-  it('printTodoList should annotate pinned items with pin tag and stop guard', () => {
+  it('printTodoList should annotate pinned items with pin tag and reactivate condition', () => {
     const todo = new Todo();
     const a = todo.createTodo('Schema: users table');
     todo.pinTodo(a.id, a.hash, true, 'when users table changes');
     const printed = todo.printTodoList();
     expect(printed).toContain('📌');
-    expect(printed).toContain('[preventStop: when users table changes]');
+    expect(printed).toContain('[reactivate: when users table changes]');
   });
 
   // ── Previous-hash lineage ring & warm-hint resolution ───────────────────

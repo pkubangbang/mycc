@@ -143,7 +143,7 @@ peer：跨实例 peer discovery 与通信
 
 ## todo
 
-待办事项维护了一个简单列表供当前的线程使用（`src/context/shared/todo.ts`）。列表中的元素是 `TodoItem`，包括序号、名称、完成状态、备注、hash（完整性签名）、pinned（置顶标记）、preventStop（阻止结束回合的自然语言条件）。
+待办事项维护了一个简单列表供当前的线程使用（`src/context/shared/todo.ts`）。列表中的元素是 `TodoItem`，包括序号、名称、完成状态、备注、hash（完整性签名）、pinned（置顶标记）、reactivate（重激活条件）。
 
 ### createTodo
 创建新的待办事项，返回包含自动分配 ID 和 hash 的 `TodoItem`。
@@ -159,10 +159,10 @@ peer：跨实例 peer discovery 与通信
 ### hasOpenTodo
 返回 true/false，表示是否有未完成的待办事项。
 
-### pinTodo / getPreventStopCandidates
-`pinTodo(id, hash, pinned, preventStop?)` — 置顶/取消置顶 todo，可选设置自然语言 stop guard。需要当前 hash。取消置顶会同时清除 guard（这是释放 guard 的方式）。pinned todo 在所有非 pinned todo 完成时不会被自动清除。
+### pinTodo / getReactivationCandidates
+`pinTodo(id, hash, pinned, reactivate?)` — 置顶/取消置顶 todo，可选设置自然语言重激活条件。需要当前 hash。pinned todo 在所有非 pinned todo 完成时不会被自动清除。
 
-`getPreventStopCandidates()` — 返回带有 stop guard 的 pinned todo（不区分 done），供 STOP 阶段评估是否允许结束回合。
+`getReactivationCandidates()` — 返回带有重激活条件且已完成的 pinned todo，供 COLLECT 状态评估是否重新打开。
 
 ### clear / getItems
 `clear()` 清空列表。`getItems()` 返回所有项。

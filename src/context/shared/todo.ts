@@ -171,7 +171,7 @@ export class Todo implements TodoModule {
     for (const item of this.items) {
       const marker = item.done ? '[x]' : '[ ]';
       const pinTag = item.pinned ? '📌' : '';
-      const reactTag = item.preventStop ? ` [preventStop: ${item.preventStop}]` : '';
+      const reactTag = item.reactivate ? ` [reactivate: ${item.reactivate}]` : '';
       const note = item.note ? ` (${item.note})` : '';
       lines.push(`  ${marker} ${pinTag} ${item.id}. ${item.name}${note}${reactTag} [hash: ${item.hash}]`);
     }
@@ -179,13 +179,14 @@ export class Todo implements TodoModule {
   }
 
   /**
-   * Check if there are incomplete todos, OR pinned todos carrying a stop
-   * guard. The latter keeps the nudge firing for a pinned guard (done or
-   * not) so the list keeps showing the condition that may hold the turn.
+   * Check if there are incomplete todos, OR completed pinned todos carrying a
+   * reactivation condition (candidates for auto-reactivation). The latter
+   * keeps the nudge/reactivation pass firing for pinned todos that may need
+   * to be reopened.
    */
   hasOpenTodo(): boolean {
     return this.items.some((item) => !item.done) ||
-           this.items.some((item) => item.pinned && !!item.preventStop?.trim());
+           this.items.some((item) => item.pinned && item.done && !!item.reactivate);
   }
 
   /**
@@ -217,24 +218,21 @@ export class Todo implements TodoModule {
 
 
   /**
-   * Pin or unpin a todo item, optionally setting a natural-language stop
-   * guard. Requires the current hash (anti-hallusion) — rejects if id not
-   * found or hash mismatch. The hash is NOT recomputed: pinned/preventStop
-   * are not part of the integrity signature.
+   * Pin or unpin a todo item, optionally setting a natural-language
+   * reactivation condition. Requires the current hash (anti-hallusion) —
+   * rejects if id not found or hash mismatch. The hash is NOT recomputed:
+   * pinned/reactivate are not part of the integrity signature.
    * @returns the updated item (copy), or null on id-not-found / hash mismatch
    */
-  pinTodo(id: number, hash: string, pinned: boolean, preventStop?: string): TodoItem | null {
+  pinTodo(id: number, hash: string, pinned: boolean, reactivate?: string): TodoItem | null {
     const existing = this.items.find((i) => i.id === id);
     if (!existing) return null;
     if (existing.hash !== hash) return null;
 
     existing.pinned = pinned;
-    // Clear preventStop when un-pinning; set/overwrite when pinning.
-    // Un-pinning is the documented escape hatch: it is how the agent releases
-    // a guard that would otherwise keep the turn from ending.
-    existing.preventStop = pinned ? preventStop : undefined;
-    this.emitChanged('pin');
-    return cloneItem(existing);
+    // Clear reactivate when un-pinning; set/overwrite when pinning.
+    existing.reactivate = pinned ? reactivate : undefined;
+    return { ...existing };
   }
 
   /**
@@ -254,17 +252,14 @@ export class Todo implements TodoModule {
   }
 
   /**
-   * Pinned todos carrying a stop guard — candidates for the STOP gate.
-   * `done` is deliberately NOT a filter: the guard is a property of the
-   * condition, so an item that is still open but carries a guard must gate
-   * the turn end just like a completed one.
+   * Completed pinned todos carrying a reactivation condition — candidates
+   * for auto-reactivation. The COLLECT state evaluates each candidate's
+   * condition against the conversation context via `forkChat` and reopens
+   * those whose condition is met.
    */
-  getPreventStopCandidates(): TodoItem[] {
+  getReactivationCandidates(): TodoItem[] {
     return this.items
-      .filter((i) => i.pinned && !!i.preventStop?.trim())
-      // cloneItem, not `{ ...i }` (round-2 review, minor #7): a shallow spread would
-      // alias the `previousHashes` ring — the same defect M8 fixed at the four
-      // mutation return sites. This was the fifth path.
-      .map((i) => cloneItem(i));
+      .filter((i) => i.pinned && i.done && !!i.reactivate)
+      .map((i) => ({ ...i }));
   }
 }

@@ -1,10 +1,10 @@
 /**
- * todo_pinning.ts - Pin/unpin a todo, optionally with a stop guard
+ * todo_pinning.ts - Pin/unpin a todo, optionally with a reactivation condition
  *
  * Scope: ['main'] - Lead agent only. Teammates never see this tool, so they
- * cannot create pinned/guarded todos. The pin/guard capability is
- * intentionally lead-only because the guard evaluation (forkChat in the
- * STOP state) only runs in the lead agent loop.
+ * cannot create pinned/reactivate todos. The pin/reactivate capability is
+ * intentionally lead-only because the reactivation evaluation (forkChat in
+ * the COLLECT state) only runs in the lead agent loop.
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
@@ -14,9 +14,9 @@ export const todoPinningTool: ToolDefinition = {
   description:
     'Pin or unpin a todo item. Pinned todos are NOT auto-cleared when all ' +
     'todos are completed — they persist as long-term reminders. Optionally set ' +
-    'a stop guard: while that condition still holds you are not allowed to ' +
-    'finish your turn — the turn continues with a note explaining why. Omit ' +
-    'the guard (or unpin) to allow the turn to end. Requires the current hash.',
+    'a reactivation condition: after each nudge cycle the system evaluates ' +
+    'completed pinned todos against the conversation context and marks those ' +
+    'whose condition is met back to not done. Requires the current hash.',
   input_schema: {
     type: 'object',
     properties: {
@@ -30,15 +30,14 @@ export const todoPinningTool: ToolDefinition = {
       },
       pinned: {
         type: 'boolean',
-        description: 'true to pin (persist after completion), false to unpin (also clears the guard)',
+        description: 'true to pin (persist after completion), false to unpin',
       },
-      preventStop: {
+      reactivate: {
         type: 'string',
         description:
-          'Stop guard (only meaningful when pinned=true): a natural-language ' +
-          'condition. While it still holds you cannot finish your turn — the ' +
-          'turn continues with a note naming the reason. Unpin to release it. ' +
-          'Example: "until every test under src/loop passes".',
+          'Reactivation condition (only meaningful when pinned=true): when the ' +
+          'system detects it is met in the conversation context, the todo is ' +
+          'marked back to not done. Example: "when the users table is modified".',
       },
     },
     required: ['id', 'hash', 'pinned'],
@@ -48,7 +47,7 @@ export const todoPinningTool: ToolDefinition = {
     const id = args.id as number;
     const hash = args.hash as string;
     const pinned = args.pinned as boolean;
-    const preventStop = args.preventStop as string | undefined;
+    const reactivate = args.reactivate as string | undefined;
 
     if (typeof id !== 'number' || !Number.isInteger(id) || id <= 0) {
       return 'Error: id must be a positive integer.';
@@ -59,16 +58,16 @@ export const todoPinningTool: ToolDefinition = {
     if (typeof pinned !== 'boolean') {
       return 'Error: pinned must be a boolean.';
     }
-    // preventStop is optional, but when provided must be a non-empty string
-    if (preventStop !== undefined && (typeof preventStop !== 'string' || preventStop.trim() === '')) {
-      return 'Error: preventStop must be a non-empty string when provided.';
+    // reactivate is optional, but when provided must be a non-empty string
+    if (reactivate !== undefined && (typeof reactivate !== 'string' || reactivate.trim() === '')) {
+      return 'Error: reactivate must be a non-empty string when provided.';
     }
 
     const updated = ctx.todo.pinTodo(
       id,
       hash.trim(),
       pinned,
-      preventStop?.trim() || undefined,
+      reactivate?.trim() || undefined,
     );
 
     if (!updated) {
@@ -81,7 +80,7 @@ export const todoPinningTool: ToolDefinition = {
     }
 
     const action = pinned ? 'pinned' : 'unpinned';
-    const guardInfo = updated.preventStop ? `\n  preventStop: ${updated.preventStop}` : '';
+    const reactivateInfo = updated.reactivate ? `\n  reactivate: ${updated.reactivate}` : '';
     ctx.core.brief(
       'info',
       'todo_pinning',
@@ -91,7 +90,7 @@ export const todoPinningTool: ToolDefinition = {
 
     return `${action === 'pinned' ? 'Pinned' : 'Unpinned'} todo #${updated.id}
   name: ${updated.name}
-  pinned: ${updated.pinned}${guardInfo}
+  pinned: ${updated.pinned}${reactivateInfo}
   hash: ${updated.hash}
 
 ${ctx.todo.printTodoList()}`;

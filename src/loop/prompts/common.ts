@@ -58,7 +58,7 @@ export function buildVerificationSection(): string {
 }
 
 // ============================================================================
-// Pinned Todo & Stop Guard Section (lead-only — teammates never see it)
+// Pinned Todo & Reactivation Section (lead-only — teammates never see it)
 // ============================================================================
 
 export function buildPinnedTodoSection(): string {
@@ -70,16 +70,14 @@ export function buildPinnedTodoSection(): string {
     '- Use pinned todos for persistent reminders (e.g., schema definitions, invariant rules, ' +
     'materialized view refresh tasks).',
     '',
-    '### Stop Guard',
-    'A pinned todo can carry a `preventStop` condition — a promise to yourself to keep working:',
-    '- Use `todo_pinning(id, hash, pinned=true, preventStop="<natural language condition>")` to set it.',
-    '- While the condition still holds you are NOT allowed to finish your turn: the turn continues, ' +
-    'with a SYSTEM note naming the guard and why it held.',
-    '- Leave it out, or unpin the todo (`pinned=false`), to let the turn end.',
-    '- Use it for long-horizon work whose completion you cannot judge in a single turn ' +
-    '(e.g. "until every test under src/loop passes", "until the migration is verified end-to-end").',
+    '### Reactivation',
+    'Pinned todos can be automatically reactivated (marked back to not done) when a condition is met:',
+    '- Use `todo_pinning(id, hash, pinned=true, reactivate="<natural language condition>")` to set a reactivation condition.',
+    "- After each nudge cycle, the system evaluates completed pinned todos' reactivation conditions " +
+    'against the conversation context via LLM.',
+    '- If the condition is met, the todo is automatically reactivated — you will see a SYSTEM note about the reactivation.',
     '- Example: `todo_pinning(id=2, hash="abc12345", pinned=true, ' +
-    'preventStop="until the users and orders migrations both pass their tests")`',
+    'reactivate="when the users table or orders table is modified (INSERT/UPDATE/DELETE)")`',
   ].join('\n');
 }
 

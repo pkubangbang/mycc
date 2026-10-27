@@ -26,7 +26,6 @@ import { autoState } from '../auto-state.js';
 import { startWrapUp } from '../esc-wrap-up.js';
 import { loader } from '../../context/shared/loader.js';
 import { stopSpinner } from '../../engine/chat-helpers.js';
-import { checkPreventStop } from './stop-prevent-stop.js';
 
 export async function handleStop(
   env: MachineEnv,
@@ -115,28 +114,6 @@ export async function handleStop(
       agentIO.setNeglectedMode(false);
       markTurnBoundary();
       return AgentState.PROMPT;
-    }
-
-    // ── Pinned-todo stop guard ──
-    // A pinned todo may carry a `preventStop` condition — a promise the agent
-    // made to itself to keep working across turn boundaries. Evaluating it
-    // HERE (not in COLLECT) makes every turn end a checkpoint, which is what
-    // long-horizon work needs. The pass is fail-open: no candidates / an LLM
-    // hiccup / an unsure verdict all let the turn end.
-    //
-    // Placement is load-bearing:
-    //  - AFTER the neglection block above, so ESC always wins and can never
-    //    be trapped by a guard.
-    //  - BEFORE presentResult(), so no result letter-box is printed for a
-    //    turn that immediately resumes.
-    //  - BEFORE the auto-mode early return, so guards work in --auto/--daemon
-    //    (where long-horizon runs actually live).
-    // Returning COLLECT is a turn CONTINUATION: markTurnBoundary() must NOT
-    // run here (no turn events reset, no totalTurns increment).
-    const guard = await checkPreventStop(env);
-    if (guard.block) {
-      if (guard.note) triologue.note('SYSTEM', guard.note);
-      return AgentState.COLLECT;
     }
 
     // Normal mode: wait for teammates to stop, responding to steering so the

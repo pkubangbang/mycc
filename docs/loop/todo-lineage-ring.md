@@ -177,7 +177,7 @@ It is called from exactly two places — every site that recomputes the hash:
    hash, so the old hash is recorded first).
 
 It is **NOT** called from `pinTodo`, because `pinTodo` does not recompute the
-hash (`pinned`/`preventStop` are not part of the signature). This is the key
+hash (`pinned`/`reactivate` are not part of the signature). This is the key
 invariant that keeps the ring honest: **the ring only ever holds hashes the
 item actually transitioned through.**
 
@@ -367,7 +367,7 @@ New/changed tests:
 ## 9. Cross-references
 
 - `docs/archived/todo-module-redesign.md` — the hash integrity gate this builds on.
-- `docs/loop/pinned-todo-prevent-stop.md` — pinned todos & the nudge cycle (the
+- `docs/loop/pinned-todo-reactivation.md` — pinned todos & the nudge cycle (the
   self-heal path the warm hint complements).
 - `docs/peers/remote-peer-protocol.md` §2 step 3 — the `recordRemotePeerTodo`
   info-symmetry reminder whose sid-in-name volatility surfaced this bug.

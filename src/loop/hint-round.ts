@@ -762,7 +762,7 @@ const INJECTED_FIELD_MAX = 60;
 /**
  * Sanitize a user- or peer-authored value before splicing it into the prompt.
  *
- * The todo list echoes `note` / `preventStop` conditions, which are natural
+ * The todo list echoes `note` / `reactivate` conditions, which are natural
  * language written by the user or a peer — the transcript view never had this
  * exposure because it is minimised and truncated. Flatten newlines, collapse
  * whitespace and cap the length so a crafted todo cannot smuggle a heading or
@@ -792,7 +792,7 @@ function buildStateSections(env: MachineEnv): string[] {
 
   // ── Todo List ──
   // Rendered from getItems() rather than printTodoList(): the printer echoes
-  // the raw note + preventStop bodies, which are user/peer-authored.
+  // the raw note + reactivate bodies, which are user/peer-authored.
   let todos: ReturnType<MachineEnv['ctx']['todo']['getItems']> = [];
   try {
     todos = env.ctx.todo.getItems();

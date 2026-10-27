@@ -14,6 +14,7 @@ import { isVerbose } from '../../config.js';
 import { isTransientError } from '../../engine/chat-helpers.js';
 import { hintRound } from '../hint-round.js';
 import { skillSuggester } from './collect-skill.js';
+import { checkReactivation } from './collect-pinned-todo.js';
 import { listWorktrees } from '../../context/worktree-store.js';
 import { getSteeringManager } from '../steering-manager.js';
 import { tryGetServeHub } from '../../serve/serve-registry.js';
@@ -250,7 +251,10 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
  * The guard fires when there are open todos OR an active peer channel (a
  * joined channel with a fresh peer). Channel state is appended to the same
  * nudge so the LLM sees peer context without a separate mechanism (keeps
- * todo.ts pure — channel info comes from ctx.peer).
+ * todo.ts pure — channel info comes from ctx.peer). When the throttle
+ * counter hits 0, reactivation runs FIRST (so the nudge prints the
+ * already-updated list — no "closed then reopened" flicker), then the
+ * nudge is injected.
  *
  * Side effects on `turn`: `nextTodoNudge` (decremented / reset) and
  * `lastTodoState` (dedup cursor for the nudge).
@@ -292,9 +296,9 @@ async function runTodoNudge(env: MachineEnv, turn: TurnVars): Promise<void> {
     }
     turn.nextTodoNudge--;
     if (turn.nextTodoNudge === 0) {
-      // Pinned-todo guards are NOT evaluated here — the stop guard runs at
-      // STOP (see states/stop-prevent-stop.ts), on every turn end, because it
-      // gates whether the turn may finish. COLLECT only nudges the list.
+      // (4a) Reactivation FIRST — reopen pinned todos whose condition is met.
+      await checkReactivation(env);
+      // (4b) Nudge SECOND — prints the now-up-to-date todo list + channels.
       const nudgeParts = [`Update your todos. ${ctx.todo.printTodoList()}`];
       if (activeChannels.length > 0) {
         nudgeParts.push(`Active channels:\n${activeChannels.map(channelLine).join('\n\n')}`);
@@ -405,7 +409,7 @@ export async function handleCollect(
     const hintSignal = await hintRound.run(turn);
     if (hintSignal === 'stop') return AgentState.STOP;
 
-    // 4. Todo + peer-channel nudging (guards are evaluated at STOP, not here).
+    // 4. Todo + peer-channel nudging (with reactivation on the same cycle).
     await runTodoNudge(env, turn);
 
     // 5. Brief + worktree cleanup nudges.

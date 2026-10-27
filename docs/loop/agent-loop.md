@@ -92,7 +92,8 @@ if (ctx.todo.hasOpenTodo() || activeChannels.length > 0) {
   }
   turn.nextTodoNudge--;
   if (turn.nextTodoNudge === 0) {
-    // COLLECT 只负责提醒；pinned todo 的 stop guard 在 STOP 阶段评估
+    // 先检查 pinned todo 重激活，再推送 nudge
+    await checkReactivation(env);
     triologue.note('REMINDER', `Update your todos. ${ctx.todo.printTodoList()}`);
     turn.nextTodoNudge = 3;
   }
@@ -159,7 +160,7 @@ COLLECT（`src/loop/states/collect.ts`）在每次 LLM 调用前执行预收集�
 5. **文件上传队列**（webui）— 保存到 `.mycc/uploaded/`，作为 REMINDER note 注入。
 6. **Hint round** — confusion index ≥ 10 且消息数 ≥ 6 时生成 hint（`CONFUSION_THRESHOLD = 10`，`MIN_MESSAGES_FOR_HINT = 6`）。整个特性由**进程级单例** `hintRound`（`src/loop/hint-round.ts`）持有：`AgentStateMachine` 构造时以 `hintRound.init(env)` 绑定 `MachineEnv`（仅 `scope === 'main'`，子进程走 `reset()` 且 `run()` 直接返回 `'continue'`），之后 COLLECT 只调用 `await hintRound.run(turn)`，由单例自行读取 triologue/ctx/sequence 并把 `[HINT]` note 推回 triologue。策略与机制（gate、状态快照、escAware、`generate`/`retryLoop`/wiki 预过滤）都在这一个模块里。
 
-分析 prompt 只携带**转录无法重建的带外状态**（`buildStateSections()`），前缀在 `## Conversation Context` 之前：`## Todo List`（`getItems()` 渲染，note/preventStop 经过 `sanitizeField()` 压缩与截断）、`## Mode & Write Scope`（**仅 plan 模式**，列出允许写入的文件）、`## Recent Permission Blocks`（**只来自精确记录**：`Core.requestGrant()` 在 grant chokepoint 用 `recordDenial()` 记下每次拒绝的 tool / target / reason，`kind` 在记录时由 reason 结构推导；`readRecentDenials()` 只读该记录，**没有 recorder 的上下文（child/lite/测试替身）整节省略** —— 旧的 `summarizePermissionBlocks()` 用正则匹配工具输出散文已被删除，因为它会把"引用了拦截信息"的普通输出误判为拒绝，且无从得知哪条规则、哪个 target；无记录时沉默是唯一诚实输出）、`## Loop Evidence`（`detectRepeatedActions()`；无重复时输出显式的 "No repeated-action evidence…" 中性行，避免 LLM 凭长度臆造循环）。**confusion score、assistant turn 数、tool error 数已移除**：它们是转录可推导的（turn 数还是 `Math.ceil(events.length / 3)` 的估算）；confusion index 仍然只负责**触发**该轮。`HINT_SCHEMA` 未变。
+分析 prompt 只携带**转录无法重建的带外状态**（`buildStateSections()`），前缀在 `## Conversation Context` 之前：`## Todo List`（`getItems()` 渲染，note/reactivate 经过 `sanitizeField()` 压缩与截断）、`## Mode & Write Scope`（**仅 plan 模式**，列出允许写入的文件）、`## Recent Permission Blocks`（**只来自精确记录**：`Core.requestGrant()` 在 grant chokepoint 用 `recordDenial()` 记下每次拒绝的 tool / target / reason，`kind` 在记录时由 reason 结构推导；`readRecentDenials()` 只读该记录，**没有 recorder 的上下文（child/lite/测试替身）整节省略** —— 旧的 `summarizePermissionBlocks()` 用正则匹配工具输出散文已被删除，因为它会把"引用了拦截信息"的普通输出误判为拒绝，且无从得知哪条规则、哪个 target；无记录时沉默是唯一诚实输出）、`## Loop Evidence`（`detectRepeatedActions()`；无重复时输出显式的 "No repeated-action evidence…" 中性行，避免 LLM 凭长度臆造循环）。**confusion score、assistant turn 数、tool error 数已移除**：它们是转录可推导的（turn 数还是 `Math.ceil(events.length / 3)` 的估算）；confusion index 仍然只负责**触发**该轮。`HINT_SCHEMA` 未变。
 7. **Todo nudging** — 见上文。
 8. **Brief nudging** — 见上文。
 9. **Worktree cleanup nudge** — `env.nextWtNudge` 为 0 时检查 worktree 列表，有则提醒清理。

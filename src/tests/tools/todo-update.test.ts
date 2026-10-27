@@ -21,7 +21,7 @@ function createMockTodoContext(): { ctx: AgentContext; mockTodo: TodoModule } {
     ]),
     pinTodo: vi.fn(() => null),
     findByPreviousHash: vi.fn(() => null),
-    getPreventStopCandidates: vi.fn(() => []),
+    getReactivationCandidates: vi.fn(() => []),
   };
   const ctx = createMockContext('/tmp/test');
   ctx.todo = mockTodo;
