@@ -41,7 +41,7 @@
 
 import type { Tool } from '../types.js';
 import { retryChat, MODEL } from '../engine/chat-provider.js';
-import { startSpinner, stopSpinner } from '../engine/chat-helpers.js';
+import { startSpinner, stopSpinner, StreamAbortedError } from '../engine/chat-helpers.js';
 
 /**
  * One foldable chunk boundary, as the signal sees it.
@@ -73,14 +73,21 @@ export interface RecapSignalUsage {
  *
  *   - `recap`  — fold to `target` (a hash from the candidate list).
  *   - `skip`   — the model looked and said no. A deliberate, settled answer.
- *   - `failed` — the call threw (network, retry budget, ESC abort). NOT a
- *                decision: the span stays, and the difference is observable
- *                (a failing signal must not look like a healthy "skip").
+ *   - `failed` — the call threw (network, retry budget). NOT a decision: the
+ *                span stays, the difference is observable, and `reason`
+ *                carries the CAUSE so the one channel meant to diagnose the
+ *                signal is not reduced to a bare "failed".
+ *
+ * ESC is a FOURTH case, and it is its own status on purpose: a cancelled
+ * decision is neither a decision nor a fault, and the caller must send the
+ * model back to PROMPT rather than let the turn continue as if nothing
+ * happened.
  */
 export type RecapSignal =
   | { status: 'recap'; target: string; reason: string }
   | { status: 'skip'; reason: string }
-  | { status: 'failed' };
+  | { status: 'failed'; reason: string }
+  | { status: 'esc' };
 
 /** Per-message character budget in the signal prompt (keeps the context small). */
 const MESSAGE_CLIP = 200;
@@ -199,6 +206,12 @@ function parseVerdict(
   } else {
     args = (raw ?? {}) as Record<string, unknown>;
   }
+  // `JSON.parse('null')` succeeds and yields null — a non-object body must not
+  // reach the property reads below (a TypeError there would surface as a
+  // cause-free `failed` instead of the documented skip).
+  if (args === null || typeof args !== 'object' || Array.isArray(args)) {
+    return { status: 'skip', reason: 'signal returned a non-object verdict' };
+  }
 
   const reason = typeof args.reason === 'string' ? args.reason.trim() : '';
   if (args.recap !== true) {
@@ -226,13 +239,13 @@ function parseVerdict(
  * Decide whether to fold, from the brief stack alone.
  *
  * @param candidates - `Triologue.getFoldCandidates()`, oldest → newest. EMPTY is
- *        a valid input and short-circuits to `failed`'s sibling-free `skip`
- *        without an LLM call (nothing can be folded).
+ *        a valid input and short-circuits to `skip` without an LLM call
+ *        (nothing can be folded).
  * @param usage - current tokens vs threshold (`Triologue.getTokenCount()` /
  *        `getTokenThreshold()`), so the decider can weigh the cost of growing.
  * @param escAware - the lead's ESC-aware runner; the whole call is
- *        interruptible, and an ESC aborts it (reported as `failed` — no fold).
- * @returns A {@link RecapSignal}. NEVER throws: a failed signal must leave the
+ *        interruptible, and an ESC aborts it (reported as `esc` — no fold).
+ * @returns A {@link RecapSignal}. NEVER throws: a failed signal leaves the
  *          turn intact and the brief must still run.
  */
 export async function evaluateRecapSignal(
@@ -277,17 +290,48 @@ export async function evaluateRecapSignal(
         )
       : await run(new AbortController().signal);
 
-    if (!response) return { status: 'failed' }; // ESC: the user cancelled the decision
+    // ESC: the user cancelled the decision. Its OWN status — a cancellation is
+    // not a fault to be retried and not a "skip" to be recorded as settled.
+    if (!response) return { status: 'esc' };
     const toolCalls = response.message?.tool_calls as
       | Array<{ function?: { arguments?: unknown } }>
       | undefined;
     return parseVerdict(toolCalls, candidates);
-  } catch {
-    // Network fault, retry budget exhausted, or an aborted stream. NOT a
-    // decision — reported as `failed` so the caller can tell it apart from a
-    // deliberate skip.
-    return { status: 'failed' };
+  } catch (err) {
+    // An aborted stream (ESC pressed while the model was replying) arrives as a
+    // THROWN abort, not as the escAware cleanup value — same outcome, same
+    // status: the user stopped the turn.
+    if (isAbortError(err)) return { status: 'esc' };
+    // Network fault, retry budget exhausted, auth error, wrong model, 402, or an
+    // aborted stream. NOT a decision — reported as `failed` so the caller can
+    // tell it apart from a deliberate skip, and WITH THE CAUSE: this is the only
+    // channel that can diagnose why the signal never decided.
+    return { status: 'failed', reason: describeError(err) };
   } finally {
     stopSpinner();
   }
+}
+
+/** True for the abort flavours the engines raise when a stream is cancelled. */
+function isAbortError(err: unknown): boolean {
+  if (err instanceof StreamAbortedError) return true;
+  if (err instanceof Error) {
+    return err.name === 'AbortError' || /aborted|abort(ed)? by/i.test(err.message);
+  }
+  return false;
+}
+
+/**
+ * One short, cause-carrying description of a thrown error.
+ *
+ * The `failed` verdict is the ONLY channel that can explain why the signal did
+ * not decide, so the cause is carried instead of being collapsed into a bare
+ * `{ status: 'failed' }` — an auth error, a wrong model name, and a 402 used to
+ * be indistinguishable there.
+ */
+function describeError(err: unknown): string {
+  if (err instanceof Error) {
+    return err.name && err.name !== 'Error' ? `${err.name}: ${err.message}` : err.message;
+  }
+  return String(err);
 }

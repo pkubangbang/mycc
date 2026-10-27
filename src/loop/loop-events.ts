@@ -99,11 +99,6 @@ export interface EscInterruptPayload {
   state: string;
 }
 
-export interface BriefMessagePayload {
-  message: string;
-  confidence: number;
-}
-
 /**
  * Auto-recap produced a verdict, and possibly a fold.
  *
@@ -117,8 +112,13 @@ export interface BriefMessagePayload {
  * only when a rewind actually ran.
  */
 export interface AutoRecapPayload {
-  verdict: 'recap' | 'skip' | 'failed';
-  /** The hash the signal picked (recap), or the newest candidate the signal was offered (skip). */
+  /**
+   * `esc` is the fourth case: the user pressed ESC and the fold was discarded.
+   * Reported as its own value so a cancellation is neither recorded as a
+   * deliberate `skip` nor as a fault.
+   */
+  verdict: 'recap' | 'skip' | 'failed' | 'esc';
+  /** The hash the signal acted on. Absent when the signal named no target. */
   targetHash?: string;
   reason?: string;
   foldedMessages?: number;
@@ -200,9 +200,9 @@ export type LoopEventPayload =
   | ConfusionScorePayload
   | TriologueEventPayload
   | EscInterruptPayload
-  | BriefMessagePayload
   | ServeStatePayload
-  | TodoChangedPayload;
+  | TodoChangedPayload
+  | AutoRecapPayload;
 
 // ============================================================================
 // Callback Type

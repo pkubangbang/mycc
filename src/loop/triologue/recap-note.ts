@@ -81,7 +81,8 @@ export const OPEN_TODOS_HEADING = '### Open todos';
  * WHICH anchor it had folded to in an addressable stack. It does not address
  * anything now: the summary is simply the state of the world it resumes from.
  * The anchor message survives where it belongs — in the audit record
- * (`Triologue.submitUser(…, 'steer')`, written by the caller).
+ * (`Triologue.journalRecapAudit()`, a `recap_audit` transcript record written
+ * by the caller; NOT a user-journal record, see transcript.ts).
  *
  * SINGLE SOURCE OF TRUTH — both `rewindToLastBrief` (which appends it through
  * `noteWithSummary`) and `recapNoteSize` (which sizes it) call this, so a
@@ -157,10 +158,16 @@ function clampTodoText(value: string | undefined): string | undefined {
  * the stricter one is correct where the item must be actionable. Recorded as a
  * known inconsistency, left explicit at each call site.
  *
- * Rendering is compact and HASH-FREE: the model addresses an item by its `#id`
- * (the one handle `todo_update` / `todo_update` take), so the 8-char integrity
- * hash would only cost tokens. `Todo.printTodoList()` is the PROMPT renderer;
- * this is the folded-state renderer.
+ * Rendering carries `#id` AND the 8-char `[hash: …]`: `todo_update` / `todo_pinning`
+ * require BOTH (id **and** the current hash — the hash gate is the anti-stale
+ * write), so a hash-free row would advertise an address the model cannot use.
+ * That was a real defect (issue #6): after a fold this section is the ONLY view
+ * of the list, the model read `[ ] #1 …` with no hash, could not call
+ * `todo_update`, and created COPIES of the open items instead — closing the
+ * copies while the originals stayed open and stale. The hash is part of the
+ * handle, not decoration, so it must ride here. Cost: 8-16 chars per row,
+ * against a per-row clamp and the section budget below; `recapNoteSize` remains
+ * the authoritative final size check before any truncation.
  *
  * `undefined`/empty → `''`, so a session with no todos produces a two-part note
  * (marker + summary) and the section never appears empty.
@@ -177,7 +184,7 @@ function clampTodoText(value: string | undefined): string | undefined {
  *    provider's prompt-cache prefix on each request.
  */
 export function formatOpenTodos(
-  items: readonly { id: number; name: string; done: boolean; pinned?: boolean; note?: string; preventStop?: string }[] | undefined,
+  items: readonly { id: number; name: string; done: boolean; hash?: string; pinned?: boolean; note?: string; preventStop?: string }[] | undefined,
 ): string {
   const open = (items ?? []).filter((i) => !i.done || i.pinned);
   if (open.length === 0) return '';
@@ -195,7 +202,8 @@ export function formatOpenTodos(
     const guard = clampTodoText(i.preventStop);
     const note = clampTodoText(i.note);
     const line = `${marker} #${i.id} ${clampTodoText(i.name) ?? '(unnamed)'}${pin}`
-      + `${note ? ` (${note})` : ''}${guard ? ` [preventStop: ${guard}]` : ''}`;
+      + `${note ? ` (${note})` : ''}${guard ? ` [preventStop: ${guard}]` : ''}`
+      + `${i.hash ? ` [hash: ${i.hash}]` : ''}`;
     // CHAR BUDGET, not a row count: stop at the budget so the note stays
     // writable regardless of how many maximal rows have accumulated.
     if (used + line.length + 1 > MAX_TODO_SECTION_CHARS) {
@@ -214,44 +222,10 @@ export function formatOpenTodos(
 /**
  * The plan-scope section heading, still recognised in a brief result.
  *
- * `hasPlanScopeSection` is used by the plan-scope fork to avoid answering the
- * same brief twice; the heading itself is unchanged.
+ * The heading is the WHOLE detection rule: `plan-scope.ts` imports it and
+ * matches it directly. There is no helper function around it.
  */
 export const PLAN_SCOPE_HEADING = 'When thinking on the larger scope';
-
-/** True when a brief result already carries the plan-scope reflection. */
-export function hasPlanScopeSection(content: string | undefined): boolean {
-  if (typeof content !== 'string') return false;
-  return content.includes(PLAN_SCOPE_HEADING);
-}
-
-/**
- * The hash a tool result used to start with (`[<hash>] …`), or null.
- *
- * KEPT FOR THE WEB/SERVE PROJECTION'S MESSAGE KEYS, which prefix a brief's
- * message with a stable token. It no longer reads anything the model writes or
- * that the rewind produces — brief results are plain `OK.` and notes open with
- * `[RECAP]` — so it returns null for both.
- */
-export function hashOf(content: string | undefined): string | null {
-  if (typeof content !== 'string' || !content.startsWith('[')) return null;
-  const close = content.indexOf(']');
-  if (close <= 1) return null;
-  const candidate = content.slice(1, close);
-  // A note's marker is a WORD, not a hex hash: `[RECAP]` must not read as one.
-  return /^[0-9a-f]{6,}$/i.test(candidate) ? candidate : null;
-}
-
-/** Message with a leading `[<hash>] ` / `[RECAP]` marker removed, if any. */
-export function stripHashPrefix(content: string): string {
-  if (typeof content !== 'string' || !content.startsWith('[')) return content;
-  const close = content.indexOf(']');
-  if (close <= 1) return content;
-  // A marker word (`[RECAP]`) is not a hash prefix: it is content, and the
-  // note's opener must survive for a reader that renders the first line.
-  if (!hashOf(content)) return content;
-  return content.startsWith('] ', close) ? content.slice(close + 2) : content.slice(close + 1);
-}
 
 /**
  * Resolve a hash or call id to the candidate it names.

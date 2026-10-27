@@ -11,9 +11,6 @@
  *     fold is decided outside the conversation, so there is no anchor to echo.
  *   - `noteWithSummary(body)` is a PURE OVERWRITE: a second fold at the same
  *     brief replaces the note instead of stacking under a preserved line 1.
- *   - `hashOf` / `stripHashPrefix` still READ a legacy `[<hash>] …` prefix (the
- *     web projection uses them for message keys) but never mistake a note's
- *     `[RECAP]` marker for one.
  */
 import { describe, it, expect } from 'vitest';
 
@@ -24,11 +21,8 @@ import {
   anchoredNoteLength,
   briefHash,
   buildRecapNote,
-  hasPlanScopeSection,
-  hashOf,
   noteWithSummary,
   resolveBriefTarget,
-  stripHashPrefix,
 } from '../../loop/triologue/recap-note.js';
 
 const ID = 'brief_1793000000000_abc123';
@@ -72,34 +66,6 @@ describe('recap-note', () => {
   });
 
   // ==========================================================================
-  // hashOf / stripHashPrefix — legacy READERS only
-  // ==========================================================================
-
-  describe('hashOf / stripHashPrefix — reading a legacy prefix', () => {
-    it('reads a hash-shaped prefix', () => {
-      expect(hashOf(`[${HASH}] OK`)).toBe(HASH);
-    });
-
-    it('hashOf rejects anything that is not a single-token prefix', () => {
-      expect(hashOf('OK')).toBeNull();
-      expect(hashOf('[]')).toBeNull();
-      expect(hashOf('[not a hash] x')).toBeNull();
-      expect(hashOf(undefined)).toBeNull();
-    });
-
-    it('stripHashPrefix tolerates a missing separating space and a bare prefix', () => {
-      expect(stripHashPrefix(`[${HASH}]OK`)).toBe('OK');
-      expect(stripHashPrefix(`[${HASH}]`)).toBe('');
-      expect(stripHashPrefix('[]')).toBe('[]');
-      expect(stripHashPrefix('OK')).toBe('OK');
-    });
-
-    it("never reads a note's [RECAP] marker as a hash prefix", () => {
-      const note = noteWithSummary(buildRecapNote('body'));
-      expect(hashOf(note)).toBeNull();
-      expect(stripHashPrefix(note)).toBe(note);
-    });
-  });
 
   // ==========================================================================
   // resolveBriefTarget — the loop's internal resolver
@@ -191,12 +157,9 @@ describe('recap-note', () => {
   // plan-scope section detection (unchanged)
   // ==========================================================================
 
-  describe('hasPlanScopeSection', () => {
-    it('recognizes only the plan-scope section', () => {
-      expect(hasPlanScopeSection(`OK. ${PLAN_SCOPE_HEADING}, decide the interface first.`)).toBe(true);
-      expect(hasPlanScopeSection('OK')).toBe(false);
-      expect(hasPlanScopeSection('OK.')).toBe(false);
-      expect(hasPlanScopeSection(undefined)).toBe(false);
+  describe('PLAN_SCOPE_HEADING', () => {
+    it('names the plan-scope section', () => {
+      expect(PLAN_SCOPE_HEADING).toContain('larger scope');
     });
   });
 });

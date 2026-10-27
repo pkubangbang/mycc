@@ -159,7 +159,7 @@ model input; only from the loop.
 ```
 runs iff ALL hold
   env.scope === 'main'                          // lead only; teammates never fold
-  !shouldNoRecap()                             // --no-recap / MYCC_NO_RECAP=1
+  !shouldDisableRecap()                             // --disable-recap / MYCC_NO_RECAP=1
   this turn carries an UNBLOCKED `brief` call   // THE trigger (not an exclusion)
   !agentIO.isNeglectedMode()
   !hookResult.compactRequested && !chat.deferredCompact
@@ -348,7 +348,7 @@ fold, and it is appended only after the rewind has completed.
 |---|---|---|---|
 | 1 | signal evaluating | spinner `Managing the context…` | **nothing** |
 | 2 | signal said `recap`, forks running | spinner `Summarizing last N chunks…` | **nothing** |
-| 3 | rewind succeeded | `[recap]` block | **one** `steer` record |
+| 3 | rewind succeeded | `[recap]` block | **one** `recap_audit` record |
 
 Non-`recap` verdicts stop at #1: `skip` / `failed` / ESC produce no #2, no #3,
 no append — the brief turn proceeds as if the feature were off.
@@ -371,13 +371,13 @@ patch fork; only the text and the `N` are new). Both forks return strings; no
 asserted in tests — they are a `--debug-ansi`-off manual check (§13). What tests
 assert is the append-order invariant above: `captureLoopEvents()` + a transcript
 writer spy must show **zero** records between the brief turn starting and the
-rewind returning, then exactly one `steer`.
+rewind returning, then exactly one `recap_audit`.
 
 **3. After the rewind, two things:**
 
 ```
 ctx.core.brief('info', 'recap', summaryText.split('\n')[0] …)   // the visible "recap" block
-triologue.submitUser(<audit text>, 'steer')                      // the synthesized JSONL record
+triologue.journalRecapAudit(auditFields)                         // the synthesized JSONL record
 ```
 
 The user-facing block is the existing `recap` channel that `handleRecapCall`
@@ -388,25 +388,33 @@ already used, so the terminal rendering is unchanged:
         (47,812 → 12,040 tokens)
 ```
 
-The JSONL record is a synthesized **`'steer'`** — which is precisely what
-`Triologue.submitUser(text, 'steer')` exists for: *an input that reaches the LLM
-through another channel and therefore has no message of its own to append*. The
-recap note reaches the model as the anchor's rewritten tool result, never as a
-message, so this is the same shape as a WebUI steering note. Consequences, all
-of them wanted:
+The JSONL record is a **`recap_audit`** — its OWN non-user kind, written by
+`Triologue.journalRecapAudit()`. It is *not* `submitUser(…, 'steer')` (the
+shape an earlier draft of this plan chose). Why that was wrong: `'steer'` is
+the user-input journal, and the transcript is the single source of truth for
+WebUI right-side user bubbles — so every past fold was reconstructed as
+something the user had typed after a serve reload. `'steer'` is ALSO the kind
+carried by genuine typed steering notes, so filtering `'steer'` at read time
+would have deleted real user bubbles. A fold has no user behind it (the
+decision is made outside the conversation), so it needs a kind of its own.
 
-* **it is the ONLY correct primitive here.** `triologue.user(text)` would push a
-  real `role:'user'` message into the LIVE log, landing between the anchor's
-  `tool` result and the next `assistant` — and the turn about to be registered
-  at step 6 is `assistant(tool_calls: brief)`. That is a TP violation
-  (`tool → user` with no assistant bridge). `submitUser` is journal-only: no
-  store push, no ledger touch, no `lastUserQuery` write.
-* `collateMessages` **skips** `'steer'`, so replay and livelog parity are
-  untouched — a restored session does not gain a phantom user message;
-* the serve projection renders it as its own bubble, so the WebUI shows the
-  recap the same way it shows a steering note;
-* one `{kind:'steer', role:'user', content, timestamp}` line per fold, carrying
-  what an auditor needs:
+`recap_audit` is neither a user-journal record nor a boundary marker:
+
+* **BOTH projections skip it** — `collateMessages` (restoration) yields no
+  message and `collateEntries` (serve `/history`) yields no bubble. A restored
+  session gains no phantom user turn;
+* it is distinct from `{kind:'recap'}`, the payload-free truncation mark
+  `truncateAndRecount` emits. Conflating them would make one kind mean two
+  things in a single stream;
+* it carries **no `role`** (so no projection can mistake it for a message) and
+  a `content` string (so it stays greppable), plus the structured `audit`
+  fields. `readTranscript` refuses a `recap_audit` record that carries a
+  `role`, or that has no `content` string;
+* like `submitUser`, it is journal-only: no store push, no ledger touch, no
+  `lastUserQuery` write, therefore no TP-parity risk mid-turn. `triologue.user()`
+  would instead land a real `role:'user'` between the anchor's `tool` result and
+  the next `assistant` — a `tool → user` TP violation;
+* one record per fold, carrying what an auditor needs:
 
 ```
 [RECAP] Folded 18 messages / ~14.2k tokens back to brief
@@ -414,18 +422,10 @@ of them wanted:
 Summary: <the full [RECAP] body>
 ```
 
-Design note — this REPLACES the earlier idea of widening `ControlPiece` with
-seven optional fields. `submitUser(…, 'steer')` already exists, requires **no**
-change to `transcript.ts`, `CONTROL_KINDS`, `collateMessages` or
-`restoration.ts`, and is the more truthful record: the audit is a journal entry
-about an input channel, not a mutation of the boundary marker. The existing
-`{kind:'recap'}` control record still fires from `truncateAndRecount` and stays
-payload-free.
-
 ## 10. Configuration
 
-* `src/config.ts` — `shouldNoRecap(): boolean` → `MYCC_NO_RECAP === '1'`.
-* `src/help.ts` + `README.md` flag table — `--no-recap`
+* `src/config.ts` — `shouldDisableRecap(): boolean` → `MYCC_NO_RECAP === '1'`.
+* `src/help.ts` + `README.md` flag table — `--disable-recap`
   (*"Disable automatic span folding (auto-recap); briefs then only report
   status"*). No env fallback for the CLI flag, mirroring `shouldAllowPlanOff`'s
   anti-stale-env comment.
@@ -478,14 +478,14 @@ payload-free.
 * `src/tests/loop/states/auto-recap-hook.test.ts` —
   folds at step 4a **before** the current brief is registered; the current
   brief survives as the first message of the new chunk; TP parity holds
-  (`tool → assistant(tool_calls: brief) → tool`); `--no-recap`, neglected mode,
+  (`tool → assistant(tool_calls: brief) → tool`); `--disable-recap`, neglected mode,
   `compactRequested`, non-brief turns, empty candidate list and `failed` all
   fold nothing; plan-scope reflection is skipped on a fold turn; summary/patch
   forks receive the un-minified prefix + full tool list (cache invariant).
 * `src/tests/loop/transcript-recap-audit.test.ts` — after a fold the JSONL gains
-  exactly one `{kind:'steer', role:'user'}` record; `collateMessages` skips it
-  so replay/livelog parity is unchanged; nothing is appended while the signal
-  or the forks run.
+  exactly one `{kind:'recap_audit', content}` record (no `role`); BOTH `collateMessages`
+  and `collateEntries` skip it, so replay/livelog parity is unchanged AND no user
+  bubble is rendered; nothing is appended while the signal or the forks run.
 
 ## 13. Verification
 
@@ -507,10 +507,10 @@ check the spinners with plain `mycc`, and the notes/JSONL with either):
 5. A fold produces exactly one `[RECAP]` note, positioned as the last thing
    before the new chunk's brief, plus one `[recap]` display block
    (`<first summary line>` / `(47,812 → 12,040 tokens)`).
-6. Exactly one `{kind:'steer', role:'user'}` audit record per fold; reloading
+6. Exactly one `{kind:'recap_audit'}` audit record per fold; reloading
    the session (`/load`) shows no phantom user bubble from it.
 7. The next turn resumes from the note; open todos render with `#id` + `hash`.
-8. `--no-recap` suppresses all folding — no spinners, no notes, no records;
+8. `--disable-recap` suppresses all folding — no spinners, no notes, no records;
    briefs still report normally.
 
 ## 14. Execution order
@@ -524,7 +524,7 @@ check the spinners with plain `mycc`, and the notes/JSONL with either):
 | 4 | HOOK wiring: delete 2b/4, add 4a | `states/hook.ts` |
 | 5 | vocabulary removal (all call sites) | `recap-note.ts`, `tool.ts`, `llm.ts`, `compact.ts`, `plan-scope.ts`, `brief-stack.ts`, `prompts/common.ts`, `tools/brief.ts` |
 | 6 | delete `recap` tool + registry | `tools/recap.ts`, `registry.ts` |
-| 7 | audit: `submitUser(…, 'steer')` after the rewind + display block | `states/hook.ts` only (no transcript change) |
+| 7 | audit: `journalRecapAudit(fields)` after the rewind + display block | `states/hook.ts` + a `recap_audit` kind in `transcript.ts` |
 | 8 | docs, skills, wiki | §11 |
 | 9 | test sweep + verification | §12, §13 |
 
@@ -536,7 +536,7 @@ anchor line.
 
 Phases 0–9 are complete. What the plan asked for, as landed:
 
-- Flags: `--no-recap` / `MYCC_NO_RECAP=1` (`arg-canonical.ts`, `config.ts#shouldNoRecap`,
+- Flags: `--disable-recap` / `MYCC_NO_RECAP=1` (`arg-canonical.ts`, `config.ts#shouldDisableRecap`,
   `help.ts`, README).
 - `src/loop/recap-signal.ts` — `evaluateRecapSignal()`, forced `decide_recap`,
   `recap` / `skip` / `failed`, unknown target → `skip`, never throws, one
@@ -547,7 +547,7 @@ Phases 0–9 are complete. What the plan asked for, as landed:
   under one `Summarizing last N chunks…` spinner, `commitMindmapPatch()`.
 - `src/loop/states/hook.ts` step 4a `handleAutoRecap()` — lead-only, before the
   triggering brief is registered, every failure folds nothing, `[recap]` block +
-  one `submitUser(…, 'steer')` audit + `loopEvents` `auto_recap`,
+  one `journalRecapAudit(…)` + `loopEvents` `auto_recap`,
   `chat.autoRecapFolded` suppresses plan-scope reflection.
 - Anchor vocabulary removed from every model-facing surface (`brief` result is
   `OK.`; `recap-note.ts` renders `[RECAP]` + summary + `### Open todos`).
@@ -556,7 +556,7 @@ Phases 0–9 are complete. What the plan asked for, as landed:
 
 **Tests:** `src/tests/loop/recap-signal.test.ts` (new), auto-recap cases in
 `hook-esc-and-brief-isolation.test.ts` (fold / ESC / failed summary / skip verdict /
-`--no-recap` / non-brief turn / fork inputs), every anchor-vocabulary assertion
+`--disable-recap` / non-brief turn / fork inputs), every anchor-vocabulary assertion
 rewritten.
 
 **Gates (2026-10-27):**

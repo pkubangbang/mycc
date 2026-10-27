@@ -7,6 +7,11 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
+import {
+  briefMessageVerdict,
+  briefOverTargetWarning,
+  briefTooLongError,
+} from '../loop/triologue/brief.js';
 
 /**
  * `brief` is shared by the lead AND teammates (`scope: ['main', 'child']`) and
@@ -25,7 +30,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
  */
 export const briefTool: ToolDefinition = {
   name: 'brief',
-  description: 'Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence score (0-10) indicating your certainty about the current state. State the conclusion first, then the evidence. Must be called alone (no other tools in the same turn).',
+  description: 'Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence score (0-10) indicating your certainty about the current state. State the conclusion first, then the evidence. Be concise: this is a status line, not a working note — the detail belongs in your next tool result. Must be called alone (no other tools in the same turn).',
   input_schema: {
     type: 'object',
     properties: {
@@ -56,6 +61,23 @@ export const briefTool: ToolDefinition = {
         'Provide all required args in one call, e.g. brief(message="<status>", confidence=7).';
     }
 
+    // THE MESSAGE CAP — two tiers, checked BEFORE anything is recorded:
+    //
+    //   over the hard limit  → HARD FAILURE. Nothing is recorded: no confusion
+    //                          update, no heartbeat, no terminal line. A brief
+    //                          that is rejected must not leave a half-written
+    //                          trail behind.
+    //   over the target      → SUCCESS, with a warning appended to the result
+    //                          so the model can calibrate. The message itself
+    //                          is kept verbatim — never silently clipped, since
+    //                          a shortened status line misreports how much the
+    //                          agent actually said.
+    const verdict = briefMessageVerdict(message);
+    if (verdict === 'fail') {
+      return briefTooLongError();
+    }
+    const overTargetWarning = verdict === 'warn' ? briefOverTargetWarning() : '';
+
     // Update confusion index based on confidence
     // Formula: deltaConfusion = 8 - confidence
     // High confidence (8-10) reduces confusion, low confidence (0-7) increases it
@@ -81,6 +103,10 @@ export const briefTool: ToolDefinition = {
     // the larger scope, …") — that section is added by the HOOK stage in plan
     // mode, never here: the tool stays a reporter, the loop owns the
     // enhancement.
-    return 'OK.';
+    //
+    // An over-target (but accepted) message carries its warning HERE, so the
+    // model learns the cost of what it just wrote. The full text is still shown
+    // to the user verbatim, never clipped.
+    return overTargetWarning ? `OK.${overTargetWarning}` : 'OK.';
   },
 };

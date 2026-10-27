@@ -34,6 +34,9 @@ import {
   readTranscript,
   collateMessages,
   collateEntries,
+  RECAP_AUDIT_KIND,
+  type RecapAuditFields,
+  buildRecapAuditLine,
   type TranscriptRecord,
 } from '../../loop/triologue/transcript.js';
 
@@ -134,6 +137,96 @@ describe('JsonlTranscriptWriter ({A, AB} regression guard)', () => {
     const messages = collateMessages(records);
     expect(messages).toHaveLength(1);
     expect(messages[0].content).toBe('修复登录页面的中文乱码问题\n——谢谢');
+  });
+
+  // ── The auto-recap audit trail is NOT user input ─────────────────────────
+  describe('recap_audit records (auto-recap audit trail)', () => {
+    const AUDIT: RecapAuditFields = {
+      foldedMessages: 18,
+      spanTokens: 14200,
+      tokensBefore: 47812,
+      tokensAfter: 12040,
+      reason: 'span complete',
+      targetBrief: 'explored the parser',
+      summary: 'The parser was mapped; the fix goes in parser.ts next.',
+    };
+
+    it('yields NO collateEntries entry and NO collateMessages message', () => {
+      writer.append(asAppendablePiece({ role: 'user', content: 'q', kind: 'new', user_origin: true }));
+      writer.append(asAppendablePiece({ role: 'assistant', content: 'a', kind: 'new' }));
+      // The audit record exactly as the facade writes it: kind + content +
+      // audit fields, and deliberately NO role.
+      writer.append(asAppendablePiece({
+        kind: RECAP_AUDIT_KIND,
+        content: buildRecapAuditLine(AUDIT),
+        audit: AUDIT,
+      } as Record<string, unknown>));
+      writer.append(asAppendablePiece({ role: 'assistant', content: 'r', kind: 'new' }));
+
+      const { records, skippedLines } = readTranscript(filePath);
+      expect(skippedLines).toBe(0); // a well-formed audit record is NOT corrupt
+
+      // Restoration view: no phantom message for the fold.
+      expect(collateMessages(records).map((m) => m.content)).toEqual(['q', 'a', 'r']);
+      // Serve view: no right-side bubble for the fold.
+      expect(collateEntries(records).map((e) => e.message.content)).toEqual(['q', 'a', 'r']);
+    });
+
+    it('REGRESSION GUARD: a genuine typed steering note still yields a user bubble', () => {
+      // This is why the fix is a NEW kind rather than filtering 'steer' at
+      // read time: 'steer' is real user input and must keep rendering.
+      writer.append(asAppendablePiece({ role: 'user', content: 'typed while running', kind: 'steer', user_origin: true }));
+      writer.append(asAppendablePiece({
+        kind: RECAP_AUDIT_KIND,
+        content: buildRecapAuditLine(AUDIT),
+        audit: AUDIT,
+      } as Record<string, unknown>));
+
+      const { records } = readTranscript(filePath);
+      const entries = collateEntries(records);
+      expect(entries).toHaveLength(1);
+      expect(entries[0].message.role).toBe('user');
+      expect(entries[0].message.content).toBe('typed while running');
+      // ...while the restoration view still skips the steering note (whose
+      // text already reached the LLM as the [REMINDER] note) AND the audit.
+      expect(collateMessages(records)).toEqual([]);
+    });
+
+    it('keeps the audit text in the JSONL for grep-ability', () => {
+      writer.append(asAppendablePiece({
+        kind: RECAP_AUDIT_KIND,
+        content: buildRecapAuditLine(AUDIT),
+        audit: AUDIT,
+      } as Record<string, unknown>));
+
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      expect(raw).toContain('"kind":"recap_audit"');
+      expect(raw).toContain('[RECAP] Folded 18 message(s)');
+      expect(raw).toContain('parser.ts');
+      // Structured fields survive alongside the prose.
+      expect(raw).toContain('"tokensBefore":47812');
+    });
+
+    it('drops an audit record that carries a role — it must never be renderable', () => {
+      // A hand-edited/corrupt line claiming kind:'recap_audit' WITH a role
+      // could otherwise be projected into a message (and, as role:'user', a
+      // bubble). readTranscript refuses it rather than guessing.
+      fs.writeFileSync(
+        filePath,
+        `${JSON.stringify({ kind: 'recap_audit', role: 'user', content: '[RECAP] x', timestamp: 1 })}\n`,
+        'utf-8',
+      );
+      const { records, skippedLines } = readTranscript(filePath);
+      expect(records).toEqual([]);
+      expect(skippedLines).toBe(1);
+    });
+
+    it('drops an audit record with no content string', () => {
+      fs.writeFileSync(filePath, `${JSON.stringify({ kind: 'recap_audit', timestamp: 1 })}\n`, 'utf-8');
+      const { records, skippedLines } = readTranscript(filePath);
+      expect(records).toEqual([]);
+      expect(skippedLines).toBe(1);
+    });
   });
 });
 

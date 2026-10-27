@@ -503,8 +503,17 @@ export async function retryChat(
           body.tools = request.tools as unknown[];
         }
 
-        // Allow callers to override tool_choice (e.g., 'none' for wrap-up)
-        const toolChoice = (request as Record<string, unknown>).toolChoice;
+        // Allow callers to override tool_choice (e.g., 'none' for wrap-up).
+        //
+        // BOTH SPELLINGS are honoured: the Ollama-shaped request carries
+        // `tool_choice` (snake, the OpenAI wire name) while older callers pass
+        // `toolChoice` (camel, the internal spelling — esc-wrap-up.ts is the
+        // live one). Reading only the camel form silently dropped the
+        // constraint on this provider, so a FORCED structured call degraded
+        // to free prose and was then reported as a deliberate "skip". The snake
+        // form wins when both are present, since it is what the wire expects.
+        const reqRecord = request as Record<string, unknown>;
+        const toolChoice = reqRecord.tool_choice ?? reqRecord.toolChoice;
         if (toolChoice) {
           body.tool_choice = toolChoice as DeepSeekRequestBody['tool_choice'];
         }

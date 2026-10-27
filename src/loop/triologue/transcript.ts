@@ -39,6 +39,26 @@
  *                   right-side user bubbles (see serve-history.ts), which is
  *                   why a refresh no longer depends on the serve-only
  *                   user.jsonl side file.
+ *   kind:'recap_audit'
+ *                 → the AUTO-RECAP AUDIT TRAIL: one payload-bearing record
+ *                   per completed fold (`{kind:'recap_audit', content,
+ *                   audit, timestamp}`). It is NEITHER a user-input
+ *                   journal record NOR a boundary marker:
+ *                     - not user input — a fold is decided OUTSIDE the
+ *                       conversation, so no bubble may ever be rendered for
+ *                       it (that was the bug: it used to be journaled as
+ *                       'steer', which the serve projection turns into a
+ *                       right-side user bubble, so every past fold appeared
+ *                       as something the user typed);
+ *                     - not a boundary marker — `kind:'recap'` is the
+ *                       payload-free truncation mark emitted by
+ *                       truncateAndRecount, and conflating the two would make
+ *                       `kind:'recap'` mean two different things in one
+ *                       stream. The audit carries text precisely so it stays
+ *                       greppable, and carries NO `role` so no projection can
+ *                       mistake it for a message.
+ *                   BOTH projections SKIP it. It survives in the JSONL as
+ *                   the durable, greppable record of what was folded.
  *   kind:'clear' | 'compact' | 'recap' | 'rollback'
  *                 → a journaled truncation boundary, carrying NO message
  *                   fields (no role). The clear semantics are a property of
@@ -68,6 +88,8 @@
  *     timestamp: number }
  *   { ...messageFields, kind: 'user'|'steer', user_origin: true,
  *     timestamp: number }
+ *   { kind: 'recap_audit', content: string, audit: {...},
+ *     timestamp: number }
  *   { kind: 'clear'|'compact'|'recap'|'rollback', timestamp: number }
  *
  * Legacy lines (full snapshots without `kind`) are treated as `new`
@@ -89,7 +111,7 @@ import * as fs from 'fs';
  * truncation events CONFLATED into the kind field (no 'control' pseudo-kind
  * — kind IS the event for boundary records).
  */
-export type PieceKind = 'new' | 'merge' | UserJournalKind | ControlEvent;
+export type PieceKind = 'new' | 'merge' | UserJournalKind | 'recap_audit' | ControlEvent;
 
 /**
  * The user-input journal kinds: message-bearing records that carry ONE
@@ -118,6 +140,53 @@ export function isUserJournalKind(kind: unknown): kind is UserJournalKind {
 
 /** Journaled live-log truncation/boundary events (carried directly on `kind`). */
 export type ControlEvent = 'clear' | 'compact' | 'recap' | 'rollback';
+
+/** The auto-recap audit-trail record kind (see the module header). */
+export const RECAP_AUDIT_KIND = 'recap_audit' as const;
+
+/**
+ * The structured payload of a `recap_audit` record — the machine-readable
+ * half of the audit. `content` on the record is the human-readable line (see
+ * buildRecapAudit in the triologue facade); these fields are what an auditor
+ * greps/reduces over, so they are typed rather than left to prose.
+ */
+export interface RecapAuditFields {
+  /** The folded span, in message count and estimated tokens. */
+  foldedMessages: number;
+  spanTokens: number;
+  /** Rewind accounting as measured by the truncation itself. */
+  tokensBefore: number;
+  tokensAfter: number;
+  /** The signal's reason (why this span was judged finished). */
+  reason: string;
+  /** The brief the fold landed on, quoted (never an address the model sees). */
+  targetBrief: string;
+  /** The note body written into that brief's tool result. */
+  summary: string;
+}
+
+/** Is this record the auto-recap audit trail? Never a message, never a bubble. */
+export function isRecapAuditKind(kind: unknown): boolean {
+  return kind === RECAP_AUDIT_KIND;
+}
+
+/**
+ * Render the human-readable auto-recap audit line.
+ *
+ * Lives HERE, beside {@link RecapAuditFields}, so the record's prose and its
+ * structured fields are produced together and cannot drift — and so a consumer
+ * that only needs the renderer (serve, tests, an auditor script) does not have
+ * to import the whole Triologue facade. The text is the same shape the
+ * terminal `[recap]` block and the pre-fix audit record used, so an operator
+ * grepping the JSONL sees no change in WHAT is recorded — only in the record's
+ * `kind` (and therefore in who is allowed to render it).
+ */
+export function buildRecapAuditLine(fields: RecapAuditFields): string {
+  const quotedAnchor = fields.targetBrief
+    ? ` back to brief "${fields.targetBrief}"`
+    : '';
+  return `[RECAP] Folded ${fields.foldedMessages} message(s) / ~${fields.spanTokens.toLocaleString()} tokens${quotedAnchor} (${fields.reason}).\nSummary: ${fields.summary}`;
+}
 
 /** The subset of PieceKind values that are journaled boundary events. */
 export const CONTROL_KINDS: readonly ControlEvent[] = ['clear', 'compact', 'recap', 'rollback'];
@@ -194,6 +263,17 @@ export function readTranscript(filePath: string): ReadTranscriptResult {
     const kind = obj.kind;
     if (kind === 'new' || kind === 'merge' || isControlKind(kind)) {
       records.push(obj as TranscriptRecord);
+    } else if (isRecapAuditKind(kind)) {
+      // The auto-recap audit trail: shape-validated like the user journal,
+      // for the OPPOSITE reason. It MUST NOT carry a `role` — a record with a
+      // role could be rendered as a message (and, with role:'user', as a
+      // right-side bubble, which is the exact bug this kind exists to kill).
+      // A `content` string is required so the record stays greppable.
+      if (obj.role !== undefined || typeof obj.content !== 'string') {
+        skippedLines++;
+        continue;
+      }
+      records.push(obj as TranscriptRecord);
     } else if (isUserJournalKind(kind)) {
       // The user-input journal: a genuine submission (folded query fragment
       // or typed steering note). Shape-validated rather than trusted — a
@@ -266,6 +346,12 @@ export function collateMessages(
       // an observable boundary.
       continue; // boundary records never become messages
     }
+
+    // The auto-recap audit trail is not conversation: it carries no role, so
+    // it can never be a message — and it must not become one even if a
+    // hand-edited line smuggled a role in. A restored session does not gain a
+    // phantom user message for a fold.
+    if (isRecapAuditKind(record.kind)) continue;
 
     // A typed steering note is a DISPLAY journal entry, not a livelog
     // mutation: its text reached the LLM as the [REMINDER] steering note the
@@ -369,6 +455,12 @@ export function collateEntries(
     // A note fragment folded into a user host — never a user bubble.
     if (record.kind === 'merge') continue;
 
+    // The auto-recap audit trail is the ONE payload-bearing record that must
+    // never render as a bubble: a fold is decided outside the conversation, so
+    // there is no user behind it. It is not `kind:'steer'` (a genuine typed
+    // steering note, which IS a bubble) for exactly this reason.
+    if (isRecapAuditKind(record.kind)) continue;
+
     const timestamp = typeof record.timestamp === 'number' ? record.timestamp : 0;
 
     // The user-input journal: one entry per genuine submission.
@@ -455,9 +547,9 @@ export class JsonlTranscriptWriter {
    * Append exactly one flat record line. `message` is the piece (already
    * stamped with kind/user_origin by the facade's dispatcher — a
    * 'new'/'merge' message piece, a 'user'/'steer' user-input journal record,
-   * or a bare boundary piece { kind:'clear'|'compact'|'recap'|'rollback' });
-   * the timestamp is added here at write time (single clock, monotonic
-   * per line).
+   * a 'recap_audit' audit-trail record, or a bare boundary piece
+   * { kind:'clear'|'compact'|'recap'|'rollback' }); the timestamp is added
+   * here at write time (single clock, monotonic per line).
    */
   append(message: AppendablePiece | ControlPiece): void {
     const piece = message as Record<string, unknown>;
