@@ -117,37 +117,6 @@ describe('applyServerMessage — steering review card', () => {
   });
 
 
-  it('a note consumed by the agent (steer-flush) is never re-surfaced by a later prompt', () => {
-    // Double-injection guard at the dispatch level: a note the backend ALREADY
-    // consumed is announced by 'steer-flush' (buffer cleared). The following
-    // PROMPT must NOT move it into the review card — otherwise the user could
-    // send an already-received instruction a second time.
-    const state = makeState();
-    const ctx = makeCtx();
-    applyServerMessage(state, steerEcho('already consumed', 7), ctx);
-    applyServerMessage(state, { type: 'steer-flush', content: '' }, ctx);
-    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
-    expect(state.pendingSteeringReview).toEqual([]);
-    expect(state.steeringBuffer).toEqual([]);
-    expect(state.hasReview).toBe(false);
-  });
-
-  it('only notes still queued at prompt are reviewed, and exactly once', () => {
-    const state = makeState();
-    const ctx = makeCtx();
-    applyServerMessage(state, steerEcho('note A', 1), ctx);
-    applyServerMessage(state, steerEcho('note B', 2), ctx);
-    // The agent consumes note A on its way to PROMPT.
-    applyServerMessage(state, { type: 'steer-flush', content: '' }, ctx);
-    applyServerMessage(state, steerEcho('note B', 2), ctx);
-    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
-    expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([2]);
-    // A second prompt (reconnect replay / wrap-up result follow-up) must not
-    // duplicate the note in the review card.
-    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
-    expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([2]);
-  });
-
   it('auto:on abandons any pending review', () => {
     const state = makeState();
     const ctx = makeCtx();

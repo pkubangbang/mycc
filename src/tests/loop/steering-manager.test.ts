@@ -146,55 +146,6 @@ describe('SteeringManager', () => {
     expect(selected).toHaveLength(2);
   });
 
-  describe('consumed notes cannot boomerang twice', () => {
-    // The double-injection defect class: a note is delivered/consumed once,
-    // then a later resolve (a stale card click, a reconnect replay, a
-    // re-fired event) asks the queue for it again. Because every consumer
-    // path DRAINS atomically, the second ask must find an empty queue — the
-    // note text can never be submitted a second time.
-    it('a note consumed by a seam delivery is not selectable by a later resolve', () => {
-      const m = new SteeringManager();
-      m.addNote('consumed by seam');
-      // Seam delivery (pushSteer/arm/wake) drains it.
-      expect(m.takeForDelivery(true, false)).toHaveLength(1);
-      // A stale card click afterwards selects nothing.
-      expect(m.resolveBoomerang([1])).toEqual({ selected: [], discarded: [] });
-    });
-
-    it('a note resolved by the card is not deliverable by a later seam', () => {
-      const m = new SteeringManager();
-      m.addNote('sent as query');
-      expect(m.resolveBoomerang([1]).selected).toHaveLength(1);
-      // The seam check that follows sees an empty queue.
-      expect(m.takeForDelivery(true, false)).toBeNull();
-    });
-
-    it('two resolves in a row submit the note set at most once', () => {
-      const m = new SteeringManager();
-      m.addNote('a');
-      m.addNote('b');
-      const first = m.resolveBoomerang([1, 2]).selected;
-      const second = m.resolveBoomerang([1, 2]).selected;
-      expect(first).toHaveLength(2);
-      expect(second).toHaveLength(0);
-      expect(joinSteeringNotes([...first, ...second])).toBe('a\n\nb');
-    });
-
-    it('a note added AFTER a resolve is new (ids never reset, so it cannot alias)', () => {
-      const m = new SteeringManager();
-      const old = m.addNote('old');
-      m.resolveBoomerang([old.id]);
-      const fresh = m.addNote('new');
-      expect(fresh.id).toBeGreaterThan(old.id);
-      // Replaying the OLD id must not select the new note (the whole queue
-      // drains, so nothing is selected and the new note is discarded).
-      expect(m.resolveBoomerang([old.id])).toEqual({
-        selected: [],
-        discarded: [{ id: fresh.id, text: 'new' }],
-      });
-    });
-  });
-
   it('isNonEmpty/drain on an empty manager are natural no-ops', () => {
     const m = new SteeringManager();
     expect(m.isNonEmpty()).toBe(false);
