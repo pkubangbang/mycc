@@ -36,31 +36,9 @@ export function askResult(answer: string, source: 'user' | 'auto' = 'user'): Ask
  * For full mock context with all modules, use createFullMockContext from mock-context.ts
  */
 export function createMockContext(workdir: string): AgentContext {
-  // Live allow-list backing the /auto-commit + git_commit pair (see BaseCore).
-  // A real array, not just vi.fn(): a test that adds/removes a branch changes
-  // what getAllowAutoCommitBranches() returns.
-  let allowAutoCommitBranches: string[] = [];
   const core: CoreModule = {
     getWorkDir: () => workdir,
     setWorkDir: vi.fn(),
-    getAllowAutoCommitBranches: () => [...allowAutoCommitBranches],
-    addAllowAutoCommitBranch: (branch: string) => {
-      const name = branch.trim();
-      if (name.length === 0 || allowAutoCommitBranches.includes(name)) return false;
-      allowAutoCommitBranches.push(name);
-      return true;
-    },
-    removeAllowAutoCommitBranch: (branch: string) => {
-      const idx = allowAutoCommitBranches.indexOf(branch.trim());
-      if (idx === -1) return false;
-      allowAutoCommitBranches.splice(idx, 1);
-      return true;
-    },
-    clearAllowAutoCommitBranches: () => {
-      const cleared = [...allowAutoCommitBranches];
-      allowAutoCommitBranches = [];
-      return cleared;
-    },
     getName: () => 'test-agent',
     brief: vi.fn(),
     verbose: vi.fn(),

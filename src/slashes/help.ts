@@ -17,7 +17,7 @@ export const helpCommand: SlashCommand = {
     const commands = slashRegistry.list().map(name => slashRegistry.get(name)!);
 
     // Commands that take arguments (based on their descriptions/usage)
-    const withArgs = ['issues', 'load', 'wiki', 'domain', 'auto-commit'];
+    const withArgs = ['issues', 'load', 'wiki', 'domain'];
     
     // Split into two categories
     const simpleCommands = commands.filter(c => !withArgs.includes(c.name));

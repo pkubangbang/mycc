@@ -16,31 +16,9 @@ import type { AgentContext, CoreModule, TodoModule, MailModule, SkillModule, Iss
  * Create a mock CoreModule with optional overrides
  */
 export function createMockCore(overrides: Partial<CoreModule> = {}): CoreModule {
-  // Live allow-list backing the /auto-commit + git_commit pair. Behavioural
-  // (not just vi.fn()) so a test that calls add/remove/clear actually changes
-  // what getAllowAutoCommitBranches() returns — mirrors BaseCore's real store.
-  let allowAutoCommitBranches: string[] = [];
   return {
     getWorkDir: vi.fn(() => process.cwd()),
     setWorkDir: vi.fn(),
-    getAllowAutoCommitBranches: vi.fn(() => [...allowAutoCommitBranches]),
-    addAllowAutoCommitBranch: vi.fn((branch: string) => {
-      const name = branch.trim();
-      if (name.length === 0 || allowAutoCommitBranches.includes(name)) return false;
-      allowAutoCommitBranches.push(name);
-      return true;
-    }),
-    removeAllowAutoCommitBranch: vi.fn((branch: string) => {
-      const idx = allowAutoCommitBranches.indexOf(branch.trim());
-      if (idx === -1) return false;
-      allowAutoCommitBranches.splice(idx, 1);
-      return true;
-    }),
-    clearAllowAutoCommitBranches: vi.fn(() => {
-      const cleared = [...allowAutoCommitBranches];
-      allowAutoCommitBranches = [];
-      return cleared;
-    }),
     getName: vi.fn(() => 'test-agent'),
     brief: vi.fn(),
     verbose: vi.fn(),

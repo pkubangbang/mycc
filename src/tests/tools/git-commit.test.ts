@@ -31,9 +31,15 @@ vi.mock('../../context/worktree-store.js', () => ({
   findWorktreeByName: vi.fn(async () => null),
 }));
 
-// The --allow-auto-commit allow-list is RUNTIME state on ctx.core (seeded from
-// the launch flag), not a config getter — so the tests drive it through the
-// same mutators the `/auto-commit` slash command uses. No config mock needed.
+// Mock the config getters that back the --allow-auto-commit pre-authorization.
+// The test harness cannot inject argv, so the two predicates are the seam:
+// tests toggle the grant by re-mocking these between cases.
+vi.mock('../../config.js', () => ({
+  isAllowAutoCommit: vi.fn(() => false),
+  getAllowAutoCommitBranches: vi.fn(() => [] as string[]),
+}));
+
+import { isAllowAutoCommit, getAllowAutoCommitBranches } from '../../config.js';
 
 describe('gitCommitTool', () => {
   let tempDir: string;
@@ -219,10 +225,9 @@ describe('gitCommitTool', () => {
       });
     };
 
-    /** Seed the context's live allow-list (stands in for the launch flag). */
     const grant = (branches: string[]): void => {
-      ctx.core.clearAllowAutoCommitBranches();
-      for (const b of branches) ctx.core.addAllowAutoCommitBranch(b);
+      vi.mocked(isAllowAutoCommit).mockReturnValue(true);
+      vi.mocked(getAllowAutoCommitBranches).mockReturnValue(branches);
     };
 
     it('auto-commits without prompting when auto mode + allow-listed branch', async () => {
@@ -325,9 +330,8 @@ describe('gitCommitTool', () => {
       expect(result).toContain('auto mode is ON');
     });
 
-    it('is a no-op when the allow-list is empty (question() still called)', async () => {
-      // Default mock core starts with an empty list; clear defensively.
-      ctx.core.clearAllowAutoCommitBranches();
+    it('is a no-op when the flag is unset (question() still called)', async () => {
+      vi.mocked(isAllowAutoCommit).mockReturnValue(false);
       vi.mocked(ctx.core.getAuto).mockReturnValue(true);
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n', 'auto'));
 

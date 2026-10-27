@@ -45,9 +45,6 @@ vi.mock('../../engine/chat-helpers.js', () => ({
 // Mock config
 vi.mock('../../config.js', () => ({
   isVerbose: vi.fn(() => false),
-  // BaseCore seeds its runtime auto-commit allow-list from this parse-only
-  // config reader at construction; an empty list = feature OFF.
-  getAllowAutoCommitArg: vi.fn(() => [] as string[]),
   getVisionModel: vi.fn(() => 'test-vision-model'),
   isVisionEnabled: vi.fn(() => false),
   getApiProvider: vi.fn(() => 'ollama'),
