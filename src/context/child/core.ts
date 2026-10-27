@@ -4,6 +4,7 @@
 
 import type { CoreModule, PictureResult, AskResult } from '../../types.js';
 import type { AutoCommitEntry } from '../../loop/auto-state.js';
+import type { CrossroadCardWire } from '../../loop/crossroad-card.js';
 import { ipc, sendStatus } from './ipc-helpers.js';
 import { isVerbose } from '../../config.js';
 import { BaseCore } from '../shared/base-core.js';
@@ -25,7 +26,7 @@ export class ChildCore extends BaseCore implements CoreModule {
     return this.name;
   }
 
-  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean }): void {
+  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire }): void {
     if (level === 'error') {
       ipc.sendNotification('error', { error: message, detail, tool, synthetic: opts?.synthetic ?? false });
     } else {

@@ -12,6 +12,7 @@ import { setWebUiUp } from '../loop/loop-events.js';
 import { setResultCallback } from '../utils/letter-box.js';
 import { sendToParent } from '../utils/parent-ipc.js';
 import chalk from 'chalk';
+import type { CrossroadCardWire } from '../loop/crossroad-card.js';
 
 // ─── WebUI serve-state holder ──────────────────────────────────────────────
 //
@@ -34,7 +35,7 @@ import chalk from 'chalk';
  * types erase at compile time and cost nothing at runtime.
  */
 type OutputMirroringHub = {
-  broadcast(type: string, content: string, label?: string, detail?: string, synthetic?: boolean): void;
+  broadcast(type: string, content: string, label?: string, detail?: string, synthetic?: boolean, crossroad?: CrossroadCardWire): void;
 };
 
 type ActivateHub = OutputMirroringHub & {
@@ -57,9 +58,9 @@ type ActivateHub = OutputMirroringHub & {
  * matching the terminal-style header the user requested.
  */
 export function wireOutputMirroring(hub: OutputMirroringHub): void {
-  agentIO.setOutputCallback((method, args, label, detail, synthetic) => {
+  agentIO.setOutputCallback((method, args, label, detail, synthetic, crossroad) => {
     const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
-    hub.broadcast(method, text, label, detail, synthetic);
+    hub.broadcast(method, text, label, detail, synthetic, crossroad);
   });
   setResultCallback((content) => hub.broadcast('result', content, 'assistant'));
 }

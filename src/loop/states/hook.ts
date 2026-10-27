@@ -32,7 +32,7 @@ import { applyPatchAction } from '../../mindmap/patch.js';
 import { appendPatch, getPatchPath } from '../../mindmap/patch-jsonl.js';
 import { loopEvents } from '../loop-events.js';
 import { stripInternalMarkup } from '../../utils/letter-box.js';
-import { buildCandidatesBrief } from '../crossroad.js';
+import { buildCrossroadCard, formatCrossroadCard, toCrossroadCardWire } from '../crossroad-card.js';
 import { briefToolCall, newBriefCallId, validateBriefIsolation } from '../triologue/brief.js';
 import { briefResultLine } from '../triologue/recap-note.js';
 import { buildPlanScopeNote, formatPlanScopeForDisplay, withPlanScopeNote } from '../plan-scope.js';
@@ -614,10 +614,24 @@ export async function handleHook(
       // the intended order.
       briefAssistantContent(ctx, chat.assistantContent);
       if (chat.crossroadCandidates && chat.crossroadCandidates.length > 1) {
-        ctx.core.brief('info', 'crossroad',
-          buildCandidatesBrief(chat.crossroadCandidates, chat.crossroadSelectedIndex ?? -1));
+        // ONE structured event instead of two free-text notes: the card carries
+        // the drafts, the winner and the resolved outcome, so the reader no
+        // longer has to reconcile a candidate list with a separate
+        // "Resolved: …" line. The plain-text body keeps the terminal (and the
+        // replayed history) complete; a serve-mode client renders the rows.
+        const card = buildCrossroadCard({
+          candidates: chat.crossroadCandidates,
+          selectedIndex: chat.crossroadSelectedIndex ?? -1,
+          resolvedOutcome: chat.crossroadContinuation,
+        });
+        ctx.core.brief('info', 'crossroad', formatCrossroadCard(card), undefined, {
+          crossroad: toCrossroadCardWire(card),
+        });
+      } else {
+        // Only one direction survived — there is no card to compare, so the
+        // outcome alone is the honest report.
+        ctx.core.brief('info', 'crossroad', `Resolved: ${chat.crossroadContinuation}`);
       }
-      ctx.core.brief('info', 'crossroad', `Resolved: ${chat.crossroadContinuation}`);
 
       // Inject deferred hook messages so the LLM sees them in the next round.
       // Each deferred message carries its originating hook name for attribution.

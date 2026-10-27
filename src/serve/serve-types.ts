@@ -25,6 +25,27 @@ export interface LogEntry {
    *  bookkeeping). The WebUI hides these from the chat log; the terminal
    *  keeps printing them. Omitted for normal messages. */
   synthetic?: boolean;
+  /**
+   * STRUCTURED crossroad card — the drafted directions, the winner and the
+   * resolved outcome, attached to the single crossroad note.
+   *
+   * Why attached rather than a separate wire type: `brief()` already owns the
+   * one mirroring path to the WebUI, and a separate event would have to be
+   * replayed and ordered against the note it describes. Carrying the payload
+   * alongside keeps the note self-contained — a client that ignores it still
+   * renders `content`, and a client that understands it renders rows.
+   *
+   * Shape is the flat CrossroadCardWire contract from
+   * src/loop/crossroad-card.ts (kept structural here to avoid a web→loop
+   * import from the serve layer).
+   */
+  crossroad?: {
+    kind: 'crossroad';
+    drafted: number;
+    chosenIndex: number;
+    candidates: Array<{ index: number; direction: string; preview: string; selected: boolean }>;
+    outcome: string;
+  };
 }
 
 /** Metadata for a file uploaded via the chat box (raw, over the wire). */

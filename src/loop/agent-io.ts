@@ -17,6 +17,7 @@ import { getToolColor } from '../utils/tool-colors.js';
 import { slashRegistry } from '../slashes/index.js';
 import { tryGetServeHub, onServeHubReady } from '../serve/serve-registry.js';
 import { autoState } from './auto-state.js';
+import type { CrossroadCardWire } from './crossroad-card.js';
 import { setResultCallback } from '../utils/letter-box.js';
 import { sendToParent } from '../utils/parent-ipc.js';
 import { runExec } from './agent-exec.js';
@@ -55,7 +56,7 @@ export class PromptAbortError extends Error {
  *               [HH:MM:SS] [tool] header as the terminal. Plain log/warn/error
  *               leave it undefined (treated as a raw verbose log line).
  */
-type OutputCallback = (method: 'log' | 'warn' | 'error', args: unknown[], label?: string, detail?: string, synthetic?: boolean) => void;
+type OutputCallback = (method: 'log' | 'warn' | 'error', args: unknown[], label?: string, detail?: string, synthetic?: boolean, crossroad?: CrossroadCardWire) => void;
 
 /**
  * Subcommand hints for slash commands.
@@ -466,7 +467,7 @@ class AgentIO {
    * @param message - Main message text
    * @param detail - Optional greyed detail shown after the tool tag
    */
-  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean }): void {
+  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire }): void {
     const now = new Date();
     const timestamp = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     const colorFn = getToolColor(tool);
@@ -497,7 +498,7 @@ class AgentIO {
     // so the WebUI can hide them from the chat log (terminal keeps them).
     if (this.outputCallback) {
       const method: 'log' | 'warn' | 'error' = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log';
-      this.outputCallback(method, [message], tool, detail, opts?.synthetic);
+      this.outputCallback(method, [message], tool, detail, opts?.synthetic, opts?.crossroad);
     }
   }
 

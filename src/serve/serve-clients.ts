@@ -12,6 +12,7 @@
 import { WebSocket } from 'ws';
 import { stripAnsi } from './serve-utils.js';
 import type { LogEntry } from './serve-types.js';
+import type { CrossroadCardWire } from '../loop/crossroad-card.js';
 
 /** Capped in-memory log for reconnect replay (sibling of ServeHub.messageLog). */
 export interface MessageLogHolder {
@@ -91,6 +92,7 @@ export class ClientRegistry {
     detail?: string,
     synthetic?: boolean,
     log?: MessageLogHolder,
+    crossroad?: CrossroadCardWire,
   ): void {
     const cleanContent = stripAnsi(content);
     // detail also carries chalk
@@ -107,6 +109,9 @@ export class ClientRegistry {
       // chat log. Omitted when falsy so the wire format and /history replay
       // stay unchanged for all normal messages.
       if (synthetic) entry.synthetic = true;
+      // Structured crossroad card: attached to the note so a client can render
+      // rows instead of parsing markdown, and so /history replays it verbatim.
+      if (crossroad) entry.crossroad = crossroad;
       log.push(entry);
       if (log.length > MAX_LOG_SIZE) {
         log.shift();
@@ -116,6 +121,9 @@ export class ClientRegistry {
       type, content: cleanContent, label, timestamp,
       detail: cleanDetail || undefined,
       synthetic: synthetic || undefined,
+      // Structured crossroad card (see LogEntry.crossroad). Omitted when absent
+      // so every other message keeps its exact wire shape.
+      crossroad,
     });
     for (const ws of this.clients) {
       this.sendTo(ws, payload);

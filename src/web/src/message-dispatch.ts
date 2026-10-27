@@ -142,7 +142,17 @@ export function applyServerMessage(
       if (state.isAutoMode) {
         state.steeringBuffer.splice(0, state.steeringBuffer.length);
       } else {
-        state.pendingSteeringReview.push(...state.steeringBuffer);
+        // DEDUPE BY ID. A reconnect replays /history (which repopulates the
+        // buffer) and THEN sends `prompt`, and a note may already have been
+        // moved into review by an earlier prompt. Pushing the buffer wholesale
+        // stacked duplicate cards for the SAME note, and resolving one left the
+        // twin to be "sent" again. One card per steer id, ever.
+        const seen = new Set(state.pendingSteeringReview.map((n) => n.id));
+        for (const note of state.steeringBuffer) {
+          if (seen.has(note.id)) continue;
+          seen.add(note.id);
+          state.pendingSteeringReview.push(note);
+        }
         state.steeringBuffer.splice(0, state.steeringBuffer.length);
       }
     }

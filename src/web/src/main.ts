@@ -19,6 +19,7 @@ import type { App as VueApp } from 'vue';
 import App from './App.vue';
 import type { ChatMessage, CardOption, FileInfo, SteeringNote } from './types';
 import { applyServerMessage } from './message-dispatch';
+import { armResolve, rollbackResolve, confirmResolve, disarmResolve, createResolveGuard } from './resolve-guard';
 import { registerDebugSeam } from './debug';
 import { ensureHighlighterReady } from './highlight';
 import { useChatStore } from './stores/chat-store';
@@ -114,6 +115,14 @@ let lastHistoryEtag: string | null = null;
 // snapshot replaces the store. Contract: 304 is valid only when the client
 // has made no local changes since the last authoritative snapshot.
 let historyDirty = false;
+
+/**
+ * Boomerang guard: a steer-resolve stays unconfirmed until the server's
+ * steer-flush ack. Armed in resolveSteering() BEFORE the optimistic clear so
+ * an undelivered resolve can restore the card; confirmed on steer-flush,
+ * disarmed on prompt (see resolve-guard.ts).
+ */
+const resolveGuard = createResolveGuard<SteeringNote>();
 
 // Serialize cache writes so they complete in CALL ORDER, not whichever
 // IndexedDB transaction happens to finish first. Without this, two
@@ -437,6 +446,17 @@ function connectWebSocket(): void {
     // The store is the single mutation surface; applyServerMessage calls
     // store.setPhase() / store.setAutoMode() per the transition table.
     applyServerMessage(store, msg, { nextId, chatApi });
+    // Boomerang guard, one-way only:
+    //  - steer-flush IS the delivery ack for a `steer-resolve` → confirm, so a
+    //    later drop cannot roll the delivered snapshot back.
+    //  - prompt ends the turn and DISARMS (the notes it held are no longer
+    //    restorable). It must NOT confirm: a turn end proves nothing about
+    //    whether the drain ever reached the server.
+    if (msg.type === 'steer-flush') {
+      confirmResolve(resolveGuard);
+    } else if (msg.type === 'prompt') {
+      disarmResolve(resolveGuard);
+    }
   };
 
   ws.onclose = () => {
@@ -718,12 +738,29 @@ export const chatApi = {
    * - sendIds = [] → discard-all (drain without submitting)
    */
   resolveSteering(sendIds: number[]): void {
+    // SNAPSHOT BEFORE CLEARING (the boomerang fix). A dropped socket used to
+    // make the fire-and-forget send a silent no-op while the backend still held
+    // every note, so the next /history + prompt resurfaced the card and the
+    // user could submit the same instruction twice. The guard keeps the notes
+    // restorable until the server's `steer-flush` acknowledges the drain.
+    armResolve(resolveGuard, store.pendingSteeringReview, sendIds);
     // Local optimistic clear: the card disappears and the input box re-enables.
     store.pendingSteeringReview.splice(0);
     store.steeringBuffer.splice(0);
     // The backend owns the authoritative queue; this is a single positive
     // message (no separate discard-then-input ordering problem).
-    wsSend({ type: 'steer-resolve', sendIds });
+    const sent = wsSend({ type: 'steer-resolve', sendIds });
+    if (!sent) {
+      // The frame was never handed to a socket. Put the card back exactly as
+      // the user saw it and force the next /history to be a real 200 (a 304
+      // would keep our optimistic snapshot and hide the backend's queue).
+      const snapshot = rollbackResolve(resolveGuard);
+      if (snapshot) {
+        store.pendingSteeringReview.push(...snapshot.notes);
+      }
+      historyDirty = true;
+      void reconnect();
+    }
   },
   sendExit(): void {
     wsSend({ type: 'exit' });

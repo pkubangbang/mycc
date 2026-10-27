@@ -106,6 +106,34 @@ describe('applyServerMessage — steering review card', () => {
   });
 
 
+  it('does NOT stack duplicate review cards when the same steer id arrives twice (boomerang)', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    // A note is queued, surfaced at prompt, then — after a reconnect whose
+    // /history replay repopulates the buffer — the server sends `prompt` again.
+    applyServerMessage(state, steerEcho('once', 1), ctx);
+    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
+    expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([1]);
+
+    applyServerMessage(state, steerEcho('once', 1), ctx);
+    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
+
+    // Exactly one card for id 1 — the old code pushed a duplicate, and
+    // resolving one left the twin to be submitted a second time.
+    expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([1]);
+  });
+
+  it('still surfaces a genuinely NEW note alongside an already-reviewed one', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, steerEcho('first', 1), ctx);
+    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
+    applyServerMessage(state, steerEcho('second', 2), ctx);
+    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
+
+    expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([1, 2]);
+  });
+
   it('steer-flush clears only the buffer, never populates review', () => {
     const state = makeState();
     const ctx = makeCtx();

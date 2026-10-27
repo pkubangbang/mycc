@@ -2,6 +2,8 @@
  * types.ts - Shared type definitions for the mycc web chat UI
  */
 
+import type { CrossroadCardWire } from '../../loop/crossroad-card';
+
 export type MessageType =
   | 'user'
   | 'log'
@@ -45,6 +47,14 @@ export interface ChatMessage {
    *  frontend can key duplicate-text notes by id and target them for the
    *  boomerang 'steer-resolve' API. */
   steerId?: number;
+  /**
+   * STRUCTURED crossroad card — attached to the ONE crossroad note (see
+   * src/loop/crossroad-card.ts). Carries the drafted directions, which one was
+   * chosen and the resolved outcome, so the log view can render rows instead
+   * of re-parsing the markdown `content` (which stays the plain-text fallback
+   * for history-only readers and the terminal).
+   */
+  crossroad?: CrossroadCardWire;
   // ── Card wire fields (top-level on an incoming 'card' message) ──
   // The backend broadcasts cards using the flat CardMessage shape
   // (serve-hub.ts: CardMessage has type/cardId/query/kind/options/...), so an

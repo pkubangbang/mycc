@@ -10,6 +10,7 @@ import type { Mindmap } from './mindmap/types.js';
 import type { Condition } from './hook/conditions.js';
 import type { ValidationResult } from './hook/condition-validator.js';
 import type { AutoCommitEntry } from './loop/auto-state.js';
+import type { CrossroadCardWire } from './loop/crossroad-card.js';
 
 // ============================================================================
 // Ollama Type Extensions
@@ -406,7 +407,7 @@ export interface CoreModule {
   getWorkDir(): string;
   setWorkDir(dir: string): void;
   getName(): string;
-  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean }): void;
+  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire }): void;
   /**
    * Get current confusion index (0-20 range)
    */

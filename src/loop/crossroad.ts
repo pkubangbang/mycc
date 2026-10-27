@@ -16,6 +16,7 @@ import { forkChat } from '../engine/chat-provider.js';
 import { startSpinner, stopSpinner, sleep } from '../engine/chat-helpers.js';
 import { agentIO } from './agent-io.js';
 import { stripInternalMarkup } from '../utils/letter-box.js';
+import { buildCrossroadCard, formatCrossroadCard } from './crossroad-card.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -583,21 +584,15 @@ export interface CrossroadResult {
  *    than `:` followed by another colon-bearing sentence).
  */
 export function buildCandidatesBrief(candidates: string[], selectedIndex: number): string {
-  const lines: string[] = [];
-  lines.push('');
-  const chosen = selectedIndex >= 0 ? ` — chose #${selectedIndex + 1}` : '';
-  lines.push(`**🚦 Crossroad** — drafted ${candidates.length} directions${chosen}:`);
-  for (let i = 0; i < candidates.length; i++) {
-    const isSelected = i === selectedIndex;
-    const directionName = GENERATION_DIRECTIONS[i]?.name ?? `option ${i + 1}`;
-    const marker = isSelected ? '✅' : '⬜';
-    const preview = candidates[i].length > 100
-      ? `${candidates[i].slice(0, 100)}…`
-      : candidates[i];
-    const namePart = isSelected ? `**${directionName}**` : directionName;
-    lines.push(`${i + 1}. ${marker} ${namePart} — ${preview}`);
-  }
-  return lines.join('\n');
+  const card = buildCrossroadCard({
+    candidates,
+    selectedIndex,
+    directionNames: GENERATION_DIRECTIONS.map((d) => d.name),
+  });
+  // The card title/rows are the same information this function always produced;
+  // the card module owns the preview normalization (flatten → de-markdown →
+  // truncate) so a multi-line continuation can no longer break a row.
+  return `\n${formatCrossroadCard(card)}`;
 }
 
 /**

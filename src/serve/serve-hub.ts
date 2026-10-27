@@ -14,6 +14,7 @@
  */
 
 import express from 'express';
+import type { CrossroadCardWire } from '../loop/crossroad-card.js';
 import http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -840,8 +841,8 @@ export class ServeHub implements HubHandler, ServeHubLike {
   // Output bridge (called by agentIO output callback)
   // ===========================================================================
 
-  broadcast(type: string, content: string, label?: string, detail?: string, synthetic?: boolean): void {
-    this.clients.broadcast(type, content, label, detail, synthetic, this.messageLog);
+  broadcast(type: string, content: string, label?: string, detail?: string, synthetic?: boolean, crossroad?: CrossroadCardWire): void {
+    this.clients.broadcast(type, content, label, detail, synthetic, this.messageLog, crossroad);
   }
 
   /** Broadcast to all clients EXCEPT the sender (multi-browser user-bubble sync). */
