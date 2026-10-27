@@ -5,6 +5,7 @@
 import type { AgentContext, IpcHandlerRegistration, WikiModule, PeerModule } from '../types.js';
 import { Core } from './parent/core.js';
 import { Todo } from './shared/todo.js';
+import { queueTodoModelRefresh } from './shared/todo-model-refresh.js';
 import { MailBox } from './shared/mail.js';
 import { IssueManager } from './parent/issue.js';
 import { BackgroundTasks } from './shared/bg.js';
@@ -91,29 +92,26 @@ export class ParentContext implements AgentContext {
       // the reminder is best-effort and must not break the wire.
       recordRemotePeerTodo: ({ sid, endpoint, done }) => {
         try {
-          // NO ANNOUNCEMENT HERE, DELIBERATELY (unlike tm_create/hand_over).
-          //
-          // This site runs from the peer-wire callback — there is no model turn
-          // in flight and no tool result to append to, so "announce the todo"
-          // has nowhere to land. These rows are PINNED, which makes them visible
-          // by two other routes: the pinned-todo populator renders them at the
-          // next compact/clear boundary, and the recap note's `### Open todos`
-          // section carries every pinned row. So the model does learn about them
-          // — passively, at a boundary, rather than immediately. That is the
-          // correct trade for state that changes without the model acting.
+          // This peer-wire callback has no ordinary model-facing tool result.
+          // Queue a transcript-side refresh for the next brief result; never
+          // rebuild the cache-stable projectContext prefix mid-run.
           const openName = `remote peer ${sid} at ${endpoint} — wire, mail_to("${sid}/lead")`;
           const doneName = `remote peer ${sid} at ${endpoint} — wire disconnected (re-run peer_connect to reconnect)`;
           const existing = this.wireRemoteTodoIds.get(endpoint);
           if (done) {
             if (!existing) return;
             const updated = this.todoModule.updateTodo(existing.id, existing.hash, doneName, true, 'terminal close');
-            if (updated) this.wireRemoteTodoIds.set(endpoint, { id: updated.id, hash: updated.hash });
+            if (updated) {
+              this.wireRemoteTodoIds.set(endpoint, { id: updated.id, hash: updated.hash });
+              queueTodoModelRefresh(this.todoModule);
+            }
             return;
           }
           if (existing) {
             const refreshed = this.todoModule.updateTodo(existing.id, existing.hash, openName, false, 'cross-machine peer wire — pinned reminder');
             if (refreshed) {
               this.wireRemoteTodoIds.set(endpoint, { id: refreshed.id, hash: refreshed.hash });
+              queueTodoModelRefresh(this.todoModule);
               return;
             }
             // Stale hash (todo was cleared externally) — fall through and
@@ -123,6 +121,7 @@ export class ParentContext implements AgentContext {
           const pinned = this.todoModule.pinTodo(created.id, created.hash, true);
           const item = pinned ?? created;
           this.wireRemoteTodoIds.set(endpoint, { id: item.id, hash: item.hash });
+          queueTodoModelRefresh(this.todoModule);
         } catch { /* best-effort — never break the wire */ }
       },
       // Single mailbox writer (plan §5): inbound wire mail appends via

@@ -8,6 +8,7 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { sanitizeTodoField, renderTodoItemDetails } from '../context/shared/todo-render.js';
 
 export const todoPinningTool: ToolDefinition = {
   name: 'todo_pinning',
@@ -77,21 +78,24 @@ export const todoPinningTool: ToolDefinition = {
       if (!exists) {
         return `Error: Todo item #${id} not found. Use the current todo list to find the correct id.`;
       }
-      return `Error: Hash mismatch for todo #${id}. The item may have been updated since you last read it. Check the current todo list for the latest hash.`;
+      const current = items.find((i) => i.id === id)!;
+      return `Error: Hash mismatch for todo #${id}. No changes were applied.\nCurrent item:\n${renderTodoItemDetails(current)}\nRetry using the current hash above.`;
     }
 
     const action = pinned ? 'pinned' : 'unpinned';
-    const guardInfo = updated.preventStop ? `\n  preventStop: ${updated.preventStop}` : '';
+    const safeName = sanitizeTodoField(updated.name) ?? '(unnamed)';
+    const safeGuard = sanitizeTodoField(updated.preventStop);
+    const guardInfo = safeGuard ? `\n  preventStop: ${safeGuard}` : '';
     // Same rule as todo_create/todo_update: no open-list echo — the list is
     // delivered by the todo project-context populator (buildTodoMessages).
     ctx.core.brief(
       'info',
       'todo_pinning',
-      `${action} #${updated.id}: ${updated.name}`,
+      `${action} #${updated.id}: ${safeName}`,
     );
 
     return `${action === 'pinned' ? 'Pinned' : 'Unpinned'} todo #${updated.id}
-  name: ${updated.name}
+  name: ${safeName}
   pinned: ${updated.pinned}${guardInfo}
   hash: ${updated.hash}`;
   },

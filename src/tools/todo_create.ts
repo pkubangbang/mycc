@@ -5,6 +5,7 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { sanitizeTodoField } from '../context/shared/todo-render.js';
 
 export const todoCreateTool: ToolDefinition = {
   name: 'todo_create',
@@ -33,6 +34,8 @@ export const todoCreateTool: ToolDefinition = {
     }
 
     const item = ctx.todo.createTodo(name.trim(), note?.trim() || undefined);
+    const safeName = sanitizeTodoField(item.name) ?? '(unnamed)';
+    const safeNote = sanitizeTodoField(item.note);
     // The WebUI todo panel is NOT pushed here: TodoModule emits `todo_changed`
     // on the loop event bus (subscribed once by the serve layer, see
     // serve-todos.ts) from inside the mutation, so every mutation path —
@@ -45,8 +48,8 @@ export const todoCreateTool: ToolDefinition = {
     ctx.core.brief('info', 'todo_create', `Created #${item.id}: ${item.name}`);
 
     return `Created todo #${item.id}
-  name: ${item.name}
-  done: false${item.note ? `\n  note: ${item.note}` : ''}
+  name: ${safeName}
+  done: false${safeNote ? `\n  note: ${safeNote}` : ''}
   hash: ${item.hash}`;
   },
 };
