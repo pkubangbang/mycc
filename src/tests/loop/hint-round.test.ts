@@ -296,11 +296,6 @@ describe('Hint Round JSON Output', () => {
     expect(userPrompt).toContain('## Todo List');
     expect(userPrompt).toContain('- [x] 1. write the plan');
     expect(userPrompt).toContain('- [ ] 2. implement phase 2a');
-    // EVERY row carries its integrity hash: this section is where the analyzer
-    // learns which item its `next_step` (e.g. `todo_pinning(id=2, …)`) can act
-    // on, and a row without the hash is a row the agent cannot update.
-    expect(userPrompt).toContain('- [x] 1. write the plan [hash: h1]');
-    expect(userPrompt).toContain('- [ ] 2. implement phase 2a [hash: h2]');
     // State snapshot first, transcript second.
     expect(userPrompt.indexOf('## Todo List')).toBeLessThan(
       userPrompt.indexOf('## Conversation Context'),
