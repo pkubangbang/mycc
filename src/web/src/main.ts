@@ -213,57 +213,6 @@ function wsSend(data: object): boolean {
   return false;
 }
 
-// ── Unconfirmed steer-resolve ──
-//
-// A `steer-resolve` is TERMINAL server-side (the queue is drained atomically
-// on receipt), so the client may never infer delivery from `ws.send()` alone:
-// on a HALF-OPEN socket the send succeeds into the void, `wsSend()` reports
-// success, the notes are already gone from the card, and the next PROMPT
-// brings them back for a second submission. The server broadcasts the positive
-// ack (`steer-flush` on both terminal drain paths), so a resolve stays
-// UNCONFIRMED until that ack lands; if it never lands we restore the snapshot
-// and force an authoritative /history re-read.
-//
-// The server already broadcasts the positive ack we need: 'steer-flush' fires
-// on BOTH terminal drain paths (seam delivery and resolveSteering). So a
-// resolve stays UNCONFIRMED until that ack arrives; if it does not arrive in
-// time, we restore the snapshot and force an authoritative /history re-read.
-let pendingResolve: { notes: SteeringNote[]; timer: ReturnType<typeof setTimeout> } | null = null;
-
-/** How long a resolve may stay unacknowledged before we distrust the socket. */
-const RESOLVE_ACK_TIMEOUT_MS = 2500;
-
-/** The ack arrived (or the socket is gone) — stop waiting. */
-function clearPendingResolve(): void {
-  if (!pendingResolve) return;
-  clearTimeout(pendingResolve.timer);
-  pendingResolve = null;
-}
-
-/**
- * Arm the ack timer for a just-sent resolve. `notes` is the snapshot to
- * restore if the ack never comes. Any previous unconfirmed resolve is
- * superseded (its notes are still in the new snapshot by construction).
- */
-function armPendingResolve(notes: SteeringNote[]): void {
-  clearPendingResolve();
-  const timer = setTimeout(() => {
-    pendingResolve = null;
-    // No ack: either the socket is half-open (send() "succeeded" into the
-    // void) or the message was dropped. Treat the resolve as NOT delivered —
-    // the server may still hold these notes, and re-offering them is always
-    // safer than silently losing an instruction.
-    for (const note of notes) {
-      if (!store.pendingSteeringReview.some((n) => n.id === note.id)) {
-        store.pendingSteeringReview.push(note);
-      }
-    }
-    // Force a real 200 (never a 304) so the card reflects the server's queue.
-    historyDirty = true;
-    connectWebSocket();
-  }, RESOLVE_ACK_TIMEOUT_MS);
-  pendingResolve = { notes, timer };
-}
 /**
  * Fetch the message history from /history BEFORE establishing the WebSocket.
  * This populates the chat record first, so live WS updates layer cleanly on
@@ -484,11 +433,6 @@ function connectWebSocket(): void {
     } catch {
       return; // ignore malformed messages
     }
-    // A `steer-flush` is also the POSITIVE ACK for a pending resolve: the
-    // server drains the steering queue atomically before broadcasting it, so
-    // receipt proves the resolve landed. Disarm the unconfirmed-resolve timer
-    // (see confirmResolve below) before dispatching.
-    if (msg.type === 'steer-flush') clearPendingResolve();
     // Delegate the pure state-transition logic to the DOM-free dispatch module.
     // The store is the single mutation surface; applyServerMessage calls
     // store.setPhase() / store.setAutoMode() per the transition table.

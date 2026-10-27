@@ -34,25 +34,6 @@ When updating the changelog, use the following procedure:
 <!-- September 2026 entries rotated to changelog-202609.md on 2026-10-12. -->
 <!-- Add new (October 2026 onward) entries below this line. -->
 
-## 2026-10-26
-### Features
-- **`/auto-commit` slash command**: Human-typed control over the auto-commit allow-list at runtime — `/auto-commit` shows the current branches, `on <branch>` adds one, `off <branch>` removes one, `off --all` clears the list.
-### Refactoring
-- **Auto-commit store relocated to `ctx.core`**: the allow-list is runtime, session-scoped state (like `workDir`), so it now lives on `BaseCore` — `allowAutoCommitBranches` plus `getAllowAutoCommitBranches()` (copy) / `addAllowAutoCommitBranch()` / `removeAllowAutoCommitBranch()` / `clearAllowAutoCommitBranches()`, all also declared on the `CoreModule` interface so lead, teammate and mocks share one shape. `src/config.ts` is back to PARSE-ONLY: `isAllowAutoCommit()` and the mutable array are gone, replaced by `getAllowAutoCommitArg()` which only reports what `--allow-auto-commit` said on the command line; `BaseCore`'s constructor seeds the list from it once. `git_commit` now reads `ctx.core.getAllowAutoCommitBranches()` per call (no config import), so a slash edit is effective on the next commit with no restart. The "the agent can never self-grant" guarantee is unchanged — no tool reaches the list, only a human-typed slash command.
-- **`/reload` does NOT inherit runtime edits** (documented at both sites): `/reload` replays the original launch argv, so the respawned lead re-seeds from `--allow-auto-commit` alone — a runtime `on` is lost and a runtime `off --all` is undone. Nothing is persisted by design.
-### Tests
-- **Auto-commit**: new `src/tests/slashes/auto-commit-slash.test.ts` drives the REAL command end-to-end against a behavioural mock core (14 cases: display/OFF, add, dedupe, remove, absent no-op, clear, already-empty, usage on missing operand, unknown subcommand, case-insensitive, and "git_commit sees the slash edit immediately"). `tools/test-utils.ts` + `test-utils/mock-context.ts` gained a real mutable allow-list, `git-commit.test.ts` seeds the grant through `ctx.core` instead of a config mock, and `context/core.test.ts`'s config mock exports `getAllowAutoCommitArg`.
-
-## 2026-10-25
-### Refactoring
-- **Todo system**: `todo_create` / `todo_update` / `todo_pinning` no longer echo the whole open list — each returns only the touched item with its current hash; the COLLECT todo nudge ("Update your todos.") is removed (the state is renamed `runTodoNudge` → `runChannelNudge`, keeping only the peer-channel nudge, and `TurnVars.nextTodoNudge`/`lastTodoState` → `nextChannelNudge`/`lastChannelState`; the teammate loop's duplicate nudge is deleted).
-- **Todo context populators**: new `buildTodoMessages()` (shared, `## Task Management` usage + live `## Todo List` snapshot, rebuilt at startup/compact/clear so the list survives auto-compaction, starts empty) and `buildPinnedTodoMessages()` (lead-only pinned-todo/stop-guard prose) in `src/loop/prompt-populators.ts`; `buildPinnedTodoSection()` is deleted from `prompts/common.ts` and its text no longer ships in the lead's system prompt.
-- **Clear ordering**: `/clear` and double-Ctrl+L now empty the todo store BEFORE `triologue.clear()`, so the post-clear populator snapshot renders `No todos.` instead of resurrecting the old list.
-### Fixes
-- **Todo staleness (covered, not rebuilt)**: with the nudge gone, the boundary-only snapshot can lag the store for writers that mutate it mid-run. This is deliberately NOT patched with a mid-run `rebuildProjectContext()` — that would re-render the populator output and break the cache-stable prompt prefix. Instead the hint round's `buildStateSections()` already renders its own live, sanitized `## Todo List` from `getItems()` (plus the `## Stop Guards (held)` evidence) and closes the gap until the next natural boundary. `/todos`, the peer-wire pinned reminder and `slashes/todos.ts` all rely on that, and each says so in a comment so nobody "helpfully" adds a rebuild later.
-- **Prompt**: `buildTodoMessages` no longer advertises `/todos` as an escape hatch (terminal-only — the agent cannot invoke a slash, and a teammate has no REPL); the two contradicting doc comments are reconciled — 📌/`[preventStop]` markers DO appear in the snapshot (`printTodoList()` verbatim), only the USAGE prose is lead-only.
-- **Tests**: add `todo-pinning.test.ts` (was absent — its no-echo change was completely unlocked, covering every happy/error branch + the brief arity); make `todo-create.test.ts`'s no-echo assertion non-vacuous (real list stub); replace the misleading `not.toContain('preventStop')` populator assertion with a positive guarded-item case plus a `/todos`-not-a-tool check; fix stale `nextTodoNudge`/`lastTodoState` references in `docs/`.
-
 ## 2026-08-29
 ### Chores
 - **Package**: Update package info.

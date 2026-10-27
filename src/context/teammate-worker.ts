@@ -383,11 +383,19 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         pendingModeChange = null;
       }
 
-      // 3. (removed) The former todo nudge is gone: the open todo list is
-      //    delivered by the todo project-context populator (buildTodoMessages)
-      //    and the todo_* tools report only the item they touched. A teammate
-      //    has no peer channels, so no channel nudge either — the numbered
-      //    steps below are unchanged.
+      // 3. Todo nudging with counter and state tracking
+      if (ctx.todo.hasOpenTodo()) {
+        const currentTodoState = ctx.todo.printTodoList();
+        if (currentTodoState !== lastTodoState) {
+          nextTodoNudge = 3; // Reset for new todo state
+          lastTodoState = currentTodoState;
+        }
+        nextTodoNudge--;
+        if (nextTodoNudge === 0) {
+          triologue.note('REMINDER', `Update your todos. ${ctx.todo.printTodoList()}`);
+          nextTodoNudge = 3;
+        }
+      }
 
       // 4. Time reminder if budget is set (every N rounds)
       if (budgetSent) {

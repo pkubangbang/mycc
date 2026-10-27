@@ -147,7 +147,7 @@ COLLECT（`src/loop/states/collect.ts`）在每次 LLM 调用前执行预收集�
 
 - **Plan 模式** — `buildPlanModePrompt(workDir, hasTeam)`：Solo plan / Team plan
 - **Normal 模式** — `buildNormalModePrompt(workDir, identity?, hasTeam)`：
-  - **Solo normal**（无 team）：`"You are a coding agent at ${workDir}."` + 知识边界 + 公共部分 + recap rewind（任务管理 / todo 列表 / pinned todo 均已移出 system prompt，改由 projectContext populator 交付）
+  - **Solo normal**（无 team）：`"You are a coding agent at ${workDir}."` + 任务管理 + pinned todo + 知识边界 + 公共部分 + recap rewind
   - **Team normal (Lead)**：`"You are the lead of a coding agent team at ${workDir}."` + team workflow + issue 管理 + 通信规则 + 边界规则
   - **Teammate (Child)**：`"You are ${name}, a specialized agent working as part of a team, created by the \"lead\"."` + 三种通信方式 + 时间预算协议 + worktree 用法
 

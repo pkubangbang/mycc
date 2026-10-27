@@ -158,10 +158,8 @@ export class Todo implements TodoModule {
     if (existing.hash !== hash) return null;
 
     existing.pinned = pinned;
-    // Clear preventStop when un-pinning; set/overwrite when pinning.
-    // Un-pinning is the documented escape hatch: it is how the agent releases
-    // a guard that would otherwise keep the turn from ending.
-    existing.preventStop = pinned ? preventStop : undefined;
+    // Clear reactivate when un-pinning; set/overwrite when pinning.
+    existing.reactivate = pinned ? reactivate : undefined;
     return { ...existing };
   }
 
@@ -189,7 +187,7 @@ export class Todo implements TodoModule {
    */
   getReactivationCandidates(): TodoItem[] {
     return this.items
-      .filter((i) => i.pinned && !!i.preventStop?.trim())
+      .filter((i) => i.pinned && i.done && !!i.reactivate)
       .map((i) => ({ ...i }));
   }
 }
