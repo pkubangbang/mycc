@@ -28,7 +28,7 @@ vi.mock('../../../context/shared/loader.js', () => ({
 
 import { parsePreventStopResult, checkPreventStop } from '../../../loop/states/stop-prevent-stop.js';
 import { forkChat } from '../../../engine/chat-provider.js';
-import type { MachineEnv, TurnVars } from '../../../loop/state-machine.js';
+import type { MachineEnv } from '../../../loop/state-machine.js';
 import type { TodoItem } from '../../../types.js';
 
 describe('parsePreventStopResult', () => {
@@ -253,7 +253,8 @@ describe('checkPreventStop — hash echo and recovery (review 2026-10-24)', () =
     expect(verdict.block).toBe(true);
   });
 
-  it('should accept a STALE hash that the lineage ring knows', async () => {    // todo_update recomputes the hash; the model routinely holds the previous
+  it('should accept a STALE hash that the lineage ring knows', async () => {
+    // todo_update recomputes the hash; the model routinely holds the previous
     // one. `previousHashes` is exactly that history, so a stale-but-honest echo
     // must still gate the turn.
     const c = guarded({ id: 4, hash: 'current1', previousHashes: ['stale001'] });
@@ -292,75 +293,5 @@ describe('parsePreventStopResult — balanced extraction (review 2026-10-24)', (
   it('should ignore brackets inside JSON strings', () => {
     const spans = extractJsonArrayCandidates('[{"id":1,"reason":"see [2] and ]"}], trailing ]');
     expect(spans).toEqual(['[{"id":1,"reason":"see [2] and ]"}]']);
-  });
-});
-
-describe('checkPreventStop — hold escalation (review 2026-10-24)', () => {
-  /** Minimal TurnVars carrying only the field the guard touches. */
-  const makeTurn = () => ({ preventStopHolds: {} } as unknown as TurnVars);
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('counts consecutive holds per guard and escalates from the 2nd onward', async () => {
-    // The loop's only exit is the agent unpinning the todo. A model that
-    // re-reads the same condition reaches the same answer every iteration, so
-    // the note must carry the ESCALATION as evidence, starting at hold 2.
-    const c = guarded({ id: 3, hash: 'h3', name: 'migration' });
-    vi.mocked(forkChat).mockResolvedValue('[{"id":3,"hash":"h3","hold":true,"reason":"still failing"}]');
-    const env = makeEnv([c]);
-    const turn = makeTurn();
-
-    const first = await checkPreventStop(env, turn);
-    expect(first.note).not.toContain('Held 1 consecutive turn end');
-    expect(first.note).toContain('To release the guard early, unpin #3');
-    expect(turn.preventStopHolds[3]).toBe(1);
-
-    const second = await checkPreventStop(env, turn);
-    expect(second.note).toContain('Held 2 consecutive turn ends');
-    expect(second.note).toContain('todo_pinning(id=3, pinned=false)');
-    expect(second.note).toContain('repeating it will not help');
-    expect(turn.preventStopHolds[3]).toBe(2);
-
-    const third = await checkPreventStop(env, turn);
-    expect(third.note).toContain('Held 3 consecutive turn ends');
-    expect(turn.preventStopHolds[3]).toBe(3);
-  });
-
-  it('clears the streak when the guard releases (a met condition restarts the count)', async () => {
-    const c = guarded({ id: 5, hash: 'h5' });
-    const env = makeEnv([c]);
-    const turn = makeTurn();
-    turn.preventStopHolds[5] = 4;
-
-    vi.mocked(forkChat).mockResolvedValue('[{"id":5,"hash":"h5","hold":false,"reason":"done"}]');
-    const verdict = await checkPreventStop(env, turn);
-
-    expect(verdict.block).toBe(false);
-    expect(turn.preventStopHolds[5]).toBeUndefined();
-  });
-
-  it('is not a CAP: a guard that keeps holding still holds the turn', async () => {
-    // Deliberate design — an honest long-horizon run must never be auto-released.
-    // The escalation informs the agent; it does not override the verdict.
-    const c = guarded({ id: 1, hash: 'h1' });
-    const env = makeEnv([c]);
-    const turn = makeTurn();
-    turn.preventStopHolds[1] = 99;
-
-    vi.mocked(forkChat).mockResolvedValue('[{"id":1,"hash":"h1","hold":true,"reason":"unfinished"}]');
-    const verdict = await checkPreventStop(env, turn);
-
-    expect(verdict.block).toBe(true);
-    expect(turn.preventStopHolds[1]).toBe(100);
-  });
-
-  it('omitting turn still works (no counter, no escalation)', async () => {
-    const c = guarded({ id: 2, hash: 'h2' });
-    vi.mocked(forkChat).mockResolvedValue('[{"id":2,"hash":"h2","hold":true,"reason":"r"}]');
-    const verdict = await checkPreventStop(makeEnv([c]));
-    expect(verdict.block).toBe(true);
-    expect(verdict.note).not.toContain('consecutive turn ends');
   });
 });

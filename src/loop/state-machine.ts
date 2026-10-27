@@ -100,25 +100,6 @@ export interface TurnVars {
    * TurnVars so the PROMPT/AWAIT turn boundary naturally clears it.
    */
   collectTransientRetries: number;
-  /**
-   * Consecutive turn ends at which a preventStop guard held, keyed by todo id.
-   *
-   * Lives on TurnVars deliberately: a guard hold returns COLLECT without
-   * `markTurnBoundary()`, so the turn does NOT end — TurnVars is exactly the
-   * scope that survives a held continuation and is cleared at a real turn
-   * boundary. Reset per todo as soon as its guard releases.
-   *
-   * WHY THIS EXISTS (review 2026-10-24): the loop's only escape from a held
-   * guard is the agent unpinning the todo, and nothing told the agent HOW LONG
-   * it had been held. A model could re-read the same condition, reach the same
-   * "still unsatisfied" conclusion, and repeat the same attempt indefinitely
-   * (the only cost being a full LLM stage + one forkChat per iteration). This
-   * counter is fed into the guard note so the agent sees escalating evidence
-   * and can decide the condition is unreachable.
-   *
-   * NOT a cap: a guard that keeps making progress must never be released.
-   */
-  preventStopHolds: Record<number, number>;
 }
 
 /** Pass lifetime — fresh at every COLLECT entry, flows LLM→HOOK→{TOOL|STOP} */
@@ -250,7 +231,7 @@ export class AgentStateMachine {
    * Errors propagate to the caller.
    */
   async run(): Promise<void> {
-    let turn: TurnVars = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', lastBriefMessage: '', lastHintFocus: '', collectTransientRetries: 0, preventStopHolds: {} };
+    let turn: TurnVars = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', lastBriefMessage: '', lastHintFocus: '', collectTransientRetries: 0 };
     this.currentTurn = turn;
     skillSuggester.reset();
     let chat: ChatData = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null, deferredCompact: false };
@@ -270,7 +251,7 @@ export class AgentStateMachine {
       // AWAIT is also a turn boundary in auto mode: each autonomous cycle starts a
       // fresh turn (fresh nudges, lastUserQuery cleared). AWAIT never follows SLASH.
       if ((state === AgentState.PROMPT || state === AgentState.AWAIT) && prevState !== AgentState.SLASH) {
-        turn = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', lastBriefMessage: '', lastHintFocus: '', collectTransientRetries: 0, preventStopHolds: {} };
+        turn = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', lastBriefMessage: '', lastHintFocus: '', collectTransientRetries: 0 };
         this.currentTurn = turn;
         // Reset the skill-discovery singleton's throttle state at the turn
         // boundary — the same lifecycle point where lastSkillY /
