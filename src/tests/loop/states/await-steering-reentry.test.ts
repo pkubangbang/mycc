@@ -32,6 +32,11 @@ vi.mock('../../../loop/agent-io.js', () => {
       isNeglectedMode: vi.fn(() => neglected),
       setNeglectedMode: vi.fn((v: boolean) => { neglected = v; }),
       setAuto: vi.fn(),
+    getAutoCommitBranches: vi.fn(() => [] as string[]),
+    addAutoCommitBranches: vi.fn(() => []),
+    removeAutoCommitBranches: vi.fn(() => []),
+    clearAutoCommitBranches: vi.fn(() => []),
+    effectiveAutoCommitBranches: vi.fn(() => [] as string[]),
       getAuto: vi.fn(() => false),
       log: vi.fn(),
       flushOutput: vi.fn(),
@@ -45,6 +50,11 @@ vi.mock('../../../loop/auto-state.js', () => ({
   autoState: {
     getAuto: vi.fn(() => true),
     setAuto: vi.fn(),
+    getAutoCommitBranches: vi.fn(() => [] as string[]),
+    addAutoCommitBranches: vi.fn(() => []),
+    removeAutoCommitBranches: vi.fn(() => []),
+    clearAutoCommitBranches: vi.fn(() => []),
+    effectiveAutoCommitBranches: vi.fn(() => [] as string[]),
     resetStreak: vi.fn(),
   },
 }));

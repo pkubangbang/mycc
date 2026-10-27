@@ -51,7 +51,7 @@ All environment variables can be overridden via CLI flags. These take highest pr
 | `--auto` | — | Start in autonomous mode (no user prompts) |
 | `--daemon [skill]` | — | Detached headless daemon (forces auto mode); optionally auto-load a service skill and start its cron |
 | `--allow-plan-off` | `MYCC_ALLOW_PLAN_OFF` | In auto mode, auto-approve `plan_off` to exit plan mode without confirmation |
-| `--allow-auto-commit <branches>` | `MYCC_ALLOW_AUTO_COMMIT` | In auto mode (NORMAL mode only), pre-approve `git_commit` on the comma-separated allow-listed branches (exact names, no globs — `release/*` never matches `release/1.2`); skips the interactive prompt and adds an `Auto-Committed-By` trailer. Pair with CI on protected branches — the flag is a narrow launch-time pre-authorization, not a security boundary |
+| `--allow-auto-commit <branches>` | `MYCC_ALLOW_AUTO_COMMIT` | SEED for the live auto-commit branch allow-list (exact names, no globs). Seeded branches also bypass the commit prompt outside auto mode. Edit the live list at runtime with `/auto-commit on <b>` / `off <b>` / `off --all`; `/reload` re-seeds from this flag (the original value), so session edits are discarded. Auto-approved commits carry an `Auto-Committed-By` trailer. Pair with CI on protected branches — the flag is a narrow operator grant, not a security boundary |
 | `--wire-token` | `MYCC_WIRE_TOKEN` | Optional shared secret for the `/peer/ws` peer-wire upgrade (set the same value on both instances to enable the in-app auth gate; unset on both to run the wire open — see [Cross-machine peer wire](QUICKSTART.md#6-cross-machine-peer-wire-optional) in QUICKSTART.md) |
 
 Example usage:

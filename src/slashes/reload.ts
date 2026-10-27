@@ -133,7 +133,7 @@ export const reloadCommand: SlashCommand = {
     const servePort = hub?.getPort() ?? 0;
     const serveHost = hub?.getHost() ?? null;
 
-    console.log(chalk.cyan('\nReloading mycc...'));
+      console.log(chalk.cyan('\nReloading mycc...'));
 
     if (wasServeActive && servePort > 0) {
       console.log(chalk.gray(`  Web UI will resume on port ${servePort} after restart.`));

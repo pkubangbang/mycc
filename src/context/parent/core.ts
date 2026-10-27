@@ -9,7 +9,7 @@ import sharp from 'sharp';
 import type { CoreModule, PictureResult, AskResult } from '../../types.js';
 import { imgDescribe } from '../../engine/chat-provider.js';
 import { agentIO } from '../../loop/agent-io.js';
-import { autoState } from '../../loop/auto-state.js';
+import { autoState, type AutoCommitEntry } from '../../loop/auto-state.js';
 import { getVisionModel, isVisionEnabled, getImgCacheDir, getApiProvider } from '../../config.js';
 import { filetypeinfo } from '../../utils/magic-bytes.js';
 import { BaseCore } from '../shared/base-core.js';
@@ -195,6 +195,35 @@ export class Core extends BaseCore implements CoreModule {
    */
   setAuto(value: boolean): void {
     autoState.setAuto(value);
+  }
+
+  /**
+   * The LIVE auto-commit branch allow-list (`branch` / `branch:autoAdd`
+   * entries). Owned by the shared `autoState` singleton; seeded once from
+   * `--allow-auto-commit` and then edited by `/auto-commit`.
+   */
+  getAutoCommitBranches(): string[] {
+    return autoState.getAutoCommitBranches();
+  }
+
+  /** Add branches to the allow-list (the `/auto-commit on` path). */
+  addAutoCommitBranches(branches: readonly string[], autoAdd: boolean): AutoCommitEntry[] {
+    return autoState.addAutoCommitBranches(branches, autoAdd);
+  }
+
+  /** Remove branches from the allow-list (the `/auto-commit off <b>` path). */
+  removeAutoCommitBranches(branches: readonly string[]): string[] {
+    return autoState.removeAutoCommitBranches(branches);
+  }
+
+  /** Clear the whole allow-list, launch seed included (`off --all`). */
+  clearAutoCommitBranches(): string[] {
+    return autoState.clearAutoCommitBranches();
+  }
+
+  /** Branches that authorize a commit under the given mode. */
+  effectiveAutoCommitBranches(autoMode: boolean): string[] {
+    return autoState.effectiveAutoCommitBranches(autoMode);
   }
 
   /**

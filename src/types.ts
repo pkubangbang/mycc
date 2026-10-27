@@ -9,6 +9,7 @@ import { WebFetchResponse, WebSearchResult } from 'ollama';
 import type { Mindmap } from './mindmap/types.js';
 import type { Condition } from './hook/conditions.js';
 import type { ValidationResult } from './hook/condition-validator.js';
+import type { AutoCommitEntry } from './loop/auto-state.js';
 
 // ============================================================================
 // Ollama Type Extensions
@@ -539,6 +540,48 @@ export interface CoreModule {
    * @param value - true to enter auto mode, false to exit
    */
   setAuto(value: boolean): void;
+  /**
+   * The LIVE branch allow-list for auto-mode commits, as encoded entries
+   * (`branch` or `branch:autoAdd`).
+   *
+   * Seeded from the launch flag `--allow-auto-commit` and then edited by the
+   * `/auto-commit` slash command (`on` adds, `off <branches>` removes,
+   * `off --all` clears). Tools must consult THIS list rather than re-reading
+   * the flag, which only ever holds the original launch value.
+   *
+   * Teammates (child processes) see an empty list: the grant is lead-only and
+   * a teammate in its own worktree can never inherit the lead's authorization.
+   */
+  getAutoCommitBranches(): string[];
+  /**
+   * Add branches to the auto-commit allow-list (the `/auto-commit on` path).
+   *
+   * Add-only and never downgrading: an existing plain entry is upgraded to
+   * `autoAdd` when requested, but never the reverse.
+   *
+   * @param branches - branch names (an entry may already carry `:autoAdd`)
+   * @param autoAdd - true when the branches must also skip the prompt OUTSIDE
+   *   auto mode
+   * @returns the entries newly added or upgraded (for reporting)
+   */
+  addAutoCommitBranches(branches: readonly string[], autoAdd: boolean): AutoCommitEntry[];
+  /**
+   * Remove branches from the auto-commit allow-list (`/auto-commit off <b>`).
+   * Matching is on the branch name only; provenance is ignored.
+   * @returns the branches actually removed
+   */
+  removeAutoCommitBranches(branches: readonly string[]): string[];
+  /**
+   * Clear the WHOLE auto-commit allow-list, launch-seeded entries included
+   * (`/auto-commit off --all`).
+   * @returns the entries that were cleared
+   */
+  clearAutoCommitBranches(): string[];
+  /**
+   * The branch names that authorize a commit under the given mode: `autoAdd`
+   * entries always, plain entries only while auto mode is on.
+   */
+  effectiveAutoCommitBranches(autoMode: boolean): string[];
   /**
    * Get the loaded mindmap data
    * @returns Mindmap data or null if not loaded

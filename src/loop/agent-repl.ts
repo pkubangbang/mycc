@@ -10,7 +10,7 @@ import { classifyError } from '../engine/chat-helpers.js';
 import { ParentContext } from '../context/parent-context.js';
 import { getSessionId, markHeadlessSession } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
-import { getTokenThreshold, shouldServe, getServePort, getServeHost, shouldAuto, shouldDaemon, getAutoflyThresholdArg, getDiscoveryDir, isPlainOutput } from '../config.js';
+import { getTokenThreshold, shouldServe, getServePort, getServeHost, shouldAuto, shouldDaemon, getAutoflyThresholdArg, getDiscoveryDir, isPlainOutput, getAllowAutoCommitBranches } from '../config.js';
 import { Triologue } from './triologue.js';
 import { JsonlTranscriptWriter, asAppendablePiece } from './triologue/transcript.js';
 import { agentIO } from './agent-io.js';
@@ -139,6 +139,13 @@ export async function main(): Promise<void> {
   // Create context
   const ctx = new ParentContext(sessionFilePath);
   ctx.initializeIpcHandlers();
+
+  // Seed the LIVE auto-commit allow-list from the launch flag
+  // (`--allow-auto-commit` / MYCC_ALLOW_AUTO_COMMIT). One-shot: /auto-commit
+  // edits the seeded copy for the rest of the session, and /reload respawns
+  // this process with the original argv so a fresh seed restores the original
+  // value rather than the edited one.
+  autoState.seedAutoCommitBranches(getAllowAutoCommitBranches());
 
   // Auto-grant read access to skill directories so the LLM can read
   // skill asset files (cheat sheets, scripts, etc.) without permission prompts.

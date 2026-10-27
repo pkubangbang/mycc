@@ -408,9 +408,12 @@ export function shouldAllowPlanOff(): boolean {
 /**
  * Parse the `--allow-auto-commit=<branch,branch,...>` allow-list.
  *
- * Returns the list of branch names the operator has pre-authorized for
- * auto-mode commits. Comma-separated; whitespace around each name is trimmed
- * and empty entries dropped. An absent/empty flag yields `[]` (feature OFF).
+ * Returns the SEED value: the branches the operator pre-authorized at launch.
+ * This is the STARTING state of `ctx.core.autoCommitBranches`, not the live
+ * list — the `/auto-commit` slash command adds to / removes from that runtime
+ * copy, so the commit gate must read the Core list, never this function.
+ * Keeping the flag itself immutable is what lets `/reload` restore the original
+ * value: the respawned Lead re-reads this seed and any session edits are gone.
  *
  * MATCHING IS EXACT STRING EQUALITY — NO GLOBS. `release/*` does NOT match the
  * branch `release/1.2`; only a literal `release/1.2` entry does. This is
@@ -425,6 +428,18 @@ export function shouldAllowPlanOff(): boolean {
  */
 export function getAllowAutoCommitBranches(): string[] {
   const raw = args['allow-auto-commit'];
+  if (typeof raw !== 'string') return [];
+  return parseAutoCommitBranchList(raw);
+}
+
+/**
+ * Split a comma-separated branch list into normalized entries.
+ *
+ * Shared by `getAllowAutoCommitBranches()` and the `/auto-commit` slash command
+ * so the seed value and the runtime edits can never disagree about trimming or
+ * about which empty entries to drop.
+ */
+export function parseAutoCommitBranchList(raw: string | undefined): string[] {
   if (typeof raw !== 'string') return [];
   return raw
     .split(',')

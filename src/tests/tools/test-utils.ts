@@ -56,6 +56,11 @@ export function createMockContext(workdir: string): AgentContext {
     // tests override getAuto via vi.mocked(ctx.core.getAuto).mockReturnValue(true).
     getAuto: vi.fn(() => false),
     setAuto: vi.fn(),
+    getAutoCommitBranches: vi.fn(() => [] as string[]),
+    addAutoCommitBranches: vi.fn(() => []),
+    removeAutoCommitBranches: vi.fn(() => []),
+    clearAutoCommitBranches: vi.fn(() => []),
+    effectiveAutoCommitBranches: vi.fn(() => [] as string[]),
     getMindmap: vi.fn(() => null),
     isPlainOutput: vi.fn(() => false),
     setMindmap: vi.fn(),

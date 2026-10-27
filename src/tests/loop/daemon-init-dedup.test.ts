@@ -33,6 +33,11 @@ vi.mock('../../loop/auto-state.js', () => ({
   autoState: {
     resetStreak: vi.fn(),
     setAuto: vi.fn(),
+    getAutoCommitBranches: vi.fn(() => [] as string[]),
+    addAutoCommitBranches: vi.fn(() => []),
+    removeAutoCommitBranches: vi.fn(() => []),
+    clearAutoCommitBranches: vi.fn(() => []),
+    effectiveAutoCommitBranches: vi.fn(() => [] as string[]),
   },
 }));
 

@@ -3,6 +3,7 @@
  */
 
 import type { CoreModule, PictureResult, AskResult } from '../../types.js';
+import type { AutoCommitEntry } from '../../loop/auto-state.js';
 import { ipc, sendStatus } from './ipc-helpers.js';
 import { isVerbose } from '../../config.js';
 import { BaseCore } from '../shared/base-core.js';
@@ -185,6 +186,36 @@ export class ChildCore extends BaseCore implements CoreModule {
   /** No-op: auto mode is lead-only. Kept for CoreModule interface conformance. */
   setAuto(_value: boolean): void {
     // No-op: auto mode is managed by the parent process
+  }
+
+  /**
+   * Teammates never hold an auto-commit grant — the authorization belongs to
+   * the lead, and a teammate in its own worktree can never inherit it. The
+   * empty list makes the `git_commit` gate fall through to the normal prompt
+   * (or the mail-to-lead path) for every teammate.
+   */
+  getAutoCommitBranches(): string[] {
+    return [];
+  }
+
+  /** No-op: the auto-commit allow-list is lead-only. */
+  addAutoCommitBranches(_branches: readonly string[], _autoAdd: boolean): AutoCommitEntry[] {
+    return [];
+  }
+
+  /** No-op: the auto-commit allow-list is lead-only. */
+  removeAutoCommitBranches(_branches: readonly string[]): string[] {
+    return [];
+  }
+
+  /** No-op: the auto-commit allow-list is lead-only. */
+  clearAutoCommitBranches(): string[] {
+    return [];
+  }
+
+  /** Always empty for a child process (see getAutoCommitBranches). */
+  effectiveAutoCommitBranches(_autoMode: boolean): string[] {
+    return [];
   }
 
   /**

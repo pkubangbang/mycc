@@ -24,7 +24,7 @@ import type { Core } from '../context/parent/core.js';
 import { agentIO } from '../loop/agent-io.js';
 import { MailBox } from '../context/shared/mail.js';
 import { findWorktreeByName } from '../context/worktree-store.js';
-import { isAllowAutoCommit, getAllowAutoCommitBranches } from '../config.js';
+import { parseAutoCommitEntry } from '../loop/auto-state.js';
 import path from 'path';
 import { spawn } from 'child_process';
 
@@ -155,49 +155,62 @@ export const gitCommitTool: ToolDefinition = {
       // If git status fails, just proceed - the commit will fail with a clear message
     }
 
-    // ── Auto-commit pre-authorization (--allow-auto-commit=<branches>) ──
-    // When the operator pre-authorized a branch list AND we are in auto mode
-    // AND we are NOT in plan mode AND the current branch is allow-listed,
-    // skip the interactive question() (which auto mode would otherwise
-    // auto-DENY) and commit directly with an audit trailer.
+    // ── Auto-commit pre-authorization (--allow-auto-commit / /auto-commit) ──
+    // Two grants feed ONE gate, read from `ctx.core.getAutoCommitBranches()`
+    // (the LIVE list owned by autoState — never the launch flag, which only
+    // seeds it):
+    //   - launch : `--allow-auto-commit=<branches>` at process start
+    //   - session: `/auto-commit on ...` typed by the user at the PROMPT
+    // Both are user-typed; no tool can reach a slash command, so the agent can
+    // never grant itself. `/auto-commit off --all` clears even the launch seed.
     //
-    // This mirrors plan_off.ts's shape: the getAuto() check runs BEFORE
-    // question() decides whether to skip it entirely, so there is no
-    // AskResult.source to read — do NOT convert this to the source==='auto'
-    // pattern used further below.
+    // MODE RULE: an entry carrying `autoAdd` bypasses the prompt regardless of
+    // auto mode (that is what the launch flag always meant, and what
+    // `/auto-commit on <b>:autoAdd` opts into explicitly). A PLAIN entry only
+    // applies in auto mode — auto mode would otherwise auto-DENY the prompt,
+    // so skipping it is exactly the pre-`/auto-commit` behavior.
     //
-    // PLAN MODE ALWAYS WINS: the flag is a capability grant, never a mode
-    // override. A plan-mode agent must not be able to land a commit even with
-    // a pre-staged tree, so getMode()==='plan' short-circuits the bypass and
-    // falls through to question() (which auto mode denies).
-    //
+    // PLAN MODE ALWAYS WINS: the grant is a capability, never a mode override.
     // Placed AFTER the child/worktree gate (a teammate in its own worktree can
-    // never inherit the lead's grant — belt-and-suspenders on top of child
-    // getAuto() being hard-false) and AFTER the staged-changes check above.
+    // never inherit the lead's grant) and AFTER the staged-changes check.
     const core = ctx.core as Core;
+    const autoMode = ctx.core.getAuto();
     let autoApproved = false;
     // Captured ONCE and reused for the audit trailer, so the branch recorded in
     // `Auto-Commit-Branch:` is exactly the branch that authorized the commit —
     // re-running `git rev-parse` later could observe a switched branch (TOCTOU)
     // and make the audit trail lie.
     let autoCommitBranch: string | null = null;
-    if (isAllowAutoCommit() && ctx.core.getAuto() && core.getMode() !== 'plan') {
+    // Which grant authorized it, for the trailer. Captured from the SAME entry
+    // that matched, so provenance cannot drift from the live list:
+    //   'auto'    — a plain entry that applied because auto mode was on
+    //   'autoAdd' — an entry carrying the autoAdd suffix (bypasses the prompt
+    //               outside auto mode too)
+    let autoCommitSource: 'auto' | 'autoAdd' | null = null;
+    const allowList = ctx.core.getAutoCommitBranches();
+    if (allowList.length > 0 && core.getMode() !== 'plan') {
       const branch = await currentBranch(commitCwd);
-      if (branch !== null && getAllowAutoCommitBranches().includes(branch)) {
+      const authorized = branch !== null
+        ? allowList
+          .map(parseAutoCommitEntry)
+          .find((e) => e.branch === branch && (e.autoAdd || autoMode))
+        : undefined;
+      if (branch !== null && authorized) {
         autoApproved = true;
         autoCommitBranch = branch;
+        autoCommitSource = authorized.autoAdd ? 'autoAdd' : 'auto';
         ctx.core.brief(
           'info',
           'git_commit',
-          `Auto-approved commit on allow-listed branch '${branch}' (--allow-auto-commit)`,
+          `Auto-approved commit on allow-listed branch '${branch}'`,
         );
       } else {
-        // Flag is set but this branch isn't listed (or detached HEAD): fall
+        // A list exists but this branch is not (currently) authorized: fall
         // through to the normal path, which auto-denies under auto mode.
         ctx.core.brief(
           'info',
           'git_commit',
-          `--allow-auto-commit set but branch '${branch ?? '(detached)'}' is not allow-listed`,
+          `Auto-commit: branch '${branch ?? '(detached)'}' is not authorized${autoMode ? '' : ' (and the lead is not in auto mode)'}`,
         );
       }
     }
@@ -259,10 +272,11 @@ export const gitCommitTool: ToolDefinition = {
     }
 
     // Append the audit trailer when the commit was auto-approved, so CI and
-    // humans can see it was machine-approved rather than human-confirmed.
-    // Uses the branch captured at authorization time (see autoCommitBranch).
+    // humans can see it was machine-approved rather than human-confirmed, and
+    // WHICH grant authorized it. Uses the branch captured at authorization time
+    // (see autoCommitBranch).
     const commitMessage = autoApproved
-      ? `${message}\n\nAuto-Committed-By: mycc --allow-auto-commit\nAuto-Commit-Branch: ${autoCommitBranch}`
+      ? `${message}\n\nAuto-Committed-By: mycc auto-commit\nAuto-Commit-Branch: ${autoCommitBranch}\nAuto-Commit-Grant: ${autoCommitSource}`
       : message;
 
     try {
