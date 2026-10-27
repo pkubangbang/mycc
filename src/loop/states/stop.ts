@@ -26,10 +26,11 @@ import { autoState } from '../auto-state.js';
 import { startWrapUp } from '../esc-wrap-up.js';
 import { loader } from '../../context/shared/loader.js';
 import { stopSpinner } from '../../engine/chat-helpers.js';
+import { checkPreventStop } from './stop-prevent-stop.js';
 
 export async function handleStop(
   env: MachineEnv,
-  _turn: TurnVars,
+  turn: TurnVars,
   _chat: ChatData,
 ): Promise<HandlerResult> {
   const { triologue, ctx } = env;
@@ -114,6 +115,44 @@ export async function handleStop(
       agentIO.setNeglectedMode(false);
       markTurnBoundary();
       return AgentState.PROMPT;
+    }
+
+    // Normal mode: STOP GUARD first — a pinned todo's `preventStop` condition
+    // may forbid ending the turn. Placed AFTER the neglection block (ESC always
+    // wins: a user interrupt is never blocked by a guard) and BEFORE
+    // presentResult()/the auto-mode early return, so a held guard keeps the
+    // turn alive in BOTH interactive and auto mode.
+    //
+    // A hold returns COLLECT WITHOUT markTurnBoundary(): the turn genuinely
+    // continues, so turn.* events, hook dedup and totalTurns all persist. The
+    // SYSTEM note is the only thing the LLM sees — the gate never mutates the
+    // todo (the agent must release the guard itself).
+    const guardResult = await checkPreventStop(env);
+    if (guardResult.held && guardResult.guard) {
+      const held = guardResult.guard;
+      const counts = (turn.preventStopHolds ??= {});
+      counts[held.id] = (counts[held.id] ?? 0) + 1;
+      const nth = counts[held.id];
+
+      const lines = [
+        `[STOP BLOCKED] Pinned todo #${held.id} "${held.name}" prevents finishing this turn.`,
+        `Guard: "${held.condition}"`,
+      ];
+      if (guardResult.reason) lines.push(`Evaluator's grounds: ${guardResult.reason}`);
+      if (nth >= 2) {
+        // Escalate from the 2nd hold: repeating the same message is what lets a
+        // held guard spin. Name the count and the ONLY way out.
+        lines.push(
+          `This is hold #${nth} in a row for this guard — the previous attempt did not satisfy it.`,
+          `Either satisfy the guard with concrete, verifiable evidence, or release it with ` +
+            `todo_pinning(id=${held.id}, hash=<current hash>, pinned=false) once it no longer applies.`,
+        );
+      } else {
+        lines.push('Satisfy the guard before finishing, or release it if it no longer applies.');
+      }
+      triologue.note('SYSTEM', lines.join('\n'));
+      ctx.core.brief('info', 'stop', `Stop guard held (#${held.id}, hold ${nth})`);
+      return AgentState.COLLECT;
     }
 
     // Normal mode: wait for teammates to stop, responding to steering so the

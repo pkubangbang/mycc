@@ -100,6 +100,17 @@ export interface TurnVars {
    * TurnVars so the PROMPT/AWAIT turn boundary naturally clears it.
    */
   collectTransientRetries: number;
+  /**
+   * Consecutive STOP-guard holds per todo id, within the current turn.
+   *
+   * Lives on TurnVars because a hold does NOT end the turn (STOP→COLLECT skips
+   * `markTurnBoundary()`), so nothing that normally clears state runs. It lets
+   * the hold note escalate from the second hold onward (naming the count and
+   * the release call) instead of repeating the identical message. There is NO
+   * hard cap — a residual spin is possible if the evaluator never accepts the
+   * evidence; that risk is documented in docs/loop/pinned-todo-prevent-stop.md.
+   */
+  preventStopHolds?: Record<number, number>;
 }
 
 /** Pass lifetime — fresh at every COLLECT entry, flows LLM→HOOK→{TOOL|STOP} */

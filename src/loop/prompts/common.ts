@@ -58,7 +58,7 @@ export function buildVerificationSection(): string {
 }
 
 // ============================================================================
-// Pinned Todo & Reactivation Section (lead-only — teammates never see it)
+// Pinned Todo & Prevent-Stop Guard Section (lead-only — teammates never see it)
 // ============================================================================
 
 export function buildPinnedTodoSection(): string {
@@ -70,14 +70,19 @@ export function buildPinnedTodoSection(): string {
     '- Use pinned todos for persistent reminders (e.g., schema definitions, invariant rules, ' +
     'materialized view refresh tasks).',
     '',
-    '### Reactivation',
-    'Pinned todos can be automatically reactivated (marked back to not done) when a condition is met:',
-    '- Use `todo_pinning(id, hash, pinned=true, reactivate="<natural language condition>")` to set a reactivation condition.',
-    "- After each nudge cycle, the system evaluates completed pinned todos' reactivation conditions " +
-    'against the conversation context via LLM.',
-    '- If the condition is met, the todo is automatically reactivated — you will see a SYSTEM note about the reactivation.',
-    '- Example: `todo_pinning(id=2, hash="abc12345", pinned=true, ' +
-    'reactivate="when the users table or orders table is modified (INSERT/UPDATE/DELETE)")`',
+    '### Prevent-Stop Guards',
+    'A pinned todo can carry a `preventStop` guard — a statement about the state the work must ' +
+    'reach before you may finish your turn:',
+    '- Set it with `todo_pinning(id, hash, pinned=true, preventStop="<condition>")`.',
+    '- At every STOP, the system evaluates ALL guards in one batched LLM call against the conversation.',
+    '- While a guard holds, you CANNOT end the turn: you get a `[STOP BLOCKED]` SYSTEM note and are ' +
+    'sent back to work with what is still missing.',
+    '- Repeated holds escalate, naming the hold count and the release call.',
+    '- Release a guard you no longer need (or once it is satisfied) with ' +
+    '`todo_pinning(id, hash, pinned=false)` — the system never releases it for you.',
+    '- Judge-proof wording matters: state a verifiable outcome, not an intention. Example: ' +
+    '`todo_pinning(id=2, hash="abc12345", pinned=true, ' +
+    'preventStop="the failing test in todo.test.ts passes and pnpm lint is clean")`',
   ].join('\n');
 }
 

@@ -762,7 +762,7 @@ const INJECTED_FIELD_MAX = 60;
 /**
  * Sanitize a user- or peer-authored value before splicing it into the prompt.
  *
- * The todo list echoes `note` / `reactivate` conditions, which are natural
+ * The todo list echoes `note` / `preventStop` conditions, which are natural
  * language written by the user or a peer — the transcript view never had this
  * exposure because it is minimised and truncated. Flatten newlines, collapse
  * whitespace and cap the length so a crafted todo cannot smuggle a heading or
@@ -774,6 +774,43 @@ function sanitizeField(value: string): string {
   // it), so a value containing it is defused rather than passed through.
   const safe = flat.split(ANALYSIS_INSTRUCTION).join('[gap analysis]');
   return safe.length > INJECTED_FIELD_MAX ? `${safe.slice(0, INJECTED_FIELD_MAX)}…` : safe;
+}
+
+/**
+ * One held STOP guard, as read from the turn state.
+ */
+interface HeldGuardLine {
+  id: number;
+  name: string;
+  condition: string;
+  holds: number;
+}
+
+/**
+ * Read the guards that blocked the turn, or [] when none did.
+ *
+ * The hold counters live on `TurnVars.preventStopHolds` (a hold does not end
+ * the turn, so nothing clears it mid-turn); the names and conditions live on
+ * the todo items themselves. A guard whose todo was released between the hold
+ * and this round is skipped — the section reports LIVE guards only, so it can
+ * never claim something the todo store no longer says.
+ *
+ * Duck-typed on purpose: the hint round stays decoupled from the state
+ * machine's TurnVars shape (same reason `readRecentDenials` duck-types core).
+ */
+function readHeldGuards(env: MachineEnv): HeldGuardLine[] {
+  const turn = (env as unknown as { turn?: { preventStopHolds?: Record<number, number> } }).turn;
+  const holds = turn?.preventStopHolds;
+  if (!holds) return [];
+  const out: HeldGuardLine[] = [];
+  for (const [idStr, count] of Object.entries(holds)) {
+    const id = Number(idStr);
+    if (!Number.isFinite(id) || !count) continue;
+    const todo = env.ctx.todo.getItems().find((i) => i.id === id);
+    if (!todo || !todo.preventStop) continue;
+    out.push({ id, name: todo.name, condition: todo.preventStop, holds: count });
+  }
+  return out.sort((a, b) => a.id - b.id);
 }
 
 /**
@@ -792,7 +829,7 @@ function buildStateSections(env: MachineEnv): string[] {
 
   // ── Todo List ──
   // Rendered from getItems() rather than printTodoList(): the printer echoes
-  // the raw note + reactivate bodies, which are user/peer-authored.
+  // the raw note + preventStop bodies, which are user/peer-authored.
   let todos: ReturnType<MachineEnv['ctx']['todo']['getItems']>;
   try {
     todos = env.ctx.todo.getItems();
@@ -836,6 +873,23 @@ function buildStateSections(env: MachineEnv): string[] {
   const permissionEvidence = formatDenials(readRecentDenials(env) ?? []);
   if (permissionEvidence) parts.push(permissionEvidence);
 
+  // ── Stop Guards (held) ──
+  // Out-of-band evidence the transcript CANNOT reconstruct: a held guard is a
+  // system-side verdict that blocked the turn, and the agent's retry text does
+  // not say how many times it was already bounced. Without this section the
+  // analyzer sees a repeated "I`m done" and invents a generic blocker instead
+  // of telling the agent what the guard is actually waiting for.
+  const heldGuards = readHeldGuards(env);
+  if (heldGuards.length > 0) {
+    const guardLines = ['## Stop Guards (held)'];
+    guardLines.push('A pinned-todo guard blocked the turn. Repeating the same claim will not release it:');
+    for (const g of heldGuards) {
+      guardLines.push(
+        `- #${g.id} "${sanitizeField(g.name)}" — guard: ${sanitizeField(g.condition)} — held ${g.holds}×`,
+      );
+    }
+    parts.push(guardLines.join('\n'));
+  }
   // ── Loop Evidence ──
   // detectRepeatedActions() names the tool, the repeat count and the shared
   // error prefix — evidence, not a metric. It is the ONE piece of the old

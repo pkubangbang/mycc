@@ -192,18 +192,23 @@ export interface TodoItem {
   /**
    * Pinned todos are NOT auto-cleared when all (non-pinned) todos are completed.
    * They persist as long-term reminders. Set via `todo_pinning` tool.
-   * The hash does NOT include this field — pinned/reactivate are managed
+   * The hash does NOT include this field — pinned/preventStop are managed
    * through `todo_pinning`, which itself requires the current hash, so the
    * anti-hallusion guarantee is preserved.
    */
   pinned?: boolean;
   /**
-   * Natural-language reactivation condition for a pinned todo. After each
-   * nudge cycle, the system evaluates completed pinned todos carrying a
-   * reactivation condition against the conversation context via `forkChat`;
-   * if the condition is met, the todo is automatically reopened.
+   * Natural-language STOP-GUARD condition for a pinned todo. While it holds,
+   * the agent may not finish its turn: STOP evaluates every pending guard in
+   * one batched `forkChat` and, when one holds, routes back to COLLECT with a
+   * SYSTEM note instead of reaching PROMPT.
+   *
+   * The guard is a STATEMENT about the state the work must reach (e.g. "the
+   * migration has been rolled back and verified"), not a reminder to be
+   * reopened — that is why it replaced the old `reactivate` field: reopening a
+   * todo changed nothing about whether the turn could end.
    */
-  reactivate?: string;
+  preventStop?: string;
   /**
    * Lineage ring of previous integrity hashes (cap 3, oldest dropped first).
    * Read-only metadata: every time a field in the hash signature (name|done|note)
@@ -634,12 +639,12 @@ export interface TodoModule {
   getItems(): TodoItem[];
   /**
    * Pin or unpin a todo item, optionally setting a natural-language
-   * reactivation condition. Requires the current hash (anti-hallusion).
-   * The hash is NOT recomputed — pinned/reactivate are not part of the
+   * STOP-GUARD condition. Requires the current hash (anti-hallusion).
+   * The hash is NOT recomputed — pinned/preventStop are not part of the
    * integrity signature.
    * Returns null if id not found or hash mismatch.
    */
-  pinTodo(id: number, hash: string, pinned: boolean, reactivate?: string): TodoItem | null;
+  pinTodo(id: number, hash: string, pinned: boolean, preventStop?: string): TodoItem | null;
   /**
    * Resolve a stale hash to the CURRENT item whose lineage ring contains it.
    * Returns null if no item's `previousHashes` includes the hash.
@@ -650,8 +655,15 @@ export interface TodoModule {
    * write — the integrity gate in `updateTodo` is unchanged.
    */
   findByPreviousHash(hash: string): TodoItem | null;
-  /** Completed pinned todos carrying a reactivation condition — candidates for auto-reactivation. */
-  getReactivationCandidates(): TodoItem[];
+  /**
+   * Pinned todos carrying a STOP-GUARD condition — the only todos STOP must
+   * evaluate before letting the turn finish.
+   *
+   * NOT filtered on `done`: a guard describes a state the work must reach, so
+   * a guard attached to an already-completed todo is still meaningful (the
+   * completion may have happened before the guarded state changed again).
+   */
+  getPreventStopTodos(): TodoItem[];
 }
 
 /**

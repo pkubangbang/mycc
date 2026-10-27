@@ -111,22 +111,21 @@ export class Todo implements TodoModule {
     for (const item of this.items) {
       const marker = item.done ? '[x]' : '[ ]';
       const pinTag = item.pinned ? '📌' : '';
-      const reactTag = item.reactivate ? ` [reactivate: ${item.reactivate}]` : '';
+      const guardTag = item.preventStop ? ` [preventStop: ${item.preventStop}]` : '';
       const note = item.note ? ` (${item.note})` : '';
-      lines.push(`  ${marker} ${pinTag} ${item.id}. ${item.name}${note}${reactTag} [hash: ${item.hash}]`);
+      lines.push(`  ${marker} ${pinTag} ${item.id}. ${item.name}${note}${guardTag} [hash: ${item.hash}]`);
     }
     return lines.join('\n');
   }
 
   /**
-   * Check if there are incomplete todos, OR completed pinned todos carrying a
-   * reactivation condition (candidates for auto-reactivation). The latter
-   * keeps the nudge/reactivation pass firing for pinned todos that may need
-   * to be reopened.
+   * Check if there are incomplete todos. STOP guards deliberately do NOT keep
+   * this true: a guard blocks the turn's END, so it must not also drive the
+   * "keep working" nudge — otherwise a held guard and the nudge would fight
+   * over the same loop iteration.
    */
   hasOpenTodo(): boolean {
-    return this.items.some((item) => !item.done) ||
-           this.items.some((item) => item.pinned && item.done && !!item.reactivate);
+    return this.items.some((item) => !item.done);
   }
 
   /**
@@ -146,20 +145,20 @@ export class Todo implements TodoModule {
 
 
   /**
-   * Pin or unpin a todo item, optionally setting a natural-language
-   * reactivation condition. Requires the current hash (anti-hallusion) —
-   * rejects if id not found or hash mismatch. The hash is NOT recomputed:
-   * pinned/reactivate are not part of the integrity signature.
+   * Pin or unpin a todo item, optionally setting a natural-language STOP-GUARD
+   * condition. Requires the current hash (anti-hallusion) — rejects if id not
+   * found or hash mismatch. The hash is NOT recomputed: pinned/preventStop are
+   * not part of the integrity signature.
    * @returns the updated item (copy), or null on id-not-found / hash mismatch
    */
-  pinTodo(id: number, hash: string, pinned: boolean, reactivate?: string): TodoItem | null {
+  pinTodo(id: number, hash: string, pinned: boolean, preventStop?: string): TodoItem | null {
     const existing = this.items.find((i) => i.id === id);
     if (!existing) return null;
     if (existing.hash !== hash) return null;
 
     existing.pinned = pinned;
-    // Clear reactivate when un-pinning; set/overwrite when pinning.
-    existing.reactivate = pinned ? reactivate : undefined;
+    // Clear the guard when un-pinning; set/overwrite when pinning.
+    existing.preventStop = pinned ? preventStop : undefined;
     return { ...existing };
   }
 
@@ -180,14 +179,16 @@ export class Todo implements TodoModule {
   }
 
   /**
-   * Completed pinned todos carrying a reactivation condition — candidates
-   * for auto-reactivation. The COLLECT state evaluates each candidate's
-   * condition against the conversation context via `forkChat` and reopens
-   * those whose condition is met.
+   * Pinned todos carrying a STOP-GUARD condition — the set STOP evaluates in
+   * one batched forkChat before allowing the turn to finish.
+   *
+   * Not filtered on `done` (see TodoModule.getPreventStopTodos): a guard is a
+   * statement about the state the work must reach, not about the todo's own
+   * checkbox.
    */
-  getReactivationCandidates(): TodoItem[] {
+  getPreventStopTodos(): TodoItem[] {
     return this.items
-      .filter((i) => i.pinned && i.done && !!i.reactivate)
+      .filter((i) => i.pinned && !!i.preventStop)
       .map((i) => ({ ...i }));
   }
 }
