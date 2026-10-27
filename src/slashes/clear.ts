@@ -8,6 +8,7 @@ import { Triologue } from '../loop/triologue.js';
 import { clearWrapUp } from '../loop/wrap-up-state.js';
 import { skillSuggester, beginFreshSession } from '../loop/states/collect-skill.js';
 import { reconcileServeStateAfterClear } from '../loop/states/collect.js';
+import { discardTodoModelRefresh } from '../context/shared/todo-model-refresh.js';
 
 export const clearCommand: SlashCommand = {
   name: 'clear',
@@ -20,6 +21,7 @@ export const clearCommand: SlashCommand = {
     // the fresh conversation carrying the pre-clear todos (the list would
     // "survive" the very boundary meant to wipe it).
     context.ctx.todo.clear();
+    discardTodoModelRefresh(context.ctx.todo);
     triologue.clear();
     // fullClear() resets EVERYTHING including turn.events[] and totalTurns —
     // /clear starts a completely fresh session. This is the one place where

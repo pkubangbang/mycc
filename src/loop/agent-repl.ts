@@ -41,6 +41,7 @@ import { handleStop } from './states/stop.js';
 import { handleWait } from './states/await.js';
 import { clearWrapUp } from './wrap-up-state.js';
 import { beginFreshSession } from './states/collect-skill.js';
+import { discardTodoModelRefresh } from '../context/shared/todo-model-refresh.js';
 import pkg from '../../package.json';
 import { loadProjectMindmap } from './mindmap-loader.js';
 import { registerSignalHandlers } from './signal-handlers.js';
@@ -233,6 +234,7 @@ export async function main(): Promise<void> {
     // todo populator (buildTodoMessages), re-invoked by clear()'s
     // rebuildProjectContext(), snapshots an EMPTY list. See slashes/clear.ts.
     ctx.todo.clear();
+    discardTodoModelRefresh(ctx.todo);
     triologue.clear();
     // fullClear() resets EVERYTHING including turn.events[] and totalTurns —
     // double-Ctrl+L starts a completely fresh session.

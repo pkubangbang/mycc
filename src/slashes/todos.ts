@@ -11,6 +11,7 @@
 
 import type { SlashCommand } from '../types.js';
 import chalk from 'chalk';
+import { queueTodoModelRefresh } from '../context/shared/todo-model-refresh.js';
 
 export const todosCommand: SlashCommand = {
   name: 'todos',
@@ -19,13 +20,9 @@ export const todosCommand: SlashCommand = {
   handler: (context) => {
     const subCommand = context.args[1];
 
-    // NOTE: this command mutates the todo store from the SLASH state, which is
-    // NOT a project-context rebuild boundary — and it deliberately does NOT
-    // force one. A mid-run rebuild would re-render the populator output and
-    // break the cache-stable prompt prefix. The agent does not need it: the
-    // hint round (hint-round.ts buildStateSections) renders its own live,
-    // sanitized `## Todo List` from getItems() and covers the gap until the
-    // next natural boundary (compact / clear / startup).
+    // Slash mutations are outside model-call todo tools and need an explicit
+    // transcript-side refresh. Queue the latest snapshot for the next brief
+    // result; do not rebuild projectContext and invalidate the cached prefix.
 
     if (subCommand === 'add') {
       // Parse name and optional -n/--note
@@ -53,10 +50,12 @@ export const todosCommand: SlashCommand = {
       }
 
       const item = context.ctx.todo.createTodo(name.trim(), note);
+      queueTodoModelRefresh(context.ctx.todo);
       const noteStr = note ? ` (note: ${note})` : '';
       console.log(chalk.green(`Todo ${item.id} added: ${item.name}${noteStr} [hash: ${item.hash}]`));
     } else if (subCommand === 'clear') {
       context.ctx.todo.clear();
+      queueTodoModelRefresh(context.ctx.todo);
       console.log(chalk.green('All todos cleared.'));
     } else if (subCommand === 'done' || subCommand === 'undone') {
       const idStr = context.args[2];
@@ -90,6 +89,7 @@ export const todosCommand: SlashCommand = {
       );
 
       if (updated) {
+        queueTodoModelRefresh(context.ctx.todo);
         const status = done ? 'done' : 'undone';
         console.log(chalk.green(`Todo ${id} marked as ${status}.`));
       } else {

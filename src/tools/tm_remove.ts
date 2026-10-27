@@ -5,6 +5,7 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { queueTodoModelRefresh } from '../context/shared/todo-model-refresh.js';
 
 export const tmRemoveTool: ToolDefinition = {
   name: 'tm_remove',
@@ -58,8 +59,13 @@ export const tmRemoveTool: ToolDefinition = {
         const cwdVal = todo.note!.substring(4);
         const lastSeg = cwdVal.replace(/\\/g, '/').split('/').pop();
         if (lastSeg === name) {
-          ctx.todo.updateTodo(todo.id, todo.hash, todo.name, true, todo.note);
-          ctx.core.brief('info', 'tm_remove', `Closed worktree cleanup todo for '${name}' (${cwdVal})`);
+          const updated = ctx.todo.updateTodo(todo.id, todo.hash, todo.name, true, todo.note);
+          if (updated) {
+            // This side effect does not return the changed row to the model.
+            // Queue its new hash for the next brief result.
+            queueTodoModelRefresh(ctx.todo);
+            ctx.core.brief('info', 'tm_remove', `Closed worktree cleanup todo for '${name}' (${cwdVal})`);
+          }
         }
       }
 
