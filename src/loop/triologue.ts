@@ -459,24 +459,10 @@ export class Triologue {
   journalRecapAudit(fields: RecapAuditFields): void {
     const content = buildRecapAuditLine(fields);
     if (content.trim() === '') return; // nothing to journal
-    // NOTHING AFTER THE FOLD MAY THROW (MEDIUM-2). `onMessage` is the transcript
-    // sink: a full disk, a read-only session dir, or a writer bug would raise
-    // here — and by the time this runs the span has ALREADY been truncated and
-    // the note written into the anchor, so an escaping exception would replace
-    // an applied fold with a HOOK-stage error (the caller routes to PROMPT and
-    // the user sees "HOOK state error", with the fold silently applied and its
-    // audit record absent). Swallowing keeps the fold reported as `partial` by
-    // the caller, which is the honest outcome; the verbose line keeps it
-    // observable instead of silent.
-    try {
-      this.options.onMessage(
-        { kind: RECAP_AUDIT_KIND, content, audit: fields } as unknown as Message,
-        () => this.store.getRaw(),
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      agentIO.verbose('recap', `recap audit record not journaled: ${message}`);
-    }
+    this.options.onMessage(
+      { kind: RECAP_AUDIT_KIND, content, audit: fields } as unknown as Message,
+      () => this.store.getRaw(),
+    );
   }
 
   /**
@@ -1117,30 +1103,8 @@ export class Triologue {
     expectedBriefCallId?: string,
     target?: string,
     openTodos?: string,
-  ): {
-    /** The anchor brief's message, captured before truncation. */
-    anchorMessage: string;
-    tokensBefore: number;
-    tokensAfter: number;
-    /** The note as actually stored — journal THIS text, never a re-rendering. */
-    note: string;
-    /** Stored note length, or -1 when the write could not land. */
-    noteLength: number;
-    /** false when the note could not be written — report the fold as `partial`. */
-    noteWritten: boolean;
-  } | null {
+  ): { anchorMessage: string; tokensBefore: number; tokensAfter: number } | null {
     return this.briefStack.rewindToLastBrief(additionalMessage, expectedBriefCallId, target, openTodos);
-  }
-
-  /**
-   * Is the anchor's tool result STILL exactly `note`? The post-fold
-   * reconciliation probe: after a fold, later side effects (audit record,
-   * mindmap patch) can fail on their own, and this tells the caller whether the
-   * one property that matters — "the note the model reads is the note we
-   * summarized" — actually holds. Read-only.
-   */
-  isRecapNoteStored(briefCallId: string, note: string): boolean {
-    return this.briefStack.noteIsStored(briefCallId, note);
   }
 
   /**

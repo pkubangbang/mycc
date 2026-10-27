@@ -34,7 +34,6 @@ import { stripInternalMarkup } from '../../utils/letter-box.js';
 import { buildCandidatesBrief } from '../crossroad.js';
 import { briefToolCall, newBriefCallId, validateBriefIsolation, briefMessageVerdict, briefOverTargetWarning, briefTooLongError } from '../triologue/brief.js';
 import { formatOpenTodos } from '../triologue/recap-note.js';
-import { buildRecapAuditLine } from '../triologue/transcript.js';
 import { buildPlanScopeNote, formatPlanScopeForDisplay, withPlanScopeNote } from '../plan-scope.js';
 
 /**
@@ -349,39 +348,12 @@ async function handleAutoRecap(
     return null;
   }
 
-  // ── THE COMMIT BOUNDARY (MEDIUM-2) ──
-  // `rewindToLastBrief` above is the POINT OF NO RETURN: the span is truncated
-  // and the note is written into the anchor. Everything below it is a side
-  // effect that can fail on its own (disk full, read-only session dir, a
-  // validator disagreement, a throwing sink), and NOT ONE of them may turn an
-  // applied fold into an exception or into a silent "skipped" report.
-  //
-  // The protocol, in order of irreversibility:
-  //   1. the note itself — atomic and verified by the STORE (tryRewrite...), so
-  //      either the anchor carries the note or the anchor is untouched;
-  //   2. this reconciliation — the note is probed in the store, so "did the
-  //      commit land" is a question answered by evidence, not by a boolean;
-  //   3. the audit record, the loop event, the patch — each isolated, each
-  //      downgrading the verdict to `partial` instead of aborting the turn.
-  //
-  // A rollback is deliberately NOT offered: the truncation cannot be undone
-  // (that irreversibility is what makes the span unrecoverable and the fold
-  // floor safe — see docs/loop/brief-and-recap-rewind.md), so the honest
-  // outcome of a late failure is "folded, with a listed defect", never
-  // "unfolded".
-  const noteStored = result.noteWritten
-    && triologue.isRecapNoteStored(verdict.target, result.note);
-  const defects: string[] = [];
-  if (!noteStored) defects.push('the note could not be written into the anchor');
-
   // ── REPORT 1: the user-facing block ──
   // Same `recap` channel the old tool used, so the terminal rendering is the
   // familiar two-liner (first summary line + the token delta).
   const firstLine = forks.summary.split('\n').map((l: string) => l.trim()).find((l) => l.length > 0) ?? '';
-  ctx.core.brief(
-    noteStored ? 'info' : 'warn',
-    'recap',
-    noteStored ? firstLine : `${firstLine} (note not written — the span is gone)`,
+  ctx.core.brief('info', 'recap',
+    firstLine,
     `(${chalk.yellow(result.tokensBefore.toLocaleString())} → ${chalk.green(result.tokensAfter.toLocaleString())} tokens)`,
   );
 
@@ -399,19 +371,9 @@ async function handleAutoRecap(
   // typed steering notes, so filtering it at read time would delete real user
   // bubbles. The fold gets its own kind, which BOTH projections skip: no
   // bubble, no restored message, but the durable greppable audit survives.
-  const anchorMessage = (result.anchorMessage || '').replace(/\s+/g, ' ').trim();
+  const anchorMessage = target.message.replace(/\s+/g, ' ').trim();
   const quoted = anchorMessage.length > 120 ? `${anchorMessage.slice(0, 119)}…` : anchorMessage;
-  // The audit is the durable half of the commit: it carries the SUMMARY TEXT,
-  // which is the only copy left once the span is truncated. It runs before the
-  // patch (so a patch failure can never cost the record) and is reported —
-  // never assumed — because journalRecapAudit now swallows its own sink errors.
-  // The audit is the durable half of the commit: it carries the SUMMARY TEXT,
-  // which is the only copy left once the span is truncated. It runs BEFORE the
-  // loop event and the patch, so neither a late verdict nor a patch failure can
-  // cost the record — and `journalRecapAudit` is exception-safe, so a throwing
-  // transcript sink downgrades the fold to `partial` instead of escaping into
-  // the HOOK-stage catch with an applied fold behind it.
-  const auditRecord = {
+  triologue.journalRecapAudit({
     foldedMessages: target.spanMessages,
     spanTokens: target.spanTokens,
     tokensBefore: result.tokensBefore,
@@ -419,62 +381,40 @@ async function handleAutoRecap(
     reason: verdict.reason,
     targetBrief: quoted,
     summary: forks.summary,
-  };
-  triologue.journalRecapAudit(auditRecord);
-  if (buildRecapAuditLine(auditRecord).trim() === '') {
-    defects.push('the audit record was empty');
-  }
+  });
 
   // ── REPORT 3: the loop event ──
-  // Emitted ONCE, after every side effect has settled, so its verdict describes
-  // the fold that actually happened: `recap` when everything landed, `partial`
-  // when the span is gone but one of the pieces above did not. A `recap` claim
-  // over a missing audit record is exactly the silent divergence MEDIUM-2 was.
-  const verdictForEvent = defects.length === 0 && noteStored ? 'recap' : 'partial';
   loopEvents.emit('auto_recap', {
-    verdict: verdictForEvent,
+    verdict: 'recap',
     targetHash: verdict.target,
-    reason: defects.length === 0 ? verdict.reason : `${verdict.reason} — ${defects.join('; ')}`,
+    reason: verdict.reason,
     foldedMessages: target.spanMessages,
     tokensBefore: result.tokensBefore,
     tokensAfter: result.tokensAfter,
   });
 
-  // The patch is BEST-EFFORT and applied LAST: a patch that cannot be persisted
-  // must not undo a fold that already succeeded, nor pre-empt the audit record.
+  // The patch is BEST-EFFORT and applied after the rewrite: a patch that cannot
+  // be persisted must not undo a fold that already succeeded.
   if (forks.patchError) {
     ctx.core.brief('warn', 'mindmap-patch', `patch dropped (fold continues): ${forks.patchError}`);
   }
   if (forks.patch) {
     const mindmap = ctx.core.getMindmap();
     if (mindmap) {
-      // Isolated: commitMindmapPatch writes through appendPatch (fs.appendFileSync
-      // — a throwing call on a full/read-only disk) after applyPatchAction has
-      // ALREADY mutated the in-memory tree. A throw here would leave the tree
-      // patched while the JSONL (the source of truth, replayed at startup) is
-      // not, and would escape into the HOOK-stage catch. Report it instead.
-      try {
-        commitMindmapPatch(
-          mindmap,
-          forks.patch,
-          getPatchPath(ctx.core.getWorkDir()),
-          applyPatchAction,
-          appendPatch,
-        );
-      } catch (err) {
-        defects.push('the mindmap patch threw while being persisted');
-        agentIO.verbose('recap', `mindmap patch failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
+      const applied = commitMindmapPatch(
+        mindmap,
+        forks.patch,
+        getPatchPath(ctx.core.getWorkDir()),
+        applyPatchAction,
+        appendPatch,
+      );
       ctx.core.brief(
-        'info',
+        applied ? 'info' : 'warn',
         'mindmap-patch',
-        `${forks.patch.action}: ${forks.patch.path}${forks.patch.title ? `/${forks.patch.title}` : ''}`,
+        `${forks.patch.action}: ${forks.patch.path}${forks.patch.title ? `/${forks.patch.title}` : ''}${applied ? '' : ' (rejected by validation — not persisted)'}`,
         forks.patch.reason || undefined,
       );
     }
-  }
-  if (defects.length > 0) {
-    ctx.core.brief('warn', 'recap', `Folded with defects: ${defects.join('; ')}.`);
   }
 
   // The turn's in-memory view of the conversation was just replaced:
