@@ -18,47 +18,6 @@ import { isWebUiUp } from '../../loop/loop-events.js';
 import { atomicWrite } from '../../utils/atomic-write.js';
 
 /**
- * One REFUSED grant verdict, recorded at the lead's grant chokepoint.
- *
- * The `kind` field is derived from the verdict's own reason string AT RECORD
- * TIME (where the reason was produced), not later from tool output — that is
- * the whole point of recording here: the classification is structural, and no
- * unrelated tool result can be mistaken for a refusal.
- */
-export interface GrantDenial {
-  /** Which tool was refused. */
-  tool: 'write_file' | 'edit_file' | 'bash';
-  /** The refused target: a path, or the command for bash. */
-  target: string;
-  /** Verdict reason (already user-facing prose from the gate). */
-  reason: string;
-  /** Structural class, derived from the reason at record time. */
-  kind: 'plan-mode' | 'intent' | 'dangerous' | 'batch-delete' | 'git-commit' | 'denied' | 'other';
-  /** Record order — monotonic, used by consumers to judge recency. */
-  seq: number;
-}
-
-/** Bounded size of the denial ring — the hint prompt only needs the recent past. */
-const MAX_RECENT_DENIALS = 8;
-
-/**
- * Classify a refusal reason into a structural kind.
- *
- * Order matters: the most specific markers first. These mirror the reason
- * strings produced by bash-judge.ts and this file's plan-mode branch.
- */
-function classifyDenial(reason: string | undefined): GrantDenial['kind'] {
-  const r = (reason || '').toLowerCase();
-  if (r.includes('plan mode')) return 'plan-mode';
-  if (r.includes('[intent]') || r.includes('intent')) return 'intent';
-  if (r.includes('git commit')) return 'git-commit';
-  if (r.includes('batch deletion')) return 'batch-delete';
-  if (r.includes('blocked') || r.includes('dangerous') || r.includes('modifies state')) return 'dangerous';
-  if (r.includes('denied') || r.includes('not permitted')) return 'denied';
-  return 'other';
-}
-
-/**
  * Grant scope for external path access
  */
 type GrantScope = 'file' | 'folder' | 'folder_recursive' | 'folder_recursive_readonly';
@@ -111,29 +70,6 @@ function sniffFileFormat(filePath: string): string {
 export class Core extends BaseCore implements CoreModule {
   private modeState: 'plan' | 'normal' = 'normal';
   private allowedFile?: string;
-
-  /**
-   * Ring buffer of the most recent REFUSED grant verdicts (lead scope).
-   *
-   * GRANTS KEEP NO HISTORY otherwise: `judgeBash` / `evaluateGrant` return a
-   * verdict object that is consumed and dropped, so a refusal survives only as
-   * a tool-result STRING. The hint round used to reconstruct refusals by
-   * regex-classifying those strings — which mis-classifies any tool output that
-   * merely QUOTES a block message (reading bash-judge.ts, grepping its tests)
-   * and cannot report which path/rule was refused.
-   *
-   * Recording here makes the evidence exact and structural, and cheap: this is
-   * the single chokepoint every lead-side verdict passes through.
-   *
-   * In-memory and bounded ON PURPOSE — a sealed session must not gain new
-   * persisted state, and the hint prompt only ever needs the recent past.
-   * NOT wired into the child IPC grant path: children never run a hint round
-   * (they mail the lead), so their refusals have no reader.
-   */
-  private recentDenials: GrantDenial[] = [];
-
-  /** Monotonic sequence number for recorded denials (recency ordering). */
-  private denialSeq = 0;
 
   /**
    * Session-scoped grants for external path access.
@@ -565,22 +501,6 @@ export class Core extends BaseCore implements CoreModule {
     command?: string;
     intent?: string;
   }): Promise<{ approved: boolean; reason?: string }> {
-    const verdict = await this.evaluateGrantForLead(tool, args);
-    // Record EVERY refusal at this chokepoint so downstream consumers (the
-    // hint round's "## Recent Permission Blocks") get exact, structural
-    // evidence instead of regex-classifying tool-result prose.
-    if (!verdict.approved) {
-      this.recordDenial(tool, args, verdict.reason);
-    }
-    return verdict;
-  }
-
-  /** The verdict computation, split out so requestGrant can record refusals. */
-  private async evaluateGrantForLead(tool: 'write_file' | 'edit_file' | 'bash', args: {
-    path?: string;
-    command?: string;
-    intent?: string;
-  }): Promise<{ approved: boolean; reason?: string }> {
     // For bash: delegate to grant evaluator
     if (tool === 'bash') {
       return evaluateGrant('lead', { tool, ...args }, this);
@@ -620,43 +540,6 @@ export class Core extends BaseCore implements CoreModule {
       };
     }
     return { approved: true };
-  }
-
-  /**
-   * Record a refusal and return the recorded entry (for callers that want it).
-   *
-   * Ring-buffer semantics: the newest MAX_RECENT_DENIALS are kept, oldest
-   * dropped. `target` is the path for file ops and the command for bash, so a
-   * consumer can say exactly WHAT was refused rather than "a write failed".
-   */
-  private recordDenial(
-    tool: 'write_file' | 'edit_file' | 'bash',
-    args: { path?: string; command?: string; intent?: string },
-    reason: string | undefined,
-  ): void {
-    this.denialSeq += 1;
-    this.recentDenials.push({
-      tool,
-      target: (tool === 'bash' ? args.command : args.path) ?? '(unknown)',
-      reason: reason ?? '(no reason given)',
-      kind: classifyDenial(reason),
-      seq: this.denialSeq,
-    });
-    if (this.recentDenials.length > MAX_RECENT_DENIALS) {
-      this.recentDenials.shift();
-    }
-  }
-
-  /**
-   * The most recent REFUSED grant verdicts, newest last.
-   *
-   * Consumed by the hint round's "## Recent Permission Blocks" section so the
-   * analyzer gets exact evidence (which tool, which target, which rule) instead
-   * of classifying tool-result prose. Returns a copy — callers must not mutate
-   * the buffer.
-   */
-  getRecentDenials(): GrantDenial[] {
-    return [...this.recentDenials];
   }
 
   /**

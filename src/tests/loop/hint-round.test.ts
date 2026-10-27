@@ -383,40 +383,6 @@ describe('Hint Round JSON Output', () => {
     expect(getUserPrompt()).not.toContain('## Recent Permission Blocks');
   });
 
-  it('prefers the EXACT recorded denials over classifying tool-result prose', async () => {
-    vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
-    const { round, env } = makeHarness({ wiki: makeWiki() });
-    // A recorder is present: it wins, and the events are NOT consulted.
-    (env.ctx.core as unknown as { getRecentDenials: () => unknown }).getRecentDenials = () => [
-      { tool: 'write_file', target: 'src/loop/hint-round.ts', reason: 'Error: You are in plan mode.', kind: 'plan-mode', seq: 1 },
-    ];
-    env.sequence.getEvents = vi.fn(() => []) as never;
-
-    await round.run(createTurnVars());
-
-    const userPrompt = getUserPrompt();
-    expect(userPrompt).toContain('## Recent Permission Blocks');
-    // Exact target + structural kind — impossible to derive from prose alone.
-    expect(userPrompt).toContain('write_file → src/loop/hint-round.ts [plan-mode]');
-    // The prose classifier's output must NOT appear (empty events would have
-    // produced no section at all, so its absence proves the recorder won).
-    expect(userPrompt).not.toContain('Classified from recent tool output');
-  });
-
-  it('degrades to the sequence classifier when the context has no recorder', async () => {
-    vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
-    const { round, env } = makeHarness({ wiki: makeWiki() });
-    // Test contexts have no recorder by default — the fallback must fire.
-    expect((env.ctx.core as unknown as Record<string, unknown>).getRecentDenials).toBeUndefined();
-    env.sequence.getEvents = vi.fn(() => [
-      { tool: 'bash', args: {}, result: 'Error: [Intent] use VERB OBJECT', timestamp: 1 },
-    ]) as never;
-
-    await round.run(createTurnVars());
-
-    expect(getUserPrompt()).toContain('intent grammar rejected');
-  });
-
   it('keeps ANALYSIS_INSTRUCTION unique even when a todo embeds it', async () => {
     vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
     const { round, env } = makeHarness({ wiki: makeWiki() });
