@@ -192,7 +192,6 @@ export async function main(): Promise<void> {
 
   const triologue = new Triologue({
     tokenThreshold,
-    getDuplicationReport: () => requestEmbeddingTracker.getDuplicationReport(),
     onMessage: (msg, _getTriologue) => {
       // Per-piece contract (the {A, AB} fix): append EXACTLY ONE flat line
       // per appended message via the shared JsonlTranscriptWriter — the
