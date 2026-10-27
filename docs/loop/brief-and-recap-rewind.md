@@ -259,11 +259,10 @@ address the same brief once new activity lands after it.
   is refused the same way. The
 `[RECAP]` header + quoted anchor are prepended by `rewindToLastBrief()` (it
 captures the anchor text **before** the truncation); the rest is the
-`additionalMessage` written by `handleRecapCall` in `src/loop/states/hook.ts`
-from the model's own `summary`, copied verbatim (plus the user's last query as
-context). Its closing lines are the final thing the conversation sees before
-continuing. On the `summary: ""` path the body is replaced by a "discarded without
-being summarized" note and no LLM fork runs.
+`additionalMessage` assembled by `handleRecap` in `src/loop/recap-rewind.ts`.
+The steering `comment` is deliberately LAST — the final thing the conversation
+sees before continuing. On the `abandon` path the summary body is replaced by a
+"discarded without being summarized" note and the two LLM forks are skipped.
 
 ## Interaction with compaction
 
@@ -317,7 +316,7 @@ restore). The same true-array space is used by `findToolResultIndex()` /
 | `src/tools/brief.ts` | Brief tool; its description teaches that briefs are rewind anchors and must be called alone |
 | `src/loop/triologue/store.ts` | `MessageStore.briefIndices()`, `findToolResultIndex()`, `firstMessageIndexAfter()`, `rewriteToolResult()` |
 | `src/loop/triologue.ts` | `getLastBrief()`, `rewindToLastBrief()`; private `truncateAndRecount(idx, 'recap')` |
-| `src/loop/recap-rewind.ts` | `validateRecapIsolation()`, `generatePatchAction()` (the ONE fork), `handleRecapSpan()` (spinner + `escCancelled`) |
+| `src/loop/recap-rewind.ts` | `handleRecap()` (span summary), `generatePatchAction()`, `handleRecapSpan()` (both forks), `validateRecapIsolation()` |
 | `src/loop/triologue/brief.ts` | The ONE way to read/build/merge a brief call, plus `validateBriefIsolation()` |
 | `src/loop/states/hook.ts` | State machine handling: enforces brief isolation (step 2) and recap isolation (step 2b), detects the `recap` call, invokes the rewrite or the abandon note |
 

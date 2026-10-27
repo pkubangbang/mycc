@@ -18,7 +18,7 @@
  *     return AgentState.COLLECT;
  *   }
  *
- * Strategy: Mock handleRecapSpan to report the ESC cancellation and control
+ * Strategy: Mock handleRecap to return '[RECAP] Cancelled: ...' and control
  * agentIO.isNeglectedMode(). Verify the PROMPT-vs-COLLECT branch selection.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -46,6 +46,7 @@ vi.mock('../../../hook/hook-preprocessor.js', () => ({
 
 vi.mock('../../../loop/recap-rewind.js', () => ({
   validateRecapIsolation: vi.fn(() => ({ valid: true })),
+  handleRecap: vi.fn(),
   handleRecapSpan: vi.fn(),
 }));
 

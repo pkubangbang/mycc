@@ -154,10 +154,9 @@ describe('handleRecapSpan — recap wait indicator (spinner)', () => {
   });
 
   it('does not leak the spinner when ESC wins the race (escAware returns the cleanup value)', async () => {
-    // escAware contract: on ESC the operation is abandoned and the cleanup value
-    // is returned. The patch fork turns that sentinel into a StreamAbortedError,
-    // which handleRecapSpan reports as `escCancelled` — the caller then refuses the
-    // rewind. The real forkChat is never reached.
+    // escAware contract: on ESC the operation is abandoned and the cleanup
+    // result is returned. handleRecap maps that to the "[RECAP] Cancelled"
+    // sentinel; the patch fork maps it to null. Neither hits the real forkChat.
     const escAware = async <T>(
       _fn: (ac: AbortController) => Promise<T>,
       cleanup: () => T,

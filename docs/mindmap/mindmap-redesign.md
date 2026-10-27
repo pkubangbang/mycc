@@ -1,14 +1,5 @@
 # Mindmap Module Redesign
 
-> **STATUS (updated after b52ff0c) — read before implementing.** This page is a
-> DESIGN RECORD, not a map of the current code. The plan below proposed TWO
-> concurrent forkChat calls (a "forkChat #1" summarization fork and a "forkChat #2"
-> mindmap-patch fork) run through `Promise.all`. Only the patch fork shipped.
-> The summarization fork — `handleRecap` + `buildRecapPrompt` in
-> `src/loop/recap-rewind.ts` — was DELETED: since the two-field recap schema the
-> note body is the model's own `summary`, copied verbatim by `handleRecapCall`.
-> Any `handleRecap` / `forkChat #1` / `Promise.all` reference below is history.
-
 > **Status**: Implemented. This plan shipped in full — both the compile+patch-rebuild flow (Part 1) and the recap→patch concurrent forkChat flow (Part 2). The sections below describe the shipped design. File paths and function names reference the actual implementation in `src/mindmap/`.
 
 ## Overview
