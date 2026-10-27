@@ -133,6 +133,15 @@ export interface ChatData {
   hookResult: ProcessToolCallsResult | null;
   /** If crossroad was triggered, the best continuation text (injected in hook.ts) */
   crossroadContinuation?: string;
+  /**
+   * TRUE when auto-recap folded a span on this pass (states/hook.ts step 4a).
+   *
+   * The fold rewrites the history the turn was answered against, so every
+   * later branch that would describe "the work after this brief" must know the
+   * work is already gone — today that is the plan-scope reflection (4b), which
+   * skips itself. Lives on ChatData because it is true for exactly this pass.
+   */
+  autoRecapFolded?: boolean;
   /** If crossroad was triggered, the candidate continuations (generation order)
    *  and the selected index — carried here so hook.ts can render the
    *  best-of-three brief BETWEEN the prefix and the outcome (the intended

@@ -82,6 +82,7 @@ const DEBUG_FLAGS: FlagRow[] = [
   { flag: '--debug-tp', desc: 'Triologue Parity: throw on role-transition violations instead of auto-recovering' },
   { flag: '--debug-eval', desc: 'Print the parsed jsep AST for each hook condition expression' },
   { flag: '--disable-crossroad', desc: 'Skip crossroad turning-word detection (no truncation, no continuation generation)' },
+  { flag: '--no-recap', env: 'MYCC_NO_RECAP', desc: 'Disable automatic span folding (auto-recap); briefs then only report status' },
   { flag: '--debug-autofly', desc: 'Arm the autofly gate so auto mode engages on the LLM-stage streak threshold without an active peer channel' },
   { flag: '--debug-wire', desc: 'Test-only escape hatch: allow peer_connect to a same-store / self peer (same-machine smoke test)' },
   { flag: '--debug-ansi', desc: 'Force the plain (no-TTY) output path: hide the spinner, progress bars and colour, as if stdout were piped' },

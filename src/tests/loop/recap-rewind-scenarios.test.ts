@@ -37,19 +37,15 @@ vi.mock('../../loop/agent-io.js', () => ({
   agentIO: { verbose: vi.fn(), log: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-// LINE 1 of a brief result is the anchor line (`[<hash>] ANCHOR — recap(…)`);
-// a recap APPENDS its note as LINE 2 and RETIRES the invitation (the span it
-// named is gone), leaving `[<hash>] ANCHOR`. withNoteOnly therefore accepts both
-// shapes of line 1 and requires the marker on the following line — never a
-// particular hash value.
-const ANCHOR_LINE_RE = /^\[[A-Za-z0-9_-]+\] ANCHOR(?: — recap\(target_brief="[A-Za-z0-9_-]*"\) folds the work after this point)?$/;
-const NOTE_PREFIX = 'Note, a recap has reset the conversation here with summary: ';
+// THE FOLD NOTE (after auto-recap): a brief result is a plain `OK`; a folded
+// span's result is the note — the `[RECAP]` marker, a blank line, then the
+// summary. There is no anchor line and no hash any more (the fold is decided
+// outside the conversation), so withNoteOnly tests for the NOTE HEADER, never
+// for a particular hash value.
+const NOTE_HEADER = '[RECAP]';
 function withNoteOnly(content: string | undefined): boolean {
   if (!content) return false;
-  const [line1, ...rest] = content.split('\n');
-  if (!ANCHOR_LINE_RE.test(line1)) return false;
-  // A pristine anchor line is NOT a note.
-  return rest.length > 0 && rest[0].startsWith(NOTE_PREFIX);
+  return content.startsWith(NOTE_HEADER + '\n');
 }
 
 let seq = 0;
@@ -199,10 +195,11 @@ describe('recap rewind scenarios (anchor = non-synthetic brief with activity aft
   });
 
   // ---------------------------------------------------------------------
-  // Explicit `target` (recap(target_brief="<hash>")) — the model chooses the
-  // position instead of guessing which brief the default rule will pick.
-  // The hash shown on a brief's result is a digest of the call id (see
-  // briefHash); `recap(target_brief=…)` accepts that hash or the full call id.
+  // Explicit target — the SIGNAL names the brief, never the model. The hash
+  // the signal sees is a digest of the call id (see `hashOf`); the API accepts
+  // that hash or the full call id. These cases pin the RESOLUTION layer that
+  // `handleAutoRecap` drives; the signal itself is covered by
+  // `recap-signal.test.ts`.
   // ---------------------------------------------------------------------
   it('6. target rewinds to an EARLIER brief even when a newer solidified one exists', () => {
     const b1 = pushBrief(t, 'BRIEF ONE');
@@ -210,7 +207,7 @@ describe('recap rewind scenarios (anchor = non-synthetic brief with activity aft
     const b2 = pushBrief(t, 'BRIEF TWO');
     pushTool(t);
 
-    // The default rule would pick b2 (newest solidified); the explicit target
+    // The default rule would pick b2 (newest solidified); an explicit target
     // wins over the "solidified" rule.
     expect(t.getLastBrief()!.id).toBe(b2);
     expect(t.getLastBrief(b1)!.id).toBe(b1);

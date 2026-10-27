@@ -1,25 +1,19 @@
 /**
  * hook-esc-and-brief-isolation.test.ts — handleHook's two validation/early-exit
- * guards: (1) `brief` must be called ALONE, and (2) ESC during recap cancels the
- * recap and picks PROMPT vs COLLECT.
+ * guards: (1) `brief` must be called ALONE, and (2) AUTO-RECAP at step 4a may
+ * fold an older span, and every failure of the fold means "don't fold".
  *
- * Code path under test (hook.ts handleRecapCall):
- *   const { summary, patch } = await handleRecapSpan(fullMessages, span, allTools,
- *                                                    description, mindmap, escAware, comment);
- *   if (summary.startsWith('[RECAP] Cancelled:')) {
- *     triologue.agent(chat.assistantContent, chat.rawToolCalls, ...);
- *     triologue.tool('recap', summary, call.id);
- *     ctx.core.brief('warn', 'recap', summary);
- *     if (agentIO.isNeglectedMode()) {
- *       agentIO.setNeglectedMode(false);
- *       return AgentState.PROMPT;   // ← ESC-during-recap early return
- *     }
- *     turn.isFirstRound = false;
- *     return AgentState.COLLECT;
- *   }
+ * Code path under test (hook.ts handleAutoRecap, step 4a):
+ *   await handleAutoRecap(env, turn, chat, hookResult);   // before register
+ *     → evaluateRecapSignal(candidates, usage, escAware)  // the OBSERVER
+ *     → handleRecapForks({ fullMessages, allTools, mindmap, chunks })
+ *     → triologue.rewindToLastBrief(body, anchor.id, hash, openTodos)
+ *     → ctx.core.brief('info', 'recap', …) + submitUser(audit, 'steer')
  *
- * Strategy: Mock handleRecapSpan to report the ESC cancellation and control
- * agentIO.isNeglectedMode(). Verify the PROMPT-vs-COLLECT branch selection.
+ * The fold is decided OUTSIDE the conversation: the model never sees a target,
+ * a hash or a note slot, and a brief turn is the only trigger. Everything below
+ * is observable through the stubs: the signal verdict, the forks' result, the
+ * rewind call and the audit record.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -32,6 +26,9 @@ vi.mock('../../../loop/agent-io.js', () => {
       isNeglectedMode: vi.fn(() => neglected),
       setNeglectedMode: vi.fn((v: boolean) => { neglected = v; }),
       log: vi.fn(),
+      // Step 4a logs the signal verdict on the verbose channel (`agentIO.verbose`).
+      verbose: vi.fn(),
+      brief: vi.fn(),
     },
   };
 });
@@ -45,8 +42,17 @@ vi.mock('../../../hook/hook-preprocessor.js', () => ({
 }));
 
 vi.mock('../../../loop/recap-rewind.js', () => ({
-  validateRecapIsolation: vi.fn(() => ({ valid: true })),
-  handleRecapSpan: vi.fn(),
+  // The two-fork fold. A fold is now decided OUTSIDE the conversation
+  // (recap-signal.ts), so the hook has no recap tool to guard and no
+  // model-supplied summary to validate: this module only produces the note.
+  handleRecapForks: vi.fn(),
+  commitMindmapPatch: vi.fn(() => true),
+}));
+
+// The signal is the DECIDER. Stubbed to "skip" by default so the brief path is
+// unchanged; the fold cases below opt in by returning a recap verdict.
+vi.mock('../../../loop/recap-signal.js', () => ({
+  evaluateRecapSignal: vi.fn(async () => ({ status: 'skip', reason: 'test' })),
 }));
 
 vi.mock('../../../mindmap/patch.js', () => ({
@@ -80,9 +86,17 @@ vi.mock('../../../loop/triologue.js', () => {
       tokensBefore: 100,
       tokensAfter: 10,
     }));
-    getTokenCount = vi.fn(() => 100);
-    getResultThreshold = vi.fn(() => 25000);
+    // Step 4a also sizes the note before the rewrite (mock returns 100).
     recapNoteSize = vi.fn(() => 100);
+    getTokenCount = vi.fn(() => 100);
+    getTokenThreshold = vi.fn(() => 50000);
+    getResultThreshold = vi.fn(() => 25000);
+    // Auto-recap step 4a: the foldable spans the signal may choose from.
+    getFoldCandidates = vi.fn(() => [
+      { hash: 'a1b2c3d4', message: 'explored the parser', id: 'brief_1', spanMessages: 1, spanTokens: 20 },
+    ]);
+    // The audit record of a fold (journal-only; never a store message).
+    submitUser = vi.fn();
     skipPendingTools = vi.fn();
   }
   return { Triologue: TriologueStub };
@@ -92,7 +106,8 @@ vi.mock('../../../loop/triologue.js', () => {
 import { handleHook } from '../../../loop/states/hook.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { agentIO } from '../../../loop/agent-io.js';
-import { handleRecapSpan } from '../../../loop/recap-rewind.js';
+import { handleRecapForks } from '../../../loop/recap-rewind.js';
+import { evaluateRecapSignal } from '../../../loop/recap-signal.js';
 import { Triologue } from '../../../loop/triologue.js';
 import {
   createTurnVars,
@@ -179,7 +194,7 @@ describe('handleHook — brief isolation', () => {
   });
 });
 
-describe('handleHook — ESC during recap (recap cancellation)', () => {
+describe('handleHook — auto-recap (fold decided outside the conversation)', () => {
   let triologue: Triologue;
 
   beforeEach(() => {
@@ -189,104 +204,169 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
   });
 
   /**
-   * Build a pass + hookResult that routes through handleRecapCall.
-   * The hookExecutor.processToolCalls returns a hookResult whose single call
-   * is a 'recap' tool call (so the recap dispatch branch fires).
+   * A brief turn: the ONLY trigger of a fold. The signal is stubbed per case;
+   * the forks are stubbed to report a summary / a cancellation.
    */
-  function makeRecapEnv() {
-    // TWO ARGUMENTS: the anchor hash (omitted → newest foldable) and the
-    // summary the model wrote. Escaping the summary is now the abandon signal.
-    const recapCall = createMockAugmentedToolCall('recap', {
-      target_brief: 'a1b2c3d4',
-      summary: 'Explored the parser; the fix goes in parser.ts next.',
-    });
+  function makeBriefTurnEnv() {
+    const briefCall = createMockAugmentedToolCall('brief', { message: 'next step', confidence: 7 }, 'brief_now');
     const env = createMockMachineEnv({ triologue });
-    // processToolCalls returns a hookResult containing the recap call
     env.hookExecutor.processToolCalls = vi.fn(async () =>
-      createMockHookResult({ calls: [recapCall] }),
+      createMockHookResult({ calls: [briefCall] }),
     ) as never;
-    return { env, recapCall };
+    const chat = createChatData({ assistantContent: 'status', rawToolCalls: [briefCall] as never });
+    return { env, briefCall, chat };
   }
 
-  it('should return STOP when ESC fires during recap (neglected mode true)', async () => {
-    const { env, recapCall } = makeRecapEnv();
-    const turn = createTurnVars();
-    const chat = createChatData({ assistantContent: 'summarizing now' });
-
-    // handleRecapSpan returns the cancelled summary (ESC during recap LLM call)
-    // patch is null because getMindmap() returns null (no mindmap in mock env)
-    vi.mocked(handleRecapSpan).mockResolvedValueOnce({
-      patch: null,
-      patchError: 'mindmap-patch fork aborted',
-      escCancelled: true,
-    } as never);
-    // ESC set neglected mode
-    agentIO.setNeglectedMode(true);
-
-    const result = await handleHook(env, turn, chat);
-
-    // Neglection paths now return STOP; stop.ts handles startWrapUp +
-    // setNeglectedMode. hook.ts no longer clears neglected mode itself.
-    expect(result).toBe(AgentState.STOP);
-    // Neglected mode NOT cleared by hook.ts (stop.ts handles it)
-    expect(agentIO.isNeglectedMode()).toBe(true);
-    // The cancelled summary registered as the recap tool result
-    expect(triologue.tool).toHaveBeenCalledWith(
-      'recap',
-      '[RECAP] Cancelled: ESC pressed. Nothing was collapsed.',
-      recapCall.id,
-    );
-  });
-
-  it('should return COLLECT when the patch fork aborts but ESC is not pending', async () => {
-    const { env, recapCall } = makeRecapEnv();
-    const turn = createTurnVars();
-    const chat = createChatData({ assistantContent: 'summarizing now' });
-
-    vi.mocked(handleRecapSpan).mockResolvedValueOnce({
+  it('folds when the signal says so: rewinds, reports, and journals ONE audit record', async () => {
+    vi.mocked(evaluateRecapSignal).mockResolvedValueOnce({ status: 'recap', target: 'a1b2c3d4', reason: 'span complete' });
+    vi.mocked(handleRecapForks).mockResolvedValueOnce({
+      summary: 'The parser was mapped; the fix goes in parser.ts next.',
+      summaryError: null,
       patch: null,
       patchError: null,
       escCancelled: false,
-    } as never);
-    // NOT in neglected mode — the aborted patch is reported, not fatal
-    agentIO.setNeglectedMode(false);
-
-    const result = await handleHook(env, turn, chat);
-
-    expect(result).toBe(AgentState.COLLECT);
-    // The span WAS collapsed: no cancellation sentinel was registered.
-    expect(triologue.tool).not.toHaveBeenCalledWith(
-      'recap',
-      expect.stringContaining('Cancelled'),
-      recapCall.id,
-    );
-    // turn.isFirstRound flipped to false on the COLLECT branch
-    expect(turn.isFirstRound).toBe(false);
-  });
-
-  it('should call handleRecapSpan with full messages, span, tools, and escAware wrapper', async () => {
-    const { env } = makeRecapEnv();
+    });
+    const { env, chat } = makeBriefTurnEnv();
     const turn = createTurnVars({ lastUserQuery: 'finish the task' });
-    const chat = createChatData({ assistantContent: 'let me recap' });
 
-    // Normal (non-cancelled) recap completion — no patch (getMindmap returns null)
-    vi.mocked(handleRecapSpan).mockResolvedValueOnce({
+    const result = await handleHook(env, turn, chat);
+
+    // The turn still runs: the fold is an enhancement, never a dependency.
+    expect(result).toBe(AgentState.TOOL);
+    expect(handleRecapForks).toHaveBeenCalledTimes(1);
+    // Rewind with the CAS token + the signal's hash; nothing else touches the store.
+    expect(triologue.rewindToLastBrief).toHaveBeenCalledWith(
+      expect.stringContaining('The parser was mapped'),
+      'brief_1',
+      'a1b2c3d4',
+      expect.any(String),
+    );
+    // The audit record is a synthesized 'steer' — journal-only, never a message.
+    expect(triologue.submitUser).toHaveBeenCalledWith(
+      expect.stringContaining('[RECAP] Folded 1 message(s)'),
+      'steer',
+    );
+    // A fold answers this turn's context: the plan-scope reflection is skipped.
+    expect(chat.autoRecapFolded).toBe(true);
+    // The in-turn brief memory is resynced to the anchor that survived.
+    expect(turn.lastBriefMessage).toBe('explored the parser');
+  });
+
+  it('folds NOTHING when the user pressed ESC during the forks', async () => {
+    vi.mocked(evaluateRecapSignal).mockResolvedValueOnce({ status: 'recap', target: 'a1b2c3d4', reason: 'span complete' });
+    vi.mocked(handleRecapForks).mockResolvedValueOnce({
+      summary: null,
+      summaryError: 'summary fork aborted',
+      patch: null,
+      patchError: null,
+      escCancelled: true,
+    });
+    const { env, chat } = makeBriefTurnEnv();
+
+    const result = await handleHook(env, createTurnVars(), chat);
+
+    expect(triologue.rewindToLastBrief).not.toHaveBeenCalled();
+    expect(triologue.submitUser).not.toHaveBeenCalled();
+    expect(chat.autoRecapFolded).toBeFalsy();
+    // The fold returns void: a cancelled fold is just "don't fold" — the brief
+    // turn proceeds to TOOL and the user's ESC is honoured by the layer that
+    // already owns it (the current turn was never registered here, so nothing
+    // was summarised away).
+    expect(result).toBe(AgentState.TOOL);
+  });
+
+  it('folds NOTHING when the summary fork fails — the span keeps its detail', async () => {
+    vi.mocked(evaluateRecapSignal).mockResolvedValueOnce({ status: 'recap', target: 'a1b2c3d4', reason: 'span complete' });
+    vi.mocked(handleRecapForks).mockResolvedValueOnce({
+      summary: null,
+      summaryError: 'summary fork failed: boom',
       patch: null,
       patchError: null,
       escCancelled: false,
-    } as never);
-    // Make getMessages return identifiable content so we can assert it was passed
+    });
+    const { env, chat } = makeBriefTurnEnv();
+
+    await handleHook(env, createTurnVars(), chat);
+
+    expect(triologue.rewindToLastBrief).not.toHaveBeenCalled();
+    expect(triologue.submitUser).not.toHaveBeenCalled();
+  });
+
+  it('folds NOTHING and reports the skip when the signal declines', async () => {
+    vi.mocked(evaluateRecapSignal).mockResolvedValueOnce({ status: 'skip', reason: 'newer work depends on it' });
+    const { env, chat } = makeBriefTurnEnv();
+
+    const result = await handleHook(env, createTurnVars(), chat);
+
+    expect(handleRecapForks).not.toHaveBeenCalled();
+    expect(triologue.rewindToLastBrief).not.toHaveBeenCalled();
+    expect(chat.autoRecapFolded).toBeFalsy();
+    expect(result).toBe(AgentState.TOOL);
+  });
+
+  it('folds NOTHING and reports the skip when the signal declines', async () => {
+    vi.mocked(evaluateRecapSignal).mockResolvedValueOnce({ status: 'skip', reason: 'newer work depends on it' });
+    const { env, chat } = makeBriefTurnEnv();
+
+    const result = await handleHook(env, createTurnVars(), chat);
+
+    expect(handleRecapForks).not.toHaveBeenCalled();
+    expect(triologue.rewindToLastBrief).not.toHaveBeenCalled();
+    expect(chat.autoRecapFolded).toBeFalsy();
+    expect(result).toBe(AgentState.TOOL);
+  });
+
+  it('skips the whole fold under --no-recap / MYCC_NO_RECAP=1', async () => {
+    const prev = process.env.MYCC_NO_RECAP;
+    process.env.MYCC_NO_RECAP = '1';
+    try {
+      const { env, chat } = makeBriefTurnEnv();
+
+      const result = await handleHook(env, createTurnVars(), chat);
+
+      // The OFF switch is checked BEFORE the observer: no signal call at all.
+      expect(evaluateRecapSignal).not.toHaveBeenCalled();
+      expect(handleRecapForks).not.toHaveBeenCalled();
+      expect(result).toBe(AgentState.TOOL);
+    } finally {
+      if (prev === undefined) delete process.env.MYCC_NO_RECAP;
+      else process.env.MYCC_NO_RECAP = prev;
+    }
+  });
+
+  it('does not even ask the signal when the turn is not a brief turn', async () => {    const bashCall = createMockAugmentedToolCall('bash', { command: 'ls' }, 'call_bash');
+    const env = createMockMachineEnv({ triologue });
+    env.hookExecutor.processToolCalls = vi.fn(async () =>
+      createMockHookResult({ calls: [bashCall] }),
+    ) as never;
+    const chat = createChatData({ assistantContent: 'working', rawToolCalls: [bashCall] as never });
+
+    await handleHook(env, createTurnVars(), chat);
+
+    expect(evaluateRecapSignal).not.toHaveBeenCalled();
+    expect(handleRecapForks).not.toHaveBeenCalled();
+  });
+
+  it('forwards the pre-registration snapshot, the full tool list and the escAware runner', async () => {
+    vi.mocked(evaluateRecapSignal).mockResolvedValueOnce({ status: 'recap', target: 'a1b2c3d4', reason: 'span complete' });
+    vi.mocked(handleRecapForks).mockResolvedValueOnce({
+      summary: 'a summary long enough to fold the span away cleanly',
+      summaryError: null,
+      patch: null,
+      patchError: null,
+      escCancelled: false,
+    });
     const fakeMessages = [{ role: 'user', content: 'msg1' }];
     vi.mocked(triologue.getMessages).mockReturnValue(fakeMessages as never);
+    const { env, chat } = makeBriefTurnEnv();
 
-    await handleHook(env, turn, chat);
+    await handleHook(env, createTurnVars(), chat);
 
-    expect(handleRecapSpan).toHaveBeenCalledTimes(1);
-    const callArgs = vi.mocked(handleRecapSpan).mock.calls[0];
-    // fullMessages, allTools, mindmap, escAware fn
-    expect(callArgs[0]).toEqual(fakeMessages); // fullMessages
-    // The span is no longer an argument: the note is the model's own summary.
-    expect(callArgs[1]).toEqual([{ function: { name: 'bash' } }]); // allTools from loader
-    expect(typeof callArgs[3]).toBe('function'); // escAware wrapper
+    const args = vi.mocked(handleRecapForks).mock.calls[0][0];
+    // The CACHE INVARIANT: un-minified messages + the COMPLETE tool schema.
+    expect(args.fullMessages).toEqual(fakeMessages);
+    expect(args.allTools).toEqual([{ function: { name: 'bash' } }]);
+    // N = the chunks from the target to the newest foldable span (here: 1).
+    expect(args.chunks).toBe(1);
   });
 });

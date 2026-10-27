@@ -1,15 +1,30 @@
 # Brief and Recap-Rewind Design
 
-> Context management through **rewind anchors**, not task boundaries.
+> Context management through **rewind anchors** and an **observer** that
+> decides when to fold — never through a tool the model chooses to call.
 
 ## Overview
 
 A `brief` is a **rewind anchor** once the conversation has moved past it.
-`recap` collapses the conversation back to the newest such brief: everything
-after it is replaced by one note, and the brief's own text is quoted inside
-that note so it survives.
+A *fold* (historically "recap") collapses the conversation back to one such
+brief: everything after it is replaced by the note carried in that brief's own
+tool result, so the brief's text survives inside the note.
 
-**The anchor rule** (`Triologue.currentAnchorIndex`) — a brief anchors **iff**:
+The model never folds its own context. A **recap signal** — a small, dedicated
+observer context that reads only the brief stack — decides; the HOOK stage then
+runs the forks and the rewrite. See
+[`docs/loop/auto-recap-plan.md`](auto-recap-plan.md) for the full rationale.
+
+```
+query → tool1 → brief(A) → letterbox → query → tool2 → brief(B) → tool3 → letterbox
+        ─────── span A ───────          ─────── span B ───────
+                                                              ↑ brief turn → HOOK step 4a
+                                                                signal: fold to A?
+                                                                forks → rewind → note
+```
+
+**The anchor rule** (the private `resolveAnchor()` / `MessageStore.briefIndices`)
+— a brief anchors **iff**:
 
 1. it is **not synthetic** (see "Incidental vs. floor briefs"),
 2. **its tool result exists** (an orphan `brief` call with no answer is not an
@@ -17,97 +32,179 @@ that note so it survives.
 3. at least one message of **ACTIVITY** follows its round-trip (the assistant
    `brief` call *and* the tool result answering it).
 
-**The walk-back (the same rule, read backwards).** Step back from the end of
-memory; skip a trailing `recap` round-trip; the first non-synthetic `brief`
-followed by activity is the target; reaching the start with none means there is
-nothing to collapse.
-
-- The pre-first-brief prefix belongs to compaction (`compact.ts`), never to recap.
-- A bare brief is not a target: it is where the conversation currently stands.
-- A failed recap is a message, not a wall — the walk steps over its round-trip.
-
 Rule 3 is what makes a lone brief a non-anchor: the newest brief is where the
 conversation currently stands, so there is nothing below it to collapse. The
 moment *anything* lands after it — a tool call, a query, **or even another
-brief** — it becomes history and anchors. There is no separate "consumed"
-marker and no pristine-result test: after a rewind the anchor's round-trip is
-the last thing in the history, so rule 3 alone walks the anchor backwards.
+brief** — it becomes history and a fold candidate. There is no separate
+"consumed" marker and no pristine-result test: after a fold the anchor's
+round-trip is the last thing in the history, so rule 3 alone walks the anchor
+backwards.
 
-**Activity excludes the recap machinery talking to itself.** A recap has two
-outcomes and neither is activity:
+**Fold machinery is not activity.** A fold has two outcomes and neither leaves
+activity behind:
 
-- **success** — the span is truncated and the summary is written into the
-  anchor `brief`'s own tool result, so the anchor's round-trip IS the last
-  thing in the history (rule 3 is then satisfied only by real work);
-- **failure** — nothing is rolled back. The call is answered with an ordinary
-  TOOL-CALL ERROR result (`hook.ts fail()`); the triologue is otherwise
-  byte-identical to before the attempt.
+- **success** — the span is truncated and the note is written into the anchor
+  `brief`'s own tool result, so the anchor's round-trip IS the last thing in the
+  history;
+- **failure** — nothing is rolled back. The span survives with its full detail;
+  only a `loopEvents` entry and (for the user) a warning line are produced.
 
-`hasMessagesAfterBrief()` therefore skips a `recap` round-trip (the assistant
-call and the result answering it) by tool name. Without that,
-`brief(A) → recap#1(failed)` would arm A as an anchor and the NEXT recap would
-fold the user's still-unserved query into one summary — the original message
-gone, its text merely quoted in the note. No message-level marker is involved:
-"failed" is not a property the history needs to carry.
+The old `recap` META-TOOL is gone, and with it the special case that skipped a
+`recap` round-trip when measuring "activity after the brief". Legacy transcripts
+containing such round-trips are out of scope and are not parsed.
 
-There is no `checkpoint` tool: the anchor is discovered by scanning the
-triologue, so the triologue is the single source of truth for where a rewind
-lands.
+### The fold candidates
 
-## Brief must be called alone
+`Triologue.getFoldCandidates()` returns, **oldest → newest**, every brief that
+satisfies the anchor rule:
 
-`brief` shares `recap`'s isolation rule: a turn containing `brief` may contain
-**nothing else**. Enforced as HOOK step 2 (`validateBriefIsolation` from
-`src/loop/triologue/brief.ts`), before recap's own check (step 2b):
-
-- invalid turn → the assistant turn is registered and **every** call in it is
-  answered with `Brief must be called alone. Other tools cannot be used in the
-  same turn.`; nothing executes; a `[brief] blocked: …` yellow line is logged;
-  the loop returns to `COLLECT` so the LLM re-emits the work without the brief.
-- Why: the anchor scan (`currentAnchorIndex`) must not land on a turn that also
-  carries other work. A brief-only assistant turn is a self-contained boundary,
-  which keeps `rewindToLastBrief()` unambiguous.
-- The synthetic producers (recovery `llm.ts`, crossroad, compact floor,
-  `tp-fix.ts`) emit brief as the sole call of a synthetic turn registered
-  directly with the triologue — they never pass HOOK dispatch, so the guard
-  cannot reject them.
-
-## The collapse rule
-
-```
-query → tool1 → brief(A) → letterbox → query → tool2 → brief(B) → tool3 → letterbox
-recap#1 → query → tool1 → brief(A) → letterbox → query → tool2 → [brief(B) result = note₁]
-recap#2 → query → tool1 → [brief(A) result = note₂]
+```ts
+{ hash, message, id, spanMessages, spanTokens }
 ```
 
-- **recap #1** truncates everything AFTER B's round-trip (the assistant message
-  whose `tool_calls` contain `brief`, and its tool result) and **rewrites that
-  result in place**:
+- `hash` — 8 chars of a digest of `id`; an **internal** key that lets the signal
+  name a target. It is never shown to the model.
+- `message` — the brief's own text (the only content the signal reads, clipped
+  to 200 chars).
+- `id` — the brief's tool-call id: the **compare-and-swap token** carried across
+  the forks to `rewindToLastBrief()`.
+- `spanMessages` / `spanTokens` — the region the fold deletes (`chars / 4`).
 
-  ```
-  assistant('', [brief("B's message", 7)]) → tool('brief', "[<hash>] ANCHOR
-      Note, a recap has reset the conversation here with summary: <note₁>")
-  ```
+## The signal (the observer)
 
-  `note₁` starts with `[RECAP] <description>` and `Rewound past the brief: "<B's
-  message>"`, so the result carries `B's text + the span summary`. No summary
-  turn is ever appended — the anchor's own round-trip is the survivor.
-- **recap #2** scans for the anchor again. B's round-trip is now the LAST thing
-  in the history, so rule 2 skips it and the scan lands on **A**, whose result
-  is rewritten with `note₂` (summarizing `A … note₁`, so information degrades
-  monotonically instead of vanishing).
-- **Any activity after a rewind re-arms the same anchor.** `tool3` after
-  `recap#1` puts activity below B again, so a second recap targets **B** and
-  **overwrites** its note — the rewrite is a pure overwrite, never a stack.
-- A lone brief after a rewind (`recap#1 → brief(C)`) is **not** an anchor by
-  itself; the scan returns to B. One more brief after C makes C anchor.
+`src/loop/recap-signal.ts` — `evaluateRecapSignal(candidates, usage, escAware)`.
+
+- **Trigger**: HOOK step 4a, on a **lead-only `brief` turn**, *before* the
+  current brief is registered (see "Where the fold runs").
+- **Input**: the candidate list plus `{ tokens, threshold }`. Never the
+  transcript — a fold is a *shape* decision, and sending the conversation would
+  pay for the very content the fold is trying to forget.
+- **Transport**: a dedicated `retryChat` with one forced tool, `decide_recap`
+  (`recap: boolean`, `target_brief?: string`, `reason: string`), `maxRetries: 2`,
+  `noSpinner: true`; the caller-visible spinner is one `Managing the context…`
+  pair wrapped around the whole call.
+- **Verdict** (`RecapSignal`):
+
+  | status | meaning | caller behaviour |
+  |---|---|---|
+  | `recap` | fold to `target` (a hash from the list) | forks, then rewrite |
+  | `skip` | the observer looked and said no (also: empty candidate list, unknown target) | nothing folded |
+  | `failed` | the call threw / ESC aborted — **not** a decision | nothing folded, logged |
+
+- **Never throws.** A failed signal must leave the turn intact and the brief
+  must still run.
+- **An unaddressable `target_brief` degrades to `skip`, never to a default
+  target.** Folding somewhere the observer did not choose would delete a span it
+  meant to keep.
+
+## Where the fold runs — HOOK step 4a
+
+`handleAutoRecap()` in `src/loop/states/hook.ts`, immediately after
+`validateBriefIsolation`, **before** plan-scope reflection (step 4b) and before
+the current brief's round-trip is registered with the triologue.
+
+The gate — every condition must hold:
+
+- `env.scope === 'main'` (lead only; teammates run their own loop)
+- `!shouldNoRecap()` (`--no-recap` / `MYCC_NO_RECAP=1`)
+- the turn contains a `brief` call that was **not blocked**
+- not in neglected (ESC) mode
+- no `compactRequested` / `chat.deferredCompact` — a compaction is about to
+  rewrite everything anyway
+- `getFoldCandidates().length > 0`
+
+Then, in order:
+
+1. `evaluateRecapSignal(...)` → on anything but `recap`, emit `auto_recap` and
+   return.
+2. `getLastBrief(target)` — the **peek**: the span the forks will summarize and
+   the CAS token they carry across the await.
+3. `handleRecapForks({ fullMessages, allTools, mindmap, chunks })` —
+   `Promise.all` of the summary fork and the mindmap-patch fork, one spinner
+   pair `Summarizing last N chunks…`. Returns
+   `{ summary, summaryError, patch, patchError, escCancelled }`.
+4. **Summary floor**: no summary ⇒ warn + `auto_recap: failed`, nothing
+   collapsed (there is no model on the other side to retry by hand).
+5. Build the body: summary + `**User's last query (context):** …` + the live
+   `### Open todos` block (`formatOpenTodos`, restored from the todo store
+   because the checklist lives outside the transcript).
+6. **Size ceiling**: `triologue.recapNoteSize(...) > getResultThreshold()` ⇒
+   warn, nothing collapsed. Checked on the string the rewrite will actually
+   store, while the store is still untouched.
+7. `triologue.rewindToLastBrief(body, anchor.id, targetHash, openTodos)` — the
+   CAS re-resolves the anchor; a `null` result means it moved ⇒ nothing
+   collapsed.
+8. Report: the `[recap]` visible block (first summary line + token delta), one
+   synthesized `submitUser(..., 'steer')` audit record, `loopEvents.emit('auto_recap')`,
+   then `commitMindmapPatch()`.
+9. Resync `turn.lastBriefMessage` / `turn.nextBriefNudge`, set
+   `chat.autoRecapFolded = true` so `handlePlanScopeBrief` does not also fire
+   on the same turn.
+
+**Why a brief turn.** `forkChat` needs a fully answered prefix. On a brief
+turn, everything except the brief itself is already answered — so the current
+brief (registered later) becomes the **first message of the next chunk**, and
+the folded history reads:
+
+```
+[brief(A) result = note] → [brief(B)] → work → …
+```
+
+**Anti-churn is structural, not a guard.** A successful fold consumes its
+target: after the rewrite, the anchor's round-trip is last, so the next signal
+sees only spans that real work has opened since.
+
+## The note
+
+The note is the anchor brief's rewritten TOOL RESULT:
+
+```
+[RECAP]
+
+<summary body>
+
+**User's last query (context):** <luq>
+
+### Open todos
+[ ] 1. ...
+[x] 2. ... (pinned)
+```
+
+- `buildRecapNote(summary, openTodos)` renders it; `noteWithSummary(body)` maps a
+  bare body to it, so the marker and the layout cannot drift.
+- `recapNoteSize()` measures `anchoredNoteLength(noteWithSummary(body))` — the
+  header, not just the body, is inside the budget.
+- `[RECAP]` is the protocol marker: `hashOf()` returns `null` for it and
+  `stripHashPrefix()`/`resolveBriefTarget()` treat a note as
+  **non-addressable**. The note can therefore never be its own anchor.
+- The rewrite is a **pure overwrite**, never a stack.
+- There is **no** `[<hash>] ANCHOR` line, no `recap(target_brief=…)` invitation
+  and no `· open:` list. The hash stays internal to the signal, the audit record
+  and the CAS token.
+
+### Collapse walk-back
+
+```
+recap #1 (signal → fold to B) → query → tool1 → brief(A) → letterbox → query → tool2 → brief(B) → tool3
+  ⇒ [brief(B) result = note₁], brief(A) still intact
+recap #2 (signal → fold to A) → …
+  ⇒ [brief(A) result = note₂]  (A … note₁ … note₂: information degrades monotonically)
+```
+
+- Folding an **older** brief leaves newer briefs untouched: the signal is told
+  to prefer the OLDEST finished span, which frees the most context and keeps the
+  most recent work intact.
+- **Any activity after a fold re-arms the same anchor**: `tool3` below B makes B
+  a candidate again and a second fold to B overwrites its note.
+- The pre-first-brief prefix belongs to compaction (`compact.ts`), never to a
+  fold.
 
 ### Three invariants
 
 | Invariant | Why it holds |
 |---|---|
-| `recap` is repeatable with no id argument | the anchor is always "newest non-synthetic `brief` with activity after it", re-scanned each call |
-| A recap note can never be its own anchor | the scan matches `tool_calls[].function.name === 'brief'` only, and a rewind leaves the anchor's round-trip last (rule 2 then skips it) |
+| A fold note can never be its own anchor | the scan matches `tool_calls[].function.name === 'brief'` only, and `hashOf('[RECAP]')` is `null` |
+| The anchor cannot move under the forks | `id` is a compare-and-swap token: peek before the await, re-resolve inside `rewindToLastBrief()`; a moved anchor refuses |
 | Triologue parity is preserved | the rewritten result IS the anchor's existing `tool` message, so the history still ends on `role:'tool'` — the next real `agent()` is the ordinary `tool → assistant` handoff |
 
 ### Incidental vs. floor briefs
@@ -115,8 +212,8 @@ recap#2 → query → tool1 → [brief(A) result = note₂]
 Not every `brief` is an anchor. Two producers inject a `brief` round-trip only
 to give the model a thinking step — `llm.ts` (empty-output recovery) and
 `hook.ts` (crossroad). Their `message` is boilerplate ("Let me see what to do
-next."), so rewinding to one would preserve infrastructure noise as the
-surviving anchor. They are **incidental** and skipped.
+next."), so folding to one would preserve infrastructure noise as the surviving
+anchor. They are **incidental** and skipped.
 
 The distinction is a property of the **message**: the producers set
 `Message.synthetic = true` on the assistant message they inject (see
@@ -132,164 +229,52 @@ and stripped on egress by `MessageStore.getFullMessages()` (the provider
 payload path), so the LLM never sees the marker and cannot imitate it.
 
 The compaction resume brief is the opposite case — the **floor**. Skipping it
-would leave `recap` with no anchor at all after a compaction. `compact.ts`
-therefore never marks it. Rule 2 still applies: right after a compaction the
-floor brief is the last message pair, so its span is empty and the handler
-declines; the first real activity after the boundary arms it.
+would leave a fresh post-compaction session with no anchor at all. `compact.ts`
+therefore never marks it, and its result is a plain `OK.`. Rule 3 still applies:
+right after a compaction the floor brief is the last message pair, so its span
+is empty; the first real activity after the boundary arms it.
 
-## ⚠️ Architecture: Meta-Tools
+## Brief must be called alone
 
-**Key Decision**: `recap` is a **meta-tool**, NOT a regular tool.
+`brief`'s isolation rule: a turn containing `brief` may contain **nothing
+else**. Enforced as HOOK step 2 (`validateBriefIsolation` from
+`src/loop/triologue/brief.ts`):
 
-Regular tools receive `AgentContext` (`core`, `todo`, `mail`, …). The triologue
-(message history manager) is **NOT** part of AgentContext because:
-
-1. **Separation of concerns**: triologue belongs to the agent loop, not the tool context
-2. **Lifecycle mismatch**: tools are short-lived units; triologue spans the conversation
-3. **Access pattern**: only the state machine should manage message history directly
-
-**Implementation pattern**
-
-- **Tool definition** (`src/tools/recap.ts`): name, description, parameters for
-  LLM visibility; the handler returns `''`.
-- **State machine** (`src/loop/states/hook.ts`): detects a `recap` call before
-  regular tool execution, runs the real logic with `env.triologue`, and returns
-  `COLLECT` without calling the regular handler.
-- **Rewind primitive** (`src/loop/triologue.ts`): `getLastBrief()` (read-only
-  peek: `{ message, confidence, id, span }`) and `rewindToLastBrief(description,
-  additionalMessage, expectedBriefCallId?)` (truncate + rewrite the anchor's tool
-  result). Both read ONE private resolution (`resolveAnchor()`), which returns
-  the anchor's tool-result index alongside the message: the span start and the
-  truncation point are the same number, so they cannot disagree. The array index
-  never leaves the facade — a caller-held mark could go stale across a
-  compaction; the caller carries `expectedBriefCallId` (the brief's tool-call
-  id alone — never the array index, never the arguments; an id that a
-  malformed/restored history reuses resolves to the MOST RECENT such call, so an
-  older anchor's span is never truncated on a guess) and the rewind refuses when
-  it moved. The id is a compare-and-swap token, NOT a locator: the anchor itself
-  is found by walking back from the end of the triologue.
-- **Isolation**: `recap` must be called ALONE (`validateRecapIsolation`,
-  HOOK step 2b). `brief` carries the same rule (`validateBriefIsolation` in
-  `src/loop/triologue/brief.ts`, HOOK step 2) — see "Brief must be called
-  alone" below.
-
-The handler sequence: validate args → `getLastBrief()` (null ⇒ "No brief found
-to rewind to"; empty `span` ⇒ "Nothing to collapse — there is no new activity
-past your last brief") → fork the summary and the
-mindmap patch concurrently over the pre-rewind history → **summary floor**
-(`hasUsableSummary()`: empty / whitespace / `[RECAP] …` / below
-`MIN_RECAP_SUMMARY_CHARS` ⇒ refuse, nothing truncated) → **size ceiling**
-(`recapNoteSize() > resultThreshold` ⇒ refuse, nothing truncated) →
-`rewindToLastBrief()` → resync `turn.lastBriefMessage` / `turn.nextBriefNudge` →
-apply the patch.
-
-Every refusal answers the recap call and returns `COLLECT` so the model can
-retry. A refusal rolls NOTHING back — no truncation, no rewrite of an earlier
-brief's result — and, since the recap tool never produces activity, it can
-never be folded by the next recap (see the anchor rule).
-
-## The note
-
-The note is the anchor brief's rewritten TOOL RESULT:
-
-```
-[<hash>] ANCHOR                      <- line 1: the anchor line, written once, never rewritten
-Note, a recap has reset the conversation here with summary: <body>   <- line 2: the recap's note
-
-<body> =
-[RECAP] <description>
-Rewound past the brief: "<anchor brief message>"
-
-<summary body>
-
-**User's last query (context):** <luq>
-
-**Next direction (recap comment — follow this):** <comment>
-```
-
-A `· open:` list is appended to line 1 when other foldable anchors exist: the newest
-up to 3, then `(+N more)` for the remainder (a count, never an offer — there is no tool
-that enumerates anchors). A rewind retires the whole ` — recap(…)` clause, so a folded
-anchor's line 1 is `[<hash>] ANCHOR`.
-
-The note is appended by `noteWithSummary()` in
-`src/loop/triologue/recap-note.ts` (the same module that renders line 1, so the
-marker and the anchor line cannot drift). It APPENDS: line 1 is kept, minus the
-`recap(target_brief=…)` invitation, which is retired because the span it names is now
-gone.
-
-### The brief result line: `[<hash>] ANCHOR — recap(target_brief="<hash>") folds the work after this point`
-
-Every brief result starts with a short **hash** — 8 characters of a digest of
-the brief's tool-call id — followed by the call that folds to it. `briefResultLine()`
-renders it, `stampBriefResult()` applies it idempotently (a result that already
-carries a `[<hash>]` prefix is left alone), and `briefHash()` derives the hash.
-
-Two callers deliberately do NOT get that line, and render `briefReceiptLine()`
-(`[<hash>] OK`) instead, because the invitation would be false:
-
-- a **teammate's** brief — `brief` is `['main', 'child']` but `recap` is
-  `['main']`, so a child must not be told to call a tool it does not have;
-- a **synthetic** brief (crossroad, empty-output recovery) — it is not in
-  `store.briefIndices()`, so every `recap(target_brief=…)` naming it is refused.
-
-The hash exists so the model can **name** an anchor: it is exactly the token
-`recap` takes in `target` (the shown hash or the full call id both resolve). A
-rewind APPENDS its note under line 1 and retires the `recap(target_brief=…)`
-invitation — `[<hash>] ANCHOR — recap(…)` becomes `[<hash>] ANCHOR` — because the
-span the call names is now gone. The hash survives, so a later recap can still
-address the same brief once new activity lands after it.
-
-### `recap(target_brief=…)`
-
-`recap` takes an optional `target`:
-
-- **names the last brief** (nothing after it yet) → a distinct refusal: `that brief has nothing after it yet — recap folds the work that follows an anchor`. The hash exists; it is simply not foldable until new work lands below it.
-- **empty** (the normal case) → the default anchor: the newest *solidified*
-  brief, i.e. one with meaningful activity after its round-trip. Recap
-  round-trips do not count as activity.
-- **given** → the brief carrying that hash / id. An explicit target **wins over
-  the solidified rule**: it may name a brief that the conversation has not
-  visibly moved past, as long as *something* follows its round-trip.
-- An explicit target **never falls back**. If no brief matches, the call is
-  answered with an error quoting the addressable hashes and **nothing is
-  collapsed** — silently collapsing elsewhere would delete a span the model did
-  not choose.
-- A target naming the **last** brief has nothing beneath it to collapse, so it
-  is refused the same way. The
-`[RECAP]` header + quoted anchor are prepended by `rewindToLastBrief()` (it
-captures the anchor text **before** the truncation); the rest is the
-`additionalMessage` written by `handleRecapCall` in `src/loop/states/hook.ts`
-from the model's own `summary`, copied verbatim (plus the user's last query as
-context). Its closing lines are the final thing the conversation sees before
-continuing. On the `summary: ""` path the body is replaced by a "discarded without
-being summarized" note and no LLM fork runs.
+- invalid turn → the assistant turn is registered and **every** call in it is
+  answered with `Brief must be called alone. Other tools cannot be used in the
+  same turn.`; nothing executes; a `[brief] blocked: …` yellow line is logged;
+  the loop returns to `COLLECT` so the LLM re-emits the work without the brief.
+- **Why** (narrowed rationale): the loop's slice arithmetic reads the anchor's
+  round-trip as a clean boundary (`resolveAnchor` → `resultIndex + 1` →
+  `sliceFrom`). A brief batched with other work would put unrelated results
+  inside the boundary the fold measures around. Auto-recap also relies on it:
+  step 4a runs *before* the current brief is registered, which is only correct
+  when that brief stands alone.
+- The synthetic producers (recovery `llm.ts`, crossroad, compact floor,
+  `tp-fix.ts`) emit brief as the sole call of a synthetic turn registered
+  directly with the triologue — they never pass HOOK dispatch, so the guard
+  cannot reject them.
 
 ## Interaction with compaction
 
 `compact()` replaces the whole message array (`replaceAll`), so it **empties the
-rewind stack**: `recap` can never rewind past the most recent compaction. Not a
+rewind stack**: a fold can never reach past the most recent compaction. Not a
 bug — the history no longer exists.
 
 - The post-compact resume `brief` (`compact_resume_*`) becomes the **floor
-  anchor** once any activity follows it. A `recap` right after a compaction
-  finds no anchor at all (the resume pair is last), and one before any new
-  activity finds `span.length === 0` and declines — instead of consuming the
-  floor for nothing.
+  anchor** once any activity follows it. A signal right after a compaction sees
+  no candidate at all (the resume pair is last).
 - The compaction summary lives in the `user` message *before* that brief, so it
-  is preserved by any rewind at the floor.
+  is preserved by any fold at the floor.
 - `MessageStore.lastQuery` is written only by `user()`, so
   `**User's last query (context)**` stays truthful even when the newest query
   was truncated away.
-- The compaction summary prompt ends with a `## Managing your context with
-  recap` section (see `buildSummaryPrompt()` in
-  `src/loop/triologue/compact.ts`): a compaction is machine-triggered, so the
-  model never chose it, and this is where it learns that it now owns its
-  context — call `recap` when the context feels heavy or when it is stuck in a
-  dead loop (with a steering `comment`), and use `target` only to collapse
-  further back than the newest usable brief. It deliberately does **not** tell
-  the model to `brief` first: a recap submerges the whole span, briefs included.
-  `emitControl('compact')` is untouched — it only journals a live-log boundary.
+- The compaction summary prompt no longer instructs the model to call `recap`
+  (the tool is gone). A compaction is machine-triggered and the model never
+  chose it; folding is likewise machine-decided.
+- **Never call `rebuildProjectContext()` from a fold path** (recorded in the
+  `pitfall` wiki). It is licensed only at `compact()` / `clear()` boundaries; a
+  fold rewrites the tail, not the prompt prefix.
 
 ## Two resyncs a rewind must perform
 
@@ -297,8 +282,8 @@ bug — the history no longer exists.
    would make a later rollback do `messages.length = mark` and *extend* the
    array with holes. Done inside `rewindToLastBrief()`.
 2. **`turn.lastBriefMessage` / `nextBriefNudge`** — the next brief-nudge must
-   cite the anchor that survived, not a message the model can no longer see.
-   Done by the handler.
+   cite the anchor that survived (the current brief), not a message the model
+   can no longer see. Done by `handleAutoRecap`.
 
 ## Anchor scanning and index spaces
 
@@ -309,30 +294,62 @@ when the array carries sparse holes (wrap-up rollback, TP recovery injection,
 restore). The same true-array space is used by `findToolResultIndex()` /
 `firstMessageIndexAfter()`, which apply rule 2.
 
+## Observability (§9 of the plan)
+
+1. While the signal runs: spinner `Managing the context…`; **nothing is
+   appended to the JSONL**.
+2. While the forks run: spinner `Summarizing last N chunks…`; **still nothing
+   appended**.
+3. After the rewind: the visible `[recap]` block (first summary line + token
+   delta), exactly one synthesized `submitUser(..., 'steer')` JSONL record
+   (`[RECAP] Folded N message(s) / ~T tokens back to brief "…" (reason). Summary:
+   …`), and the existing payload-free `{kind:'recap'}` control marker emitted by
+   truncation.
+4. `loopEvents` gains `auto_recap` with
+   `{ verdict, targetHash?, reason?, foldedMessages?, tokensBefore?, tokensAfter?}`.
+
+`collateMessages` skips `steer` records for livelog parity; the serve projection
+renders them as a bubble. Widening `ControlPiece` was rejected — a steer record
+is exactly the shape of "no message of its own to append".
+
+## Configuration
+
+| Flag | Env | Effect |
+|---|---|---|
+| `--no-recap` | `MYCC_NO_RECAP=1` | suppresses the signal and the fold entirely |
+
 ## Implementation files
 
 | File | Purpose |
 |------|---------|
-| `src/tools/recap.ts` | Recap tool definition (meta-tool, handler returns empty string) |
-| `src/tools/brief.ts` | Brief tool; its description teaches that briefs are rewind anchors and must be called alone |
+| `src/loop/recap-signal.ts` | The observer: `evaluateRecapSignal()`, `decide_recap` forced tool, verdict union |
+| `src/loop/recap-rewind.ts` | `handleRecapForks()` (summary + mindmap-patch forks, one spinner pair), `commitMindmapPatch()`, patch prompt/parse (`generatePatchAction` family) |
+| `src/loop/states/hook.ts` | `handleAutoRecap()` at step 4a; brief isolation at step 2 |
+| `src/loop/triologue/brief-stack.ts` | `getFoldCandidates()`, `recapNoteSize()`, `rewindToLastBrief()` |
+| `src/loop/triologue.ts` | Facade: `getFoldCandidates()`, `getLastBrief()`, `recapNoteSize()`, `rewindToLastBrief()`; private `resolveAnchor()` + `truncateAndRecount(idx, 'recap')` |
+| `src/loop/triologue/recap-note.ts` | `buildRecapNote()`, `noteWithSummary()`, `anchoredNoteLength()`, `formatOpenTodos()`, `hashOf()`, protocol constants |
 | `src/loop/triologue/store.ts` | `MessageStore.briefIndices()`, `findToolResultIndex()`, `firstMessageIndexAfter()`, `rewriteToolResult()` |
-| `src/loop/triologue.ts` | `getLastBrief()`, `rewindToLastBrief()`; private `truncateAndRecount(idx, 'recap')` |
-| `src/loop/recap-rewind.ts` | `validateRecapIsolation()`, `generatePatchAction()` (the ONE fork), `handleRecapSpan()` (spinner + `escCancelled`) |
 | `src/loop/triologue/brief.ts` | The ONE way to read/build/merge a brief call, plus `validateBriefIsolation()` |
-| `src/loop/states/hook.ts` | State machine handling: enforces brief isolation (step 2) and recap isolation (step 2b), detects the `recap` call, invokes the rewrite or the abandon note |
+| `src/tools/brief.ts` | Brief tool; its description teaches that briefs divide the session and must be called alone |
+| `src/utils/arg-canonical.ts` / `src/config.ts` / `src/help.ts` | `--no-recap` / `MYCC_NO_RECAP` |
+
+There is **no** `src/tools/recap.ts`.
 
 ## Tests
 
-`src/tests/loop/recap-rewind.test.ts` pins the contract: no-anchor,
-anchor identity, no exposed index, rewrite-in-place shape ending on `tool`,
-quoted anchor + steering last, **repeatability**, **note-never-an-anchor**,
-**compaction floor**, wrap-up mark clamping, and token recount.
-`src/tests/loop/recap-rewind-scenarios.test.ts` pins the anchor rule against
-the sequences a real session produces (b1 → t → b2 → t; recap → recap;
-recap → t → recap; recap → brief → recap), plus the explicit `target`
-scenarios: an earlier brief wins over a newer solidified one, an unknown hash
-refuses without touching history, a full call id resolves, and a target naming
-the last brief is refused.
-`src/tests/loop/triologue-brief-isolation.test.ts` covers `validateBriefIsolation`;
-`src/tests/loop/states/hook-brief-isolation.test.ts` pins the wholesale
-rejection (every call answered, hook processing skipped) and the lone-brief path.
+- `src/tests/loop/recap-rewind.test.ts` — rewind contract: no-anchor, anchor
+  identity, rewrite-in-place shape ending on `tool`, steering last,
+  repeatability, note-never-an-anchor, compaction floor, wrap-up mark clamping,
+  token recount.
+- `src/tests/loop/recap-rewind-{anchor,identity,regressions,scenarios}.test.ts` —
+  the anchor rule against real session sequences (b1 → t → b2 → t; fold → fold;
+  fold → t → fold; fold → brief → fold), the explicit target, and legacy
+  regression shapes.
+- `src/tests/loop/recap-rewind-spinner.test.ts` — `handleRecapForks` runs two
+  forks under one spinner pair; ESC cancels both.
+- `src/tests/loop/triologue-recap-note.test.ts` — note rendering, hash, protocol
+  marker, addressability.
+- `src/tests/loop/states/hook-brief-isolation.test.ts`,
+  `hook-esc-and-brief-isolation.test.ts` — brief isolation, and step 4a's gate
+  (including the ESC case).
+- `src/tests/loop/triologue-brief-isolation.test.ts` — `validateBriefIsolation`.

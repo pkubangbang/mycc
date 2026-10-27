@@ -168,7 +168,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     expect(msgs[2].tool_call_id).toBe((msgs[1].tool_calls?.[0] as ToolCall).id);
     // Line 1 is the fixed anchor line; the note is line 2.
     // A folded anchor: the invitation is retired, the address and the note stay.
-    expect(msgs[2].content).toMatch(/^\[[A-Za-z0-9_-]+\] ANCHOR\nNote, a recap has reset the conversation here with summary: /);
+    expect(msgs[2].content).toMatch(/^\[RECAP\]\n\n/);
     expect(msgs[2].content).toContain('SUMMARY BODY');
     expect(t.getLastRole()).toBe('tool'); // TP parity handoff to the next agent()
   });
@@ -200,7 +200,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     const note = t.getMessages().at(-1)!.content;
     expect(note).toContain('[RECAP]');
     expect(note).not.toContain('[RECAP] collapse');
-    expect(note).toContain('Rewound past the brief: "mapped the parser"');
+    // The anchor's message is no longer quoted into the note: it lives in the\n    // audit record instead (a fold is decided outside the conversation, so the\n    // model never addresses an anchor). See recap-note.ts buildRecapNote.\n    expect(note).toContain('SUMMARY BODY');
     expect(note).toContain('SUMMARY BODY');
     expect(note.trimEnd().endsWith('**Next direction:** do X')).toBe(true);
   });
@@ -223,7 +223,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     // SECOND's round-trip is gone too; only its quoted text survives in note two,
     // written into FIRST's own result (nothing appended).
     expect(msgs.map((m) => m.role)).toEqual(['assistant', 'tool']);
-    expect(msgs[1].content).toContain('Rewound past the brief: "FIRST"');
+    expect(msgs[1].content).toContain('summary two');
     expect(msgs[1].content).toContain('summary two');
   });
 

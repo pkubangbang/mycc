@@ -1047,6 +1047,27 @@ export class Triologue {
   }
 
   /**
+   * The fold candidates for auto-recap, TIMELY ORDER (oldest → newest).
+   *
+   * This is the auto-recap replacement for "the model reads hashes and picks
+   * one": an observer outside the conversation (`recap-signal.ts`) reads the
+   * stack as a quantitative list — hash, brief message, span size — and decides.
+   * The hash returned here never reaches the model; the loop resolves it back to
+   * a call id and hands THAT to `rewindToLastBrief` as the compare-and-swap token.
+   *
+   * Pure read: no truncation, no rewriting, no LLM.
+   */
+  getFoldCandidates(): Array<{
+    hash: string;
+    message: string;
+    id: string;
+    spanMessages: number;
+    spanTokens: number;
+  }> {
+    return this.briefStack.getFoldCandidates();
+  }
+
+  /**
    * Peek at the rewind anchor: the newest REAL `brief` that the conversation
    * has already moved past — or, when `target` is given, the brief carrying
    * that hash.

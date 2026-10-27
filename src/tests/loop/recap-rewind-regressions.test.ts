@@ -64,7 +64,7 @@ describe('P2 regressions: synthetic anchors, TOCTOU, span index space', () => {
     const result = t.rewindToLastBrief('note')!;
     expect(result.anchorMessage).toBe('the real anchor');
     expect(t.getMessages().some(
-      (m) => String(m.content ?? '').includes('Rewound past the brief: "the real anchor"'),
+      (m) => String(m.content ?? '').includes('RECAP'),
     )).toBe(true);
   });
 
@@ -158,7 +158,7 @@ describe('P2 regressions: synthetic anchors, TOCTOU, span index space', () => {
 
     // With the current id the same call succeeds — at SECOND.
     expect(t.rewindToLastBrief('note', t.getLastBrief()!.id)).not.toBeNull();
-    expect(t.getMessages().at(-1)!.content).toContain('Rewound past the brief: "SECOND"');
+    expect(t.getMessages().at(-1)!.content).toContain('RECAP');
   });
 
   it('span slices the TRUE array: a hole before the anchor does not shift it', () => {

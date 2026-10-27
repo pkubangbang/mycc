@@ -49,7 +49,7 @@
 import type { Message, ToolCall } from '../../types.js';
 import type { MessageStore } from './store.js';
 import { readBriefConfidence, readBriefMessage } from './brief.js';
-import { anchoredNoteLength, briefHash, briefResultLine, buildRecapNote, hasFoldInvitation, noteWithSummary, resolveBriefTarget } from './recap-note.js';
+import { anchoredNoteLength, briefHash, buildRecapNote, noteWithSummary, resolveBriefTarget } from './recap-note.js';
 
 /**
  * Everything the brief stack needs that is NOT a MessageStore method.
@@ -200,20 +200,63 @@ export class BriefStackManager {
   }
 
   /**
-   * The first line a rewind KEEPS — pristine (`ANCHOR — recap(…) …`) or already
-   * folded (`ANCHOR`) — or undefined when the result has no anchor line to keep.
+   * The fold candidates an auto-recap signal may choose from, in TIMELY ORDER
+   * (oldest → newest).
    *
-   * A legacy one-line result (`[<hash>] OK Note, …`) also starts with a hash but
-   * is not an anchor line: keeping it would duplicate its old summary above the
-   * new note. ONE rule for the rewrite AND the size pre-check, so the string
-   * measured is the string written.
+   * The decision to fold used to belong to the model (`recap(target_brief=…)`);
+   * it now belongs to an observer outside the conversation (`recap-signal.ts`),
+   * which needs a compact, quantitative view of the stack instead of a list of
+   * callable hashes. This is that view, and the ONLY input the signal gets:
+   * the hash (an opaque key the loop resolves back to a call id), the brief's
+   * message, and the size of the span under it.
+   *
+   * A candidate is any real brief with at least one message after its
+   * round-trip (`hasMessagesAtOrAfterBrief`, the same structural rule the
+   * explicit target always used). The newest brief is therefore excluded on
+   * its own: nothing follows it yet.
+   *
+   * `spanMessages` / `spanTokens` describe exactly the region
+   * `rewindToLastBrief` would delete (messages after the brief's tool result
+   * to the end), so the signal can compare spans and current usage on ONE
+   * scale. `spanTokens` is the project-wide `chars / 4` estimate — the same
+   * approximation the token threshold uses — and must not diverge from it.
+   *
+   * Pure read: no truncation, no rewriting, no LLM.
    */
-  private anchorLineToKeep(firstLine: string): string | undefined {
-    // A live or retired anchor line carries the invitation clause (or its
-    // stripped remainder); a legacy `[<hash>] OK …` result does not.
-    if (hasFoldInvitation(firstLine)) return firstLine;
-    return /^\[[A-Za-z0-9_-]+\] ANCHOR(?: · [^\n]*)?$/.test(firstLine) ? firstLine : undefined;
+  getFoldCandidates(): Array<{
+    hash: string;
+    message: string;
+    id: string;
+    spanMessages: number;
+    spanTokens: number;
+  }> {
+    const out: Array<{
+      hash: string;
+      message: string;
+      id: string;
+      spanMessages: number;
+      spanTokens: number;
+    }> = [];
+    for (const index of this.store.briefIndices()) {
+      if (!this.hasMessagesAtOrAfterBrief(index)) continue;
+      const call = this.briefCallAt(index);
+      const id = call?.id ?? '';
+      if (!call || !id) continue;
+      const resultIdx = this.store.findToolResultIndex(id, index + 1, 'brief');
+      const start = (resultIdx >= 0 ? resultIdx : index) + 1;
+      const span = this.store.sliceFrom(start);
+      const chars = span.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
+      out.push({
+        hash: briefHash(id),
+        message: readBriefMessage(call),
+        id,
+        spanMessages: span.length,
+        spanTokens: Math.ceil(chars / 4),
+      });
+    }
+    return out;
   }
+
 
   /** The brief a `target` names, whether or not it is foldable yet — null when no
    *  brief carries that hash or id. */
@@ -448,14 +491,15 @@ export class BriefStackManager {
    *
    * The summary does NOT get a turn of its own:
    *
-   *   assistant('', [brief("BRIEF TWO", 7)]) → tool('brief', "[a1b2c3d4] ANCHOR …")  BEFORE
-   *   assistant('', [brief("BRIEF TWO", 7)]) → tool('brief', "[a1b2c3d4] OK
-   *       Note, a recap has reset the conversation here with summary: …")    AFTER
+   *   assistant('', [brief("BRIEF TWO", 7)]) → tool('brief', "OK.")          BEFORE
+   *   assistant('', [brief("BRIEF TWO", 7)]) → tool('brief', "[RECAP]
+   *       <span summary> …")                                                  AFTER
    *
    * so the history still ends on role:'tool' — the anchor's own result — the
-   * same TP-parity handoff to the next real agent() as before. The hash line
-   * survives the rewrite, so the anchor stays addressable by `recap(target_brief=…)`
-   * after being consumed.
+   * same TP-parity handoff to the next real agent() as before. The result is a
+   * PURE OVERWRITE: the note is the whole content, because nothing addresses a
+   * brief by a printed hash any more (the fold is decided outside the
+   * conversation — see recap-signal.ts).
    *
    * REWIND-BY-BRIEF (no target): the rewind leaves the anchor's round-trip last,
    * and the last brief of any kind is never an anchor, so the next recap moves to
@@ -476,7 +520,7 @@ export class BriefStackManager {
     // the anchor or its result index independently.
     const resolved = this.resolveAnchor(expectedBriefCallId, target);
     if (!resolved) return null;
-    const { call, anchorMessage, resultIndex, id } = resolved;
+    const { call, anchorMessage, resultIndex } = resolved;
     const tokensBefore = this.store.tokenCount;
 
     this.truncateAndRecount(resultIndex + 1, 'recap');
@@ -491,22 +535,12 @@ export class BriefStackManager {
     // indices 0..resultIndex, so `resultIndex + 1` would start past the end,
     // match nothing, and return false AFTER the span was already deleted (the
     // caller would report "anchor moved" while the summary was lost).
-    // Read the live first line BEFORE rewriting: the recap APPENDS its summary as
-    // line 2, and keeps line 1's identity (see anchorLineToKeep).
-    const current = this.store.at(resultIndex)?.content ?? '';
-    const firstLine = current.split('\n')[0] ?? '';
-    // Keep the live ANCHOR line — pristine (`ANCHOR — recap(…) …`) or already
-    // folded (`ANCHOR`) — and let `withoutFoldInvitation` retire the invitation
-    // (it runs to end of line, so the `· open:` tail goes with it); that removal is
-    // idempotent, so a SECOND fold neither resurrects the invitation nor loses
-    // the line. A legacy one-line result (`[<hash>] OK Note,
-    // …`) also starts with a hash but is not an anchor line: keeping it would
-    // duplicate its old summary under the new note.
-    const anchorLine = this.anchorLineToKeep(firstLine);
-
+    // PURE OVERWRITE: the note replaces the whole result. There is no first line
+    // to preserve — a brief result is a plain `OK.` now, and a SECOND fold at the
+    // same brief must replace the previous note, not stack under it.
     const rewritten = this.store.rewriteToolResult(
       call.id,
-      noteWithSummary(id, buildRecapNote(anchorMessage, additionalMessage, openTodos), anchorLine),
+      noteWithSummary(buildRecapNote(additionalMessage, openTodos)),
       resultIndex,
     );
     if (!rewritten) return null; // defensive: the result vanished in truncation
@@ -537,17 +571,11 @@ export class BriefStackManager {
     // null when the anchor moved — the rewind will refuse for the same reason.
     const resolved = this.resolveAnchor(expectedBriefCallId, target);
     if (!resolved) return null;
-    const body = buildRecapNote(resolved.anchorMessage, additionalMessage, openTodos);
-    // Measure the string the rewind ACTUALLY writes: the live first line (with
-    // its frozen `· open:` list) plus the note marker plus the body — see
-    // noteWithSummary / anchoredNoteLength. Sizing the body alone under-measures
-    // by that whole first line.
-    const current = this.store.at(resolved.resultIndex)?.content ?? '';
-    const firstLine = current.split('\n')[0] ?? '';
-    // ONE rule with rewindToLastBrief (anchorLineToKeep) — the size pre-check must
-    // measure the string that write will actually store.
-    const anchorLine = this.anchorLineToKeep(firstLine) ?? briefResultLine(resolved.id);
-    return anchoredNoteLength(anchorLine, body);
+    const body = buildRecapNote(additionalMessage, openTodos);
+    // ONE rule with rewindToLastBrief: the rewind writes `noteWithSummary(body)`,
+    // and the note is the whole result (pure overwrite), so this is the exact
+    // length that will be stored.
+    return anchoredNoteLength(noteWithSummary(body));
   }
 
   /**

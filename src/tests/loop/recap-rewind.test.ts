@@ -22,7 +22,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MessageStore } from '../../loop/triologue/store.js';
 import { buildResumeRoundTrip } from '../../loop/triologue/compact.js';
 import { briefToolCall } from '../../loop/triologue/brief.js';
-import { briefHash, buildRecapNote } from '../../loop/triologue/recap-note.js';
+import { buildRecapNote } from '../../loop/triologue/recap-note.js';
 import { Triologue } from '../../loop/triologue.js';
 import { estimateTokens } from '../../utils/token.js';
 import type { Message, ToolCall } from '../../types.js';
@@ -157,7 +157,6 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     expect(msgs[1].tool_calls?.[0].function.name).toBe('brief');
     expect(msgs[2].tool_name).toBe('brief');
     expect(msgs[2].tool_call_id).toBe((msgs[1].tool_calls?.[0] as ToolCall).id);
-    const anchorId = (msgs[1].tool_calls?.[0] as ToolCall).id;
     // Pin THIS anchor's hash, not "some hash-shaped token": a regex of
     // /^\[[A-Za-z0-9_-]+\]/ also accepts a token that names a DIFFERENT brief,
     // so a wrong-anchor bug (the exact failure a colliding hash used to cause)
@@ -166,9 +165,13 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     // invitation — the span it named is exactly what this recap just deleted —
     // and LINE 2 is the recap summary.
     const content = msgs[2].content as string;
-    const [line1, ...rest] = content.split('\n');
-    expect(line1).toBe(`[${briefHash(anchorId)}] ANCHOR`);
-    expect(rest.join('\n')).toBe(`Note, a recap has reset the conversation here with summary: ${buildRecapNote('mapped the parser', 'SUMMARY BODY')}`);
+    const line1 = content.split('\n')[0] ?? '';
+    const rest = content.split('\n').slice(2);
+    // LINE 1 is the note's own marker — there is no anchor line any more, and no
+    // hash for the model to address: the fold is decided outside the conversation.
+    // (split('\n') on a note whose first line is the marker yields an EMPTY line 1.)
+    expect(line1).toBe('[RECAP]');
+    expect(rest.join('\n')).toBe(buildRecapNote('SUMMARY BODY').replace(/^\[RECAP\]\n\n/, ''));
     expect(msgs[2].content).toContain('SUMMARY BODY');
     expect(t.getLastRole()).toBe('tool'); // TP parity handoff to the next agent()
   });
@@ -199,8 +202,6 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
 
     const note = t.getMessages().at(-1)!.content;
     expect(note).toContain('[RECAP]');
-    expect(note).not.toContain('[RECAP] collapse');
-    expect(note).toContain('Rewound past the brief: "mapped the parser"');
     expect(note).toContain('SUMMARY BODY');
     expect(note.trimEnd().endsWith('**Next direction:** do X')).toBe(true);
   });
@@ -223,7 +224,7 @@ describe('Triologue.getLastBrief / rewindToLastBrief', () => {
     // SECOND's round-trip is gone too; only its quoted text survives in note two,
     // written into FIRST's own result (nothing appended).
     expect(msgs.map((m) => m.role)).toEqual(['assistant', 'tool']);
-    expect(msgs[1].content).toContain('Rewound past the brief: "FIRST"');
+    expect(msgs[1].content).toContain('summary two');
     expect(msgs[1].content).toContain('summary two');
   });
 
@@ -327,7 +328,7 @@ describe('P2 regressions: synthetic anchors, TOCTOU, span index space', () => {
     const result = t.rewindToLastBrief('note')!;
     expect(result.anchorMessage).toBe('the real anchor');
     expect(t.getMessages().some(
-      (m) => String(m.content ?? '').includes('Rewound past the brief: "the real anchor"'),
+      (m) => String(m.content ?? '').includes('RECAP'),
     )).toBe(true);
   });
 
@@ -421,7 +422,7 @@ describe('P2 regressions: synthetic anchors, TOCTOU, span index space', () => {
 
     // With the current id the same call succeeds — at SECOND.
     expect(t.rewindToLastBrief('note', t.getLastBrief()!.id)).not.toBeNull();
-    expect(t.getMessages().at(-1)!.content).toContain('Rewound past the brief: "SECOND"');
+    expect(t.getMessages().at(-1)!.content).toContain('RECAP');
   });
 
   it('span slices the TRUE array: a hole before the anchor does not shift it', () => {
@@ -590,7 +591,7 @@ describe('M1 — anchor identity', () => {
       'activity',
       '',
       // TWO's own result: the note, written at the RESOLVED occurrence.
-      expect.stringContaining('Rewound past the brief: "TWO"'),
+      expect.stringContaining('SUMMARY'),
     ]);
   });
 });
@@ -619,7 +620,7 @@ describe('M2 — single anchor resolution', () => {
     expect(msgs).toHaveLength(5);
     expect(msgs[1].content).toBe('OK ONE'); // the older result is untouched
     expect(msgs[4].content).toContain('SUMMARY'); // the note lands on TWO's result
-    expect(msgs[4].content).toContain('Rewound past the brief: "TWO"');
+    expect(msgs[4].content).toContain('SUMMARY');
   });
 
   it('resolveAnchor matches the brief result by tool NAME too, not just the reused call id', () => {

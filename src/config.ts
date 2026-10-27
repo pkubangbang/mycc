@@ -250,6 +250,24 @@ export function isCrossroadDisabled(): boolean {
 }
 
 /**
+ * Check if automatic span folding (auto-recap) is disabled
+ * (`--no-recap` flag or `MYCC_NO_RECAP=1`).
+ *
+ * Auto-recap is ON by default: on every lead `brief` turn the recap-signal
+ * decides whether the work since an earlier brief should be folded into a
+ * `[RECAP]` note. This switch exists for debugging and for users who want the
+ * transcript to grow untouched — when set, no signal is computed, no forks run
+ * and nothing is folded; briefs keep reporting exactly as before.
+ *
+ * Reads BOTH the parsed CLI arg and the env var (mirrored by ARG_ENV_MAP), so a
+ * relaunch that lost its argv (daemon restart, peer spawn) still honours the
+ * operator's choice to disable.
+ */
+export function shouldNoRecap(): boolean {
+  return args['no-recap'] === true || process.env.MYCC_NO_RECAP === '1';
+}
+
+/**
  * Check whether decorated console output must be suppressed ("plain output").
  *
  * Returns true when either:

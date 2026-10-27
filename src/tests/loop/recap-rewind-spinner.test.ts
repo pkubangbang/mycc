@@ -10,7 +10,7 @@
  *   running normally.
  *
  * The fix puts the spinner at the ORCHESTRATOR boundary instead of inside
- * forkChat: handleRecapSpan() owns ONE startSpinner/stopSpinner pair
+ * forkChat: handleRecapForks() owns ONE startSpinner/stopSpinner pair
  * around its concurrent Promise.all. One pair (not one per fork) because the
  * spinner is a non-refcounted module-global: the first fork to settle would
  * otherwise stopSpinner() while the other is still streaming.
@@ -49,7 +49,7 @@ vi.mock('../../engine/chat-helpers.js', () => ({
 
 import { forkChat } from '../../engine/chat-provider.js';
 import { startSpinner, stopSpinner } from '../../engine/chat-helpers.js';
-import { handleRecapSpan } from '../../loop/recap-rewind.js';
+import { handleRecapForks } from '../../loop/recap-rewind.js';
 import type { Mindmap } from '../../mindmap/types.js';
 import type { Message, Tool } from '../../types.js';
 
@@ -90,7 +90,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-describe('handleRecapSpan — recap wait indicator (spinner)', () => {
+describe('handleRecapForks — fold wait indicator (spinner)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -99,11 +99,12 @@ describe('handleRecapSpan — recap wait indicator (spinner)', () => {
     const gate = deferred<string>();
     vi.mocked(forkChat).mockImplementation(async () => gate.promise);
 
-    const pending = handleRecapSpan(
-      MESSAGES,
-      TOOLS,
-      MINDMAP, // the patch fork is the only fork left
-    );
+    const pending = handleRecapForks({
+      fullMessages: MESSAGES,
+      allTools: TOOLS,
+      mindmap: MINDMAP,
+      chunks: 1,
+    });
 
     // Let the startSpinner() + Promise.all setup run to the first await.
     await Promise.resolve();
@@ -125,11 +126,13 @@ describe('handleRecapSpan — recap wait indicator (spinner)', () => {
     vi.mocked(forkChat).mockRejectedValue(new Error('network down'));
 
     await expect(
-      handleRecapSpan(MESSAGES, TOOLS, MINDMAP),
-    ).resolves.toEqual({
+      handleRecapForks({ fullMessages: MESSAGES, allTools: TOOLS, mindmap: MINDMAP, chunks: 1 }),
+    ).resolves.toMatchObject({
+      summary: null,
       patch: null,
       patchError: expect.stringContaining('network down'),
-      // A provider error is NOT a cancellation: the recap may proceed.
+      summaryError: expect.stringContaining('network down'),
+      // A provider error is NOT a cancellation: the fold simply doesn't happen.
       escCancelled: false,
     });
 
@@ -143,35 +146,39 @@ describe('handleRecapSpan — recap wait indicator (spinner)', () => {
     // The patch fork returns "none" (no patch warranted). It is the only fork.
     vi.mocked(forkChat).mockResolvedValue('none');
 
-    await handleRecapSpan(MESSAGES, TOOLS, MINDMAP);
+    await handleRecapForks({ fullMessages: MESSAGES, allTools: TOOLS, mindmap: MINDMAP, chunks: 1 });
 
-    // Only the patch fork runs now — the note body is the model's own text.
-    expect(forkChat).toHaveBeenCalledTimes(1);
+    // BOTH forks run — the span summary (required for the note) and the
+    // mindmap patch (best-effort) — behind ONE spinner pair.
+    expect(forkChat).toHaveBeenCalledTimes(2);
     // ...behind a single spinner pair. Per-fork wrapping would double-start
     // (no-op) and double-stop (clearing the line mid-recap).
     expect(startSpinner).toHaveBeenCalledTimes(1);
     expect(stopSpinner).toHaveBeenCalledTimes(1);
   });
 
-  it('does not leak the spinner when ESC wins the race (escAware returns the cleanup value)', async () => {
-    // escAware contract: on ESC the operation is abandoned and the cleanup value
-    // is returned. The patch fork turns that sentinel into a StreamAbortedError,
-    // which handleRecapSpan reports as `escCancelled` — the caller then refuses the
-    // rewind. The real forkChat is never reached.
-    const escAware = async <T>(
-      _fn: (ac: AbortController) => Promise<T>,
-      cleanup: () => T,
-    ): Promise<T> => cleanup();
-
-    const result = await handleRecapSpan(
-      MESSAGES,
-      TOOLS,
-      MINDMAP,
-      escAware,
+  it('does not leak the spinner when the user cancels (ESC) during the forks', async () => {
+    // ESC is the neglected-mode channel: the fold checks it AFTER the forks
+    // settle, and reports `escCancelled` so the caller folds nothing.
+    const agentIO = await import('../../loop/agent-io.js');
+    const spy = vi.spyOn(agentIO.agentIO, 'isNeglectedMode').mockReturnValue(true);
+    vi.mocked(forkChat).mockRejectedValue(
+      new (await import('../../engine/chat-helpers.js')).StreamAbortedError(),
     );
 
-    expect(result.patch).toBeNull();
+    const result = await handleRecapForks({
+      fullMessages: MESSAGES,
+      allTools: TOOLS,
+      mindmap: MINDMAP,
+      chunks: 1,
+    });
+
+    expect(result.escCancelled).toBe(true);
+    expect(result.summary).toBeNull();
+    // A leaked spinner would leave the terminal line painted forever after a
+    // cancelled fold — the exact stuck-looking state this fix removes.
     expect(startSpinner).toHaveBeenCalledTimes(1);
     expect(stopSpinner).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
   });
 });

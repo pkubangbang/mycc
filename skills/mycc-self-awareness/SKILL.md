@@ -102,8 +102,8 @@ plain-language summary; the sibling file has the full detail where noted.
 
 | Concept | One-line definition | Detail |
 |---------|---------------------|--------|
-| **mindmap** | A navigable knowledge tree compiled from `MYCC.md`, queried via `recall(path=...)` for on-demand context. Answers project-structure questions. It can grow beyond `MYCC.md` because **`recap` auto-patches it** (see "Known Blind Spot" below). | `io-surfaces.md` |
-| **brief / recap** | A `brief` becomes a rewind anchor once at least one message follows its round-trip (even another brief counts) and **must be called alone** (no other tools in the same turn — the whole turn is rejected otherwise). Its result's first line is the anchor line (`[<hash>] ANCHOR — recap(target="<hash>") folds the work after this point`; a teammate's brief never carries it, since recap is lead-only (a teammate's loop registers its results directly, so it sees the plain `OK` ack) — and so does a synthetic one, e.g. the crossroad or empty-output recovery, which is not addressable at all). `recap` collapses the conversation back to that brief (the brief's tool result keeps line 1 and gains the summary as line 2: `Note, a recap has reset the conversation here with summary: …`), is repeatable (each call rewinds to the brief before, since a rewind leaves its anchor's round-trip last; new activity re-arms the same anchor and the note is overwritten, never stacked), and **can also add/update/delete one mindmap node as a side effect** (the agent is not told this — see "Known Blind Spot"). | `io-surfaces.md` |
+| **mindmap** | A navigable knowledge tree compiled from `MYCC.md`, queried via `recall(path=...)` for on-demand context. Answers project-structure questions. It can grow beyond `MYCC.md` because **auto-recap auto-patches it** (see "Known Blind Spot" below). | `io-surfaces.md` |
+| **brief / auto-recap** | A `brief` becomes a rewind anchor once at least one message follows its round-trip (even another brief counts) and **must be called alone** (no other tools in the same turn — the whole turn is rejected otherwise). Folding is **not a tool**: on a lead-only brief turn, HOOK step 4a (before the brief is registered) asks a small external **recap signal** (`src/loop/recap-signal.ts`, forced `decide_recap` over the brief stack + token usage) whether to fold an older span; on `recap` it runs the summary + mindmap forks and rewrites the anchor brief's tool result in place with a `[RECAP]` note. The model never sees hashes, `recap(...)` or anchor lines — a brief result is a plain `OK.`. Off switch: `--no-recap` / `MYCC_NO_RECAP=1`. Fold **can also add/update/delete one mindmap node as a side effect** (the agent is not told — see "Known Blind Spot"). | `io-surfaces.md` |
 | **wiki / RAG** | A persistent semantic knowledge base (vectors in LanceDB); two-phase store (`wiki_prepare`→`wiki_put`), query with `wiki_get`. Embedding always via Ollama. | `ollama-dependencies.md` |
 | **intent language** | The `bash` tool's structured intent: `VERB OBJECT PARAM... TO PURPOSE` (VERB ∈ READ/WRITE/EDIT/DELETE/BUILD/TEST/INSTALL/RUN; OBJECT ∈ SOURCE/CONFIG/DEPENDENCY/ARTIFACT/SYSTEM/DATA/TEMP/USER). | — |
 | **grant system** | The `bash` tool's 5-step judging: dangerous-pattern check → intent grammar validation → mode+verb check → LLM analysis for RUN → user prompt for uncertain cases. Destructive commands are blocked by default. | — |
@@ -196,46 +196,48 @@ X?", check `ensureDirs()` / the accessors first, then the owning module.
 
 ---
 
-## Known Blind Spot: `recap` can silently update the mindmap
+## Known Blind Spot: auto-recap can silently update the mindmap
 
-**mycc is not aware that `recap` can also trigger a mindmap update.** This
+**mycc is not aware that an automatic context fold can also trigger a
+mindmap update.** This
 is the single most likely thing an end-user will be surprised by — the
 agent's own knowledge tree can be modified as a *side effect* of compacting
-its context, and **nothing in the recap tool result tells the agent that
-the mindmap changed.**
+its context, and **nothing the agent sees tells it that the mindmap
+changed**: the fold happens outside the conversation (HOOK step 4a) and the
+`[RECAP]` note carries only the span summary.
 
 **What actually happens (verified end-to-end):**
 
 1. The lead writes a `brief` (every brief is a rewind anchor; `brief` must be
-   called alone, with no other tools in that turn), keeps working,
-   then later calls `recap` to collapse everything back to that brief.
-2. `recap` does **not** run one summarization pass — it runs **two
-   concurrent LLM forks** (`handleRecapWithPatch` in
-   `src/loop/recap-rewind.ts`):
-   - **fork #1 — recap summary:** produces the structured summary body that
-     the note carries after the quoted anchor brief.
+   called alone, with no other tools in that turn), keeps working past it.
+2. On a later brief turn — **before that new brief is registered** — the recap
+   signal (`src/loop/recap-signal.ts`) judges the brief stack and may decide
+   `recap`.
+3. `handleRecapForks()` in `src/loop/recap-rewind.ts` does **not** run one
+   summarization pass — it runs **two concurrent LLM forks**:
+   - **fork #1 — summary:** produces the body the note carries.
    - **fork #2 — mindmap patch:** *independently* decides whether **ONE**
      mindmap node should be `add`ed / `update`d / `delete`d based on what
      was learned during the span (or responds `none`).
-3. Both forks share the same prompt-cache prefix, so the second call is
-   cheap — it is effectively free extra work hidden inside every recap.
-4. In `src/loop/states/hook.ts`, if fork #2 produced a patch, `mycc`
-   applies it **both** to the in-memory tree (`applyPatchAction`) and to
-   `.mycc/mindmap-patch.jsonl` (append-only, the on-disk source of truth).
-   It then prints a small `mindmap-patch: ...` brief.
-5. **The agent's next `recall` therefore sees a mindmap that already
+4. Both forks share the same prompt-cache prefix, so the second call is
+   cheap — it is effectively free extra work hidden inside every fold.
+5. `handleAutoRecap()` in `src/loop/states/hook.ts` applies a produced patch
+   **both** to the in-memory tree (`applyPatchAction`) and to
+   `.mycc/mindmap-patch.jsonl` (append-only, the on-disk source of truth),
+   then prints a small `mindmap-patch: ...` brief.
+6. **The agent's next `recall` therefore sees a mindmap that already
    changed** — a node the agent never explicitly added, updated, or deleted
-   may now be present/absent. The recap summary says nothing about it.
+   may now be present/absent. The `[RECAP]` note says nothing about it.
 
 **Why this matters / how to explain it to a user:**
 
 - The mindmap is *not* a pure compile of `MYCC.md`. It is `MYCC.md` **plus
-  an append-only patch log** that `recap` writes to on its own.
-- A `mindmap-patch` brief line on screen means "recap decided to mutate the
+  an append-only patch log** that auto-recap writes to on its own.
+- A `mindmap-patch` brief line on screen means "a fold decided to mutate the
   knowledge tree" — it is not something the user (or the agent) directly
   asked for.
-- On the **abandon** path (`recap({abandon:true})`) the patch fork is
-  skipped — no mindmap mutation happens.
+- A failed fold (no summary, oversized note, ESC, anchor moved) collapses
+  nothing; the patch fork is only committed after a successful rewind.
 - Patches are **hash-matched and replayed at startup** (`mindmap-loader.ts`):
   load `mindmap.json` → replay `.mycc/mindmap-patch.jsonl` → merged
   in-memory tree. `recall` reads the merged tree.
@@ -265,7 +267,7 @@ another project:
    skill). **Communication model** — mail is push-based; fire-and-forget;
    never poll the mailbox.
 6. **mindmap** — navigable project-structure tree from `MYCC.md`, queried
-   via `recall`; it can also be **silently patched by `recap`** (see the
+   via `recall`; it can also be **silently patched by auto-recap** (see the
    "Known Blind Spot" section). **wiki/RAG** — free-form semantic
    knowledge. Embedding always via Ollama.
 7. **intent language** + **grant system** — why the `bash` tool is
@@ -282,7 +284,8 @@ another project:
     `mycc` shim or `npm root -g`. Detail in `launching-and-locating.md`.
 11. Two I/O surfaces (CLI + WebUI) and a known set of auto-created folders.
     Detail in `io-surfaces.md`.
-12. **Known blind spot** — `recap` runs a hidden second LLM fork that can
+12. **Known blind spot** — an automatic context fold (auto-recap, decided by
+    the recap signal on a brief turn) runs a hidden second LLM fork that can
     add/update/delete ONE mindmap node as a side effect of compressing
     context; the agent is never told. Explain this when a user asks why
     the knowledge tree changed on its own.

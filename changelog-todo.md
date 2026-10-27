@@ -17,13 +17,13 @@ Once the task is marked done, it will stay in the list for an extra week after a
 
 When updating the changelog, use the following procedure:
 
-1. **Brief first** — call `brief` to state what you are about to do. The brief becomes a recap anchor, so write it as a conclusion, not a greeting.
+1. **Brief first** — call `brief` to state what you are about to do. The brief is a fold boundary, so write it as a conclusion, not a greeting.
 2. **Get git commits** for the target date range using `git log --since="YYYY-MM-DD" --until="YYYY-MM-DD" --pretty=format:"%h %ad %s" --date=short`.
 3. **Group commits by date** and summarize each day's changes into meaningful categories (e.g., "New Tools", "Fixes", "Refactoring", "Documentation").
 4. **Write category-style summaries** similar to the existing format (e.g., "- **feature name**: description").
 5. **Update the changelog file** by adding new date sections or appending to existing ones.
 6. **Clean up todo items** that appear in the changelog and are older than one week.
-7. **Call `recap`** to collapse the work back to that brief and compress context. There is no checkpoint to close — `recap` alone rewinds to your last `brief`.
+7. **Nothing to close** — context folding is automatic (lead-only auto-recap, decided outside the conversation when the span looks finished). There is no `recap` / checkpoint tool to call; write a normal `brief` and keep working.
 
 # Change Log
 
@@ -236,6 +236,18 @@ When updating the changelog, use the following procedure:
 - **Web**: Stop the `发送` label wrapping and reclaim the narrow-screen gutter in the chat input.
 - **Prompt**: Recap guidance is now taught in ONE place. The lead prompt's `## Briefs and Recap` section gained the missing trigger — when the direction drifts, the default is `recap(abandon=true)` (no LLM fork, no mindmap patch) and a summarising recap is the exception; the stale "pops the topmost frame / each pop rewinds one brief further" bullet was rewritten to the stack model with a `target` anchor ("pops frames back to a target", repeatedly for an explicit `<hash>`). The duplicated `## Managing your context with recap` block was removed from the compaction summary prompt (`buildSummaryPrompt()`), which now ends with the conversation body, so the policy no longer gets a second, drifting copy injected into the context. `prompt-budget` re-ratifies `soloNormal` at the measured 7304 (the old ±15% cap left no room for the trigger) and `src/tests/loop/prompts/brief-recap-scope.test.ts` pins the new wording.
 - **Intent**: Diagnose a lone bare PARAM token as one word — `tokenizeParams` priority 7 used the two-token pair wording ("missing '=' between key and value") for the single-token branch, so a PARAM like `git_state` was reported as if the parser had split it into a `key value` pair. The single-token branch now says the token is a bare token missing `'='` and is not a key/value pair; the pair wording is reserved for two adjacent bare tokens. Regression tests cover `READ DATA git_state TO …`, a bare token followed by a well-formed PARAM, and the true `git state` pair.
+
+## 2026-10-27
+### Features
+- **Recap**: The `recap` META-TOOL is **deleted**; context folding is now lead-only **auto-recap**, decided OUTSIDE the conversation. On a `brief` turn, HOOK step 4a (before that brief is registered, so the fork prefix stays fully answered) asks a dedicated observer — `src/loop/recap-signal.ts`, a compact `retryChat` with the forced `decide_recap` tool reading only `Triologue.getFoldCandidates()` plus token usage — whether to fold an older span. Verdicts are `recap` / `skip` / `failed`; an unaddressable target degrades to `skip`, never to a default, and the signal never throws. `handleRecapForks()` (`src/loop/recap-rewind.ts`) runs the summary and mindmap-patch forks under one `Summarizing last N chunks…` spinner, then `Triologue.rewindToLastBrief()` truncates and rewrites the anchor brief's tool result with the `[RECAP]` note (summary + last query + `### Open todos`). New OFF switch `--no-recap` / `MYCC_NO_RECAP=1`.
+- **Prompt**: The model-facing anchor vocabulary is gone — no `[<hash>] ANCHOR`, no `recap(target_brief=…)`, no `· open:` lists; a brief result is a plain `OK.` The lead prompt's section is now `## Briefs and Folding`.
+### Refactoring
+- **Triologue**: `getFoldCandidates()` on the brief stack (hash / message / id / spanMessages / spanTokens); `recap-note.ts` rewritten around `[RECAP]` + `buildRecapNote(summary, openTodos)`; `handleRecapSpan` / `validateRecapIsolation` / `hasUsableSummary` removed.
+- **Tools**: 49 → 48 built-ins (lead 49 → 48); `src/tools/recap.ts` and its registry entry removed.
+### Docs
+- **Loop**: `brief-and-recap-rewind.md` rewritten for the observer model; `brief-recap-loopholes.md` contract table re-cut (C2 deleted, C11–C17 added); `agent-loop.md` gained the auto-recap section; `agent-tools.md`, `MYCC.md`, `README.md`, `brief-isolation` and `mycc-self-awareness` skills updated; `docs/loop/auto-recap-plan.md` records the outcome.
+### Tests
+- `recap-signal.test.ts` (new, 19 cases), auto-recap cases in `hook-esc-and-brief-isolation.test.ts`, and every anchor-vocabulary assertion rewritten. Gates: `typecheck:all` 0 errors · `vitest run` 257 files / 3809 passed · `lint` 0 errors (4 pre-existing warnings).
 
 # Todo
 

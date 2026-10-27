@@ -90,11 +90,13 @@ describe('formatOpenTodos', () => {
 
 describe('buildRecapNote — three parts, in order', () => {
   it('header → summary → open todos', () => {
-    const note = buildRecapNote('mapped the parser', 'SUMMARY BODY', formatOpenTodos(OPEN_ITEMS));
+    // The canonical note has TWO parts now: the `[RECAP]` marker, a blank line,
+    // the summary, then the live checklist. No anchor quote: a fold is decided
+    // outside the conversation, so there is no address to echo.
+    const note = buildRecapNote('SUMMARY BODY', formatOpenTodos(OPEN_ITEMS));
     expect(note).toBe(
       [
         '[RECAP]',
-        'Rewound past the brief: "mapped the parser"',
         '',
         'SUMMARY BODY',
         '',
@@ -109,8 +111,8 @@ describe('buildRecapNote — three parts, in order', () => {
   });
 
   it('is exactly the two-part note when nothing is open (no trailing separator)', () => {
-    const withEmpty = buildRecapNote('anchor', 'SUMMARY BODY', '');
-    const withoutArg = buildRecapNote('anchor', 'SUMMARY BODY');
+    const withEmpty = buildRecapNote('SUMMARY BODY', '');
+    const withoutArg = buildRecapNote('SUMMARY BODY');
     expect(withEmpty).toBe(withoutArg);
     expect(withEmpty.endsWith('SUMMARY BODY')).toBe(true);
     expect(withEmpty).not.toContain(OPEN_TODOS_HEADING);
@@ -140,9 +142,10 @@ describe('Triologue — the open todos reach the WRITTEN note and its size pre-c
     expect(t.rewindToLastBrief('SUMMARY BODY', undefined, undefined, openTodos)).not.toBeNull();
 
     const note = storedNote();
-    // Line 1 is untouched structure; line 2 is the note.
-    expect(note.startsWith('[RECAP]')).toBe(false); // line 1 is the anchor line
-    expect(note).toContain('Note, a recap has reset the conversation here with summary: ');
+    // The note IS the whole result now: the marker opens it, then the summary,
+    // then the live checklist (pure overwrite — no anchor line survives).
+    expect(note.startsWith('[RECAP]')).toBe(true);
+    expect(note).not.toContain('Note, a recap has reset the conversation here with summary: ');
     expect(note).toContain('SUMMARY BODY');
     expect(note).toContain(OPEN_TODOS_HEADING);
     expect(note).toContain('#1 wire the todo list');

@@ -28,9 +28,12 @@ rejection.
 `bash`, not `read_file`, not `plan_off`, not `wiki_prepare`, nothing — may
 share the turn with a `brief`.
 
-**Why:** a `brief` is a rewind anchor. `recap` collapses the conversation back
-to the LAST brief, so the anchor must be an unambiguous, self-contained turn
-boundary. Answering only `brief` in a turn makes that anchor clean;
+**Why:** a `brief` is a rewind anchor for the lead's automatic context fold.
+The fold's slice arithmetic (`resolveAnchor` → `resultIndex + 1` →
+`sliceFrom`) reads the anchor's round-trip as a clean, self-contained boundary,
+and auto-recap fires at HOOK step 4a precisely because the current brief is
+not yet registered — which is only correct when that brief stands alone.
+Answering only `brief` in a turn makes that anchor clean;
 `validateBriefIsolation` (src/loop/triologue/brief.ts) enforces this by
 rejecting the ENTIRE turn — every call in the batch gets the same
 "Brief must be called alone" rejection and nothing runs.
@@ -51,7 +54,8 @@ If you want to report progress AND do work:
 
 If you want to report progress and NOTHING else, issue `brief` alone now.
 
-`recap` carries the same rule (`validateRecapIsolation`) for the same reason.
+There is no exemption to plan around: context folding is not a tool you call,
+so a `brief` turn has exactly one legitimate shape.
 
 ## After this skill loads — re-decision tree
 

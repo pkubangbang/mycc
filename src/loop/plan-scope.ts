@@ -41,7 +41,7 @@
  */
 import type { Message, Tool } from '../types.js';
 import { forkChat } from '../engine/chat-provider.js';
-import { BRIEF_OK, PLAN_SCOPE_HEADING, briefStampedLength } from './triologue/recap-note.js';
+import { PLAN_SCOPE_HEADING } from './triologue/recap-note.js';
 
 /** Head room for the fork's signal + the result threshold's own safety slack. */
 const SCOPE_NOTE_OVERHEAD_CHARS = 512;
@@ -134,10 +134,16 @@ export interface PlanScopeDeps {
   messages: Message[];
   tools: Tool[];
   briefMessage: string;
-  /** The brief's tool-call id — its anchor hash is part of the result budget. */
+  /**
+   * The brief's tool-call id.
+   *
+   * KEPT FOR TRACEABILITY ONLY: it no longer affects the result budget (nothing
+   * is stamped into line 1 — a brief result is a plain `OK.`), and it is not
+   * written back into the transcript. Callers still pass it so a future
+   * reflection-related fix can attribute a note to its brief without a
+   * signature change.
+   */
   briefCallId: string;
-  /** The `· open:` candidates the TOOL stage will render into line 1 (same list). */
-  openAnchors: readonly string[];
   /** tool()'s result limit — the note must fit under it. */
   resultThreshold: number;
   /** ESC-aware runner owned by the caller (ctx.core.escAware): it gives the
@@ -152,14 +158,13 @@ export interface PlanScopeDeps {
  * Pure I/O: one forkChat, no triologue mutation.
  */
 export async function buildPlanScopeNote(deps: PlanScopeDeps): Promise<string | null> {
-  // Reserve what the result will ACTUALLY be: the anchor line (which the loop
-  // stamps, ~80-115 chars with its `· open:` list) + the `. ` separator + the
-  // reflection + the fixed overhead. Reserving only `BRIEF_OK.length` under-counted
-  // the line by two orders of magnitude and let a near-limit reflection push the
-  // composed result past `resultThreshold` — which `tool()` answers by dumping
-  // the whole brief to a file, losing the anchor.
-  const briefLine = briefStampedLength(deps.briefCallId, deps.openAnchors);
-  const budget = deps.resultThreshold - briefLine - 1 - 2 - SCOPE_NOTE_OVERHEAD_CHARS;
+  // Reserve what the result will ACTUALLY be: the plain `OK.` the brief tool
+  // returns (2 chars — the success word + its period; no anchor line is stamped
+  // any more, see recap-note.ts) + the `. ` separator + the reflection + the
+  // fixed overhead. Sizing too small lets a near-limit reflection push the
+  // composed result past `resultThreshold`, which `tool()` answers by dumping the
+  // whole brief to a file.
+  const budget = deps.resultThreshold - 'OK.'.length - 2 - SCOPE_NOTE_OVERHEAD_CHARS;
   if (budget < 200) return null; // no room worth writing — leave the brief plain
 
   const prompt = buildPrompt(deps.briefMessage);
@@ -233,5 +238,5 @@ export function formatPlanScopeForDisplay(note: string): string {
 
 /** The complete brief tool result: success line + the reflection paragraph. */
 export function withPlanScopeNote(note: string): string {
-  return `${BRIEF_OK}. ${note}`;
+  return `OK. ${note}`;
 }

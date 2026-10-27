@@ -120,13 +120,12 @@ describe('HOOK-stage plan-mode scope reflection', () => {
     expect(msgs[0].role).toBe('assistant');
     expect(msgs[1].role).toBe('tool');
     expect(msgs[1].tool_call_id).toBe(briefCall.id);
-    // LINE 1 is the anchor line the TOOL stage would have stamped; the
-    // reflection is the section under it. Plan-mode briefs are lead briefs, so
-    // they are addressable like any other — this path never reaches handleTool,
-    // which is why the HOOK stage stamps it itself.
-    const [line1, ...body] = (msgs[1].content as string).split('\n');
-    expect(line1).toMatch(/^\[[A-Za-z0-9_-]+\] ANCHOR — recap\(target_brief="[A-Za-z0-9_-]*"\) folds the work after this point$/);
-    expect(body.join('\n')).toContain(PLAN_SCOPE_HEADING);
+    // The result is the plain `OK. <reflection>` the TOOL stage would have
+    // written — nothing is stamped: a brief result carries no anchor line and no
+    // hash any more, because the fold is decided outside the conversation.
+    expect(msgs[1].content).not.toMatch(/ANCHOR/);
+    expect(msgs[1].content).toMatch(/^OK\. /);
+    expect(msgs[1].content).toContain(PLAN_SCOPE_HEADING);
     expect(msgs[1].content).toContain('parser.ts');
   });
 
@@ -171,7 +170,7 @@ describe('HOOK-stage plan-mode scope reflection', () => {
     expect(passed.some((m) => m.tool_calls && m.role === 'assistant')).toBe(false);
   });
 
-  it('PLAN mode: the reflected brief is still a recap anchor, and a recap replaces the reflection', async () => {
+  it('PLAN mode: the reflected brief is still a foldable boundary, and a fold replaces the reflection', async () => {
     const { env, triologue, chat } = makeEnv('plan');
     await handleHook(env, createTurnVars(), chat);
 
