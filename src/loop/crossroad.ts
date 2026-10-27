@@ -652,23 +652,8 @@ export function buildCandidatesBrief(
   // second `[crossroad]` header directly under the card, so the card looked
   // split in two. The card keeps the win marker independently, so the reader
   // still knows which direction was chosen even if this line were absent.
-  // BLANK LINE BEFORE THE OUTCOME (not cosmetic): the card renders under
-  // markdown-it with `breaks: true`, where a single newline is a `<br>`, not a
-  // paragraph break. Appending this line directly after the row loop made it a
-  // CONTINUATION of the last candidate item, so the outcome looked like it
-  // belonged to direction N - reintroducing the row-swallowing bug this card
-  // exists to prevent. A blank line closes the `<ol>` first, so the
-  // outcome renders as its own paragraph after the list.
-  //
-  // Routed through `plainPreview` for the same reason the rows are: the
-  // outcome is model prose and this card is markdown-inert. Raw text here
-  // would let code spans, emphasis, images and links execute in a card that
-  // promises plain text.
-  const outcomeLine = outcome === undefined ? '' : plainPreview(outcome);
-  if (outcomeLine) {
-    lines.push('');
-    lines.push(`**Outcome** — ${outcomeLine}`);
-  }
+  const outcomeLine = outcome?.replace(/\s+/g, ' ').trim();
+  if (outcomeLine) lines.push(`**Outcome** — ${outcomeLine}`);
   return lines.join('\n');
 }
 
