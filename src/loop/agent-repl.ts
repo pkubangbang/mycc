@@ -367,12 +367,9 @@ export async function main(): Promise<void> {
   //      module instance /clear resets BEFORE triologue.clear() runs, so the
   //      post-clear snapshot is empty.
   //
-  //      Mid-run staleness is COVERED, not rebuilt: writers that mutate the
-  //      store outside a rebuild boundary (the /todos slash, the peer-wire
-  //      pinned reminder) deliberately do NOT force a mid-run rebuild — that
-  //      would break the cache-stable prefix. The hint round (hint-round.ts
-  //      buildStateSections) renders its own live, sanitized `## Todo List`
-  //      from getItems() and closes the gap.
+  //      Mid-run staleness is COVERED, not rebuilt: out-of-band writers queue
+  //      a full current snapshot for the next `brief` tool result. That changes
+  //      only the transcript suffix and leaves the cache-stable prefix untouched.
   triologue.registerProjectContextPopulator(() => buildTodoMessages(ctx.todo));
 
   // (3g) Pinned todos & stop guard — LEAD-ONLY. `todo_pinning` is

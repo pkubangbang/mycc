@@ -69,7 +69,7 @@ export const todoUpdateTool: ToolDefinition = {
     } else { done = doneArg; }
     if (noteArg !== undefined && typeof noteArg !== 'string') return 'Error: note must be a string when provided.';
     const note = noteArg === undefined ? current?.note : (noteArg as string).trim() || undefined;
-    const updated = ctx.todo.updateTodo(id, hash.trim(), name.trim(), done, note);    const updated = ctx.todo.updateTodo(id, hash.trim(), name.trim(), done, note?.trim() || undefined);
+    const updated = ctx.todo.updateTodo(id, hash.trim(), name.trim(), done, note);
 
     if (!updated) {
       // Check if id doesn't exist vs hash mismatch

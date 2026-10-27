@@ -10,12 +10,14 @@
  * prompts-cache prefix hot), so mid-task it showed a stale list or none. A plain
  * every-N-calls reminder is therefore its ONLY current view of its own checklist.
  *
- * The LEAD has three channels already:
+ * The LEAD has three baseline channels plus a targeted out-of-band refresh:
  *   1. the populator — guarantees the list appears, at boundaries;
  *   2. `hintRound` → `buildStateSections` (hint-round.ts:791) — renders the live,
  *      sanitized list mid-turn, gated on real trouble (confusion index);
  *   3. `recap` — folds finished work and re-surfaces the list WITH hashes.
- * A fourth, blind, every-N-calls reminder would fire unconditionally where
+ *   4. `brief` — carries a current snapshot only when an out-of-band writer
+ *      has queued one (slash command or peer-wire side effect).
+ * A fifth, blind, every-N-calls reminder would fire unconditionally where
  * hint-round fires on a signal, and would compete for attention with the tool
  * results that already carry the current hash. It would also contradict the rule
  * collect.ts itself states: the list "must NOT be re-injected as a per-turn
@@ -94,7 +96,7 @@ describe('LEAD has NO periodic todo nudge — the decision, locked', () => {
   });
 });
 
-describe('the lead’s three channels are present (they are what make 5a unnecessary)', () => {
+describe('lead todo exposure channels are present without a blind periodic nudge', () => {
   it('1 — the populator', () => {
     expect(read('src/loop/agent-repl.ts')).toContain('registerProjectContextPopulator(() => buildTodoMessages');
   });
@@ -114,5 +116,11 @@ describe('the lead’s three channels are present (they are what make 5a unneces
     // the `### Open todos` section below. The list is delivered by the note.
     expect(read('src/loop/triologue/recap-note.ts')).toContain('formatOpenTodos');
     expect(read('src/loop/states/hook.ts')).not.toContain('rebuildProjectContext');
+  });
+
+  it('4 — brief carries an out-of-band snapshot only when queued', () => {
+    expect(read('src/tools/brief.ts')).toContain('takeTodoModelRefresh(ctx.todo)');
+    expect(read('src/context/shared/todo-model-refresh.ts')).toContain('queueTodoModelRefresh');
+    expect(read('src/slashes/todos.ts')).toContain('queueTodoModelRefresh(context.ctx.todo)');
   });
 });
