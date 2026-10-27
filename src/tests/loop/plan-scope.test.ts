@@ -22,7 +22,7 @@ vi.mock('../../loop/agent-io.js', () => ({
 
 import { forkChat } from '../../engine/chat-provider.js';
 import { buildPlanScopeNote, withPlanScopeNote } from '../../loop/plan-scope.js';
-import { PLAN_SCOPE_HEADING } from '../../loop/triologue/recap-note.js';
+import { BRIEF_OK, PLAN_SCOPE_HEADING } from '../../loop/triologue/recap-note.js';
 import type { Message, Tool } from '../../types.js';
 
 const messages: Message[] = [{ role: 'user', content: 'plan the parser refactor' }];
@@ -123,6 +123,6 @@ describe('buildPlanScopeNote', () => {
   });
 
   it('composes with the success line as one result', () => {
-    expect(withPlanScopeNote(`${PLAN_SCOPE_HEADING}, x`)).toBe(`OK. ${PLAN_SCOPE_HEADING}, x`);
+    expect(withPlanScopeNote(`${PLAN_SCOPE_HEADING}, x`)).toBe(`${BRIEF_OK}. ${PLAN_SCOPE_HEADING}, x`);
   });
 });

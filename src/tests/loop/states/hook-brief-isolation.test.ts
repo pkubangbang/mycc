@@ -60,16 +60,8 @@ vi.mock('../../../loop/triologue.js', () => {
     agent = vi.fn();
     tool = vi.fn();
     note = vi.fn();
-    rewindToLastBrief = vi.fn();
-    // Auto-recap (step 4a) asks the stack for foldable spans. EMPTY = no span to
-    // fold, which is the state a single brief turn is in anyway.
-    getFoldCandidates = vi.fn(() => []);
     getLastBrief = vi.fn(() => undefined);
-    getTokenCount = vi.fn(() => 0);
-    getTokenThreshold = vi.fn(() => 50000);
-    recapNoteSize = vi.fn(() => 0);
-    getResultThreshold = vi.fn(() => 50000);
-    submitUser = vi.fn();
+    rewindToLastBrief = vi.fn();
     skipPendingTools = vi.fn();
   }
   return { Triologue: TriologueStub };

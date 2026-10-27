@@ -153,7 +153,7 @@ describe('handleLlm — empty output when lastRole === "tool" (img_describe regr
     expect(triologue.tool).toHaveBeenCalledTimes(1);
     // A synthetic RECOVERY brief is not addressable, so it gets a plain
     // receipt — never the `recap(target_brief=…)` invitation.
-    expect(triologue.tool).toHaveBeenCalledWith('brief', 'OK.', expect.any(String));
+    expect(triologue.tool).toHaveBeenCalledWith('brief', expect.stringMatching(/^\[[A-Za-z0-9_-]+\] OK$/), expect.any(String));
   });
 
   it('does NOT infinite-loop: bails to PROMPT after MAX_EMPTY_RETRIES consecutive empties', async () => {
@@ -197,7 +197,7 @@ describe('handleLlm — empty output when lastRole === "tool" (img_describe regr
     expect(triologue.agent).toHaveBeenCalledTimes(1);
     // A synthetic RECOVERY brief is not addressable, so it gets a plain
     // receipt — never the `recap(target_brief=…)` invitation.
-    expect(triologue.tool).toHaveBeenCalledWith('brief', 'OK.', expect.any(String));
+    expect(triologue.tool).toHaveBeenCalledWith('brief', expect.stringMatching(/^\[[A-Za-z0-9_-]+\] OK$/), expect.any(String));
   });
 
   it('does not record an LLM success while spinning on empty output', async () => {

@@ -170,16 +170,16 @@ const commonAxes = [
 
 /**
  * Lead agent-memory section. Adds lead-only coordination (teammates, peers,
- * context folding) and communication channels on top of the shared axes. The
- * lead reaches the user through the `agent >>` prompt, NOT via a tool — so
- * `question` is absent here (it is child-only).
+ * recap rewind context compression) and communication channels on top of
+ * the shared axes. The lead reaches the user through the `agent >>` prompt,
+ * NOT via a tool — so `question` is absent here (it is child-only).
  */
 export function buildLeadAgentMemorySection(): string {
   return [
     '## Agent Memory',
     'You have structured capability modules beyond basic file I/O. They organize along a few conceptual axes:',
     ...commonAxes,
-    'You also coordinate: spawn/await teammates, broadcast, discover peer instances, and fold finished work out of your own context (see "Briefs and Folding" below).',
+    'You also coordinate: spawn/await teammates, broadcast, discover peer instances, and rewind your own exploration (see "Briefs and Recap" below).',
     'Communication is async (mail_to), status (brief), or topic-shift (mycc_title).',
     '',
     buildBriefRecapSection(),
@@ -187,25 +187,17 @@ export function buildLeadAgentMemorySection(): string {
 }
 
 // ============================================================================
-// Briefs and Folding section (lead-only — teammates must never see it)
+// Briefs and Recap Section (lead-only — teammates must never see it)
 // ============================================================================
 
 /**
- * The fold contract, stated ONLY here. It must never go into `brief`'s tool
- * description: `brief` is `scope: ['main', 'child']`, so every teammate
- * receives that description, and a teammate's span is never folded. Teaching a
- * child about a fold it cannot incur is a pure distraction.
- *
- * WHAT THE MODEL NEEDS TO KNOW, and nothing more:
- *   - its `brief` calls divide its session into chunks;
- *   - finished chunks MAY be replaced by a `[RECAP]` note, chosen for it;
- *   - the note is authoritative state, not a suggestion;
- *   - it should therefore write briefs that stand on their own.
- *
- * WHAT IT MUST NOT BE TOLD: a hash, a fold call, an addressable boundary. The
- * decision is made outside the conversation (`recap-signal.ts`) precisely
- * because the model would not make it; an address it could act on would be an
- * affordance pointing at a deleted tool.
+ * The recap contract, stated ONLY here and in the recap tool's description
+ * (`scope: ['main']`). It must never go into `brief`'s tool description:
+ * `brief` is `scope: ['main', 'child']`, so every teammate receives that
+ * description, and teammates are not allowed to call recap. Teaching a child
+ * about a rewind it cannot perform is a pure distraction — and the rewind
+ * rule would invite child briefs written for an audience that will never
+ * rewind to them.
  *
  * Lead-only by construction: this builder is called from
  * buildLeadAgentMemorySection() only. The teammate prompt assembles
@@ -214,12 +206,13 @@ export function buildLeadAgentMemorySection(): string {
  */
 export function buildBriefRecapSection(): string {
   return [
-    '## Briefs and Folding',
-    'Your `brief` calls divide this session into **chunks** of work. A chunk that is finished may be folded away: everything after that brief is replaced by a `[RECAP]` note.',
-    '- You do not choose when this happens — a context manager outside the conversation decides, from the shape of the session, and does it just before one of your briefs is recorded. Expect a fold without asking for it, and do not try to invoke one.',
-    '- A `[RECAP]` note is **authoritative state**, not a suggestion: it is the whole record of the work that was folded. Read it as your current situation and continue from it.',
-    '- Write every brief so it can stand alone: conclusion first, then the evidence that matters. It is the boundary a fold cuts at, and the note that replaces the span builds on it.',
-    '- Compaction is the floor: a fold never reaches back past the last compaction.',
+    '## Briefs and Recap',
+    '`brief` + `recap` shape your context like a **stack**, and only YOU (the lead) can call `recap`. It takes exactly two REQUIRED arguments: `target_brief` and `summary`.',
+    '- `brief` **pushes** a frame where an exploration span starts (sole call of its turn): conclusion first, then evidence. Its result\'s first line is that frame\'s **anchor** — `[<hash>] ANCHOR`; a `· open:` list there names other anchors you can fold to instead.',
+    '- `recap(target_brief="<hash>", summary="…")` **pops frames back to that anchor**, replacing everything after it with your summary, copied VERBATIM into that frame\'s result. `target_brief` is never defaulted: an unknown hash, or one with nothing after it yet, is refused and nothing is collapsed. Repeatable: each pop rewinds one further; new activity re-arms the frame and overwrites its note.',
+    '- The summary is the ONLY record of the deleted span — state what was found, what now holds, and how the next turn should proceed (its last lines are the last thing the conversation sees). A too-short summary is refused and nothing is collapsed.',
+    '- `summary: ""` pops and **discards** the span — the way out of a wrong direction.',
+    '- Compaction is the floor: `recap` cannot rewind past it.',
   ].join('\n');
 }
 

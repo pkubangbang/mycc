@@ -39,7 +39,7 @@ agent loop 已从早期的 `while(true)` 命令式循环重构为**显式状态�
 | `SLASH` | 处理 `/` 斜杠命令 | `src/loop/states/slash.ts` |
 | `COLLECT` | LLM 前的预收集：子进程问题、邮件、hint round、todo nudge、brief nudge、worktree nudge、技能发现 | `src/loop/states/collect.ts` |
 | `LLM` | 构建 system prompt、调用 LLM、auto-compact、crossroad 检测 | `src/loop/states/llm.ts` |
-| `HOOK` | 执行 hook，处理 hook 对 tool call 的拦截/增强；步骤 4a 是 lead 专属的 **auto-recap**（在 brief 回合、该 brief 注册之前折叠旧 span） | `src/loop/states/hook.ts` |
+| `HOOK` | 执行 hook，处理 hook 对 tool call 的拦截/增强 | `src/loop/states/hook.ts` |
 | `TOOL` | 顺序执行 tool calls，记录 sequence，语义重复检测 | `src/loop/states/tool.ts` |
 | `STOP` | 无 tool call 时的收尾：neglected mode wrap-up 或 team awaiting | `src/loop/states/stop.ts` |
 | `AWAIT` | auto 模式下的自主循环等待 | `src/loop/states/await.ts` |
@@ -106,30 +106,6 @@ if (ctx.todo.hasOpenTodo() || activeChannels.length > 0) {
 
 COLLECT 状态中每 5 次 pass 提醒一次使用 brief 工具（`turn.nextBriefNudge` 初始为 5）。使用 brief 工具后重置为 5（在 `src/loop/states/tool.ts` 中）。
 
-### auto-recap - 观察者驱动的上下文折叠
-
-模型不会主动回退自己的上下文，所以折叠**不是工具**：旧的 `recap` META-TOOL 已删除。
-
-- **触发**：HOOK 阶段 4a，仅在 lead 的 **brief 回合**，且在该 brief 注册到 triologue **之前**
-  （`handleAutoRecap()`，`src/loop/states/hook.ts`）。当前 brief 因此成为新 chunk 的第一条消息。
-- **门控**：`scope === 'main'`、`!shouldNoRecap()`（`--no-recap` / `MYCC_NO_RECAP=1`）、
-  该回合的 brief 未被拦截、非 neglected 模式、无 `compactRequested` / `deferredCompact`、
-  `getFoldCandidates().length > 0`。
-- **判定**：`evaluateRecapSignal()`（`src/loop/recap-signal.ts`）——独立的 `retryChat`，
-  强制工具 `decide_recap`，只读 brief 栈（`getFoldCandidates()`：hash / message / id /
-  spanMessages / spanTokens）和 token 用量；`maxRetries: 2`，永不抛错。判定为
-  `recap` / `skip` / `failed`，未知目标一律降级为 `skip`。
-- **执行**：`handleRecapForks()`（`src/loop/recap-rewind.ts`）用 `Promise.all` 并发跑
-  span 摘要 fork + mindmap patch fork，一对 spinner `Summarizing last N chunks…`；
-  摘要为空或 note 超出 `getResultThreshold()` ⇒ 不折叠；否则
-  `Triologue.rewindToLastBrief()` 截断并原地重写锚点 brief 的 tool 结果。
-- **收尾**：可见 `[recap]` 块（摘要首行 + token 差值）、一条
-  `submitUser(…, 'steer')` 审计记录、`loopEvents.emit('auto_recap')`、应用 mindmap patch、
-  重同步 `turn.lastBriefMessage`/`nextBriefNudge`，并置 `chat.autoRecapFolded = true`
-  使本回合不再触发 plan-scope 反思。
-- **反震荡**：无需守卫——成功折叠会消费其目标（锚点往返重新留在末尾）。
-- **不变量**：折叠路径**绝不**调用 `rebuildProjectContext()`（只在 compact/clear 边界合法）。
-
 ### Team Awaiting - 等待队友完成
 
 在 STOP 状态处理（`src/loop/states/stop.ts`）。当 agent 没有工具调用时：
@@ -171,11 +147,11 @@ COLLECT（`src/loop/states/collect.ts`）在每次 LLM 调用前执行预收集�
 
 - **Plan 模式** — `buildPlanModePrompt(workDir, hasTeam)`：Solo plan / Team plan
 - **Normal 模式** — `buildNormalModePrompt(workDir, identity?, hasTeam)`：
-  - **Solo normal**（无 team）：`"You are a coding agent at ${workDir}."` + 任务管理 + pinned todo + 知识边界 + 公共部分 + recap rewind
+  - **Solo normal**（无 team）：`"You are a coding agent at ${workDir}."` + 知识边界 + 公共部分 + recap rewind（任务管理 / todo 列表 / pinned todo 均已移出 system prompt，改由 projectContext populator 交付）
   - **Team normal (Lead)**：`"You are the lead of a coding agent team at ${workDir}."` + team workflow + issue 管理 + 通信规则 + 边界规则
   - **Teammate (Child)**：`"You are ${name}, a specialized agent working as part of a team, created by the \"lead\"."` + 三种通信方式 + 时间预算协议 + worktree 用法
 
-所有提示共享公共部分：Verification、Platform、Intent Language、Calendar、Output Behavior。Normal 模式还包含 Knowledge Boundary 和 Briefs and Folding 部分。
+所有提示共享公共部分：Verification、Platform、Intent Language、Calendar、Output Behavior。Normal 模式还包含 Knowledge Boundary 和 Recap Rewind 部分。
 
 ## 工具执行
 

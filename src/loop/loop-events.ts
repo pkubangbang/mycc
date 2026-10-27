@@ -32,7 +32,6 @@ export const LOOP_EVENT_TYPES = [
   'brief_message',
   'serve_state',
   'todo_changed',
-  'auto_recap',
 ] as const;
 
 export type LoopEventType = (typeof LOOP_EVENT_TYPES)[number];
@@ -102,28 +101,6 @@ export interface EscInterruptPayload {
 export interface BriefMessagePayload {
   message: string;
   confidence: number;
-}
-
-/**
- * Auto-recap produced a verdict, and possibly a fold.
- *
- * Fired from `states/hook.ts` step 4a on EVERY qualifying brief turn, including
- * the negative verdicts — the point of the channel is that "the signal looked
- * and said no" is observable, not just "something was folded". A silent `skip`
- * would make a mis-tuned signal indistinguishable from a feature that is off.
- *
- * `verdict` mirrors `RecapSignal['status']` ('failed' included: a thrown
- * retryChat must not look like a deliberate skip). The fold fields are present
- * only when a rewind actually ran.
- */
-export interface AutoRecapPayload {
-  verdict: 'recap' | 'skip' | 'failed';
-  /** The hash the signal picked (recap), or the newest candidate the signal was offered (skip). */
-  targetHash?: string;
-  reason?: string;
-  foldedMessages?: number;
-  tokensBefore?: number;
-  tokensAfter?: number;
 }
 
 /**

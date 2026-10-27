@@ -17,6 +17,7 @@ import type { Message, Tool, ToolCall } from '../../types.js';
 import { minifyMessages } from '../../utils/llm-chat-minifier.js';
 import { getSessionContext, getSessionDir } from '../../config.js';
 import { briefToolCall, newBriefCallId } from './brief.js';
+import { briefResultLine } from './recap-note.js';
 
 export interface CompactDeps {
   /** Raw (defensively filtered) conversation messages for transcript + minification. */
@@ -62,10 +63,10 @@ export function buildSummaryPrompt(conversationText: string, deps: CompactDeps, 
     ? `\n**User's Last Instruction:** "${lastUserQuery}"\nEnsure the summary preserves ALL constraints, pending tasks, and requests from this instruction. The agent should continue working on this after the compact.\n`
     : '';
 
-  // NOTE: no recap guidance here. Folding is decided OUTSIDE the conversation
-  // (recap-signal.ts at HOOK step 4a), so a compaction prompt must not teach the
-  // model how or when to "call recap" — the tool no longer exists, and a stale
-  // copy of the policy here would only drift.
+  // NOTE: no recap guidance here. "When/how to call recap" is taught in ONE
+  // place — the lead system prompt (buildBriefRecapSection). Repeating it in
+  // the compaction summary prompt pollutes the injected context with a second,
+  // drifting copy of the same policy.
 
   return (
     `Summarize this conversation for continuity. Cover the following sections:\n\n` +
@@ -224,9 +225,8 @@ export async function runAutoCompact(deps: CompactDeps, focus?: string, signal?:
   // same one llm.ts recovery and hook.ts crossroad use, so this producer's
   // shape cannot drift from theirs.
   // A SYNTHESIZED call id, minted like every other synthetic producer (no
-  // hand-invented id scheme): opaque and unique is all it must be — the fold
-  // reads the anchor's message, never its id; the id only serves as the
-  // compare-and-swap token across the forks.
+  // hand-invented id scheme): opaque and unique is all it must be — recap reads
+  // the anchor's message, never its id.
   const briefCall = briefToolCall(
     COMPACT_RESUME_BRIEF_MESSAGE,
     7,
@@ -255,10 +255,10 @@ export const COMPACT_RESUME_BRIEF_MESSAGE =
  * Build the post-compact 3-message round-trip that `replaceAll` installs.
  *
  * Extracted from runAutoCompact so tests can exercise the REAL producer. This
- * brief is the fold FLOOR: compact() replaces the entire conversation with
+ * brief is the recap FLOOR: compact() replaces the entire conversation with
  * this round-trip, making it the ONLY brief left, so anything that made it
- * ineligible as an anchor would leave the auto-recap with no anchor at all
- * after every compaction — a hand-built fixture cannot catch that; it silently tests a
+ * ineligible as an anchor would leave recap with no anchor at all after every
+ * compaction — a hand-built fixture cannot catch that; it silently tests a
  * shape production no longer produces (exactly the P1 this extraction exists
  * to prevent recurring).
  *
@@ -296,22 +296,23 @@ export function buildResumeRoundTrip(args: {
       content: '',
       // NOTE: this assistant message carries NO `synthetic` marker —
       // deliberately. `synthetic: true` marks an INCIDENTAL brief (llm.ts
-      // empty-output recovery, hook.ts crossroad) that the fold must skip,
+      // empty-output recovery, hook.ts crossroad) that recap must skip,
       // because its text is boilerplate. This one is the FLOOR: after a
-      // compaction it is the only brief left, so marking it would leave the
-      // auto-recap with no anchor at all. The call id is an opaque unique id
-      // and carries no meaning.
+      // compaction it is the only brief left, so marking it would leave recap
+      // with no anchor at all. The call id is an opaque unique id and carries
+      // no meaning.
       tool_calls: [briefCall],
     },
     {
       role: 'tool',
       tool_name: 'brief',
-      // The plain ack — the same result every real brief gets. This brief IS a
-      // foldable boundary (it is not synthetic: it is the floor left after a
-      // compaction), which the brief STACK recognises from the call itself, not
-      // from anything written here. Nothing is stamped: the model has no address
-      // to act on (auto-recap decides outside the conversation).
-      content: 'OK.',
+      // The pristine success result - WITH its anchor hash, so the floor brief
+      // is addressable by recap(target_brief=...) from the first moment. Rendered by
+      // recap-note.ts briefResultLine (the same writer the TOOL stage stamps),
+      // never hand-assembled. This brief is NOT synthetic — it is the only
+      // anchor left after a compaction — so the invitation is truthful here.
+      // recap REWRITES this in place with the span summary, keeping line 1.
+      content: briefResultLine(briefCall.id),
       tool_call_id: briefCall.id,
     },
   ];

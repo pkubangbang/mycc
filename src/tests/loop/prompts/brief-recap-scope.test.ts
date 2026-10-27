@@ -1,41 +1,46 @@
 /**
  * brief-recap-scope.test.ts
  *
- * Guards the SCOPE of the brief / folding teaching.
+ * Guards the SCOPE of the brief/recap teaching.
  *
- * THE BUG THIS PINS DOWN, in its post-auto-recap shape: `brief` is
- * `scope: ['main', 'child']`, so its description travels to EVERY teammate —
- * and a teammate's span is never folded (the fold runs at HOOK step 4a, lead
- * only). The old test guarded a `recap` TOOL; that tool is gone. The contract
- * that survives is the same contract in a different place: the fold is taught
- * ONCE, in buildBriefRecapSection(), reachable only via
- * buildLeadAgentMemorySection(), and nowhere a teammate can read.
+ * The bug this test pins down: `brief` is `scope: ['main', 'child']`, so its
+ * description travels to every teammate — and teammates may not call `recap`
+ * (`recap.scope === ['main']`). The description used to explain that briefs
+ * are recap rewind anchors, i.e. it taught a tool the reader cannot use and
+ * told a child to write briefs "as your only surviving record", which is only
+ * true for the lead. The recap contract now lives in two lead-only places:
  *
- * It also pins the vocabulary itself: with no `recap` tool and no
- * model-addressable anchor, no model-facing surface may mention `recap`,
- * "rewind", or an "anchor" — those words name a capability the model does not
- * have, and an affordance the model cannot use costs a round-trip when it
- * tries.
+ *   1. the `recap` tool description (scope: main), and
+ *   2. buildBriefRecapSection(), reachable only via buildLeadAgentMemorySection().
+ *
+ * These assertions fail if any future edit re-leaks recap into a surface a
+ * teammate can see (the brief description, the shared common sections, or the
+ * teammate prompt / agent-memory section).
  */
+
 import { describe, it, expect } from 'vitest';
 
 import { briefTool } from '../../../tools/brief.js';
+import { recapTool } from '../../../tools/recap.js';
 import {
   buildBriefRecapSection,
+  buildCommonSections,
   buildLeadAgentMemorySection,
   buildTeammateAgentMemorySection,
 } from '../../../loop/prompts/common.js';
+import { buildTeammatePrompt } from '../../../loop/prompts/teammate.js';
 
-/** The vocabulary a model-facing surface must not carry any more. */
-const RETIRED_CALL = /recap\(|target_brief|rewind|\banchor\b/i;
+const RECAP = /recap/i;
 
-describe('brief tool description stays a plain reporter', () => {
+describe('brief tool description does not teach recap', () => {
   it('brief is shared with teammates (the reason this matters)', () => {
     expect(briefTool.scope).toContain('child');
   });
 
   it('mentions no recap / rewind-anchor wording', () => {
-    expect(briefTool.description).not.toMatch(RETIRED_CALL);
+    expect(briefTool.description).not.toMatch(RECAP);
+    expect(briefTool.description).not.toMatch(/rewind/i);
+    expect(briefTool.description).not.toMatch(/anchor/i);
   });
 
   it('still states the isolation rule, which is enforced for every caller', () => {
@@ -43,31 +48,59 @@ describe('brief tool description stays a plain reporter', () => {
   });
 });
 
-describe('the fold is taught only in the lead section', () => {
-  it('the lead section describes folding and its note', () => {
-    const section = buildBriefRecapSection();
-    expect(section).toMatch(/fold/i);
-    expect(section).toContain('[RECAP]');
+describe('recap tool description stays lead-only', () => {
+  it('recap scope is main-only', () => {
+    expect(recapTool.scope).toEqual(['main']);
   });
 
-  it('and it tells the model it does NOT choose when to fold', () => {
-    expect(buildBriefRecapSection()).toMatch(/do not choose/i);
-  });
-
-  it('it carries no call the model could make', () => {
-    expect(buildBriefRecapSection()).not.toMatch(RETIRED_CALL);
-  });
-
-  it('the lead agent-memory section includes it', () => {
-    expect(buildLeadAgentMemorySection()).toContain(buildBriefRecapSection());
+  it('and it is where the tool-level contract is explained', () => {
+    expect(recapTool.description).toMatch(/brief/i);
+    expect(recapTool.description).toMatch(/anchor/i);
   });
 });
 
-describe('teammates never see the fold contract', () => {
-  it('the teammate agent-memory section omits it', () => {
-    const section = buildTeammateAgentMemorySection();
-    expect(section).not.toContain(buildBriefRecapSection());
-    expect(section).not.toContain('[RECAP]');
-    expect(section).not.toMatch(/do not choose/i);
+describe('system prompt: recap guidance is lead-only', () => {
+  it('lead agent-memory section carries the Briefs and Recap section', () => {
+    const lead = buildLeadAgentMemorySection();
+    expect(lead).toContain('## Briefs and Recap');
+    expect(lead).toMatch(/rewind/i);
+  });
+
+  it('teammate agent-memory section does not mention recap', () => {
+    expect(buildTeammateAgentMemorySection()).not.toMatch(RECAP);
+  });
+
+  it('shared common sections do not mention recap', () => {
+    expect(buildCommonSections()).not.toMatch(RECAP);
+  });
+
+  it('the assembled teammate prompt does not mention recap', () => {
+    const prompt = buildTeammatePrompt('/work', { name: 'w1', role: 'coder' });
+    expect(prompt).not.toMatch(RECAP);
+  });
+
+  it('buildBriefRecapSection is self-contained and recap-only (no teammate path)', () => {
+    const section = buildBriefRecapSection();
+    expect(section).toContain('## Briefs and Recap');
+    expect(section).toMatch(/only YOU \(the lead\)/i);
+  });
+
+  it('recap guidance teaches the two-field schema (target_brief + summary)', () => {
+    const section = buildBriefRecapSection();
+    // The always-on prompt must teach the CURRENT argument names — the ones
+    // hook.ts actually reads — or the model copies a call that is refused.
+    expect(section).toContain('target_brief="<hash>"');
+    expect(section).toContain('summary="…"');
+    // An empty summary is the discard request; there is no `abandon` flag.
+    expect(section).toContain('summary: ""');
+    // The anchor line the model reads and the argument it names must agree.
+    expect(section).toContain('[<hash>] ANCHOR');
+    expect(section).toMatch(/pops frames back/i);
+    // The deleted API must never come back into the prompt.
+    expect(section).not.toMatch(/abandon=true/);
+    expect(section).not.toMatch(/target="<hash>"/);
+    expect(section).not.toMatch(/\bcomment\b/);
+    expect(section).not.toMatch(/description[=:]/);
+    expect(section).not.toMatch(/pops the topmost frame/);
   });
 });

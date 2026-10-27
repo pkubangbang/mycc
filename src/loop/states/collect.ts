@@ -319,7 +319,7 @@ async function runTodoNudge(env: MachineEnv, turn: TurnVars): Promise<void> {
  *
  * The teammate loop (teammate-worker.ts step 3) DOES carry a periodic todo
  * reminder, because a teammate has no other mid-task channel: no COLLECT state,
- * no hint-round, no auto-recap. For the lead the opposite is true — three channels
+ * no hint-round, no recap. For the lead the opposite is true — three channels
  * already exist:
  *
  *   1. `buildTodoMessages` — the populator. Guarantees the list APPEARS, at
@@ -328,15 +328,13 @@ async function runTodoNudge(env: MachineEnv, turn: TurnVars): Promise<void> {
  *   2. `hintRound` → `buildStateSections` (hint-round.ts:791) — renders the live,
  *      sanitized `## Todo List` mid-turn, gated on real trouble (confusion index
  *      ≥ CONFUSION_THRESHOLD, ≥ MIN_MESSAGES_FOR_HINT).
- *   3. **auto-recap** — folds finished work once the recap signal decides the
- *      span is done; the note carries the live `### Open todos` block, because
- *      the list lives outside the transcript and would otherwise vanish with
- *      the span.
+ *   3. `recap` — folds finished work and re-surfaces the list WITH hashes; the
+ *      rewind path rebuilds the project context for exactly this.
  *
  * A blind every-N-calls reminder would be a FOURTH, and a worse one: it fires
  * unconditionally, where hint-round fires on a signal ("you look stuck — here is
- * your list"), and it competes for attention with the todo list the note already
- * carries. Adding it also contradicts the rule stated in
+ * your list"), and it competes for attention with the tool results that already
+ * carry the current hash. Adding it also contradicts the rule stated in
  * collect.ts's channel-nudge doc: the list "must NOT be re-injected as a
  * per-turn REMINDER".
  *

@@ -69,7 +69,7 @@ describe('M1 — anchor identity', () => {
       'activity',
       '',
       // TWO's own result: the note, written at the RESOLVED occurrence.
-      expect.stringContaining('SUMMARY'),
+      expect.stringContaining('Rewound past the brief: "TWO"'),
     ]);
   });
 });
@@ -98,7 +98,7 @@ describe('M2 — single anchor resolution', () => {
     expect(msgs).toHaveLength(5);
     expect(msgs[1].content).toBe('OK ONE'); // the older result is untouched
     expect(msgs[4].content).toContain('SUMMARY'); // the note lands on TWO's result
-    expect(msgs[4].content).toContain('SUMMARY');
+    expect(msgs[4].content).toContain('Rewound past the brief: "TWO"');
   });
 
   it('resolveAnchor matches the brief result by tool NAME too, not just the reused call id', () => {

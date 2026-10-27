@@ -7,21 +7,18 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { BRIEF_OK } from '../loop/triologue/recap-note.js';
 
 /**
- * `brief` is shared by the lead AND teammates (`scope: ['main', 'child']`) and
- * its result is a plain `OK.` for both. There is no model-facing anchor, no
- * hash and no fold call to describe: the decision to fold a finished span is
- * made OUTSIDE the conversation (`recap-signal.ts`), so nothing the model can
- * type addresses a span. The lead's system prompt explains the fold; the tool
- * description stays a reporter's contract for every caller.
+ * `brief` is shared by the lead AND teammates (`scope: ['main', 'child']`), so
+ * its description is visible to agents that can never call `recap`. It must
+ * therefore say nothing about recap or rewind anchors — that contract lives in
+ * the recap tool's own description (lead-only) and in the lead's system prompt
+ * (buildLeadAgentMemorySection). Do not re-add it here.
  *
  * `Must be called alone` STAYS: validateBriefIsolation rejects the whole turn
- * for every caller. Its reason changed with the fold — no longer "the model
- * needs an unambiguous target", but "the loop's span slicing needs an
- * unambiguous boundary": a brief batched with other calls yields a mid-turn
- * boundary that `resolveAnchor` -> `resultIndex + 1` -> `sliceFrom` was never
- * designed to cut at, and the fold runs on exactly that boundary.
+ * for every caller, so a teammate batching brief with another tool must know
+ * the rule even though it is the lead who rewinds to these anchors.
  */
 export const briefTool: ToolDefinition = {
   name: 'brief',
@@ -74,13 +71,17 @@ export const briefTool: ToolDefinition = {
 
     // Use core.brief to send the message via IPC to parent
     ctx.core.brief('info', 'brief', message, `confidence: ${confidence * 10}%`);
-    // A plain success line, `OK.` — and that is the WHOLE result the model
-    // reads. Nothing stamps it any more: with the fold decided outside the
-    // conversation there is no address to print. The success text ends with a
-    // period because a result may carry more after it ("OK. When thinking on
-    // the larger scope, …") — that section is added by the HOOK stage in plan
-    // mode, never here: the tool stays a reporter, the loop owns the
-    // enhancement.
-    return 'OK.';
+    // A plain success line, `OK`. The TOOL stage (states/tool.ts) replaces this
+    // ack with the ANCHOR LINE — `[<hash>] ANCHOR — recap(target_brief="<hash>") to
+    // folds the work after this point` — because only the loop knows the id the
+    // hash is derived from (a handler receives no id), and only the loop can
+    // see the brief stack the `· open:` candidates come from. The hash is the
+    // same one recap's rewind writes (`noteWithSummary`), so the two writers
+    // still share ONE rendering (recap-note.ts briefResultLine). The success
+    // text ends with a period because a result may carry more after it
+    // ("OK. When thinking on the larger scope, …") — that section is added by
+    // the TOOL stage in plan mode, never here: the tool stays a reporter, the
+    // loop owns the enhancement.
+    return `${BRIEF_OK}.`;
   },
 };

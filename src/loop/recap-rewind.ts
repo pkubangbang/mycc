@@ -1,27 +1,15 @@
 /**
- * recap-rewind.ts - The FORK half of an automatic fold.
+ * recap-rewind.ts - Recap isolation guard + mindmap patch decision
  *
- * Folding used to be a META-TOOL (`recap`): its definition shipped for LLM
- * visibility, its real work lived in the state machine, and a guard forced the
- * model to call it alone. The model never called it, so the decision moved out
- * of the conversation entirely (`recap-signal.ts`, docs/loop/auto-recap-plan.md):
+ * recap is a META-TOOL: its tool definition exists for LLM visibility, but the
+ * real work happens in the state machine (hook.ts) because it needs triologue
+ * access, which is not part of AgentContext.
  *
- *     brief turn ──> signal (retryChat over the brief list) ──"recap"──> THIS MODULE
- *                                                                         │
- *                                    ┌────────────────────────────────────┤
- *                                    ▼                                    ▼
- *                     forkChat: summarize the span      forkChat: ONE mindmap patch
- *
- * The rewind itself (truncate at the anchor + write the note) belongs to the
- * triologue facade — `Triologue.rewindToLastBrief()` — and is NOT re-implemented
- * here. This module only produces the two pieces of TEXT a fold needs, from the
- * pre-rewind conversation used as the cached prefix, and reports what happened.
- *
- * ONE SPINNER PAIR FOR BOTH FORKS: `forkChat` is permanently noSpinner (see its
- * header), so nothing would paint a wait indicator during 10-60s of LLM time.
- * A single `startSpinner`/`stopSpinner` pair wraps the group — not one pair per
- * fork — because the spinner is a non-refcounted module-global: a second start is
- * a no-op and the first finish would clear the line while the other still runs.
+ * The rewind itself (truncate at the last brief + append the merge note) lives
+ * in the triologue facade — see Triologue.getLastBrief() / rewindToLastBrief().
+ * This module guards the call shape (recap must run alone) and produces the ONE
+ * surviving fork: the mindmap patch decision. The note TEXT is the model's own
+ * `summary`, written by `states/hook.ts` — there is no summarization fork here.
  */
 
 import type { Message, Tool } from '../types.js';
@@ -31,18 +19,38 @@ import { forkChat } from '../engine/chat-provider.js';
 import { StreamAbortedError } from '../engine/chat-helpers.js';
 import { agentIO } from './agent-io.js';
 import { startSpinner, stopSpinner } from '../engine/chat-helpers.js';
-import { MIN_RECAP_SUMMARY_CHARS } from './states/hook.js';
 
-export { MIN_RECAP_SUMMARY_CHARS };
+/**
+ * Validate that recap is called alone (no other tools in same turn)
+ */
+export { MIN_RECAP_SUMMARY_CHARS } from './states/hook.js';
+
+export function validateRecapIsolation(toolCalls: Array<{ function: { name: string } }>): { valid: boolean; message?: string } {
+  const hasRecap = toolCalls.some(c => c.function.name === 'recap');
+  if (!hasRecap) {
+    return { valid: true };
+  }
+  
+  if (toolCalls.length > 1) {
+    return {
+      valid: false,
+      message: 'Recap must be called alone. Other tools cannot be used in the same turn.',
+    };
+  }
+  
+  return { valid: true };
+}
 
 // ============================================================================
-// MINDMAP PATCH: fork #2 — one node add/update/delete per fold
+// MINDMAP PATCH: the one remaining forkChat — patch decision
 //
-// Every fold launches ONE mindmap-patch forkChat (generatePatchAction, below)
-// alongside the span summary. The two are independent: the summary describes what
-// was folded, the patch decides whether the knowledge tree should change because
-// of it. Both reuse the SAME triologue prefix the loop already paid for, so both
-// are prompt-cache hits.
+// Each recap launches ONE forkChat call: the mindmap-patch decision
+// (generatePatchAction, below). It decides whether ONE mindmap node should be
+// added/updated/deleted.
+//
+// There is no summarization fork: since the two-field schema the note body is the
+// model's OWN `summary`, copied verbatim by the caller. The fork still reuses the
+// SAME triologue prefix the loop already paid for → same prompt-cache hit.
 // See docs/mindmap/mindmap-redesign.md Part 2.
 // ============================================================================
 
@@ -321,143 +329,122 @@ export async function generatePatchAction(
   return null;
 }
 
-// ============================================================================
-// THE FOLD: summarize the span (+ render its checklist) + mindmap patch
-// ============================================================================
-
-/**
- * The summary prompt. It is APPENDED to the conversation prefix (forkChat puts
- * it on the last user message), so the model sees the span it must summarize.
- *
- * The contract is narrow on purpose: the note REPLACES the span in the model's
- * context, so it must be a usable state statement in one read — and must not
- * restate raw tool output, which is what the fold removes.
- */
-function buildSummaryPrompt(): string {
-  return `[AUTO-RECAP] The work above this point is finished and is about to be REMOVED from your context. Write the note that replaces it.
-
-Rules:
-- State what was FOUND, what NOW HOLDS, and HOW THE NEXT TURN SHOULD PROCEED. That is the whole note.
-- Keep every fact the next step depends on: file paths, function names, decisions and their reasons, commands that worked, errors that remain open, and anything the user asked for.
-- Drop raw tool output, restated file contents, and narration of the steps themselves.
-- Do not open with a preamble ("Here is a summary", "The user asked me to"). Do not use headings or bullet markers — 3 to 8 short sentences of plain prose.
-- Write in the language of the conversation.
-Output TEXT ONLY.`;
-}
-
-/** One fold's inputs, assembled by the caller (states/hook.ts step 4a). */
-export interface RecapFoldInput {
-  /** Pre-registration snapshot of the conversation — the prompt-cache prefix. */
-  fullMessages: Message[];
-  /** The FULL `main` tool list, un-minified: dropping or shrinking it costs the cache. */
-  allTools: Tool[];
-  /** Current mindmap, or null/undefined to skip the patch fork. */
-  mindmap: Mindmap | null | undefined;
-
-  /** How many chunks (brief-delimited spans) this fold collapses; drives the spinner text. */
-  chunks: number;
-}
-
-/** What a fold's forks produced. */
-export interface RecapForkResult {
-  /** The span summary, or null when the summary fork failed / returned nothing usable. */
-  summary: string | null;
-  /** Non-null when the summary fork failed for a reason worth reporting. */
-  summaryError: string | null;
-  /** The mindmap patch decision, or null for "none" / skipped / failed. */
+/** What `handleRecapSpan` reports: the patch decision and its cancellation state. */
+export interface RecapWithPatchResult {
+  /** The mindmap patch decision. The recap NOTE is not produced here: the
+   *  model's own summary is copied verbatim by the caller. */
+  /** A validated patch action, or null if none was produced (from forkChat #2) */
   patch: MindmapPatchAction | null;
-  /** Non-null when the patch fork failed. Best-effort: never blocks the fold. */
+  /**
+   * Non-null when the mindmap-patch fork failed. The patch is best-effort, so
+   * this never fails the recap — but it must not vanish silently either: the
+   * jsonl-validation failure is reported via `brief('warn', 'mindmap-patch')`,
+   * so a dropped patch deserves the same visibility. Reported by the CALLER
+   * (hook.ts), not from here: agentIO is process-wide and this module is also
+   * used by teammate recaps.
+   */
   patchError: string | null;
   /**
-   * TRUE when the user pressed ESC. The caller MUST then fold NOTHING: the span
-   * is still in context and the user asked to stop, so collapsing it would delete
-   * work they were trying to save.
+   * TRUE when the user pressed ESC during the patch fork. The caller MUST refuse
+   * the rewind: the span is still in context and the user asked to stop, so
+   * collapsing it would delete work they were trying to save.
    */
   escCancelled: boolean;
 }
 
 /**
- * Run the forks for one fold.
+ * Run the ONE surviving fork: the mindmap-patch decision.
  *
- * Both forks run CONCURRENTLY over the same prefix snapshot. The summary is
- * REQUIRED for a fold (there is no model behind it to retry by hand), so a
- * summary failure leaves the span intact; the patch is BEST-EFFORT.
+ * The note body is the model's own `summary`, copied verbatim by the caller, so no
+ * summarization fork exists and nothing here needs Promise.all. If mindmap is
+ * null/undefined the fork is skipped and `patch` is null.
  *
- * ESC is an OUTCOME, not "no summary": `escAware` resolves its cleanup value on
- * abort, and returning that as a failed fork would let the caller report a
- * cancellation as a shrug. It is tracked explicitly and checked at the end.
+ * @param fullMessages - Full triologue messages before truncation (cache prefix)
+ * @param allTools - All tools for prompt cache preservation
+ * @param mindmap - Current mindmap (for patch decision); if absent, skip patch
+ * @param escAware - Optional ESC-aware wrapper (lead agent)
+ * @returns { patch, patchError, escCancelled } — the patch is best-effort; the
+ *          cancellation flag is what the caller must honour before rewinding
  */
-export async function handleRecapForks(input: RecapFoldInput): Promise<RecapForkResult> {
-  const { fullMessages, allTools, mindmap, chunks } = input;
-  const chunkWord = chunks === 1 ? '1 chunk' : `${chunks} chunks`;
-  startSpinner(`Summarizing last ${chunkWord}`);
-  let summary: string | null = null;
-  let summaryError: string | null = null;
-  let patchError: string | null = null;
+export async function handleRecapSpan(
+  fullMessages: Message[],
+  allTools: Tool[],
+  mindmap: Mindmap | null | undefined,
+  escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>,
+): Promise<RecapWithPatchResult> {
+  // ── SPINNER: the caller owns the wait indicator ──
+  // forkChat is permanently noSpinner (see its header), so retryChat paints
+  // NOTHING for these forks. Without a spinner here the terminal is silent for
+  // the entire recap (~10-60s of LLM time) and mycc looks hung even though the
+  // two forks are running normally. This is the same contract crossroad.ts
+  // follows: one startSpinner/stopSpinner pair around the fork group.
+  //
+  // ONE pair for BOTH forks — not one per fork. The spinner is a NON-refcounted
+  // module-global (chat-helpers.ts): a second startSpinner while one is running
+  // is a no-op, and stopSpinner by whichever fork finished first would clear the
+  // line while the other is still streaming. Wrapping each fork individually
+  // would make the spinner die mid-recap.
+  //
+  // The forks are already safe to reveal visually: updateSpinnerTokens() is
+  // called unconditionally by the providers' onChunk (it is NOT gated by
+  // noSpinner), so the live "(Xs, N tokens)" suffix works here for free.
+  // finally{} guarantees the line is cleared on success, on ESC (escAware
+  // resolves null — it only logs verbosely, so the spinner never hides an ESC
+  // hint) and on a thrown error.
+  startSpinner('Recapping context');
   let patch: MindmapPatchAction | null;
-
+  // Set by the patch fork's catch — surfaced to the caller, never fatal.
+  let patchError: string | null = null;
+  /**
+   * TRUE only when the user actually pressed ESC during the patch fork.
+   *
+   * NOT derivable from `patchError`: any aborted stream raises StreamAbortedError,
+   * including the teammate watchdog, so the error alone cannot tell a cancellation
+   * from a provider hiccup. Neglected mode is the ESC channel.
+   */
+  let escCancelled = false;
   try {
-    const summaryTask = forkChat(fullMessages, allTools, buildSummaryPrompt(), undefined, 'none')
-      .catch((err: unknown) => {
-        summaryError = err instanceof StreamAbortedError
-          ? 'summary fork aborted'
-          : `summary fork failed: ${String(err)}`;
-        return null;
-      });
-
-    const patchTask = mindmap
-      ? generatePatchAction(fullMessages, allTools, mindmap).catch((err: unknown) => {
+    // ── The lone surviving fork: the mindmap-patch decision ──
+    // The note body is the model's own `summary` (copied verbatim by the caller),
+    // so there is no summary fork to run — and therefore no Promise.all: a lone
+    // fork needs no concurrency scaffolding, and the spinner still wraps the wait.
+    //
+    // REJECTION POLICY: a mindmap patch is BEST-EFFORT. Letting it reject would
+    // dump the turn to PROMPT after the user already waited, so it is neutralised
+    // to `null` — and `.catch` must RETURN a value for that; a logging-only handler
+    // still leaves the rejection to propagate.
+    patch = mindmap
+      ? await generatePatchAction(fullMessages, allTools, mindmap, escAware).catch((err: unknown) => {
+          // REACHABILITY: this branch is live but NARROW. escAware races
+          // forkChat against an ESC resolver (parent/core.ts:747); abort() fires
+          // synchronously (:724) while the sentinel resolves only after
+          // `await onCleanUp()` (:725), so forkChat usually rejects FIRST and
+          // the summary fork's rejection reaches the caller instead of the
+          // "[RECAP] Cancelled:" sentinel. The race is per-fork, so
+          // "summary resolves with the sentinel, patch rejects" is reachable —
+          // that interleaving is this handler's only entry point.
+          //
+          // StreamAbortedError does NOT mean "the recap is cancelled": any
+          // aborted stream raises it, including the teammate watchdog
+          // (context/teammate-worker.ts). So it is reported like any other
+          // patch failure, only shorter.
           patchError = err instanceof StreamAbortedError
             ? 'mindmap-patch fork aborted'
             : `mindmap-patch fork failed: ${String(err)}`;
+          // A StreamAbortedError WHILE neglected mode is on is a real cancellation;
+          // anything else (watchdog, provider fault) is a failed patch that must
+          // not block a valid recap.
+          escCancelled = err instanceof StreamAbortedError && agentIO.isNeglectedMode();
           return null;
         })
-      : Promise.resolve(null);
-
-    const [summaryText, patchDecision] = await Promise.all([summaryTask, patchTask]);
-    patch = patchDecision;
-
-    const text = (summaryText ?? '').trim();
-    // The note REPLACES the span: an empty or stub-length summary would delete
-    // everything after the brief and record nothing. Treated as a failed fold so
-    // the span survives — there is no model to ask for a fuller one.
-    if (text.length >= MIN_RECAP_SUMMARY_CHARS && !text.startsWith('[RECAP]')) {
-      summary = text;
-    } else if (!summaryError) {
-      summaryError = `summary unusable (${text.length} chars)`;
-    }
+      : null;
   } finally {
-    // Cleared on success, on ESC, and on a thrown error.
+    // Cleared on success, on ESC, and on a thrown error. A still-running
+    // sibling keeps streaming into a stopped spinner, which is harmless
+    // (startSpinner is non-refcounted; stopSpinner only clears the line).
     stopSpinner();
   }
 
-  const escCancelled = agentIO.isNeglectedMode();
-  if (escCancelled) {
-    agentIO.verbose('recap', `fold cancelled: ${summaryError ?? patchError ?? 'ESC'}`);
-  }
-  return { summary, summaryError, patch, patchError, escCancelled };
+  return { patch, patchError, escCancelled };
 }
 
-/**
- * Apply a mindmap patch and journal it.
- *
- * Kept next to the fork that produced it (it used to live inline in
- * states/hook.ts): the in-memory tree and the jsonl are updated together, and
- * the jsonl is the source of truth (the in-memory tree is rebuilt from it at
- * startup). See docs/mindmap/mindmap-redesign.md Part 2.6.
- *
- * @returns true when the patch was applied AND persisted.
- */
-export function commitMindmapPatch(
-  mindmap: Mindmap,
-  patch: MindmapPatchAction,
-  patchPath: string,
-  apply: (mindmap: Mindmap, patch: MindmapPatchAction) => boolean,
-  append: (patch: MindmapPatchAction, patchPath: string) => boolean,
-): boolean {
-  if (!apply(mindmap, patch)) return false;
-  // append() returns false when structural validation refuses the action
-  // (orphan-prevention gate). apply() already accepted it, so a false here is
-  // logic drift between the two validators — the caller reports it.
-  return append(patch, patchPath);
-}
