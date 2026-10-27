@@ -49,11 +49,6 @@ function createMockCore(): CoreModule {
   return {
     getWorkDir: () => '/test',
     setWorkDir: () => {},
-    // Runtime auto-commit allow-list (BaseCore surface); empty = feature OFF.
-    getAllowAutoCommitBranches: () => [],
-    addAllowAutoCommitBranch: () => false,
-    removeAllowAutoCommitBranch: () => false,
-    clearAllowAutoCommitBranches: () => [],
     getName: () => 'test-agent',
     brief: vi.fn(),
     verbose: vi.fn(),

@@ -40,11 +40,6 @@ export const contextFactories = {
     core: {
       getWorkDir: () => workdir,
       setWorkDir: () => {},
-      // Runtime auto-commit allow-list (BaseCore surface); empty = feature OFF.
-      getAllowAutoCommitBranches: () => [],
-      addAllowAutoCommitBranch: () => false,
-      removeAllowAutoCommitBranch: () => false,
-      clearAllowAutoCommitBranches: () => [],
       getName: () => 'test-agent',
       brief: () => {},
       verbose: () => {},
