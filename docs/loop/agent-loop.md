@@ -158,7 +158,7 @@ COLLECT（`src/loop/states/collect.ts`）在每次 LLM 调用前执行预收集�
 3. **注入团队状态** — `ctx.team.printTeam()`，非空时作为 SYSTEM note 注入。
 4. **Steering 队列**（webui）— `getServeHub().drainSteering()`，作为 REMINDER note 注入。
 5. **文件上传队列**（webui）— 保存到 `.mycc/uploaded/`，作为 REMINDER note 注入。
-6. **Hint round** — confusion index ≥ 10 且消息数 ≥ 6 时生成 hint（`CONFUSION_THRESHOLD = 10`，`MIN_MESSAGES_FOR_HINT = 6`）。整个特性由**进程级单例** `hintRound`（`src/loop/hint-round.ts`）持有：`AgentStateMachine` 构造时以 `hintRound.init(env)` 绑定 `MachineEnv`（仅 `scope === 'main'`，子进程走 `reset()` 且 `run()` 直接返回 `'continue'`），之后 COLLECT 只调用 `await hintRound.run(turn)`，由单例自行读取 triologue/ctx/sequence 并把 `[HINT]` note 推回 triologue。策略与机制（gate、breakdown、escAware、`generate`/`retryLoop`/wiki 预过滤）都在这一个模块里。
+6. **Hint round** — confusion index ≥ 10 且消息数 ≥ 6 时生成 hint（`CONFUSION_THRESHOLD = 10`，`MIN_MESSAGES_FOR_HINT = 6`）。
 7. **Todo nudging** — 见上文。
 8. **Brief nudging** — 见上文。
 9. **Worktree cleanup nudge** — `env.nextWtNudge` 为 0 时检查 worktree 列表，有则提醒清理。

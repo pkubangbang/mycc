@@ -1,21 +1,22 @@
 /**
  * collect-esc-hint.test.ts — handleCollect: ESC during hint generation.
  *
- * Code path under test (loop/hint-round.ts HintRound.run, invoked from collect.ts):
- *   const hintSignal = await hintRound.run(turn);
+ * Code path under test (collect-hint.ts runHintRound, invoked from collect.ts):
+ *   const hintSignal = await hintSuggester.runHintRound(env, turn);
  *     → if (confusion >= 10 && messageCount >= 6) {
  *         ctx.core.brief('info', 'loop', 'Generating hint...');
  *         const result = await ctx.core.escAware(
- *           async (abortController) => this.generate(abortController, ...),
+ *           async (abortController) =>
+ *             this.getManager(env).generate(abortController, ...),
  *           () => 'aborted',
  *         );
  *         ...
  *       }
  *
  * The hint round no longer routes through the Triologue facade
- * (Triologue.generateHintRound() is deleted). The feature is now the
- * HintRound singleton in loop/hint-round.ts. This test therefore
- * mocks `loop/hint-round.js` so `hintRound.run` is the seam
+ * (Triologue.generateHintRound() is deleted). Ownership moved to
+ * HintSuggester/HintRoundManager in states/collect-hint.ts. This test therefore
+ * mocks `triologue/hint-round.js` so `HintRoundManager.generate` is the seam
  * that decides 'failed' / success. The hint round NEVER signals compaction —
  * there is no 'compact' outcome (compaction is owned by token-based
  * auto-compact and the hook-driven deferredCompact path).
@@ -24,7 +25,7 @@
  * and stub triologue.getMessagesRaw() to return enough messages (>= 6) plus
  * ctx.core.getConfusionIndex() to return >= 10 to enter the hint block.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
 
@@ -60,16 +61,14 @@ vi.mock('../../../context/worktree-store.js', () => ({
   listWorktrees: vi.fn(async () => []),
 }));
 
-// HintRound singleton seam: hint-round.ts owns the WHOLE feature (gate +
-// mechanism) as a process-wide singleton, so we mock `run` — it is the seam
-// that decides 'stop' / success / 'failed'. `hintRun` is hoisted so the
+// HintRoundManager seam: the hint round is owned by HintSuggester in
+// states/collect-hint.ts (NOT the Triologue facade), so we mock the manager
+// module and drive `generate` directly. `hintGenerate` is hoisted so the
 // vi.mock factory (also hoisted) can reference it.
-const { hintRun } = vi.hoisted(() => ({ hintRun: vi.fn() }));
-vi.mock('../../../loop/hint-round.js', () => ({
-  hintRound: {
-    init: vi.fn(),
-    reset: vi.fn(),
-    run: hintRun,
+const { hintGenerate } = vi.hoisted(() => ({ hintGenerate: vi.fn() }));
+vi.mock('../../../loop/triologue/hint-round.js', () => ({
+  HintRoundManager: class {
+    generate = hintGenerate;
   },
 }));
 
@@ -101,7 +100,6 @@ import {
   createMockMachineEnv,
 } from '../esc-test-helpers.js';
 import { createMockContext } from '../../test-utils/mock-context.js';
-import { hintRound } from '../../../loop/hint-round.js';
 
 describe('handleCollect — ESC during hint generation', () => {
   let triologue: Triologue;
@@ -109,22 +107,11 @@ describe('handleCollect — ESC during hint generation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     agentIO.setNeglectedMode(false);
-    // Default: the hint round is a no-op that reports 'continue'. The
-    // singleton now owns the gate AND the confusion reset, so this test only
-    // asserts how handleCollect reacts to the returned HintSignal.
-    hintRun.mockReset();
-    hintRun.mockResolvedValue('continue' as never);
+    // Default: the hint manager returns a plain non-signal result (success-ish)
+    // so the runHintRound success path resets confusion.
+    hintGenerate.mockReset();
+    hintGenerate.mockResolvedValue('hint round text' as never);
     triologue = new Triologue();
-    // Pre-bind the singleton to a placeholder env so collect.ts reaches the
-    // mocked `run` even in tests that never swap env.ctx (each test re-inits
-    // with its own env when it needs a specific ctx).
-    hintRound.init(createMockMachineEnv({ triologue }));
-  });
-
-  afterEach(() => {
-    // The env the mocked singleton received is captured for the duration of
-    // one test; release it so nothing leaks into the next one.
-    hintRound.reset();
   });
 
   // Helper: enough messages (>= MIN_MESSAGES_FOR_HINT=6) + high confusion (>= 10)
@@ -140,11 +127,11 @@ describe('handleCollect — ESC during hint generation', () => {
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
-    // ESC during hint generation surfaces from the singleton as 'stop'; the
-    // handler's only contract is to translate that into AgentState.STOP.
-    hintRun.mockResolvedValue('stop' as never);
+    // escAware cleanup returns 'aborted' (ESC during hint generation)
+    env.ctx.core.escAware = vi.fn(async (_operation: any, cleanup: any) => {
+      return cleanup(new AbortController());
+    }) as never;
 
-    hintRound.init(env);
     const turn = createTurnVars();
     const chat = createChatData();
 
@@ -196,25 +183,18 @@ describe('handleCollect — ESC during hint generation', () => {
       return await operation(new AbortController());
     }) as never;
 
-    hintRound.init(env);
     const turn = createTurnVars();
     const chat = createChatData();
 
     const result = await handleCollect(env, turn, chat);
 
     expect(result).toBe(AgentState.LLM);
-    // The gate + the confusion reset now live INSIDE the singleton, so this
-    // handler test asserts only the wiring: the round ran once with the live
-    // turn, and a 'continue' signal lets the pass proceed to LLM.
-    expect(hintRun).toHaveBeenCalledTimes(1);
-    expect(hintRun).toHaveBeenCalledWith(turn);
-    expect(resetFn).not.toHaveBeenCalled();
+    // hint completed → confusion reset
+    expect(hintGenerate).toHaveBeenCalledTimes(1);
+    expect(resetFn).toHaveBeenCalledTimes(1);
   });
 
-  it('should still run the singleton (which owns the gate) when confusion is low', async () => {
-    // OWNERSHIP: the confusion gate now lives INSIDE hintRound.run, so the
-    // handler no longer short-circuits. What it must do is CALL the singleton
-    // exactly once and let its 'continue' verdict proceed to LLM.
+  it('should skip hint block when confusion index is below threshold', async () => {
     vi.mocked(triologue.getMessagesRaw).mockReturnValue(makeMessages(8));
     const ctx = createMockContext({
       core: { getConfusionIndex: vi.fn(() => 5) } as never, // < 10
@@ -228,9 +208,8 @@ describe('handleCollect — ESC during hint generation', () => {
     const result = await handleCollect(env, turn, chat);
 
     expect(result).toBe(AgentState.LLM);
-    // The gate is the singleton's job: it ran, and only the singleton decides
-    // whether confusion is high enough to spend an LLM round.
-    expect(hintRun).toHaveBeenCalledTimes(1);
+    // hint block NOT entered → no hint generation
+    expect(hintGenerate).not.toHaveBeenCalled();
   });
 
 
@@ -239,7 +218,7 @@ describe('handleCollect — ESC during hint generation', () => {
     // high confusion, escAware runs the operation and returns 'failed'.
     function makeFailedEnv() {
       vi.mocked(triologue.getMessagesRaw).mockReturnValue(makeMessages(8));
-      hintRun.mockResolvedValue('failed' as never);
+      hintGenerate.mockResolvedValue('failed' as never);
       const ctx = createMockContext({
         core: {
           getConfusionIndex: vi.fn(() => 12),

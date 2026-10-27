@@ -24,7 +24,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { parseReactivationResult } from '../../../loop/states/collect-pinned-todo.js';
-import { detectRepeatedActions } from '../../../loop/hint-round.js';
+import { detectRepeatedActions } from '../../../loop/states/collect-hint.js';
 import type { SequenceEvent } from '../../../hook/sequence.js';
 
 /** Build a SequenceEvent with minimal fields. */

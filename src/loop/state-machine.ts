@@ -32,7 +32,6 @@ import type { RequestEmbeddingTracker } from './request-embedding.js';
 import { displayLetterBox } from '../utils/letter-box.js';
 import { loopEvents } from './loop-events.js';
 import { skillSuggester } from './states/collect-skill.js';
-import { hintRound } from './hint-round.js';
 
 // ============================================================================
 // States
@@ -195,14 +194,6 @@ export class AgentStateMachine {
       requestEmbeddingTracker,
       nextWtNudge: 0,
     };
-    // Bind the hint-round singleton to the live env for the main process.
-    // Children never run a hint round (they mail the lead), so they stay
-    // unbound — HintRound.run() then returns 'continue' via its null guard.
-    if (scope === 'main') {
-      hintRound.init(this.env);
-    } else {
-      hintRound.reset();
-    }
     this.handlers = handlers;
   }
 

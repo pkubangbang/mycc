@@ -1,75 +1,26 @@
 /**
- * hint-round.ts - Hint round: one process-wide singleton that owns the WHOLE
- * feature (policy + mechanism) and reads its dependencies from the live
- * MachineEnv.
+ * triologue/hint-round.ts - Hint round feature domain
  *
- * HISTORY / OWNERSHIP
- * -------------------
- * The feature used to be split across three layers:
+ * The HintRoundManager is constructed by the COMPOSITION ROOT that holds both
+ * the triologue and the runtime context — currently HintSuggester in
+ * states/collect-hint.ts, which owns `ctx.wiki`. It is NOT owned by the
+ * Triologue facade: Triologue is a conversation-state primitive, whereas the
+ * hint round is an application-level feature that consults external modules
+ * (the wiki now, potentially more later), so it must be built where those
+ * modules are in scope. The facade exposes no hint-round methods.
  *
- *     collect.ts → hintSuggester (states/collect-hint.ts, POLICY)
- *                → createManager(env) building a FRESH HintRoundManager
- *                  (triologue/hint-round.ts, MECHANISM) on every round
+ * The manager is bound to a live message provider (() => Message[]) plus a note
+ * injector, the wiki module, and optional duplication callbacks, so it always
+ * sees the current message history (including compact/clear/restore swaps).
  *
- * The facade (Triologue) never owned it — but neither did anything else with
- * a stable identity: the policy singleton rebuilt the mechanism object each
- * round. This module collapses both into ONE singleton, `hintRound`:
- *
- *     collect.ts → hintRound.run(turn)
- *                     ├─ gate + breakdown + escAware + outcome  (policy)
- *                     └─ generate → retryLoop → preFilterWikiSuggestion
- *                                                → validateHintData (mechanism)
- *
- * `hintRound.init(env)` hands the singleton the live `MachineEnv` (triologue +
- * ctx + sequence + embedding tracker) at COMPOSITION time; after that it reads
- * through `this.env` directly and pushes its [HINT] note into the triologue via
- * `env.triologue.note('HINT', ...)`.
- *
- * WHY HOLDING `env` IS SAFE (the old per-round construction rationale)
- * ---------------------------------------------------------------------
- * `createManager` used to be rebuilt per round because a cached manager "would
- * be bound to the FIRST env's triologue/wiki/embedding-tracker". That hazard is
- * already excluded by construction: `MachineEnv` is assembled ONCE per process
- * (`AgentStateMachine`'s constructor, driven by agent-repl for the lead), and
- * compact / clear / restore swap the STORE INSIDE the same Triologue instance —
- * the facade object identity never changes and every accessor (`getMessagesRaw`,
- * `note`, …) reads the live store at CALL time. So one held `env` reference is
- * not stale; it is exactly the same reference the state machine holds.
- *
- * The singleton is therefore reset (not re-created) if a second composition
- * ever hands it a different env — see `init()`.
- *
- * SCOPE
- * -----
- * Main process only. Children (teammates) never run a hint round: they request
- * guidance from the lead via `mail_to` (see triologue-lite.ts). The state
- * machine wires `init(env)` for scope 'main' and `reset()` otherwise, so a
- * child that somehow calls `run()` hits the null-env guard and returns
- * 'continue'.
- *
- * OUTCOME CONTRACT (unchanged from the old policy module)
- * ------------------------------------------------------
- *  - 'continue'  — normal pass, hint skipped, or analysis FAILED (the confusion
- *                  signal is preserved so a later round retries).
- *  - 'stop'      — ESC during generation; the caller returns STOP for
- *                  centralized wrap-up.
- * `resetConfusionIndex()` fires ONLY after a hint actually landed.
+ * Pattern mirrors triologue/wrap-up.ts: a deps interface (HintRoundManagerDeps)
+ * is bound to the facade's live store via closures resolved lazily at call time.
  */
 
-import type { MachineEnv, TurnVars } from './state-machine.js';
-import type { SequenceEvent } from '../hook/sequence.js';
-import { retryChat, MODEL } from '../engine/chat-provider.js';
-import type { NoteCategory, WikiModule, SearchResult } from '../types.js';
-import { minifyMessages } from '../utils/llm-chat-minifier.js';
-import { agentIO } from './agent-io.js';
-
-/** Signal returned by HintRound.run to steer the orchestrator. */
-export type HintSignal = 'continue' | 'stop';
-
-// Confusion threshold for hint generation
-const CONFUSION_THRESHOLD = 10;
-// Minimum message count before hint generation
-const MIN_MESSAGES_FOR_HINT = 6;
+import { retryChat, MODEL } from '../../engine/chat-provider.js';
+import type { Message, NoteCategory, WikiModule, SearchResult } from '../../types.js';
+import { minifyMessages } from '../../utils/llm-chat-minifier.js';
+import { agentIO } from '../agent-io.js';
 
 const ANALYSIS_INSTRUCTION = 'Analyze the gap between the user\'s intent and current progress.';
 const MAX_HINT_ATTEMPTS = 3;
@@ -94,6 +45,7 @@ const HINT_WIKI_SIMILARITY_BAR = (() => {
   const parsed = val ? parseFloat(val) : NaN;
   return Number.isFinite(parsed) ? parsed : 0.5;
 })();
+
 
 const HINT_SCHEMA = {
   type: 'object',
@@ -154,7 +106,7 @@ EXAMPLE D — cautious moves (single-tool turns, encourage batching):
 {"blocker":"no blockers","next_step":"You are making one tool call per turn. Batch independent calls — emit all the read_file / todo_pinning / issue_create calls with no data dependency on each other in a single response to save round-trips. Do not batch calls where one needs another's result, and keep brief and recap alone.","focus_on":"batching independent tool calls"}
 `;
 
-/** Shape of the parsed hint data from the LLM response. */
+/** Shape of the parsed hint data from LLM response */
 interface HintData {
   blocker: string;
   next_step: string;
@@ -164,188 +116,43 @@ interface HintData {
 }
 
 /**
- * Detect repeated tool actions that signal a dead-loop, to feed the hint round
- * as objective evidence (so the LLM's next_step advice targets the actual loop)
- * instead of a vague "the conversation feels long" feeling.
+ * Dependencies the HintRoundManager needs from the facade's private state.
  *
- * A "repeated action" = the same tool called 3+ times in the recent window with
- * results that share the same error-ish prefix. We look at the trailing events
- * (the recent window) and group consecutive same-tool calls; if 3+ share a
- * common error prefix, we report it. Bash is keyed by its first command clause
- * (so repeated `pnpm test` runs group together even when the tail differs);
- * other tools are keyed by a stable arg (path/name/command).
- *
- * Returns a human-readable line like:
- *   "Repeated actions: edit_file ×4 (results start with "Error: old_text not found")"
- * or null if no repetition is found. The hint-round prompt surfaces this line
- * to the LLM as objective evidence of a loop.
- *
- * Exported for unit testing (see src/tests/loop/states/collect-repeated.test.ts).
+ * Mirrors WrapUpManager's deps pattern: arrow closures over the facade's live store
+ * and options, resolved lazily at call time so the manager always reflects the
+ * current history (including compact/clear/restore swaps).
  */
-export function detectRepeatedActions(events: SequenceEvent[]): string | null {
-  if (events.length < 3) return null;
-  // Inspect only the trailing window — a dead-loop is a RECENT phenomenon.
-  const window = events.slice(-8);
-  // Group consecutive same-tool calls; report the largest group with 3+ that
-  // also share an error prefix in their results.
-  const groups: Array<{ tool: string; events: SequenceEvent[] }> = [];
-  for (const ev of window) {
-    const last = groups[groups.length - 1];
-    if (last && last.tool === ev.tool) {
-      last.events.push(ev);
-    } else {
-      groups.push({ tool: ev.tool, events: [ev] });
-    }
-  }
-  let best: { tool: string; count: number; prefix: string } | null = null;
-  for (const g of groups) {
-    if (g.events.length < 3) continue;
-    const prefix = commonErrorPrefix(g.events.map(e => e.result || ''));
-    if (prefix) {
-      const candidate = { tool: g.tool, count: g.events.length, prefix };
-      if (!best || candidate.count > best.count) best = candidate;
-    }
-  }
-  if (!best) return null;
-  return `Repeated actions: ${best.tool} ×${best.count} (results start with "${best.prefix}")`;
+export interface HintRoundManagerDeps {
+  /** Live view of the raw message array (no system prompt / project context prepended). */
+  getMessagesRaw: () => Message[];
+  /** Add a system note (e.g. the formatted hint) into the conversation. */
+  note: (category: NoteCategory, message: string) => void;
+  /**
+   * The wiki knowledge module, injected at CONSTRUCTION by the composition
+   * root (HintSuggester, which holds `ctx`). The manager derives the domain
+   * list AND runs its own semantic pre-filter search from it — neither is wired
+   * per call, and no domain-list callback is passed through the Triologue
+   * options.
+   */
+  wiki?: WikiModule;
+  /** Optional duplication report from the embedding tracker. */
+  getDuplicationReport?: () => string;
 }
 
 /**
- * Find the longest common error prefix across results that look like errors.
- * Only considers results that start with an error-ish marker; if fewer than
- * 3 share a prefix, returns null (not a dead-loop signal).
- */
-function commonErrorPrefix(results: string[]): string | null {
-  const errorish = results.filter(r => {
-    const lower = r.toLowerCase();
-    return lower.startsWith('error:') || lower.startsWith('error ') ||
-      lower.startsWith('failed') || lower.includes('not found') ||
-      lower.includes('no such') || lower.includes('does not match');
-  });
-  if (errorish.length < 3) return null;
-  // Longest common prefix of the first 40 chars (enough to identify the
-  // repeated error class without dumping a whole message into the breakdown).
-  const snippets = errorish.map(r => r.slice(0, 40));
-  let prefix = snippets[0];
-  for (const s of snippets) {
-    while (prefix && !s.startsWith(prefix)) {
-      prefix = prefix.slice(0, -1);
-    }
-    if (!prefix) break;
-  }
-  return prefix && prefix.length >= 6 ? prefix : null;
-}
-
-/**
- * HintRound — process-wide singleton owning the whole hint-round feature.
+ * Delegate for the hint-round feature domain.
+ * Constructed by the composition root (HintSuggester) and driven via
+ * generate(); the manager owns ALL hint-round concerns (problem analysis +
+ * HINT note injection + the executed wiki pre-filter).
  *
- * Lifecycle:
- *   init(env)  — called ONCE by the composition root (AgentStateMachine's
- *                constructor) for the main scope; holds the live MachineEnv.
- *                A second init with a DIFFERENT env resets first, so a stale
- *                binding can never survive a re-composition.
- *   reset()    — idempotent teardown (also the child-process branch).
- *   run(turn)  — COLLECT step 3: gate → generate → handle the outcome.
- *
- * Carries NO per-turn throttle state: its only dedup is the cross-cutting
- * confusion index on `ctx.core`, which the state machine and other states
- * (llm/hook/prompt) also reset. So the state machine never calls `reset()`
- * at turn boundaries.
+ * The manager is bound to the live message store so it always reflects the
+ * current history.
  */
-export class HintRound {
-  private env: MachineEnv | null = null;
+export class HintRoundManager {
+  private deps: HintRoundManagerDeps;
 
-  /**
-   * Bind the singleton to the live machine environment.
-   *
-   * Called once per process by AgentStateMachine's constructor. Holding this
-   * reference is safe across compact/clear/restore because those swap the
-   * store INSIDE the same Triologue instance — every accessor resolves the
-   * live store at call time (see the module header).
-   */
-  init(env: MachineEnv): void {
-    if (this.env && this.env !== env) {
-      // Re-composition: drop any derived state bound to the old env.
-      this.reset();
-    }
-    this.env = env;
-  }
-
-  /** Unbind the env (child processes, teardown, re-composition). */
-  reset(): void {
-    this.env = null;
-  }
-
-  /**
-   * COLLECT step 3: generate a hint round when confusion is high, and handle
-   * its outcomes.
-   *
-   * @returns `'stop'` if ESC aborted the hint round (caller returns STOP for
-   *          centralized wrap-up); `'continue'` for a normal pass, when the
-   *          hint block was skipped, when the env is not bound (child), or when
-   *          the hint analysis FAILED (no hint injected — the confusion signal
-   *          is deliberately preserved rather than cleared).
-   *
-   * Side effects on `turn`: captures `lastHintFocus` (the hint source) on a
-   * successful hint round.
-   */
-  async run(turn: TurnVars): Promise<HintSignal> {
-    const env = this.env;
-    if (!env) return 'continue';
-    const { triologue, ctx } = env;
-    const confusionIndex = ctx.core.getConfusionIndex();
-    const messageCount = triologue.getMessagesRaw().length;
-
-    if (confusionIndex < CONFUSION_THRESHOLD || messageCount < MIN_MESSAGES_FOR_HINT) {
-      return 'continue';
-    }
-
-    // Use brief for hint round notification (user-facing)
-    ctx.core.brief('info', 'loop', 'Generating hint...');
-    const pendingSkills = env.conditions.getPending();
-    const breakdown = generateBreakdown(confusionIndex, env.sequence.getEvents());
-
-    // Use escAware for ESC-interruptible hint generation
-    const result = await ctx.core.escAware(
-      async (abortController) => {
-        return await this.generate(abortController, confusionIndex, breakdown, pendingSkills);
-      },
-      () => {
-        // ESC pressed during hint generation — return 'aborted' so the
-        // caller returns STOP for centralized wrap-up (stop.ts handles
-        // startWrapUp + auto-off + setNeglectedMode).
-        return 'aborted' as const;
-      }
-    );
-
-    // If aborted (ESC pressed), return STOP for centralized wrap-up.
-    // Neglected mode is NOT cleared here — stop.ts handles that.
-    if (result === 'aborted') {
-      return 'stop';
-    }
-    // Capture focus_on from a successful hint round (hint source for the
-    // composite keyword extraction in collect-skill.ts step 6).
-    if (typeof result === 'object' && result.status === 'success') {
-      turn.lastHintFocus = result.focusOn;
-    }
-    // If the hint analysis FAILED (malformed output exhausted the bounded
-    // 3-attempt budget), NO hint was injected — so this must NOT be treated
-    // as a successful intervention. Falling through to the reset below would
-    // clear the confusion signal that triggered the round, hiding the fact
-    // that no guidance was delivered and forcing confusion to re-accumulate
-    // from scratch before the loop retries. Mirror the 'aborted' branch:
-    // return WITHOUT resetting, so the preserved signal lets a later COLLECT
-    // regenerate the hint once the LLM produces well-formed output. The
-    // per-call burst is already bounded by MAX_HINT_ATTEMPTS in generate(),
-    // so preserving the signal cannot spin an unbounded malformed-output loop.
-    if (result === 'failed') {
-      ctx.core.brief('warn', 'loop', 'Hint analysis failed (malformed output); preserving confusion signal to retry later.');
-      return 'continue';
-    }
-    // Reset confusion after a hint that actually landed (success). 'aborted'
-    // and 'failed' returned above.
-    ctx.core.resetConfusionIndex();
-    return 'continue';
+  constructor(deps: HintRoundManagerDeps) {
+    this.deps = deps;
   }
 
   /**
@@ -353,7 +160,7 @@ export class HintRound {
    *
    * Extracts focused context from the triologue's messages, queries the LLM
    * for structured problem analysis, formats it, and injects it via
-   * `triologue.note('HINT', ...)`. Supports abort via AbortController for ESC.
+   * deps.note('HINT', ...). Supports abort via AbortController for ESC.
    *
    * @param abortController - Abort controller for ESC handling
    * @param confusionScore - Current confusion score
@@ -362,18 +169,16 @@ export class HintRound {
    * @returns 'aborted' if ESC was pressed, 'failed' after bounded malformed-output retries,
    *   or a success object.
    */
-  private async generate(
+  async generate(
     abortController: AbortController,
     confusionScore: number,
     confusionBreakdown: string,
     pendingSkills?: string[],
   ): Promise<'aborted' | 'failed' | { status: 'success'; focusOn: string }> {
-    const env = this.env;
-    if (!env) return 'aborted';
     if (agentIO.isNeglectedMode()) return 'aborted';
 
     // Build compact conversation context for analysis
-    const messages = env.triologue.getMessagesRaw();
+    const messages = this.deps.getMessagesRaw();
 
     // Filter out system noise messages that would distract hint analysis.
     // REMINDER now covers what was previously CONTINUE/FYI (merged into REMINDER).
@@ -399,14 +204,14 @@ export class HintRound {
 
     const compactContext = minifyMessages(filteredMessages, { maxContentLength: 300, maxArgsLength: 100, truncateToolOutput: true });
 
-    // Derive wiki domains from the live wiki module. Guarded: in a child
-    // process listDomains() is an IPC round-trip that can reject — a failed
-    // domain list must degrade to 'No domains available', not fail the whole
-    // hint round.
+    // Derive wiki domains from the injected wiki module (construction-site DI).
+    // Guarded: in a child process listDomains() is an IPC round-trip that can
+    // reject — a failed domain list must degrade to 'No domains available',
+    // not fail the whole hint round.
     let domains: Awaited<ReturnType<WikiModule['listDomains']>> = [];
-    if (env.ctx.wiki) {
+    if (this.deps.wiki) {
       try {
-        domains = await env.ctx.wiki.listDomains();
+        domains = await this.deps.wiki.listDomains();
       } catch (err) {
         agentIO.verbose('triologue', `Hint wiki listDomains failed; proceeding with no domains: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -415,8 +220,6 @@ export class HintRound {
     const domainInfo = domains.length > 0
       ? domains.map(d => `- ${d.domain_name}${d.description ? `: ${d.description}` : ''}`).join('\n')
       : 'No domains available';
-
-    const duplicationReport = env.requestEmbeddingTracker.getDuplicationReport();
 
     const userPrompt = [
       '## Conversation Context',
@@ -428,7 +231,7 @@ export class HintRound {
       '## Available Wiki Domains',
       domainInfo,
       '',
-      duplicationReport,
+      this.deps.getDuplicationReport ? this.deps.getDuplicationReport() : '',
       '',
       ANALYSIS_INSTRUCTION,
     ].join('\n');
@@ -454,7 +257,7 @@ export class HintRound {
    *
    * Issues a single retryChat call with the assembled user prompt, parses the
    * JSON response, validates the required fields, formats the HINT note, and
-   * injects it into the triologue.
+   * injects it via deps.note('HINT', ...).
    *
    * @param abortController - Abort handling
    * @param userPrompt - The fully assembled analysis prompt (context + score + domains)
@@ -543,7 +346,7 @@ export class HintRound {
       hintLines.push('');
       hintLines.push('Use the `brief` tool to post a status update.');
 
-      this.note('HINT', hintLines.join('\n'));
+      this.deps.note('HINT', hintLines.join('\n'));
 
       return { status: 'success', focusOn: hintData.focus_on };
     } catch (err) {
@@ -552,11 +355,6 @@ export class HintRound {
       }
       throw err;
     }
-  }
-
-  /** Push a note into the bound triologue (no-op when unbound). */
-  private note(category: NoteCategory, message: string): void {
-    this.env?.triologue.note(category, message);
   }
 
   /**
@@ -589,8 +387,7 @@ export class HintRound {
     abortController: AbortController,
   ): Promise<void> {
     if (!hintData.wiki_domain || !hintData.wiki_query) return;
-    const wiki = this.env?.ctx.wiki;
-    if (!wiki) {
+    if (!this.deps.wiki) {
       // No wiki module wired (e.g. lite/test wiring) — keep the line as-is.
       return;
     }
@@ -602,7 +399,7 @@ export class HintRound {
     let hits: SearchResult[] = [];
     try {
       if (wikiDomainNames.has(hintData.wiki_domain)) {
-        hits = await wiki.get(query, { domain: hintData.wiki_domain, topK, threshold });
+        hits = await this.deps.wiki.get(query, { domain: hintData.wiki_domain, topK, threshold });
       }
       if (hits.length === 0) {
         // ESC during the first search: leave hintData UNTOUCHED and bail — the
@@ -610,7 +407,7 @@ export class HintRound {
         if (abortController.signal.aborted) return;
         // Unregistered domain, or a registered one that found nothing: widen to
         // an all-domains search before giving up (domain-less get()).
-        hits = await wiki.get(query, { topK, threshold });
+        hits = await this.deps.wiki.get(query, { topK, threshold });
       }
     } catch (err) {
       // A failed search must NOT fail the hint — mute the line and keep going.
@@ -687,28 +484,3 @@ export class HintRound {
     return errors;
   }
 }
-
-/**
- * Generate a human-readable breakdown of confusion factors.
- *
- * Only the OBJECTIVE dead-loop evidence is kept — it names the tool, the
- * repeat count and the shared error prefix, which is something the analyzer
- * can act on. The "N assistant turns" estimate was derived from
- * `Math.ceil(events.length / 3)` (a fabricated number) and the bare error
- * count restated what the transcript already shows, so neither is emitted.
- */
-function generateBreakdown(
-  _confusionIndex: number,
-  events: SequenceEvent[]
-): string {
-  const repeated = detectRepeatedActions(events);
-  return repeated ?? 'No issues detected';
-}
-
-/**
- * Process-wide singleton. Owns the COLLECT step-3 hint-round policy AND
- * mechanism (gate + breakdown + ESC wiring + outcome handling + LLM analysis +
- * [HINT] injection). Carries no mutable state besides the bound env — the hint
- * flow's only dedup is the cross-cutting confusion index on `ctx.core`.
- */
-export const hintRound = new HintRound();
