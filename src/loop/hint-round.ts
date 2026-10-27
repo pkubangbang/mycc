@@ -810,7 +810,15 @@ function buildStateSections(env: MachineEnv, turn?: TurnVars): string[] {
       const marker = item.done ? '[x]' : '[ ]';
       const pin = item.pinned ? ' 📌' : '';
       const note = item.note ? ` — ${sanitizeField(item.note)}` : '';
-      todoLines.push(`- ${marker}${pin} ${item.id}. ${sanitizeField(item.name)}${note}`);
+      // The hash is the integrity signature `todo_update` / `todo_pinning`
+      // require. Every list render names it (printTodoList, recap
+      // formatOpenTodos) — this one used to be the exception, so the analyzer
+      // saw rows it could describe but no row it could act on with the
+      // `todo_pinning(id=<n>, pinned=false)` release step the guidance below
+      // recommends. It is NOT free-form text (8 hex chars, machine-minted), so
+      // it skips sanitizeField; omitted only when absent (a stub item).
+      const hash = item.hash ? ` [hash: ${item.hash}]` : '';
+      todoLines.push(`- ${marker}${pin} ${item.id}. ${sanitizeField(item.name)}${note}${hash}`);
     }
   }
   parts.push(todoLines.join('\n'));
