@@ -46,6 +46,7 @@
  */
 
 import type { Message, ToolCall } from '../../types.js';
+import { agentIO } from '../agent-io.js';
 import type { MessageStore } from './store.js';
 import { readBriefConfidence, readBriefMessage } from './brief.js';
 import { anchoredNoteLength, briefHash, buildRecapNote, noteWithSummary, resolveBriefTarget } from './recap-note.js';
@@ -464,7 +465,26 @@ export class BriefStackManager {
     expectedBriefCallId?: string,
     target?: string,
     openTodos?: string,
-  ): { anchorMessage: string; tokensBefore: number; tokensAfter: number } | null {
+  ): {
+    /** The anchor brief's message — read BEFORE truncation; the pair is gone after. */
+    anchorMessage: string;
+    tokensBefore: number;
+    tokensAfter: number;
+    /**
+     * The note as actually STORED (marker + summary + open-todo section).
+     *
+     * Returned rather than re-derived by the caller: the caller must journal the
+     * SAME text the model now reads, and rebuilding it a second time is how the
+     * audit and the note drift apart (a second `buildRecapNote` call is one edit
+     * away from a different section list). See states/hook.ts step 4a, which
+     * journals this string verbatim.
+     */
+    note: string;
+    /** The rewritten tool result's content length — what `recapNoteSize` predicted. */
+    noteLength: number;
+    /** false when the note could not be written — the caller reports `partial`. */
+    noteWritten: boolean;
+  } | null {
     // One resolution for every caller (see resolveAnchor) — including the
     // TOCTOU refusal, the message read that tolerates a string-shaped
     // `arguments`, and the tool-result index. Nothing below re-derives either
@@ -473,6 +493,11 @@ export class BriefStackManager {
     if (!resolved) return null;
     const { call, anchorMessage, resultIndex } = resolved;
     const tokensBefore = this.store.tokenCount;
+
+    // Built ONCE, before the truncation, so the string that is stored and the
+    // string handed back are the same object — not two renderings that can
+    // disagree.
+    const note = noteWithSummary(buildRecapNote(additionalMessage, openTodos));
 
     this.truncateAndRecount(resultIndex + 1, 'recap');
     this.deps.resetWrapUpMark();
@@ -489,15 +514,67 @@ export class BriefStackManager {
     // PURE OVERWRITE: the note replaces the whole result. There is no first line
     // to preserve — a brief result is a plain `OK.` now, and a SECOND fold at the
     // same brief must replace the previous note, not stack under it.
-    const rewritten = this.store.rewriteToolResult(
-      call.id,
-      noteWithSummary(buildRecapNote(additionalMessage, openTodos)),
-      resultIndex,
-    );
-    if (!rewritten) return null; // defensive: the result vanished in truncation
+    //
+    // ATOMIC REWRITE (MEDIUM-2): the truncation above is irreversible, so the
+    // one write that carries the summary must not be able to land halfway. The
+    // store's tryRewriteToolResult restores the previous content if the write
+    // fails or is silently swallowed, and never throws — either the anchor
+    // carries the note, or the anchor is exactly as it was, and the caller is
+    // told which in one boolean. Everything AFTER this point (audit record,
+    // mindmap patch) is reported as `partial` rather than being assumed.
+    const write = this.store.tryRewriteToolResult(call.id, note, resultIndex);
+    // The note (or the restored original) is what the history now holds, so the
+    // count must be refreshed either way: a stale tokenCount would make every
+    // downstream size check read a history that no longer exists.
     this.store.recomputeTokenCount();
 
-    return { anchorMessage, tokensBefore, tokensAfter: this.store.tokenCount };
+    if (!write.succeeded) {
+      // The span is already gone; this is not a refusal. The caller gets the
+      // truth (a fold happened, without a note) and journals it as `partial`.
+      agentIO.verbose('recap', `recap note could not be written at message ${resultIndex}`);
+      return {
+        anchorMessage,
+        tokensBefore,
+        tokensAfter: this.store.tokenCount,
+        note,
+        noteLength: -1,
+        noteWritten: false,
+      };
+    }
+
+    return {
+      anchorMessage,
+      tokensBefore,
+      tokensAfter: this.store.tokenCount,
+      note,
+      noteLength: note.length,
+      noteWritten: true,
+    };
+  }
+
+  /**
+   * Does the store still hold the anchor's tool result with EXACTLY `note`?
+   *
+   * The post-fold reconciliation probe (see states/hook.ts step 4a): the fold's
+   * later side effects (audit record, mindmap patch) each run after the
+   * truncation, and any of them can fail on its own. This predicate is what lets
+   * the caller report a `partial` fold honestly instead of claiming success —
+   * it answers "is the note the model reads the note we summarized?", which is
+   * the only property the fold actually promises.
+   *
+   * Read-only. Returns false when the anchor or its result is gone.
+   */
+  noteIsStored(briefCallId: string, note: string): boolean {
+    const index = this.store.briefIndices()
+      .find((i) => {
+        const call = (this.store.at(i)?.tool_calls as ToolCall[] | undefined)
+          ?.find((tc) => tc.function?.name === 'brief');
+        return call?.id === briefCallId;
+      });
+    if (index === undefined) return false;
+    const resultIndex = this.store.findToolResultIndex(briefCallId, index + 1, 'brief');
+    if (resultIndex < 0) return false;
+    return this.store.at(resultIndex)?.content === note;
   }
 
   /**

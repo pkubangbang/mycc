@@ -194,6 +194,57 @@ export class MessageStore {
     return true;
   }
 
+  /**
+   * REWRITE-or-ROLLBACK the tool result answering call `id` — the atomic half
+   * of a fold commit.
+   *
+   * A plain {@link rewriteToolResult} has two failure modes the fold cannot
+   * tolerate, because the rewrite happens AFTER an irreversible truncation:
+   *
+   *   - it returns false and has modified nothing → the span is gone with no
+   *     note (a caller can only report a partial fold);
+   *   - it throws (a frozen message, a poisoned array slot) → the exception
+   *     escapes a commit that already burned its rollback point.
+   *
+   * This wrapper never throws and never leaves a half-written result: on any
+   * failure the previous content is restored before the error is reported, so
+   * the caller sees either "the anchor now carries the note" or "the anchor is
+   * exactly as it was". `succeeded` is that single answer.
+   *
+   * @returns `{ succeeded, previous }` — `previous` is the content to restore by
+   *   hand when `succeeded` is false (already restored here; exposed so a caller
+   *   can verify or re-apply after its own later failure).
+   */
+  tryRewriteToolResult(
+    id: string | undefined,
+    content: string,
+    fromIndex = 0,
+  ): { succeeded: boolean; previous: string | null } {
+    const i = this.findToolResultIndex(id, fromIndex);
+    if (i < 0) return { succeeded: false, previous: null };
+    const target = this.messages[i];
+    const previous = typeof target.content === 'string' ? target.content : null;
+    try {
+      target.content = content;
+      // Verify the write landed: a frozen descriptor or a Proxy could swallow
+      // the assignment silently, which would otherwise be reported as success
+      // while the model keeps reading the old `OK.`.
+      if (target.content !== content) throw new Error('tool result rejected the write');
+      return { succeeded: true, previous };
+    } catch (err) {
+      if (previous !== null) {
+        try {
+          target.content = previous;
+        } catch {
+          // Restoring is best-effort; the caller still gets succeeded:false and
+          // reports the fold as partial with the note text preserved in the audit.
+        }
+      }
+      agentIO.verbose('triologue', `recap note write failed at message ${i}: ${describeCause(err)}`);
+      return { succeeded: false, previous };
+    }
+  }
+
   push(message: Message): void {
     this.messages.push(message);
   }
@@ -367,6 +418,17 @@ const PROVIDER_MESSAGE_KEYS = [
 ] as const;
 
 const PROVIDER_MESSAGE_KEY_SET: ReadonlySet<string> = new Set<string>(PROVIDER_MESSAGE_KEYS);
+
+/**
+ * One short cause string for a failed side effect (a bare `String(err)` loses
+ * `name`, and `String(undefined)` reads as the literal text "undefined").
+ */
+function describeCause(err: unknown): string {
+  if (err instanceof Error) {
+    return err.name && err.name !== 'Error' ? `${err.name}: ${err.message}` : err.message;
+  }
+  return String(err);
+}
 
 /**
  * Project a message onto the provider-visible fields, dropping everything
