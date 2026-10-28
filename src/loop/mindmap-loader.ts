@@ -28,7 +28,7 @@ function countNodes(node: Node): number {
  *
  * Two independent on-disk lines merge only in memory at load time:
  * 1. mindmap.json — MYCC.md isomorph (load_mindmap sets is_mycc=true, is_patch=false)
- * 2. mindmap-patch.jsonl — append-only patch log from recap
+ * 2. mindmap-patch.jsonl — append-only patch log from the mindmap-patch hook
  *
  * Patches are hash-gated: only those whose mindmap_hash matches the loaded
  * mindmap.json hash are applied (others are skipped — created against an older

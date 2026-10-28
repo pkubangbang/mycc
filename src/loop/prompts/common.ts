@@ -174,9 +174,8 @@ const commonAxes = [
 ];
 
 /**
- * Lead agent-memory section. Adds lead-only coordination (teammates, peers,
- * recap rewind context compression) and communication channels on top of
- * the shared axes. The lead reaches the user through the `agent >>` prompt,
+ * Lead agent-memory section. Adds lead-only coordination (teammates, peers)
+ * and communication channels on top of the shared axes. The lead reaches the user through the `agent >>` prompt,
  * NOT via a tool — so `question` is absent here (it is child-only).
  */
 export function buildLeadAgentMemorySection(): string {
@@ -184,39 +183,29 @@ export function buildLeadAgentMemorySection(): string {
     '## Agent Memory',
     'You have structured capability modules beyond basic file I/O. They organize along a few conceptual axes:',
     ...commonAxes,
-    'You also coordinate: spawn/await teammates, broadcast, discover peer instances, and rewind your own exploration (see "Briefs and Recap" below).',
+    'You also coordinate: spawn/await teammates, broadcast, and discover peer instances.',
     'Communication is async (mail_to), status (brief), or topic-shift (mycc_title).',
     '',
-    buildBriefRecapSection(),
+    buildBriefSection(),
   ].join('\n');
 }
 
 // ============================================================================
-// Briefs and Recap Section (lead-only — teammates must never see it)
+// Briefs Section (lead-only — teammates must never see it)
 // ============================================================================
 
 /**
- * The recap contract, stated ONLY here and in the recap tool's description
- * (`scope: ['main']`). It must never go into `brief`'s tool description:
- * `brief` is `scope: ['main', 'child']`, so every teammate receives that
- * description, and teammates are not allowed to call recap. Teaching a child
- * about a rewind it cannot perform is a pure distraction — and the rewind
- * rule would invite child briefs written for an audience that will never
- * rewind to them.
+ * The brief contract, stated ONLY here and in the `brief` tool's description.
  *
  * Lead-only by construction: this builder is called from
  * buildLeadAgentMemorySection() only. The teammate prompt assembles
  * buildTeammateAgentMemorySection() + buildCommonSections(), neither of which
- * reaches it (src/tests/loop/prompts/brief-recap-scope.test.ts guards this).
+ * reaches it.
  */
-export function buildBriefRecapSection(): string {
+export function buildBriefSection(): string {
   return [
-    '## Briefs and Recap',
-    '`brief` + `recap` shape your context like a **stack**, and only YOU (the lead) can call `recap`. When the direction drifts, default to `recap(abandon=true)` — it forks nothing.',
-    '- `brief` **pushes** a frame where an exploration span starts (sole call of its turn): conclusion first, then evidence.',
-    '- `recap` **pops frames back to a target**, summarising the span into that frame\'s result — no `target` pops to the newest frame you have moved past, `target="<hash>"` pops until that frame. Repeatable: each pop rewinds one further; new activity re-arms the frame and overwrites its note.',
-    '- `recap(abandon=true)` pops and **discards** the span — the way out of a wrong direction.',
-    '- Compaction is the floor: `recap` cannot rewind past it.',
+    '## Briefs',
+    'A `brief` is a checkpoint the user reads AND the durable record of where an exploration stands. Emit it as the SOLE tool call of its turn (conclusion first, then evidence), then keep working.',
   ].join('\n');
 }
 

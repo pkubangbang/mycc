@@ -62,7 +62,7 @@ function readTriologue(filePath: string): Message[] {
     if (raw.hook_name !== undefined) msg.hook_name = raw.hook_name as string;
     // Carry the provenance marker (types.ts Message.synthetic). collateMessages
     // already preserved it on the spread; dropping it here would silently turn a
-    // restored infrastructure brief back into a recap anchor.
+    // restored infrastructure brief back into the model's own checkpoint.
     if (raw.synthetic !== undefined) msg.synthetic = raw.synthetic as boolean;
     messages.push(msg);
   }

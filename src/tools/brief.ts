@@ -11,10 +11,8 @@ import { BRIEF_OK } from '../loop/triologue/recap-note.js';
 
 /**
  * `brief` is shared by the lead AND teammates (`scope: ['main', 'child']`), so
- * its description is visible to agents that can never call `recap`. It must
- * therefore say nothing about recap or rewind anchors — that contract lives in
- * the recap tool's own description (lead-only) and in the lead's system prompt
- * (buildLeadAgentMemorySection). Do not re-add it here.
+ * its description is visible to teammates too. Lead-only teaching belongs to
+ * the lead's system prompt (buildLeadAgentMemorySection), never here.
  *
  * `Must be called alone` STAYS: validateBriefIsolation rejects the whole turn
  * for every caller, so a teammate batching brief with another tool must know
@@ -74,8 +72,7 @@ export const briefTool: ToolDefinition = {
     // A plain success line, `OK`. The TOOL stage (states/tool.ts) PREFIXES this
     // result with the anchor hash — `[<hash>] OK` — because only the loop knows
     // the tool-call id the hash is derived from (a handler receives no id). The
-    // hash is the same one recap's rewind writes (`noteWithSummary`), so the
-    // two writers still share ONE rendering (recap-note.ts briefResultLine).
+    // hash is rendered by ONE shared writer (recap-note.ts briefResultLine).
     // The success text ends with a period because a result may carry more after
     // it ("OK. When thinking on the larger scope, …") — that section is added
     // by the TOOL stage in plan mode, never here: the tool stays a reporter,

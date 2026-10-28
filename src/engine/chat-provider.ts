@@ -65,10 +65,10 @@ export type { RetryConfig, ErrorType } from './chat-helpers.js';
  * The ONE safe knob is `toolChoice`: it is a sampling parameter that governs
  * whether the model may EMIT tool calls — it is NOT part of the cached prefix
  * token sequence, so `toolChoice:'none'` constrains output to text-only while
- * keeping the tools schema cached. Use it for text-only forks (recap, crossroad).
+ * keeping the tools schema cached. Use it for text-only forks (crossroad, plan-scope).
  *
  * Used by:
- * - handleRecap — summarize the span a recap will collapse (context compression)
+ * - plan-scope — reflect on the larger scope of a brief (PLAN mode)
  * - crossroad — generate/select continuation candidates (toolChoice:'none')
  *
  * @param messages - Full messages to fork from (caller's copy before mutation)

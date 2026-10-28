@@ -149,11 +149,11 @@ COLLECT（`src/loop/states/collect.ts`）在每次 LLM 调用前执行预收集�
 
 - **Plan 模式** — `buildPlanModePrompt(workDir, hasTeam)`：Solo plan / Team plan
 - **Normal 模式** — `buildNormalModePrompt(workDir, identity?, hasTeam)`：
-  - **Solo normal**（无 team）：`"You are a coding agent at ${workDir}."` + 任务管理 + pinned todo + 知识边界 + 公共部分 + recap rewind
+  - **Solo normal**（无 team）：`"You are a coding agent at ${workDir}."` + 任务管理 + pinned todo + 知识边界 + 公共部分 + brief
   - **Team normal (Lead)**：`"You are the lead of a coding agent team at ${workDir}."` + team workflow + issue 管理 + 通信规则 + 边界规则
   - **Teammate (Child)**：`"You are ${name}, a specialized agent working as part of a team, created by the \"lead\"."` + 三种通信方式 + 时间预算协议 + worktree 用法
 
-所有提示共享公共部分：Verification、Platform、Intent Language、Calendar、Output Behavior。Normal 模式还包含 Knowledge Boundary 和 Recap Rewind 部分。
+所有提示共享公共部分：Verification、Platform、Intent Language、Calendar、Output Behavior。Normal 模式还包含 Knowledge Boundary 和 Brief 部分。
 
 ## 工具执行
 

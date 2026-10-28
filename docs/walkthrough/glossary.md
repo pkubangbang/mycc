@@ -20,7 +20,7 @@
 | 14 | Crossroad | 十字路口 | Feature that detects turning words in LLM output and generates alternative continuations. |
 | 15 | ESC / Neglected Mode | ESC / 被忽略模式 | User presses ESC to abort the current operation; agent produces a quick wrap-up. |
 | 16 | escAware | escAware | Utility wrapping slow operations for ESC-aware quick return with AbortController. |
-| 17 | forkChat | forkChat | Single-turn side-chat from current triologue state, used by crossroad and recap. |
+| 17 | forkChat | forkChat | Single-turn side-chat from current triologue state, used by crossroad and plan-scope. |
 | 18 | Grant System | 授权系统 | 5-step judging process for bash command approval. |
 | 19 | Heartbeat | 心跳 | Periodic signal (every 30s) from teammate to lead indicating it's alive. |
 | 20 | Hint Round | 提示轮次 | When confusion ≥10, LLM analyzes blockers and next steps, injected as HINT note. |
@@ -37,14 +37,13 @@
 | 31 | MachineEnv | 机器环境 | Lifetime data tier: Triologue, AgentContext, HookExecutor, InputProvider. |
 | 32 | Mail | 邮件 | File-based async messaging between agents via JSONL files. |
 | 33 | markPromptBoundary | 标记提示边界 | Method that clears per-turn events, defining a turn boundary. |
-| 34 | Meta-Tool | 元工具 | `recap` (and the plan-mode brief reflection) — handled in HOOK state, not TOOL, because they need triologue access. `checkpoint` was removed: every `brief` is the rewind anchor. |
+| 34 | Meta-Tool | 元工具 | the plan-mode brief reflection — handled in HOOK state, not TOOL, because they need triologue access. `checkpoint` was removed: every `brief` is the rewind anchor. |
 | 35 | Mindmap | 思维导图 | Tree-structured knowledge system compiled from MYCC.md. |
 | 36 | Neglected Mode | 被忽略模式 | See ESC. |
 | 37 | Order | 指令 | Combined mail_to + tm_await into a single blocking call. |
 | 38 | PassData | 传递数据 | Per-pass data tier: tool calls, assistant content, hook results, crossroad continuation. |
 | 39 | Plan Mode | 计划模式 | Restricted mode where code changes are prohibited; only read-only tools work. |
 | 40 | PROMPT | PROMPT | State where the system waits for user input. |
-| 41 | Recap | 回顾 | Rewinds to the last `brief` and rewrites that brief's tool result in place with a structured summary. |
 | 42 | retryChat | retryChat | LLM call with internal retry loop and exponential backoff. |
 | 43 | Sequence | 序列 | Query interface over conversation history for hook condition evaluation. |
 | 44 | Slash Command | 斜杠命令 | User commands starting with `/` that bypass the LLM (e.g., `/mode`, `/plan`). |

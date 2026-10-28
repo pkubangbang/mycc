@@ -63,8 +63,8 @@ export function buildSummaryPrompt(conversationText: string, deps: CompactDeps, 
     ? `\n**User's Last Instruction:** "${lastUserQuery}"\nEnsure the summary preserves ALL constraints, pending tasks, and requests from this instruction. The agent should continue working on this after the compact.\n`
     : '';
 
-  // NOTE: no recap guidance here. "When/how to call recap" is taught in ONE
-  // place — the lead system prompt (buildBriefRecapSection). Repeating it in
+  // NOTE: no brief guidance here. "When/how to call brief" is taught in ONE
+  // place — the lead system prompt (buildBriefSection). Repeating it in
   // the compaction summary prompt pollutes the injected context with a second,
   // drifting copy of the same policy.
 
@@ -225,7 +225,7 @@ export async function runAutoCompact(deps: CompactDeps, focus?: string, signal?:
   // same one llm.ts recovery and hook.ts crossroad use, so this producer's
   // shape cannot drift from theirs.
   // A SYNTHESIZED call id, minted like every other synthetic producer (no
-  // hand-invented id scheme): opaque and unique is all it must be — recap reads
+  // hand-invented id scheme): opaque and unique is all it must be — a reader
   // the anchor's message, never its id.
   const briefCall = briefToolCall(
     COMPACT_RESUME_BRIEF_MESSAGE,
@@ -255,9 +255,9 @@ export const COMPACT_RESUME_BRIEF_MESSAGE =
  * Build the post-compact 3-message round-trip that `replaceAll` installs.
  *
  * Extracted from runAutoCompact so tests can exercise the REAL producer. This
- * brief is the recap FLOOR: compact() replaces the entire conversation with
+ * brief is the resume checkpoint: compact() replaces the entire conversation with
  * this round-trip, making it the ONLY brief left, so anything that made it
- * ineligible as an anchor would leave recap with no anchor at all after every
+ * ineligible as a checkpoint would leave the agent with no readable record after every
  * compaction — a hand-built fixture cannot catch that; it silently tests a
  * shape production no longer produces (exactly the P1 this extraction exists
  * to prevent recurring).
@@ -296,9 +296,9 @@ export function buildResumeRoundTrip(args: {
       content: '',
       // NOTE: this assistant message carries NO `synthetic` marker —
       // deliberately. `synthetic: true` marks an INCIDENTAL brief (llm.ts
-      // empty-output recovery, hook.ts crossroad) that recap must skip,
+      // empty-output recovery, hook.ts crossroad) that readers skip,
       // because its text is boilerplate. This one is the FLOOR: after a
-      // compaction it is the only brief left, so marking it would leave recap
+      // compaction it is the only brief left, so marking it would leave a reader
       // with no anchor at all. The call id is an opaque unique id and carries
       // no meaning.
       tool_calls: [briefCall],
@@ -307,9 +307,9 @@ export function buildResumeRoundTrip(args: {
       role: 'tool',
       tool_name: 'brief',
       // The pristine success result - WITH its anchor hash, so the floor brief
-      // is addressable by recap(target=...) from the first moment. Rendered by
+      // is addressable by its hash from the first moment. Rendered by
       // recap-note.ts briefResultLine (the same writer the TOOL stage stamps),
-      // never hand-assembled. recap REWRITES this in place with the span
+      // never hand-assembled. A later section may be appended in place
       // summary, keeping the hash line.
       content: briefResultLine(briefCall.id),
       tool_call_id: briefCall.id,

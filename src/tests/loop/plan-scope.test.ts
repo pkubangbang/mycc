@@ -5,7 +5,7 @@
  *   - it is appended to the BRIEF'S TOOL RESULT: `OK. When thinking on the
  *     larger scope, …` — produced at the TOOL stage, never by the brief tool
  *     and never as a field on the call;
- *   - a recap of this stretch OVERWRITES it (it rides in the anchor's note slot),
+ *   - it rides in the brief's own result, so it travels with that brief,
  *     so it is one-shot by construction;
  *   - a failed / empty / over-budget reflection leaves the plain success result;
  *   - it must fit under tool()'s result threshold (an over-size result is

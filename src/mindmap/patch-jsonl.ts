@@ -2,7 +2,7 @@
  * patch-jsonl.ts - Append-only JSONL log of mindmap patch actions
  *
  * The mindmap-patch.jsonl file is an independent on-disk line that records
- * structural changes (add/update/delete) produced by recap. It is replayed
+ * structural changes (add/update/delete) produced by the mindmap-patch hook. It is replayed
  * at startup to rebuild the in-memory merged tree (mindmap.json + patches).
  *
  * Key properties:

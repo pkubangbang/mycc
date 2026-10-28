@@ -154,7 +154,7 @@ function notifyLeadInBestEffort(title: string, text: string): boolean {
  * Create a triologue that persists messages to disk.
  * Uses TriologueLite — the teammate-only simplified facade over the shared
  * triologue submodules (store/compact/pending-tools/tp-fix). Teammates don't
- * need the lead-only features (wrap-up, recap, hint round, longtext dump).
+ * need the lead-only features (wrap-up, hint round, longtext dump).
  *
  * @param name - Teammate name (for fallback path generation)
  * @param assignedPath - Pre-assigned path from parent (optional)

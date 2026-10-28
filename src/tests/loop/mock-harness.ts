@@ -10,10 +10,10 @@
  * | Symbol | LLM Response        | Path                                        |
  * |--------|---------------------|---------------------------------------------|
  * | T      | tool_calls (bash)   | HOOK→TOOL→COLLECT (normal tool round)       |
- * | H      | tool_calls (recap)  | HOOK→COLLECT (recap/blocked/etc)             |
+ * | H      | tool_calls (brief x2) | HOOK→COLLECT (brief isolation rejection)   |
  * | W      | text-only           | HOOK→STOP→COLLECT (interactive: awaitTeammates holds a teammate question) |
  * | E      | throw Error         | LLM→PROMPT (ESC/empty-exhausted/error-decl) |
- * | X      | text-only           | HOOK→PROMPT (recap ESC / catch error)       |
+ * | X      | text-only           | HOOK→PROMPT (catch error)                   |
  * | P      | tool_calls (bash)   | HOOK→TOOL→PROMPT (ESC per-tool)             |
  * | S      | text-only "final"   | HOOK→STOP→PROMPT (all-done/no-teammates)    |
  * | CE     | (no LLM call)       | COLLECT→PROMPT (hint ESC / catch error)     |
@@ -166,9 +166,9 @@ export class MockHarness {
     }));
 
     // --- chat-helpers ---
-    // startSpinner included because hook.ts → recap-rewind.ts now starts
-    // the recap spinner from this (transitive) import chain; a mock that omits
-    // it fails with "No 'startSpinner' export is defined on the mock".
+    // startSpinner/stopSpinner are included because hook.ts starts a spinner
+    // around the plan-scope fork from this (transitive) import chain; a mock that
+    // omits them fails with "No 'startSpinner' export is defined on the mock".
     vi.mock('../../../engine/chat-helpers.js', () => ({
       startSpinner: vi.fn(),
       stopSpinner: vi.fn(),
@@ -241,7 +241,7 @@ export class MockHarness {
    *
    * Symbol → Response:
    *  - T: tool_calls (bash) — HOOK returns TOOL, TOOL returns COLLECT
-   *  - H: tool_calls (recap) — HOOK returns COLLECT (meta-tool path)
+   *  - H: tool_calls (brief + bash) — HOOK rejects the turn (brief isolation)
    *  - W: text-only — HOOK returns STOP, STOP awaitTeammates returns COLLECT
    *  - E: throw Error — simulates ESC/empty-exhausted/error-declined (LLM→PROMPT)
    *  - X: text-only — HOOK catch error fires, HOOK→PROMPT
@@ -265,12 +265,11 @@ export class MockHarness {
         });
 
       case 'H':
-        // Hook-blocked / recap / crossroad / compact path:
-        // LLM produces a recap meta-tool call, which HOOK intercepts.
-        // The stub triologue has no anchor brief (getLastBrief → null), so
-        // handleRecapCall fails gracefully and returns COLLECT.
+        // HOOK-blocked path: the LLM co-batches `brief` with another tool.
+        // validateBriefIsolation rejects the WHOLE turn (both calls are answered
+        // with the rejection message) and HOOK returns COLLECT.
         return createMockChatResponse({
-          toolCalls: [createMockToolCall('recap', { description: 'test', comment: 'continue' })],
+          toolCalls: [createMockToolCall('brief', { message: 'test', confidence: 7 })],
         });
 
       case 'W':
@@ -287,7 +286,7 @@ export class MockHarness {
         throw new Error('Simulated ESC / transient error (symbol E)');
 
       case 'X':
-        // HOOK catch error fires (e.g. recap ESC) → HOOK returns PROMPT
+        // HOOK catch error fires → HOOK returns PROMPT
         // LLM succeeds with text-only; the error is triggered downstream in HOOK
         return createMockChatResponse({ content: 'text response' });
 

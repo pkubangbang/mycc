@@ -17,10 +17,10 @@
  *
  * WHY IT IS ONE-SHOT
  * The text rides in the brief's own tool result, which is the rewind anchor's
- * note slot: the next recap of this stretch OVERWRITES it with the span summary.
+ * note slot: it travels WITH the brief result it was produced for.
  * That is deliberate — the reflection describes the work that follows this
  * brief, so when that work is folded into a summary, the reflection is folded
- * with it. Nothing accumulates across recaps.
+ * with it.
  *
  * WHAT IT ASKS (the four escape-hatch checks)
  * It is NOT a progress review. A plan can be executed perfectly and still be
@@ -117,7 +117,7 @@ function buildPrompt(briefMessage: string): string {
     '  alternative are exactly what locks a frame in place. `two-way — <the revert, named>` if',
     '  that is the honest answer.',
     '',
-    'Banned: restating the brief, recapping progress, and any sentence that would be equally true',
+    'Banned: restating the brief, summarizing progress, and any sentence that would be equally true',
     'of a different task ("consider the bigger picture", "there may be risks", "we should validate").',
     'Every line must be checkable against a file, a named decision, or a user statement above.',
   ].join('\n');

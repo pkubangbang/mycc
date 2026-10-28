@@ -125,7 +125,7 @@ export class ClientRegistry {
       if (label) entry.label = label;
       if (cleanDetail) entry.detail = cleanDetail;
       // `synthetic` marks machine-originated briefs (hook engine, debug
-      // evaluator, recap bookkeeping) that the WebUI hides from the
+      // evaluator) that the WebUI hides from the
       // chat log. Omitted when falsy so the wire format and /history replay
       // stay unchanged for all normal messages.
       if (synthetic) entry.synthetic = true;

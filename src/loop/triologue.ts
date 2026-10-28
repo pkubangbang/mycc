@@ -17,7 +17,7 @@ import { TpAutoFixer } from './triologue/tp-fix.js';
 import { loopEvents } from './loop-events.js';
 import type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } from './triologue/types.js';
 import { type PieceKind } from './triologue/transcript.js';
-import { BriefStackManager } from './triologue/brief-stack.js';
+import { truncateAndRecount } from './triologue/truncate.js';
 
 export type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } from './triologue/types.js';
 
@@ -105,32 +105,6 @@ export class Triologue {
   });
 
   /**
-   * Brief stack (see triologue/brief-stack.ts): anchor selection, the span
-   * slice, the truncation and the in-place note rewrite. It takes the message
-   * store as its model and receives the four FACADE-OWNED side effects the
-   * store cannot see as narrow callbacks; the facade only delegates, so the
-   * public API is unchanged.
-   *
-   * The callbacks are arrow closures resolved lazily at call time (the same
-   * pattern as tpFix above), so a store swap in compact()/clear() never leaves
-   * a stale reference behind.
-   */
-  private briefStack: BriefStackManager = new BriefStackManager(this.store, {
-    clearPendingToolCalls: (): void => {
-      this.ledger.clear();
-    },
-    resetWrapUpMark: (): void => {
-      this.wrapUp.reset();
-    },
-    dropDeferredInputs: (reason: string): void => {
-      this.dropDeferredInputs(reason);
-    },
-    emitControl: (event: 'recap' | 'rollback'): void => {
-      this.emitControl(event);
-    },
-  });
-
-  /**
    * Private per-piece dispatcher for the onMessage contract.
    *
    * Stamps the collation metadata (kind + user_origin for GENUINE user
@@ -160,10 +134,10 @@ export class Triologue {
    * the writer records as `{ kind, timestamp }` — the event name IS the
    * kind (conflated; no 'control' pseudo-kind, no event field). Journaled
    * events: 'clear' (replay resets the collated view — /clear meaning is
-   * preserved across restoration), 'compact', 'recap', 'rollback' (boundary
-   * markers; the durable collated history stays intact).
+   * preserved across restoration), 'compact', 'rollback' (boundary markers;
+   * the durable collated history stays intact).
    */
-  private emitControl(event: 'clear' | 'compact' | 'recap' | 'rollback'): void {
+  private emitControl(event: 'clear' | 'compact' | 'rollback'): void {
     this.options.onMessage(
       { kind: event } as unknown as Message,
       () => this.store.getRaw(),
@@ -499,10 +473,8 @@ export class Triologue {
    * @param result - The result/output from the tool call (becomes content)
    * @param toolCallId - Optional ID from model's tool_calls (resolved from pending if not provided)
    *
-   * A FAILED meta-tool call needs no special marking: a recap refusal is just a
-   * tool result whose `tool_name` is 'recap' (see BriefStackManager's
- * hasMessagesAfterBrief — the
-   * recap tool never produces activity).
+   * A FAILED meta-tool call needs no special marking: a refusal is just a
+   * tool result whose `tool_name` is that tool.
    */
   tool(functionName: string, result: string, toolCallId?: string): void {
     // Check for missing assistant with tool_calls
@@ -751,7 +723,7 @@ export class Triologue {
     // pointing at the pre-compact length, e.g. 50) would let a later
     // rollbackWrapUp() do `this.messages.length = 50` on the now-2-element
     // array, stretching it with undefined sparse holes that crash the next
-    // raw reader (minifyMessages in runAutoCompact, or recap iteration)
+    // raw reader (minifyMessages in runAutoCompact, )
     // with "Cannot read properties of undefined (reading 'role')".
     this.wrapUp.reset();
     // Refresh dynamic project context (README, mindmap, hooks) at the compact
@@ -896,9 +868,8 @@ export class Triologue {
    *
    * Defensive filtering: drops any undefined / null / non-object entry that
    * slipped into `messages` (e.g. via sparse-array length manipulation from
-   * wrap-up rollback, TP auto-fixer injection, session restoration, or recap
-   * slicing). Without this, unguarded raw consumers (hint-round, minifier,
-   * recap-rewind) that read `.role` / `.content` directly would throw
+   * wrap-up rollback, TP auto-fixer injection, session restoration).
+   * Without this, unguarded raw consumers (hint-round, minifier) that read `.role` / `.content` directly would throw
    * "Cannot read properties of undefined (reading 'role'/'content')" — an
    * intermittent error surfaced most often in the COLLECT state because that
    * is where hint-round runs. Mirrors the guard already present in
@@ -997,85 +968,18 @@ export class Triologue {
     return { total, system, projectContext, conversation, tools: toolsTokens };
   }
 
-  // === Rewind (recap) ===
-  //
-  // Delegates to the briefStack field (declared with the other fields, above).
-  // The anchor rule, the span, the truncation and the note rewrite all live in
-  // BriefStackManager (triologue/brief-stack.ts).
-
-  /** Every real brief's displayed hash, oldest first — for refusal messages. */
-  listBriefHashes(): Array<{ hash: string; message: string }> {
-    return this.briefStack.listBriefHashes();
-  }
-
   /**
-   * Peek at the rewind anchor: the newest REAL `brief` that the conversation
-   * has already moved past — or, when `target` is given, the brief carrying
-   * that hash.
-   *
-   * A pure peek: it returns the anchor's `message`/`hash`/`id` plus the `span`
-   * a rewind WOULD delete, and modifies nothing. The anchor rule itself (which
-   * brief is eligible, and why) is documented on
-   * BriefStackManager.getLastBrief / the class comment in brief-stack.ts.
+   * Truncate to \startIndex\, recount tokens, clear the pending ledger, drop
+   * deferred submissions and journal the 'rollback' boundary event — the
+   * SHARED truncation primitive (see triologue/truncate.ts), also used by
+   * rollbackWrapUp().
    */
-  getLastBrief(target?: string): {
-    message: string;
-    confidence?: number;
-    /** The anchor brief's displayed hash (see recap-note.ts briefHash). */
-    hash: string;
-    /** The anchor brief's call id — the token to hand back to rewindToLastBrief. */
-    id: string;
-    span: Message[];
-  } | null {
-    return this.briefStack.getLastBrief(target);
-  }
-
-  /**
-   * Collapse the conversation back to a `brief` (the rewind primitive behind
-   * recap): the newest solidified one, or the one `target` names.
-   *
-   * Returns null when there is no brief to rewind to (nothing is modified).
-   * The sequence — re-scan the anchor, capture its message BEFORE truncation,
-   * truncate + recount + clear the ledger + drop deferred inputs + journal
-   * 'recap', reset the wrap-up mark, rewrite the result at the RESOLVED
-   * occurrence, recount — is owned end-to-end by
-   * BriefStackManager.rewindToLastBrief, which also carries the invariants
-   * (TOCTOU guard, inclusive lower bound, span sliced from the TRUE array).
-   */
-  rewindToLastBrief(
-    description: string,
-    additionalMessage: string,
-    expectedBriefCallId?: string,
-    target?: string,
-  ): { anchorMessage: string; tokensBefore: number; tokensAfter: number } | null {
-    return this.briefStack.rewindToLastBrief(description, additionalMessage, expectedBriefCallId, target);
-  }
-
-  /**
-   * The exact length `rewindToLastBrief` writes into the anchor's tool result —
-   * the note BODY.
-   *
-   * Returned so a caller CAN size-check BEFORE mutating anything: checking the
-   * bare summary under-measures by the header (description + quoted anchor) and
-   * by any comment/query text the caller folded in — and since the rewrite
-   * happens AFTER the truncation, an under-measure loses the span with the note
-   * unrecorded. A pure peek: null when the anchor moved.
-   */
-  recapNoteSize(description: string, additionalMessage: string, expectedBriefCallId?: string, target?: string): number | null {
-    return this.briefStack.recapNoteSize(description, additionalMessage, expectedBriefCallId, target);
-  }
-
-  /**
-   * Truncate to `startIndex`, recount tokens, clear the pending ledger, drop
-   * deferred submissions and journal the boundary event — the SHARED
-   * truncation primitive (recap span removal and wrap-up rollback must do it
-   * identically, so there is one implementation).
-   *
-   * Delegated to the manager because a truncation is a brief-stack concern:
-   * the recap path owns the span, and rollback reuses the same primitive.
-   */
-  private truncateAndRecount(startIndex: number, event: 'recap' | 'rollback' = 'recap'): void {
-    this.briefStack.truncateAndRecount(startIndex, event);
+  private truncateAndRecount(startIndex: number, event: 'rollback' = 'rollback'): void {
+    truncateAndRecount(this.store, {
+      clearPendingToolCalls: (): void => { this.ledger.clear(); },
+      dropDeferredInputs: (reason: string): void => { this.dropDeferredInputs(reason); },
+      emitControl: (e: 'rollback'): void => { this.emitControl(e); },
+    }, startIndex, event);
   }
 
   // === Private Helpers ===
@@ -1085,7 +989,7 @@ export class Triologue {
    * a longtext file instead. Exposed so a caller that is ABOUT to hand over a
    * large result can refuse it before mutating anything — `tool()` throws
    * after its ledger bookkeeping, so "append then catch" cannot roll back
-   * cleanly. See handleRecapCall.
+   * cleanly.
    */
   getResultThreshold(): number {
     return this.options.resultThreshold;

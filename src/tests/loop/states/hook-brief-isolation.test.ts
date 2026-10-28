@@ -1,8 +1,8 @@
 /**
  * hook-brief-isolation.test.ts — handleHook: brief must be called alone.
  *
- * `brief` is recap's rewind anchor, so a brief-only assistant turn keeps the
- * anchor unambiguous (currentAnchorIndex / rewindToLastBrief). The guard is
+ * `brief` is the user-facing status checkpoint, so a brief-only assistant turn
+ * stays an unambiguous, self-contained turn boundary. The guard is
  * HOOK validation step 2, BEFORE hook processing:
  *
  *   const briefValidation = validateBriefIsolation(augmentedCalls);
@@ -39,21 +39,6 @@ vi.mock('../../../context/shared/loader.js', () => ({
 
 vi.mock('../../../hook/hook-preprocessor.js', () => ({
   augmentToolCalls: vi.fn((calls: unknown[]) => calls),
-}));
-
-vi.mock('../../../loop/recap-rewind.js', () => ({
-  validateRecapIsolation: vi.fn(() => ({ valid: true })),
-  handleRecap: vi.fn(),
-  handleRecapSpan: vi.fn(),
-}));
-
-vi.mock('../../../mindmap/patch.js', () => ({
-  applyPatchAction: vi.fn(() => true),
-}));
-
-vi.mock('../../../mindmap/patch-jsonl.js', () => ({
-  appendPatch: vi.fn(),
-  getPatchPath: vi.fn(() => '/tmp/.mycc/mindmap-patch.jsonl'),
 }));
 
 vi.mock('../../../loop/triologue.js', () => {

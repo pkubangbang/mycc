@@ -14,7 +14,7 @@ import type { Message, ToolCall } from '../../types.js';
 
 /** Captured piece: the shallow-copied message plus the livelog state at emit. */
 interface Captured {
-  msg: Message & { kind?: 'new' | 'merge' | 'user' | 'steer' | 'clear' | 'compact' | 'recap' | 'rollback'; user_origin?: true };
+  msg: Message & { kind?: 'new' | 'merge' | 'user' | 'steer' | 'clear' | 'compact' | 'rollback'; user_origin?: true };
   /** getTriologue() snapshot taken at emit time (livelog the piece belongs to) */
   seen: Message[];
 }

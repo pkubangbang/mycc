@@ -16,7 +16,7 @@
  *     assistant bridge and resolve pending ids (same wiring as full facade).
  *  4. compact() swaps the store, recomputes tokens, and rebuilds project
  *     context at the boundary.
- *  5. Lead-only features are ABSENT: no wrap-up / recap-rewind / hint-round /
+ *  5. Lead-only features are ABSENT: no wrap-up rollback / hint-round /
  *     loadRestoration / clear methods on the lite class.
  */
 
@@ -413,7 +413,7 @@ describe('TriologueLite', () => {
       // (boundary pieces are only journaled at truncation sites — none here).
       for (const m of pieces) {
         expect((m as unknown as { event?: string }).event).toBeUndefined();
-        expect(['new', 'merge', 'user', 'steer', 'clear', 'compact', 'recap', 'rollback']).toContain((m as unknown as { kind?: string }).kind);
+        expect(['new', 'merge', 'user', 'steer', 'clear', 'compact', 'rollback']).toContain((m as unknown as { kind?: string }).kind);
       }
       // getTriologue reflects the live store at call time.
       const lastCall = onMessage.mock.calls[onMessage.mock.calls.length - 1] as unknown[];
@@ -441,7 +441,7 @@ describe('TriologueLite', () => {
   });
 
   describe('lead-only features are absent', () => {
-    it('does not expose wrap-up / recap rewind / hint-round / restoration / clear', () => {
+    it('does not expose wrap-up rollback / hint-round / restoration / clear', () => {
       const proto = Object.getOwnPropertyNames(Object.getPrototypeOf(t));
       for (const absent of [
         'beginWrapUp', 'finishWrapUp', 'commitWrapUp', 'rollbackWrapUp',

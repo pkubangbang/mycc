@@ -11,7 +11,7 @@
  * adversarial review of the agent-memory section work.
  *
  * The baseline values were measured after the agent-memory section landed
- * (replacing the old Checkpoint/recap + Knowledge Boundary sections with
+ * (replacing the old Checkpoint + Knowledge Boundary sections with
  * buildLeadAgentMemorySection / buildTeammateAgentMemorySection). They are
  * intentionally pinned as constants so a regression test fails loudly rather
  * than drifting.
@@ -35,7 +35,7 @@ import { buildPlanModePrompt, buildNormalModePrompt } from '../../loop/prompts/l
 const BASELINES = {
   soloPlan: 7298,
   teamPlan: 8312,
-  // Raised from 6346 when the always-on recap Trigger bullet landed (drift
+  // Raised from 6346 when an earlier always-on Trigger bullet landed (drift
   // trigger + `abandon=true` as the default). The new text measures 7304 and
   // the ±15% cap for the old baseline was 7297.9 — i.e. the bullet did not fit
   // at all. Pinned to the measured size so the guard keeps catching drift.

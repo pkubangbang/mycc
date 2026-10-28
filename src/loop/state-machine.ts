@@ -83,7 +83,7 @@ export interface TurnVars {
   nextTodoNudge: number;
   lastTodoState: string;
   nextBriefNudge: number;
-  /** User's last real query, stored for recap to preserve across compression */
+  /** User's last real query, preserved across compaction */
   lastUserQuery: string;
   /** Last brief message (brief source) — agent's self-reported focus, set in TOOL state */
   lastBriefMessage: string;

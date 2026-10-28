@@ -125,11 +125,11 @@ export interface PatchOptions {
 
 /**
  * A single patch action recorded in mindmap-patch.jsonl.
- * Each recap produces at most one patch action (add / update / delete).
+ * Each patch event produces at most one patch action (add / update / delete).
  * Actions are replayed at startup to rebuild the in-memory merged tree.
  */
 export interface MindmapPatchAction {
-  /** Action type — exactly one per recap */
+  /** Action type — exactly one per patch action */
   action: 'add' | 'update' | 'delete';
   /** Target node path: parent for 'add', target for 'update'/'delete' */
   path: string;

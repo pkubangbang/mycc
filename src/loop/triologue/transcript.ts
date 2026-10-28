@@ -39,7 +39,7 @@
  *                   right-side user bubbles (see serve-history.ts), which is
  *                   why a refresh no longer depends on the serve-only
  *                   user.jsonl side file.
- *   kind:'clear' | 'compact' | 'recap' | 'rollback'
+ *   kind:'clear' | 'compact' | 'rollback'
  *                 → a journaled truncation boundary, carrying NO message
  *                   fields (no role). The clear semantics are a property of
  *                   the PROJECTION, not of the shared core:
@@ -54,7 +54,7 @@
  *                   the UI). All
  *                   boundary kinds (including clear) are journaled as
  *                   observable markers in the record stream; compact/
- *                   recap/rollback never cut EITHER projection — the
+ *                   rollback never cuts EITHER projection — the
  *                   collated view (durable FULL history, a superset of the
  *                   live LLM context) is kept for both readers.
  *
@@ -68,7 +68,7 @@
  *     timestamp: number }
  *   { ...messageFields, kind: 'user'|'steer', user_origin: true,
  *     timestamp: number }
- *   { kind: 'clear'|'compact'|'recap'|'rollback', timestamp: number }
+ *   { kind: 'clear'|'compact'|'rollback', timestamp: number }
  *
  * Legacy lines (full snapshots without `kind`) are treated as `new`
  * plain Messages on read — zero migration.
@@ -85,7 +85,7 @@ import * as fs from 'fs';
 /**
  * Collation kind of a transcript piece. Message pieces carry
  * 'new'/'merge'/'user'/'steer'; the boundary kinds
- * ('clear'|'compact'|'recap'|'rollback') are journaled
+ * ('clear'|'compact'|'rollback') are journaled
  * truncation events CONFLATED into the kind field (no 'control' pseudo-kind
  * — kind IS the event for boundary records).
  */
@@ -117,10 +117,10 @@ export function isUserJournalKind(kind: unknown): kind is UserJournalKind {
 }
 
 /** Journaled live-log truncation/boundary events (carried directly on `kind`). */
-export type ControlEvent = 'clear' | 'compact' | 'recap' | 'rollback';
+export type ControlEvent = 'clear' | 'compact' | 'rollback';
 
 /** The subset of PieceKind values that are journaled boundary events. */
-export const CONTROL_KINDS: readonly ControlEvent[] = ['clear', 'compact', 'recap', 'rollback'];
+export const CONTROL_KINDS: readonly ControlEvent[] = ['clear', 'compact', 'rollback'];
 
 /** Narrow a raw PieceKind: is the record a journaled boundary marker? */
 export function isControlKind(kind: unknown): kind is ControlEvent {
@@ -129,7 +129,7 @@ export function isControlKind(kind: unknown): kind is ControlEvent {
 
 /** One flat JSONL transcript record (a single emitted piece or control event). */
 export type TranscriptRecord = {
-  /** Collation kind: replayed as push ('new'), fold-into-last-user ('merge'), a user-input journal entry ('user'|'steer'), or a journaled boundary ('clear'|'compact'|'recap'|'rollback') */
+  /** Collation kind: replayed as push ('new'), fold-into-last-user ('merge'), a user-input journal entry ('user'|'steer'), or a journaled boundary ('clear'|'compact'|'rollback') */
   kind: PieceKind;
   /** True only for pieces carrying genuine user input (never notes/bridges) */
   user_origin?: true;
@@ -260,7 +260,7 @@ export function collateMessages(
         messages.length = 0;
         lastUserIndex = -1;
       }
-      // compact/recap/rollback (and any future boundary marker) do NOT cut
+      // compact/rollback (and any future boundary marker) do NOT cut
       // the collated view: the durable full history stays intact for the
       // restore/history readers; the mark remains in the record stream as
       // an observable boundary.
@@ -413,7 +413,7 @@ export type AppendablePiece = MessageLike & Partial<TranscriptRecord>;
 
 /**
  * A journaled boundary mark: a boundary record (no message fields) written
- * when the live log is truncated or swapped — clear / compact / recap /
+ * when the live log is truncated or swapped — clear / compact /
  * rollback. CONFLATED into `kind`: written to the transcript as
  * `{ kind, timestamp }` (no 'control' pseudo-kind, no `event` field).
  */
@@ -455,7 +455,7 @@ export class JsonlTranscriptWriter {
    * Append exactly one flat record line. `message` is the piece (already
    * stamped with kind/user_origin by the facade's dispatcher — a
    * 'new'/'merge' message piece, a 'user'/'steer' user-input journal record,
-   * or a bare boundary piece { kind:'clear'|'compact'|'recap'|'rollback' });
+   * or a bare boundary piece { kind:'clear'|'compact'|'rollback' });
    * the timestamp is added here at write time (single clock, monotonic
    * per line).
    */
@@ -482,7 +482,7 @@ export class JsonlTranscriptWriter {
 
   /**
    * Journal a boundary mark (a live-log truncation/boundary: clear / compact
-   * / recap / rollback). One flat `{ kind, timestamp }` line — no message
+   * / rollback). One flat `{ kind, timestamp }` line — no message
    * fields, the event name IS the kind (conflated). Same error policy as
    * append() (never throws).
    */

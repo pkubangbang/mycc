@@ -29,7 +29,7 @@ import type { Message, ToolCall } from '../../types.js';
 
 /** Captured piece: the shallow-copied message plus the livelog state at emit. */
 interface Captured {
-  msg: Message & { kind?: 'new' | 'merge' | 'user' | 'steer' | 'clear' | 'compact' | 'recap' | 'rollback'; user_origin?: true };
+  msg: Message & { kind?: 'new' | 'merge' | 'user' | 'steer' | 'clear' | 'compact' | 'rollback'; user_origin?: true };
   /** getTriologue() snapshot taken at emit time (livelog the piece belongs to) */
   seen: Message[];
 }
@@ -170,7 +170,7 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     triologue.user('task');
     triologue.note('MAIL', 'from hook', 'some-hook');
     expect(captured).toHaveLength(2);
-    const hookPiece = captured[1].msg as Captured['msg'] & { hook_name?: string; kind?: 'new' | 'merge' | 'user' | 'steer' | 'clear' | 'compact' | 'recap' | 'rollback' };
+    const hookPiece = captured[1].msg as Captured['msg'] & { hook_name?: string; kind?: 'new' | 'merge' | 'user' | 'steer' | 'clear' | 'compact' | 'rollback' };
     expect(hookPiece.kind).toBe('new');
     expect(hookPiece.hook_name).toBe('some-hook');
     expect(triologue.getMessagesRaw()).toHaveLength(2); // separate message

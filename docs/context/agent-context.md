@@ -166,7 +166,7 @@ peer：跨实例 peer discovery 与通信
 
 ### clear / getItems
 `clear()` 清空列表。`getItems()` 返回所有项。
-（旧的 `findCheckpointTodo(checkpointId)` / `closeCheckpointTodo(checkpointId)` 已随 `checkpoint` 工具一并移除——`brief` 不再自动创建 todo，`recap` 也不再关闭 todo。）
+（旧的 `findCheckpointTodo(checkpointId)` / `closeCheckpointTodo(checkpointId)` 已随 `checkpoint` 工具一并移除——`brief` 不再自动创建或关闭 todo。）
 
 ## team
 

@@ -35,7 +35,7 @@ export interface ToolCall extends OllamaToolCall {
  * baked directly into message content, bypassing note(). They are kept here as
  * a reference so readers don't mistake them for missing categories:
  *   - `[WRAP_UP]`   — triologue.beginWrapUp() (triologue.ts)
- *   - `[RECAP]`     — recap-rewind.ts summaries; Triologue.rewindToLastBrief header
+ *   - `[COMPACT]`   — compaction summary header
  *   - `[Hook: <name>]` — hook block messages (hook-executor.ts, sequence.ts)
  *   - `[Project Context - ...]`, `[Hooks Pending]`, `[System]`, `[DUMPED TOOL RESULT]`
  *                   — project-context injection + longtext dump headers (triologue.ts)
@@ -73,14 +73,14 @@ export interface Message extends OllamaMessage {
    * as a property OF THE MESSAGE, set by the producer that created it. It is
    * deliberately NOT a field inside `arguments` — arguments are model-authored
    * and this runtime never validates them against `input_schema`, so a model
-   * echoing such a flag would disqualify its own brief as a recap anchor — and
+   * echoing such a flag would disqualify its own brief as a checkpoint — and
    * it is not inferred from a call-id convention either, which would be an
    * invented string that drifts.
    *
-   * Recap reads this on the assistant message carrying the `brief` call: a
-   * synthetic brief round-trip (llm.ts empty-output recovery, hook.ts crossroad)
-   * is never a rewind anchor. The compaction resume brief is NOT marked — it is
-   * the FLOOR and must always anchor.
+   * Readers treat this on the assistant message carrying the `brief` call
+   * (llm.ts empty-output recovery, hook.ts crossroad) as infrastructure noise,
+   * not as the model's own checkpoint. The compaction resume brief is NOT
+   * marked — it is genuine context and must stay readable.
    */
   synthetic?: boolean;
 }

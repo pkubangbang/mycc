@@ -12,10 +12,10 @@
  *   kind:'new'    → push
  *   kind:'merge'  → fold onto the most recently collated user message
  *                   (single lastUserIndex cursor — O(n) replay)
- *   kind:'clear' | 'compact' | 'recap' | 'rollback'
+ *   kind:'clear' | 'compact' | 'rollback'
  *                 → journaled truncation boundary (conflated into kind);
  *                   'clear' RESETS the collated view (restoration honors
- *                   /clear); compact/recap/rollback are markers that keep
+ *                   /clear); compact/rollback are markers that keep
  *                   the full history.
  *
  * Also covers: legacy tolerance (bare-message lines pass through as 'new',
@@ -309,12 +309,11 @@ describe('control events (journaled truncation boundaries)', () => {
     expect(messages[0].content).toBe('new host\n[HINT] note');
   });
 
-  it('compact/recap/rollback control events are markers — the collated view is kept (durable full history)', () => {
+  it('compact/rollback control events are markers — the collated view is kept (durable full history)', () => {
     writer.append(asAppendablePiece({ role: 'user', content: 'q', kind: 'new', user_origin: true }));
     writer.append(asAppendablePiece({ role: 'assistant', content: 'a', kind: 'new' }));
     writer.control('compact');
     writer.append(asAppendablePiece({ role: 'user', content: '[Conversation compressed. ...]', kind: 'new' }));
-    writer.control('recap');
     writer.control('rollback');
     writer.append(asAppendablePiece({ role: 'assistant', content: 'r', kind: 'new' }));
 

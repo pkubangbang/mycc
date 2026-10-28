@@ -6,7 +6,7 @@
  * layer (store / compact / pending-tools / tp-fix) but omits the lead-only
  * feature domains:
  *   - wrap-up lifecycle (ESC interrupt paths are main-process only)
- *   - recap rewind (recap is a lead-loop concern)
+ *   - the wrap-up rollback path that rewinds to a checkpoint
  *   - hint round (children request guidance via mail_to instead)
  *   - result-threshold longtext dump (teammates accept large tool results as-is)
  *   - loadRestoration / clear (teammate transcripts are write-only JSONL)

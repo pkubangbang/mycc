@@ -84,39 +84,20 @@ Three messages ending in `tool`, so `getLastRole()` is `'tool'` after compact. T
 
 This replaces the previous 2-message `[summary, ack-assistant]` shape, where the synthetic assistant left `getLastRole() === 'assistant'`, so the next real `agent()` tripped `duplicate_assistant` and normal control flow depended on structural-violation recovery. The focus is a **section inside the existing user message**, not a fourth message.
 
-### 3.2b Interaction with recap (rewind)
+### 3.2b Interaction with the wrap-up rollback
 
-A non-synthetic `brief` is a **rewind anchor** once at least one message
-follows its round-trip; `recap` truncates at that anchor and rewrites its own
-tool result with the note (see `brief-and-recap-rewind.md`). Compaction and
-rewind compose as follows:
-
-- **Compaction is the floor.** `compact()` does `store.replaceAll(...)`, so it
-  destroys the whole conversation and with it every rewind anchor. `recap` can
-  never rewind past the most recent compaction — the history is gone.
-- **The resume brief is the floor anchor**: after a compaction it is the only
-  brief left, and `compact.ts` deliberately does NOT mark it `synthetic: true`
-  (that mark is reserved for the INCIDENTAL briefs from llm.ts empty-output
-  recovery and hook.ts crossroad, whose text is boilerplate). Because the
-  anchor rule needs activity AFTER the brief's round-trip, the
-  `compact_resume_*` pair does not anchor until something lands after it; once
-  it does, a `recap` at that point finds the floor pair with an empty span and
-  the handler declines (`[RECAP] Nothing to collapse — there is no new activity
-  past your last brief.`) rather than consuming it for nothing.
-- **The summary survives.** The compaction summary lives in the `user` message
-  *before* the resume brief, so a rewind at the floor keeps it
-  (`user(summary) → assistant(brief) → tool(result rewritten with the note)`).
-- **`lastUserQuery` survives both.** It is written only by `user()`; neither
-  `replaceAll` nor `truncateTo` touches it, so the recap note's
-  `**User's last query (context)**` line stays truthful.
-- **A recap note is ordinary content to compaction**: it sits in the store, so a
-  later `compact()` summarizes it like any other message.
+Wrap-up rollback (`rollbackWrapUp()`) truncates the store back to the mark
+recorded by `beginWrapUp()` through the shared primitive in
+`src/loop/triologue/truncate.ts`: truncate + recount + clear the pending
+ledger + drop deferred inputs + journal the `rollback` control event.
+Compaction resets that mark (`wrapUp.reset()`), because a stale mark larger
+than the post-compact length would otherwise stretch the array with holes.
 
 ### 3.3 Two concurrent LLM calls
 
 | Call | Engine | Input | Tools | Cache | Purpose |
 |------|--------|-------|-------|-------|---------|
-| Summary | `retryChat` (fresh) | `minifyMessages(messages)` text | none | miss (by design — minified text differs from the cached prefix) | Broad recap: accomplishments, current state, key decisions |
+| Summary | `retryChat` (fresh) | `minifyMessages(messages)` text | none | miss (by design — minified text differs from the cached prefix) | Broad picture: accomplishments, current state, key decisions |
 | Focus | `forkChat` | `triologue.getMessages()` (full, un-minified) | `tools` (full schema, already in scope) | **hit** — identical prefix to the upcoming LLM call | Immediate working memory: active task, recent tool results, current file, in-progress decisions |
 
 Run via `Promise.all` so latency is the max of the two, not the sum.
@@ -161,7 +142,7 @@ The prompt deliberately does **not** ask for a broad summary — that is the sum
 
 The summary prompt keeps its existing three-section structure (Accomplishments / Current State / Key Decisions) plus the knowledge-persistence, focus-area, and user-instruction addenda.
 
-The summary prompt does **not** carry any recap guidance. "When/how to call `recap`" is taught in exactly one place — the lead system prompt's `## Briefs and Recap` section (`buildBriefRecapSection()` in `src/loop/prompts/common.ts`), which is in context on every turn. Repeating the policy in the compaction summary prompt injected a second, drifting copy into the conversation, so that section was removed. The `emitControl('compact')` live-log boundary is untouched — it journals a boundary, it is not a message to the model.
+The summary prompt does **not** carry any tool guidance. "When/how to call `brief`" is taught in exactly one place — the lead system prompt's `## Briefs` section (`buildBriefSection()` in `src/loop/prompts/common.ts`).
 
 ### 3.7 Backward-compatible fallback
 

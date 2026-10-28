@@ -2,7 +2,7 @@
  * triologue/types.ts - Shared type definitions for the Triologue layer family
  *
  * Extracted from triologue.ts (Phase 1 of the layered refactor) so the
- * sibling modules (store, pending-tools, compact, wrap-up, recap,
+ * sibling modules (store, pending-tools, compact, wrap-up, truncate,
  * tp-guards) can share these types without importing the facade class.
  *
  * The facade (src/loop/triologue.ts) re-exports everything from this file,

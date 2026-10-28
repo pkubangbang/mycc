@@ -22,7 +22,7 @@ import { agentIO } from '../agent-io.js';
  * are not the model talking to itself — two producers inject one purely to
  * give it a thinking step: `llm.ts` (empty-output recovery) and `hook.ts`
  * (crossroad). Their `message` is boilerplate ("Let me see what to do next."),
- * so recap must never rewind to one.
+ * so a reader must never treat one as the model's own checkpoint.
  *
  * HOW THE DISTINCTION IS MADE: a property of the MESSAGE. See
  * `Message.synthetic` (types.ts); the rule itself is applied in
@@ -104,9 +104,9 @@ export class MessageStore {
   /**
    * Defensive raw copy: drops any undefined / null / non-object entry that
    * slipped into `messages` (e.g. via sparse-array length manipulation from
-   * wrap-up rollback, TP auto-fixer injection, session restoration, or recap
+   * wrap-up rollback, TP auto-fixer injection, or session restoration).
    * slicing). Single chokepoint for ALL message access — unguarded raw
-   * consumers (hint-round, minifier, recap-rewind) that read `.role` /
+   * consumers (hint-round, minifier) that read `.role` /
    * `.content` directly would otherwise throw "Cannot read properties of
    * undefined (reading 'role'/'content')".
    */
@@ -147,7 +147,7 @@ export class MessageStore {
    *
    * A provider call id is unique only WITHIN one assistant turn, so an id-only
    * search can bind a call to another tool's result after a replay/reuse.
-   * Callers that REWRITE or truncate on the answer (recap's anchor path) must
+   * Callers that REWRITE or truncate on the answer must
    * pass the name too and compare against the result's `tool_name`.
    *
    * `fromIndex` is INCLUSIVE: the search starts AT that index. A caller that
@@ -176,7 +176,7 @@ export class MessageStore {
   /**
    * REWRITE (in place) the tool result answering call `id` to `content`.
    *
-   * Used by recap: the summary is written into the anchor brief's own result,
+   * Used to rewrite a brief result in place (e.g. a section appended to it),
    * not appended as a new message. In place, because the assistant→tool pairing
    * must not change — position, `tool_call_id` and `tool_name` stay as the
    * provider saw them. Returns false (modifying nothing) when no result exists.
@@ -336,7 +336,7 @@ export class MessageStore {
  * The fields a provider may see — an ALLOW-LIST, not a deny-list.
  *
  * The payload is rebuilt from these keys only, so any runtime-only field is
- * dropped BY DEFAULT, including ones added later: `synthetic` (recap
+ * dropped BY DEFAULT, including ones added later: `synthetic` (infrastructure
  * provenance, types.ts), `hook_name` (minifier attribution), `imageMime`
  * (multimodal hint), transcript envelope fields (`kind`, `user_origin`,
  * `timestamp`), and the extended `Message.tool_call_id` / `reasoning_content`

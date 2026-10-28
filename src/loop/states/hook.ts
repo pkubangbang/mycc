@@ -5,10 +5,8 @@
  * registers the agent response with triologue, and branches to
  * TOOL (has calls) or STOP (no calls).
  *
- * META-TOOLS: recap is handled here (not as a regular tool)
- * because they need access to triologue which is not in AgentContext.
- * brief needs no dispatch — it runs as a regular tool — but its ISOLATION
- * (brief must be called alone) is enforced here, before hook processing.
+ * BRIEF ISOLATION: brief runs as a regular tool, but its isolation (brief
+ * must be called alone) is enforced here, before hook processing.
  *
  * CROSSROAD: When crossroadContinuation is set on chat, the continuation is
  * merged into finalAssistantContent before triologue.agent() is called, and a
@@ -20,16 +18,10 @@ import chalk from 'chalk';
 import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
 import type { ToolCall } from '../../types.js';
-import type { AugmentedToolCall, ProcessToolCallsResult } from '../../hook/hook-executor.js';
+import type { ProcessToolCallsResult } from '../../hook/hook-executor.js';
 import { augmentToolCalls } from '../../hook/hook-preprocessor.js';
 import { agentIO } from '../agent-io.js';
 import { loader } from '../../context/shared/loader.js';
-import {
-  validateRecapIsolation,
-  handleRecapSpan,
-} from '../recap-rewind.js';
-import { applyPatchAction } from '../../mindmap/patch.js';
-import { appendPatch, getPatchPath } from '../../mindmap/patch-jsonl.js';
 import { loopEvents } from '../loop-events.js';
 import { stripInternalMarkup } from '../../utils/letter-box.js';
 import { buildCrossroadCard, formatCrossroadCard, toCrossroadCardWire } from '../crossroad-card.js';
@@ -58,37 +50,6 @@ function briefAssistantContent(
 }
 
 /**
- * The minimum meaningful recap summary length (characters after trimming).
- *
- * A one-word "summary" ("ok", "done", "n/a") still records nothing: the whole
- * point of a recap is that the deleted span remains recoverable from the note,
- * so a note shorter than this is treated as "the fork produced no usable text"
- * rather than folded into the history as a successful collapse.
- */
-const MIN_RECAP_SUMMARY_CHARS = 40;
-
-/**
- * True when `summary` is real text a rewind may delete a span in favour of.
- *
- * Rejects the sentinels the fork can return or the caller can substitute:
- *   - '' / whitespace-only
- *   - '[RECAP] …' protocol lines ('No messages to summarize.', 'Cancelled: …')
- *     — the ESC one is handled upstream, but a future producer returning a
- *     protocol line must never be mistaken for content
- *   - the '(no summary)' placeholder recap-rewind.ts used to substitute for an
- *     empty fork (guarded there too, so an old call path cannot slip past)
- *   - anything below MIN_RECAP_SUMMARY_CHARS
- */
-function hasUsableSummary(summary: string | undefined | null): boolean {
-  const text = (summary ?? '').trim();
-  if (text.length < MIN_RECAP_SUMMARY_CHARS) return false;
-  if (text.startsWith('[RECAP]')) return false;
-  if (text.toLowerCase() === '(no summary)') return false;
-  return true;
-}
-
-
-/**
  * PLAN-mode brief enhancement: answer a `brief` turn with a reflection.
  *
  * WHY THE HOOK STAGE — the HOOK stage is where mycc augments what the model just
@@ -101,9 +62,8 @@ function hasUsableSummary(summary: string | undefined | null): boolean {
  *
  * WHAT IT PRODUCES — the brief's own tool result:
  *   tool('brief', "OK. When thinking on the larger scope, …", callId)
- * so it survives exactly as long as that brief's note slot does: the next recap
- * of this stretch OVERWRITES it with the span summary. That is the intended
- * one-shot lifetime — the reflection describes the work that FOLLOWS this brief.
+ * so it rides with that brief's own result and is read alongside it: the
+ * reflection describes the work that FOLLOWS this brief.
  *
  * Returns null when nothing was done (not plan mode, no brief call, blocked
  * call, or any fork failure) — the caller then proceeds with the normal turn and
@@ -134,9 +94,8 @@ async function handlePlanScopeBrief(
   // spinner was stopped in the provider's finally before we reached HOOK — so
   // without this pair the terminal is completely blank for the whole
   // reflection: no brief line (printed below), no plan-scope block, nothing.
-  // Plan-scope was the only HOOK-stage fork without a painter; the recap fork
-  // ("Recapping context") owns one, and the crossroad fork is painted by its
-  // caller-owned pair in the LLM stage.
+  // The crossroad fork is painted by its caller-owned pair in the LLM stage,
+  // so plan-scope must paint its own.
   //
   // ONE pair, here at the caller — not inside plan-scope.ts, which is
   // documented pure I/O. The spinner is a NON-refcounted module global
@@ -209,262 +168,6 @@ async function handlePlanScopeBrief(
   return AgentState.COLLECT;
 }
 
-/**
- * Handle a recap tool call.
- *
- * Recap collapses the conversation back to the LAST un-consumed brief (the
- * rewind anchor): everything after the brief's round-trip is replaced by a note
- * that is written INTO THE BRIEF'S OWN TOOL RESULT, in place —
- *
- *   tool('brief', "OK Note, a recap has reset the conversation here with summary: \"...\"")
- *
- * so the summary lives in a tool result, not in a fresh recap call, and a later
- * recap overwrites it. See Triologue.rewindToLastBrief().
- *
- * This handler only (a) validates args, (b) forks the summary + mindmap-patch
- * LLM calls over the span that is about to be deleted, and (c) hands the text
- * to the facade, which owns all message mutation.
- *
- * The two LLM forks run BEFORE the truncation (they need the pre-rewind
- * history as their cached prefix); nothing is written to the triologue until
- * both have finished, so an ESC mid-recap leaves the history untouched.
- */
-async function handleRecapCall(
-  call: AugmentedToolCall,
-  env: MachineEnv,
-  chat: ChatData,
-  turn: TurnVars,
-): Promise<HandlerResult> {
-  const { triologue, ctx } = env;
-
-  // Show assistant text content if any
-  briefAssistantContent(ctx, chat.assistantContent);
-
-  const recapArgs = call.function.arguments as Record<string, unknown>;
-  const description = typeof recapArgs.description === 'string' ? recapArgs.description.trim() : '';
-  const abandon = recapArgs.abandon === true;
-  // Optional anchor selector: the hash shown at the start of a brief result
-  // (`[<hash>] OK`). Absent/empty → the default (newest solidified) anchor.
-  const target = typeof recapArgs.target === 'string' && recapArgs.target.trim()
-    ? recapArgs.target.trim()
-    : undefined;
-  const comment = typeof recapArgs.comment === 'string' && recapArgs.comment.trim()
-    ? recapArgs.comment.trim()
-    : undefined;
-
-  // A refusal answers the call with a TOOL-CALL ERROR and COLLAPSES NOTHING:
-  // the triologue is left byte-identical to before the attempt, and nothing is
-  // written into any earlier brief's result. It needs no marking — anchor
-  // scanning already knows the recap tool never produces activity (see
-  // Triologue.hasMessagesAfterBrief).
-  const fail = (message: string): HandlerResult => {
-    triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
-      reasoningContent: chat.assistantReasoningContent,
-    });
-    triologue.tool('recap', message, call.id);
-    turn.isFirstRound = false;
-    return AgentState.COLLECT;
-  };
-
-  if (!description) {
-    return fail('Error: description is required and must be a non-empty string.');
-  }
-
-  // comment is REQUIRED: it determines the direction of the next turn.
-  // (abandon path is exempt — it discards the span, no steering needed.)
-  if (!abandon && !comment) {
-    return fail('Error: comment is required (it determines the direction of the next turn). Provide a clear, actionable directive stating what should happen next.');
-  }
-
-  const anchor = triologue.getLastBrief(target);
-  if (!anchor) {
-    if (target) {
-      // An EXPLICIT target never falls back: collapsing somewhere the model did
-      // not choose would delete a span it meant to keep. Quote the hashes that DO
-      // exist (that is exactly what target takes) so the retry can pick a real
-      // anchor.
-      const known = triologue.listBriefHashes().map((b) => `[${b.hash}]`).join(', ');
-      return fail(`Error: No brief matches target "${target}"${known ? `. Addressable briefs: ${known}` : ', and this conversation has no briefs yet'}. Call recap without target to collapse to the newest brief instead.`);
-    }
-    return fail('Error: No brief found to rewind to — nothing to collapse yet. Call brief first, then recap.');
-  }
-
-  // Nothing between the anchor and now (e.g. a recap right after a compaction,
-  // whose resume brief IS the last brief). Skip both forks: there is nothing to
-  // summarize, and consuming the floor anchor would be pointless churn.
-  if (anchor.span.length === 0) {
-    return fail('[RECAP] Nothing to collapse — there is no new activity past your last brief.');
-  }
-
-  // ---- abandon path: collapse without summarizing ----
-  if (abandon) {
-    const parts: string[] = ['The work after the brief above was discarded without being summarized.'];
-    if (turn.lastUserQuery) {
-      parts.push('');
-      parts.push(`**User's last query (context):** ${turn.lastUserQuery}`);
-    }
-    if (comment) {
-      parts.push('');
-      parts.push(`**Next direction (recap comment — follow this):** ${comment}`);
-    }
-    const abandonParts = parts.join('\n');
-    // Size pre-check on the note that will ACTUALLY be written into the brief's
-    // tool result (header + quoted anchor + body), not just the body: the write
-    // happens AFTER the truncation, so an over-size note loses the span.
-    const abandonSize = triologue.recapNoteSize(description, abandonParts, anchor.id, target);
-    if (abandonSize !== null && abandonSize > triologue.getResultThreshold()) {
-      return fail(`Error: the recap note is ${abandonSize} chars, over the ${triologue.getResultThreshold()}-char tool-result limit; nothing was discarded. Re-run with a shorter comment.`);
-    }
-    const result = triologue.rewindToLastBrief(description, abandonParts, anchor.id, target);
-    if (!result) {
-      // The anchor moved between the peek at the top of this handler and here.
-      // Answer the call rather than returning COLLECT with a dangling
-      // tool_call and no result — that shape 400s on strict providers.
-      return fail('Error: The last brief changed while collapsing, so nothing was discarded. Run recap again.');
-    }
-    ctx.core.brief('info', 'recap',
-      `(${chalk.yellow(result.tokensBefore.toLocaleString())} → ${chalk.green(result.tokensAfter.toLocaleString())} tokens)`,
-      `Abandoned: ${description}${comment ? ` — ${comment}` : ''}`,
-    );
-    turn.lastBriefMessage = result.anchorMessage;
-    turn.nextBriefNudge = 5;
-    turn.isFirstRound = false;
-    return AgentState.COLLECT;
-  }
-
-  // ---- normal path: summarize the span, then collapse ----
-  // fullMessages + allTools form the cached prefix the main loop already paid
-  // for — pass both un-minified and complete so the fork hits that cache.
-  // (toolChoice:'none' is applied inside handleRecap; it constrains output to
-  // text-only without touching the cached prefix.)
-  const fullMessages = [...triologue.getMessages()];
-  const allTools = loader.getToolsForScope('main');
-
-  const escAware = <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T): Promise<T> => {
-    return ctx.core.escAware(fn, cleanup);
-  };
-  const lastQueryForRecap = turn.lastUserQuery || undefined;
-
-  // The durable one-line trace: the spinner started inside handleRecapSpan is
-  // terminal-only (and cleared by its finally{}), so this brief is what
-  // survives in the logs / Web UI as the record of the recap's silent wait.
-  ctx.core.brief('info', 'recap', 'Summarizing the span since your last brief...');
-  const mindmap = ctx.core.getMindmap();
-  const { summary, patch, patchError } = await handleRecapSpan(
-    fullMessages,
-    anchor.span,
-    allTools,
-    description,
-    mindmap,
-    escAware,
-    comment,
-    lastQueryForRecap,
-  );
-
-  // Check for ESC cancellation — the triologue is still untouched at this point.
-  if (summary.startsWith('[RECAP] Cancelled:')) {
-    triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
-      reasoningContent: chat.assistantReasoningContent,
-    });
-    triologue.tool('recap', summary, call.id);
-    ctx.core.brief('warn', 'recap', summary);
-    // ESC pressed during recap - return STOP for centralized wrap-up
-    // (stop.ts handles startWrapUp + auto-off + setNeglectedMode).
-    // Neglected mode is NOT cleared here. The cancelled note was already
-    // registered as a tool response above, so triologue parity is intact.
-    if (agentIO.isNeglectedMode()) {
-      return AgentState.STOP;
-    }
-    turn.isFirstRound = false;
-    return AgentState.COLLECT;
-  }
-
-  // ── SUMMARY FLOOR: an empty summary must not truncate ──
-  // The upper-bound check below exists because an over-size note loses the span
-  // without recording it. The mirror-image failure loses the span AND the
-  // knowledge: a fork that returns '' (provider hiccup, refusal, truncated
-  // stream) would still delete everything after the anchor and leave a note
-  // holding nothing but the header. Refuse — nothing truncated — and let the
-  // model retry.
-  if (!hasUsableSummary(summary)) {
-    ctx.core.brief('warn', 'recap', 'Recap summary was empty — nothing was collapsed.');
-    return fail('[RECAP] The summarization produced no usable text, so nothing was collapsed. Run recap again.');
-  }
-
-  // ── SIZE PRE-CHECK: refuse an oversized note BEFORE touching the triologue ──
-  // The note replaces the anchor brief's tool result, which is then the ONLY
-  // record of the collapsed span. Reject here, while the store is still
-  // untouched, so an oversized summary can never coexist with a truncation that
-  // already threw the span away.
-  const threshold = triologue.getResultThreshold();
-  const noteSize = triologue.recapNoteSize(description, summary, anchor.id, target);
-  if (noteSize !== null && noteSize > threshold) {
-    ctx.core.brief('warn', 'recap',
-      `Recap note too large (${noteSize} chars > ${threshold}). Nothing was collapsed.`,
-    );
-    return fail(`Error: the recap note is ${noteSize} chars, over the ${threshold}-char tool-result limit; nothing was collapsed. Re-run recap with a shorter summary or comment.`);
-  }
-
-  const result = triologue.rewindToLastBrief(description, summary, anchor.id, target);
-  if (!result) {
-    // The anchor moved while the forks ran (a new brief landed) or vanished.
-    // Nothing was truncated and nothing was appended.
-    ctx.core.brief('warn', 'recap', 'Anchor moved during summarization — nothing was collapsed.');
-    return fail('Error: The last brief changed while the recap was summarizing, so nothing was collapsed. Run recap again — it will rewind to the new anchor.');
-  }
-
-  ctx.core.brief('info', 'recap',
-    `(${chalk.yellow(result.tokensBefore.toLocaleString())} → ${chalk.green(result.tokensAfter.toLocaleString())} tokens)`,
-    `${description}${comment ? ` — ${comment}` : ''}`,
-  );
-
-  // Resync the in-turn brief memory with the anchor that survived the rewind:
-  // the old lastBriefMessage pointed at a message the model can no longer see
-  // (the span after the anchor's round-trip was just discarded).
-  turn.lastBriefMessage = result.anchorMessage;
-  turn.nextBriefNudge = 5;
-
-  // Surface a dropped patch with the same vocabulary as a validation failure
-  // below: the patch is best-effort and never fails the recap, but silence here
-  // would make a mindmap update that never happened invisible.
-  if (patchError) {
-    ctx.core.brief('warn', 'mindmap-patch', `patch dropped (recap continues): ${patchError}`);
-  }
-
-  // ── Apply mindmap patch (if produced by forkChat #2) ──
-  // Both the in-memory tree and the jsonl are updated simultaneously.
-  // jsonl is the source of truth; in-memory is ephemeral (rebuilt from jsonl
-  // at next startup). See docs/mindmap/mindmap-redesign.md Part 2.6.
-  if (patch) {
-    const mindmapForPatch = ctx.core.getMindmap();
-    if (mindmapForPatch) {
-      const applied = applyPatchAction(mindmapForPatch, patch);
-      if (applied) {
-        const patchPath = getPatchPath(ctx.core.getWorkDir());
-        // appendPatch now returns false if the action fails structural
-        // validation (orphan-prevention gate). Since applyPatchAction above
-        // already accepted it, a false here signals logic drift between the
-        // two validators — log it so the in-memory/jsonl divergence is visible.
-        const persisted = appendPatch(patch, patchPath);
-        if (persisted) {
-          ctx.core.brief('info', 'mindmap-patch',
-            `${patch.action}: ${patch.path}${patch.title ? `/${patch.title}` : ''}`,
-            patch.reason || undefined,
-          );
-        } else {
-          ctx.core.brief('warn', 'mindmap-patch',
-            `rejected by validation (not persisted): ${patch.action} ${patch.path}${patch.title ? `/${patch.title}` : ''}`,
-            patch.reason || undefined,
-          );
-        }
-      }
-    }
-  }
-
-  turn.isFirstRound = false;
-  return AgentState.COLLECT;
-}
-
 export async function handleHook(
   env: MachineEnv,
   turn: TurnVars,
@@ -477,8 +180,8 @@ export async function handleHook(
     const augmentedCalls = augmentToolCalls(chat.rawToolCalls);
     chat.augmentedCalls = augmentedCalls;
 
-    // 2. Validate brief isolation (a brief turn is recap's rewind anchor, so it
-    //    must stand alone — the whole turn is rejected, nothing partial runs).
+    // 2. Validate brief isolation (a brief must stand alone — the whole turn is
+    //    rejected, nothing partial runs).
     const briefValidation = validateBriefIsolation(augmentedCalls);
     if (!briefValidation.valid) {
       triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
@@ -492,22 +195,7 @@ export async function handleHook(
       return AgentState.COLLECT;
     }
 
-    // 2b. Validate recap isolation (must be called alone)
-    const recapValidation = validateRecapIsolation(augmentedCalls);
-    if (!recapValidation.valid) {
-      triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
-      reasoningContent: chat.assistantReasoningContent,
-    });
-      for (const call of augmentedCalls) {
-        triologue.tool(call.function.name, recapValidation.message!, call.id);
-      }
-
-      agentIO.log(chalk.yellow(`[recap] blocked: ${recapValidation.message}`));
-      return AgentState.COLLECT;
-    }
-
-    // 3. Process hooks (block/replace/inject/message) — moved before meta-tools
-    //    so hooks can also fire on recap calls.
+    // 3. Process hooks (block/replace/inject/message).
     const hookResult = await hookExecutor.processToolCalls(
       augmentedCalls,
       ctx,
@@ -544,15 +232,8 @@ export async function handleHook(
       return AgentState.COLLECT;
     }
 
-    // 4. Dispatch the recap meta-tool (rewind to the last brief)
-    //    Guard against blocked meta-calls so the agent sees the rejection.
-    const recapCall = hookResult.calls.find(c => c.function.name === 'recap');
-    if (recapCall && !hookResult.blockedCalls.has(recapCall.id)) {
-      return handleRecapCall(recapCall, env, chat, turn);
-    }
-
     // 4b. PLAN-MODE SCOPE REFLECTION — a brief turn is a snapshot of the
-    //     model's own thinking, so while PLANNING the loop answers it with one
+    // 4.  model's own thinking, so while PLANNING the loop answers it with one
     //     extra paragraph:
     //       tool('brief', "OK. When thinking on the larger scope, …", callId)
     //

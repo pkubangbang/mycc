@@ -106,13 +106,12 @@ export async function handleTool(
         agentIO.verbose('tool', `Result: ${toolName}`, { outputLength: output.length });
       }
 
-      // A brief's success result is stamped with its ANCHOR HASH — `[<hash>] OK`
+      // A brief's success result is stamped with its HASH — `[<hash>] OK`
       // — here, and only here: the handler receives no call id, so the loop is
       // the one place that can render it. The hash is `briefHash(callId)`, the
-      // same token recap writes back (`noteWithSummary`) and `recap(target=…)`
-      // resolves, so a brief is addressable the moment it lands. Only the
-      // pristine "OK…" result is stamped: an error or a plan-scope-less variant
-      // is never relabelled as an anchor. See recap-note.ts stampBriefResult.
+      // token a reader can cite, so a brief is addressable the moment it lands.
+      // Only the pristine "OK…" result is stamped: an error or a plan-scope-less
+      // variant is never relabelled as one. See recap-note.ts stampBriefResult.
       const resultContent = toolName === 'brief'
         ? stampBriefResult(output, toolCallId)
         : output;

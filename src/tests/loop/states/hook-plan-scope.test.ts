@@ -17,8 +17,8 @@
  *      brief executes exactly as before;
  *   2. PLAN mode   → one fork; the turn is registered in HOOK (assistant + tool
  *      result) and COLLECT is returned, so the brief tool never runs;
- *   3. the result keeps the "OK." prefix, so it is still the recap anchor's note
- *      slot, and a later recap overwrites the reflection with the summary;
+ *   3. the result keeps the "OK." prefix, so it still reads as the brief's own
+ *      success line and the reflection rides as that brief's note;
  *   4. failure / ESC / empty output → fall through to the normal turn (a
  *      reflection never fails a brief).
  */
@@ -61,12 +61,6 @@ vi.mock('../../../context/shared/loader.js', () => ({
 
 vi.mock('../../../hook/hook-preprocessor.js', () => ({
   augmentToolCalls: vi.fn((calls: unknown[]) => calls),
-}));
-
-vi.mock('../../../loop/recap-rewind.js', () => ({
-  validateRecapIsolation: vi.fn(() => ({ valid: true })),
-  handleRecap: vi.fn(),
-  handleRecapSpan: vi.fn(),
 }));
 
 vi.mock('../../../mindmap/patch.js', () => ({ applyPatchAction: vi.fn(() => true) }));
@@ -247,24 +241,6 @@ describe('HOOK-stage plan-mode scope reflection', () => {
     // The turn's own assistant(tool_calls) must NOT be in the prefix yet.
     expect(last.role).toBe('user');
     expect(passed.some((m) => m.tool_calls && m.role === 'assistant')).toBe(false);
-  });
-
-  it('PLAN mode: the reflected brief is still a recap anchor, and a recap replaces the reflection', async () => {
-    const { env, triologue, chat } = makeEnv('plan');
-    await handleHook(env, createTurnVars(), chat);
-
-    // Work after the brief → the brief anchors.
-    triologue.user('next step of the work');
-    const anchor = triologue.getLastBrief()!;
-    expect(anchor.message).toBe('recon done');
-    expect(anchor.span.map((m) => m.content)).toEqual(['next step of the work']);
-
-    const rewound = triologue.rewindToLastBrief('collapse', 'SUMMARY BODY');
-    expect(rewound).not.toBeNull();
-    const noteSlot = triologue.getMessages().at(-1)!;
-    expect(noteSlot.tool_name).toBe('brief');
-    expect(noteSlot.content).toContain('SUMMARY BODY');
-    expect(noteSlot.content).not.toContain(PLAN_SCOPE_HEADING);
   });
 
   it('PLAN mode: an empty fork falls through to the normal turn', async () => {

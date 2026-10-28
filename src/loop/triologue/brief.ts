@@ -6,7 +6,7 @@
  * compact.ts floor) and two more hand-copied the READER, each tolerating the
  * two runtime shapes for `arguments` (our own producers store a parsed object;
  * a provider or a restored transcript stores the raw JSON string). Two parsers
- * drifting apart is exactly how a recap quoted a blank anchor on the string
+ * drifting apart is exactly how a reader quoted a blank brief on the string
  * path, so both directions live here now.
  *
  * MERGE — `mergeBriefCall(prev, incoming)` answers: what does the conversation
@@ -42,7 +42,7 @@ export interface BriefArgs {
  * Parse a brief call's `arguments` from either runtime shape.
  *
  * Returns `{}` for a malformed payload rather than throwing: readers are on
- * paths (recap quoting, anchor identity) where a throw would lose the whole
+ * paths (brief quoting, checkpoint identity) where a throw would lose the whole
  * operation for a cosmetic defect.
  */
 export function parseBriefArgs(call: { function: { arguments?: unknown } }): BriefArgs {
@@ -76,12 +76,10 @@ export function readBriefConfidence(call: { function: { arguments?: unknown } })
 /**
  * Validate that `brief` is called alone (no other tools in the same turn).
  *
- * WHY THIS EXISTS — a brief is a rewind anchor: recap collapses the
- * conversation back to the LAST brief. Answering only `brief` in a turn makes
- * that anchor an unambiguous, self-contained boundary
- * (Triologue.currentAnchorIndex / rewindToLastBrief never have to reason about a
- * partial turn). `recap` carries the same rule (validateRecapIsolation) for
- * the same reason.
+ * WHY THIS EXISTS — a brief is the user-facing checkpoint of a stretch of work.
+ * Answering only `brief` in a turn makes it an unambiguous, self-contained turn
+ * boundary: the reader never has to reason about a partial turn where the status
+ * line and a tool call landed together.
  *
  * Enforced at the top of HOOK (states/hook.ts), BEFORE hook processing: an
  * invalid turn is answered in full with this message and never executes a
