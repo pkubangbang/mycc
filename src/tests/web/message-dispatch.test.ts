@@ -29,6 +29,7 @@ function makeState(): DispatchState & {
 } {
   const phase = ref<WebuiPhase>('idle');
   const isAutoMode = ref(false);
+  const isPlanMode = ref(false);
   const steeringQueue = reactive<SteeringNote[]>([]);
   const steeringBuffer = reactive<SteeringNote[]>([]);
   const steeringRevision = ref(-1);
@@ -49,6 +50,10 @@ function makeState(): DispatchState & {
   function setAutoMode(value: boolean): void {
     isAutoMode.value = value;
     if (value) pendingSteeringReview.splice(0);
+  }
+  /** Mirror of the store's setPlanMode (row obs-002). */
+  function setPlanMode(value: boolean): void {
+    isPlanMode.value = value;
   }
   // Mirror of stores/chat-store.ts adoptSteering/populateSteeringReview — the
   // dispatch tests exercise the WIRING, and the real rule itself is pinned by
@@ -85,6 +90,7 @@ function makeState(): DispatchState & {
   return reactive({
     phase,
     isAutoMode,
+    isPlanMode,
     steeringQueue,
     steeringBuffer,
     pendingSteeringReview,
@@ -98,6 +104,7 @@ function makeState(): DispatchState & {
     hasReview,
     setPhase,
     setAutoMode,
+    setPlanMode,
     adoptSteering,
     populateSteeringReview,
   }) as DispatchState & {
@@ -463,4 +470,21 @@ describe('applyServerMessage — lastServerMsg diagnostic recording', () => {
 
 
 
+});
+
+describe('applyServerMessage - plan/normal mode mirror (row obs-002)', () => {
+  it('sets the plan-mode flag from a mode:plan frame without touching phase or chat log', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+
+    applyServerMessage(state, { type: 'mode', content: 'plan' }, ctx);
+
+    expect(state.isPlanMode).toBe(true);
+    // Orthogonal state: unchanged phase, no chat bubble.
+    expect(state.phase).toBe('idle');
+    expect(state.messages).toHaveLength(0);
+
+    applyServerMessage(state, { type: 'mode', content: 'normal' }, ctx);
+    expect(state.isPlanMode).toBe(false);
+  });
 });

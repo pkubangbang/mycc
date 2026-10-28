@@ -18,6 +18,7 @@ import { clearAll } from '../context/memory-store.js';
 import { agentIO } from '../loop/agent-io.js';
 import { openEditor } from '../utils/open-editor.js';
 import { atomicWrite } from '../utils/atomic-write.js';
+import { probeLiveBeat } from '../peer/identity.js';
 
 /**
  * Marker seeded into `first_query` for every session that BOOTSTRAPS into
@@ -70,12 +71,16 @@ export const HEADLESS_STANDBY_QUERY =
  *    first_query (idle interactive sessions, non-bootstrap peers) that
  *    the marker does not apply to.
  */
-const LIVE_SESSION_HEARTBEAT_WINDOW_MS = 90_000;
-
 /**
  * Check whether a session directory is owned by a live process: its
- * heartbeat file (~/.mycc-store/discovery/heartbeat/{id}.json) contains a
- * beat within {@link LIVE_SESSION_HEARTBEAT_WINDOW_MS} of now.
+ * heartbeat file contains a beat within the shared liveness window.
+ *
+ * DELEGATES to `probeLiveBeat()` in peer/identity.ts — the single heartbeat
+ * reader. This module used to carry its own copy that hard-coded
+ * `~/.mycc-store/discovery`, so with MYCC_DISCOVERY_DIR set it looked at the
+ * wrong directory, saw no heartbeat, and deleted LIVE sessions. The discovery
+ * root now comes from config, through the same reader every other liveness
+ * question uses.
  *
  * Used as a deletion guard in {@link cleanupEmptySessions}: an empty
  * (no first_query) session that is heartbeating is NOT garbage — it is a
@@ -85,38 +90,11 @@ const LIVE_SESSION_HEARTBEAT_WINDOW_MS = 90_000;
  * moment its mailbox/triologue files vanish (cron nudges append to the
  * mailbox path under the session dir).
  *
- * Best-effort: any read/parse error returns false (the file is then treated
- * as not-live and the normal cleanup rules apply).
+ * Best-effort: any read/parse error returns false (the session is then
+ * treated as not-live and the normal cleanup rules apply).
  */
 function hasLiveHeartbeat(sessionId: string): boolean {
-  try {
-    const hbFile = path.join(os.homedir(), '.mycc-store', 'discovery', 'heartbeat', `${sessionId}.json`);
-    if (!fs.existsSync(hbFile)) return false;
-    const parsed = JSON.parse(fs.readFileSync(hbFile, 'utf-8')) as {
-      heartbeats?: unknown[];
-      timestamps?: unknown[];
-    };
-    // Accept both current ({heartbeats}) and legacy ({timestamps}) schemas.
-    const beats = Array.isArray(parsed.heartbeats) ? parsed.heartbeats : Array.isArray(parsed.timestamps) ? parsed.timestamps : [];
-    // NOTE: take the MAXIMUM beat, not the LAST (`.pop()`). `.pop()` only
-    // equals the max when beats are appended monotonically by a single
-    // writer. This function reads the RAW heartbeat file (including the
-    // legacy {timestamps} schema), where entries can be non-monotonic /
-    // reordered (concurrent writes, legacy migration). `.pop()` would then
-    // pick an older beat and misjudge a live session as dead — its directory
-    // gets deleted out from under the running process (exactly the
-    // daemon-stall bug this guard exists to prevent). Use a reduce instead
-    // of Math.max(...beats) to avoid a stack overflow on large arrays and
-    // to handle the empty case: reduce over no elements returns -Infinity,
-    // so Date.now() - (-Infinity) = Infinity > window → correctly returns
-    // false (no numeric beats → not live).
-    const latest = beats
-      .filter((t): t is number => typeof t === 'number')
-      .reduce((max, t) => (t > max ? t : max), -Infinity);
-    return Date.now() - latest < LIVE_SESSION_HEARTBEAT_WINDOW_MS;
-  } catch {
-    return false;
-  }
+  return probeLiveBeat(sessionId).live;
 }
 
 /**

@@ -55,6 +55,7 @@ vi.mock('../../../loop/esc-wrap-up.js', () => ({
   startWrapUp: vi.fn(),
   evaluateWrapUp: vi.fn(),
   clearWrapUp: vi.fn(),
+  setWrapUpReporter: vi.fn(),
 }));
 
 // loader: mock getToolsForScope (STOP calls it for the wrap-up tools list)
@@ -88,8 +89,13 @@ vi.mock('../../../loop/triologue.js', () => {
   return { Triologue: TriologueStub };
 });
 
+vi.mock('../../../loop/exit-auto.js', () => ({
+  exitAutoMode: vi.fn(() => true),
+}));
+
 // --- Imports after mocks -----------------------------------------------------
 import { handleStop } from '../../../loop/states/stop.js';
+import { exitAutoMode } from '../../../loop/exit-auto.js';
 import { AgentState, presentResult } from '../../../loop/state-machine.js';
 import { agentIO } from '../../../loop/agent-io.js';
 import { startWrapUp } from '../../../loop/esc-wrap-up.js';
@@ -298,8 +304,10 @@ describe('handleStop — steering notes surface as review cards after ESC (not d
 
     await handleStop(env, turn, chat);
 
-    // Auto mode turned off (ESC = "give me control back") — unchanged.
-    expect(autoState.getAuto()).toBe(false);
+    // Auto mode is left via the single exitAutoMode() owner (stubbed here; its
+    // own effect is pinned by tests/loop/exit-auto.test.ts).
+    expect(exitAutoMode).toHaveBeenCalledTimes(1);
+    expect(exitAutoMode).toHaveBeenCalledWith('stop');
     // Wrap-up still fires for the letter-box summary — unchanged.
     expect(startWrapUp).toHaveBeenCalledTimes(1);
   });

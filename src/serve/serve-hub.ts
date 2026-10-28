@@ -132,6 +132,8 @@ export class ServeHub implements HubHandler, ServeHubLike {
 
   // ── Auto-mode providers (callbacks to avoid a module-load cycle with agent-io) ──
   private autoStateProvider: (() => boolean) | null = null;
+  /** Last plan/normal mode broadcast — replayed to every new WS client. */
+  private modeState: 'plan' | 'normal' = 'normal';
   private enterAutoProvider: (() => boolean) | null = null;
 
   private running = false;
@@ -486,6 +488,9 @@ export class ServeHub implements HubHandler, ServeHubLike {
             maxUploadMb: getMaxUploadMb(),
             persistent: shouldDaemon(),
             sessionId: wireHooks?.getSessionId() ?? null,
+            // Plan/normal mode (row obs-002): the browser must be able to see
+            // that edits are refused because the lead is in plan mode.
+            mode: this.modeState,
           }),
         );
       });
@@ -875,6 +880,21 @@ export class ServeHub implements HubHandler, ServeHubLike {
     this.clients.forEachOpen((ws) => ws.send(payload));
   }
 
+  /**
+   * Broadcast plan/normal mode to all clients (row obs-002): the browser user
+   * must be able to see that edits are being refused because the lead is in
+   * plan mode. `content` is 'plan' | 'normal'; the optional allowed file rides
+   * in `detail` (the one file editable in plan mode).
+   */
+  broadcastMode(mode: 'plan' | 'normal', allowedFile?: string): void {
+    this.modeState = mode;
+    const payload = JSON.stringify({ type: 'mode', content: mode, detail: allowedFile ?? null });
+    this.clients.forEachOpen((ws) => ws.send(payload));
+  }
+
+  /** Current plan/normal mode as last broadcast (replayed on WS connect). */
+  getMode(): 'plan' | 'normal' { return this.modeState; }
+
   /** Broadcast agent running state (idle PROMPT/AWAIT → off; processing → on). */
   setAgentRunning(value: boolean): void {
     if (value === this.agentRunning) return;
@@ -925,6 +945,9 @@ export class ServeHub implements HubHandler, ServeHubLike {
       try { if (this.autoStateProvider()) { ws.send(JSON.stringify({ type: 'auto', content: 'on' })); } } catch { /* ignore */ }
     }
     try { ws.send(JSON.stringify({ type: 'running', content: this.agentRunning ? 'on' : 'off' })); } catch { /* ignore */ }
+    // Same for plan/normal mode: a browser joining mid-plan must be told that
+    // edits are prohibited instead of guessing why a request was refused.
+    try { ws.send(JSON.stringify({ type: 'mode', content: this.modeState, detail: null })); } catch { /* ignore */ }
     ws.on('message', (data) => handleWsMessage(this, ws, data.toString()));
     ws.on('close', () => this.onWsClose(ws));
     ws.on('error', (err) => this.onWsError(ws, err));

@@ -57,7 +57,7 @@ describe('agent-io', () => {
         const buffer = (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> })
           .outputBuffer;
         expect(buffer).toHaveLength(1);
-        expect(buffer[0]).toEqual({ method: 'log', args: ['buffered message'] });
+        expect(buffer[0]).toEqual({ method: 'log', args: ['buffered message'], mirror: 'no-sink' });
       });
 
       it('should buffer when line editor is active', () => {
@@ -94,7 +94,7 @@ describe('agent-io', () => {
         const buffer = (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> })
           .outputBuffer;
         expect(buffer).toHaveLength(1);
-        expect(buffer[0]).toEqual({ method: 'warn', args: ['buffered warning'] });
+        expect(buffer[0]).toEqual({ method: 'warn', args: ['buffered warning'], mirror: 'no-sink' });
       });
 
       it('should buffer when line editor is active', () => {
@@ -129,7 +129,7 @@ describe('agent-io', () => {
         const buffer = (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> })
           .outputBuffer;
         expect(buffer).toHaveLength(1);
-        expect(buffer[0]).toEqual({ method: 'error', args: ['buffered error'] });
+        expect(buffer[0]).toEqual({ method: 'error', args: ['buffered error'], mirror: 'no-sink' });
       });
 
       it('should buffer when line editor is active', () => {
@@ -158,9 +158,9 @@ describe('agent-io', () => {
         const buffer = (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> })
           .outputBuffer;
         expect(buffer).toHaveLength(3);
-        expect(buffer[0]).toEqual({ method: 'log', args: ['log message'] });
-        expect(buffer[1]).toEqual({ method: 'warn', args: ['warn message'] });
-        expect(buffer[2]).toEqual({ method: 'error', args: ['error message'] });
+        expect(buffer[0]).toEqual({ method: 'log', args: ['log message'], mirror: 'no-sink' });
+        expect(buffer[1]).toEqual({ method: 'warn', args: ['warn message'], mirror: 'no-sink' });
+        expect(buffer[2]).toEqual({ method: 'error', args: ['error message'], mirror: 'no-sink' });
       });
     });
   });
@@ -218,4 +218,103 @@ describe('agent-io', () => {
     });
   });
 
+});
+
+describe('agent-io — WebUI mirror replay (row lead-044)', () => {
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+  let mirror: ReturnType<typeof vi.fn>;
+  let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    (agentIO as unknown as { neglectedModeFlag: boolean }).neglectedModeFlag = false;
+    (agentIO as unknown as { activeLineEditor: unknown }).activeLineEditor = null;
+    (agentIO as unknown as { outputBuffer: unknown[] }).outputBuffer = [];
+    (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> }).onNeglectedCallbacks = new Set();
+    mirror = vi.fn();
+    agentIO.setOutputCallback(null);
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  /** Install the spy as the WebUI mirror (the mock is structurally an OutputCallback). */
+  const installMirror = (): void => {
+    agentIO.setOutputCallback(mirror as unknown as Parameters<typeof agentIO.setOutputCallback>[0]);
+  };
+
+  afterEach(() => {
+    agentIO.setOutputCallback(null);
+    vi.restoreAllMocks();
+  });
+
+  it('replays a buffered line that had no sink when it was emitted', () => {
+    agentIO.setNeglectedMode(true);
+    agentIO.log('emitted before serve started');       // mirror: 'no-sink'
+    installMirror();                                   // serve comes up
+    agentIO.setNeglectedMode(false);
+    agentIO.flushOutput();
+
+    expect(mirror).toHaveBeenCalledWith('log', ['emitted before serve started'], undefined);
+  });
+
+  it('does NOT replay a brief() line — brief mirrors its own clean message', () => {
+    agentIO.setNeglectedMode(true);
+    installMirror();
+    agentIO.brief('warn', 'hook', 'a warning');        // body is 'suppressed'
+    agentIO.setNeglectedMode(false);
+    mirror.mockClear();
+    agentIO.flushOutput();
+
+    // Exactly one mirror of the brief happened (at emit time, with the tool
+    // label); the flush must add nothing, or the browser shows the message
+    // twice — once as garbled chalk.
+    expect(mirror).not.toHaveBeenCalled();
+    expect(consoleWarnSpy).toHaveBeenCalled();
+  });
+
+  it('replays nothing twice when a line was already mirrored', () => {
+    installMirror();
+    agentIO.setNeglectedMode(true);
+    agentIO.log('already sent');                        // mirror: 'sent'
+    agentIO.setNeglectedMode(false);
+    mirror.mockClear();
+    agentIO.flushOutput();
+
+    expect(mirror).not.toHaveBeenCalled();
+    expect(consoleLogSpy).toHaveBeenCalledWith('already sent');
+  });
+});
+
+describe('agent-io — brief emitted with no sink yet is NOT lost', () => {
+  beforeEach(() => {
+    (agentIO as unknown as { neglectedModeFlag: boolean }).neglectedModeFlag = false;
+    (agentIO as unknown as { activeLineEditor: unknown }).activeLineEditor = null;
+    (agentIO as unknown as { outputBuffer: unknown[] }).outputBuffer = [];
+    agentIO.setOutputCallback(null);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    agentIO.setOutputCallback(null);
+    vi.restoreAllMocks();
+  });
+
+  it('replays the buffered body of a brief that ran before serve started', () => {
+    // brief() could not mirror (no callback) and its body was buffered; the
+    // line must be replayed once serve comes up. Classifying it 'suppressed'
+    // would silently drop the agent's own status line from the browser.
+    agentIO.setNeglectedMode(true);
+    agentIO.brief('info', 'hook', 'no sink yet');
+    agentIO.setNeglectedMode(false);
+
+    const mirror = vi.fn();
+    agentIO.setOutputCallback(mirror as unknown as Parameters<typeof agentIO.setOutputCallback>[0]);
+    agentIO.flushOutput();
+
+    // The buffered console line is what carries the text.
+    expect(mirror).toHaveBeenCalled();
+    expect(String((mirror.mock.calls[0][1] as unknown[])[0])).toContain('no sink yet');
+  });
 });

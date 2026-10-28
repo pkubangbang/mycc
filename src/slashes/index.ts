@@ -103,7 +103,9 @@ import { autoCommitCommand } from './auto-commit.js';
 import { channelCommand } from './channel.js';
 import { peerCommand } from './peer.js';
 import { tokenCommand } from './token.js';
+import { configCommand } from './config.js';
 
+slashRegistry.register(configCommand);
 slashRegistry.register(teamCommand);
 slashRegistry.register(todosCommand);
 slashRegistry.register(skillsCommand);

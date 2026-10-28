@@ -79,8 +79,10 @@ function briefAssistantContent(
  */
 function injectDeferredHookMessages(
   triologue: MachineEnv['triologue'],
-  deferred: ProcessToolCallsResult['deferredMessages']
+  deferred: ProcessToolCallsResult['deferredMessages'],
+  chat: ChatData
 ): void {
+  if (deferred.length === 0) return;
   for (const dm of deferred) {
     triologue.note(
       'REMINDER',
@@ -88,6 +90,10 @@ function injectDeferredHookMessages(
       dm.hookName
     );
   }
+  // The pass-scoped flag is how the no-calls branch knows a COLLECT loop-back
+  // is owed (the queue itself is not consumed — hookResult is pass data and
+  // the next pass replaces it).
+  chat.hookFeedbackDelivered = true;
 }
 
 async function handlePlanScopeBrief(
@@ -275,7 +281,7 @@ export async function handleHook(
     if (planScope) {
       // The plan-scope branch abandons the round; the deferred queue still
       // has to reach the LLM, or a hook message is silently lost here.
-      injectDeferredHookMessages(triologue, hookResult.deferredMessages);
+      injectDeferredHookMessages(triologue, hookResult.deferredMessages, chat);
       return planScope;
     }
 
@@ -377,7 +383,7 @@ export async function handleHook(
 
       // Inject deferred hook messages so the LLM sees them in the next round.
       // Each deferred message carries its originating hook name for attribution.
-      injectDeferredHookMessages(triologue, hookResult.deferredMessages);
+      injectDeferredHookMessages(triologue, hookResult.deferredMessages, chat);
 
       chat.crossroadContinuation = undefined;
       chat.crossroadFilePath = undefined;
@@ -415,12 +421,19 @@ export async function handleHook(
       }
     }
 
+    // Deferred hook messages are DELIVERED HERE (once) for the normal path, and
+    // are drained by every early return above. Delivering them at this single
+    // point — before the calls/STOP decision — means the round that runs tools
+    // also carries the notes, and the round that cannot run tools still
+    // returns to COLLECT once with them, instead of relying on tool.ts to
+    // remember a third injection site.
+    injectDeferredHookMessages(triologue, hookResult.deferredMessages, chat);
+
     // No tool calls = all blocked or LLM produced none
     if (hookResult.calls.length === 0) {
-      // Inject deferred hook messages so the LLM can respond to them
-      // (e.g., lint-after-edit, test-after-edit block messages).
-      if (hookResult.deferredMessages.length > 0) {
-        injectDeferredHookMessages(triologue, hookResult.deferredMessages);
+      // A round that carried hook feedback must go back to the LLM so it can
+      // respond to it (e.g. lint-after-edit, test-after-edit block messages).
+      if (chat.hookFeedbackDelivered === true) {
         return AgentState.COLLECT;
       }
       return AgentState.STOP;

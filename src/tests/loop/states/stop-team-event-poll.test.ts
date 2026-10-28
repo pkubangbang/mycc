@@ -60,6 +60,7 @@ vi.mock('../../../loop/esc-wrap-up.js', () => ({
   startWrapUp: vi.fn(),
   evaluateWrapUp: vi.fn(),
   clearWrapUp: vi.fn(),
+  setWrapUpReporter: vi.fn(),
 }));
 
 vi.mock('../../../context/shared/loader.js', () => ({
@@ -92,6 +93,10 @@ vi.mock('../../../serve/serve-registry.js', () => ({
   getServeHub: vi.fn(() => ({
     isRunning: vi.fn(() => false),
   })),
+}));
+
+vi.mock('../../../loop/exit-auto.js', () => ({
+  exitAutoMode: vi.fn(() => true),
 }));
 
 // --- Imports after mocks -----------------------------------------------------
@@ -279,10 +284,14 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
 
     const result = await handleStop(env, createTurnVars(), createChatData());
 
-    expect(result).toBe(AgentState.COLLECT);
-    expect(triologue.note).toHaveBeenCalledWith(
-      'SYSTEM',
-      expect.stringContaining('Timeout waiting for teammates'),
+    expect(result).toBe(AgentState.PROMPT);
+    // The timeout is reported once, as a warning, and the turn ENDS. Returning
+    // COLLECT here re-ran STOP→await(60s)→COLLECT forever — the "prompt never
+    // reached" bug the 60s bound exists to prevent.
+    expect(ctx.core.brief).toHaveBeenCalledWith(
+      'warn',
+      'stop',
+      expect.stringContaining('Still waiting on teammates after 60s'),
     );
   });
 
@@ -300,8 +309,9 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
       { reason: 'mail', state: 'COLLECT' },
       { reason: 'steering', state: 'COLLECT' },
       { reason: 'holding', state: 'COLLECT' },
-      // 'timeout' (the safety valve) also re-enters COLLECT.
-      { reason: 'timeout', state: 'COLLECT' },
+      // 'timeout' ENDS the turn: the 60s bound is what returns the prompt to
+      // the user. (It used to re-enter COLLECT and spin forever.)
+      { reason: 'timeout', state: 'PROMPT' },
     ];
 
     for (const { reason, state } of reasonToState) {

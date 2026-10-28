@@ -280,8 +280,12 @@ export class TeamManager implements TeamModule {
       // @sender. See the "@-prefix teammate label convention" in MYCC.md.
       // `synthetic` (machine-originated brief from the child) is forwarded
       // so the WebUI keeps hiding it after the re-brief.
+      // The child stamps its brief level on the wire; older/foreign children
+      // omit it, so 'info' is the default. An 'error' child brief cannot reach
+      // this branch (it travels as `type: 'error'`), hence the narrow type.
+      const level = msg.level === 'warn' ? 'warn' : 'info';
       const label = tool ? `@${sender}/${tool}` : `@${sender}`;
-      this.context.core.brief('info', label, message, detail, { synthetic });
+      this.context.core.brief(level, label, message, detail, { synthetic });
       return;
     }
 
@@ -609,6 +613,10 @@ export class TeamManager implements TeamModule {
 
     this.teammateEta.delete(name);
     MemoryStore.removeTeammate(name);
+    // A queued question from a teammate being removed must not reach the user:
+    // the answer could never be delivered, and the user would be answering on
+    // behalf of a process that is already gone (row context-013).
+    this.dropPendingQuestionsFrom((sender) => sender === name, `teammate ${name} removed`);
     // Keep statuses[name] until the child's exit handler fires so `tm_await`
     // reports a crash as 'failed' rather than forgetting the teammate.
   }
@@ -630,10 +638,36 @@ export class TeamManager implements TeamModule {
 
     this.processes.clear();
     this.statuses.clear();
+    // Dismissing everyone invalidates every queued question: asking the user on
+    // behalf of a teammate that no longer exists is pure noise (row
+    // context-013), and the answer could never be delivered.
+    this.dropPendingQuestionsFrom(() => true, 'all teammates dismissed');
 
     // Remove all from memory store
     for (const name of MemoryStore.listTeammates().map((t) => t.name)) {
       MemoryStore.removeTeammate(name);
+    }
+  }
+
+  /**
+   * Drop queued questions sent by a teammate that is going away, and answer
+   * each one on the child's behalf so a still-alive sender unblocks instead of
+   * waiting forever (row context-013).
+   *
+   * Asking the USER a question whose asker has been removed is the misfire this
+   * prevents: the user answers, and the reply is dropped because no child
+   * remains.
+   */
+  private dropPendingQuestionsFrom(match: (sender: string) => boolean, reason: string): void {
+    const kept: typeof this.pendingQuestions = [];
+    const dropped: typeof this.pendingQuestions = [];
+    for (const q of this.pendingQuestions) {
+      (match(q.sender) ? dropped : kept).push(q);
+    }
+    this.pendingQuestions = kept;
+    for (const q of dropped) {
+      this.sendResponse(q.sender, q.reqId, 'question_result', false, undefined, reason);
+      this.context.core.brief('info', 'team', `dropped queued question from ${q.sender} (${reason})`);
     }
   }
 

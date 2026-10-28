@@ -33,11 +33,11 @@
  * regardless of auto state).
  */
 
-import chalk from 'chalk';
 import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
-import { agentIO } from '../agent-io.js';
 import { autoState } from '../auto-state.js';
+import { exitAutoMode } from '../exit-auto.js';
+import { agentIO } from '../agent-io.js';
 
 export async function handleWait(
   env: MachineEnv,
@@ -45,6 +45,18 @@ export async function handleWait(
   _chat: ChatData,
 ): Promise<HandlerResult> {
   const { ctx } = env;
+
+  // AWAIT is a STATE the user must be able to see: "waiting for an event" and
+  // "hung" look identical otherwise, and in auto mode there is no prompt to
+  // contradict it (REPORT row 35). One line on entry — not per tick, which
+  // would flood the transcript every 60s — naming what we wait for and how to
+  // leave.
+  ctx.core.brief(
+    'info',
+    'await',
+    'AWAIT — auto mode: waiting for an event (mail, teammate, steering). ESC leaves auto mode.',
+  );
+  let ticks = 0;
 
   // Block until a teammate/steering/mail event or ESC exits auto mode.
   // 'all done' (teammates idle) and 'timeout' are NOT exits — re-check
@@ -57,18 +69,24 @@ export async function handleWait(
     });
 
     if (reason === 'esc') {
-      autoState.setAuto(false);
-      agentIO.setNeglectedMode(false);
-      agentIO.flushOutput();
-      console.log(chalk.gray('auto mode is off. Prompt resumed.'));
+      // Single owner of the ESC exit (the STOP state calls the same helper
+      // when the ESC landed mid-execution instead of while blocked here).
+      exitAutoMode('await');
       return AgentState.PROMPT;
     }
 
     if (reason === 'timeout') {
+      // Still waiting is a fact worth recording, but NOT a chat message: this
+      // loop is unbounded, so a brief per tick would add one bubble a minute
+      // forever. The verbose trace carries it instead (the state machine
+      // already logs the AWAIT transition there).
+      ticks++;
+      agentIO.verbose('await', `still waiting — no event yet (${ticks} min elapsed)`);
       continue; // re-check autoState, then re-await
     }
 
     // holding / mail / steering → COLLECT to process the event.
+    ctx.core.brief('info', 'await', `event received (${reason}) — waking up`);
     return AgentState.COLLECT;
   }
 

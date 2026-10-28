@@ -202,7 +202,7 @@ function killProcessTree(pid: number, isWin: boolean): void {
  */
 export function runExec(
   options: ExecOptions,
-  onNeglected: (cb: () => void) => void,
+  onNeglected: (cb: () => void) => void | (() => void),
 ): Promise<ExecResult> {
   const { cwd, command, timeout } = options;
 
@@ -247,9 +247,19 @@ export function runExec(
 
     const drain = armExitDrain(proc);
 
+    // Declared before the timer so EVERY settle path can drop the ESC callback
+    // (the closure captures the replay buffers — a leaked one pins the whole
+    // stdout/stderr of this bash call until an ESC finally fires).
+    let unsubscribeEsc: (() => void) | null = null;
+    const releaseEsc = (): void => {
+      unsubscribeEsc?.();
+      unsubscribeEsc = null;
+    };
+
     const timer = setTimeout(() => {
       if (!completed) {
         completed = true;
+        releaseEsc();
         try {
           if (proc.pid) {
             killProcessTree(proc.pid, isWin);
@@ -272,7 +282,8 @@ export function runExec(
     }, timeoutMs);
 
     // Register callback for ESC (neglected) - skip subprocess wait.
-    onNeglected(() => {
+    const unsubscribe = onNeglected(() => {
+      releaseEsc();
       if (!completed) {
         completed = true;
         clearTimeout(timer);
@@ -287,6 +298,7 @@ export function runExec(
         });
       }
     });
+    if (typeof unsubscribe === 'function') unsubscribeEsc = unsubscribe;
 
     // Capture the real exit code the moment the process exits (this also arms
     // the grace window inside the drain).
@@ -302,6 +314,7 @@ export function runExec(
       if (!completed) {
         completed = true;
         clearTimeout(timer);
+        releaseEsc();
         resolve({
           stdout: stdoutBuffer.getString(),
           stderr: stderrBuffer.getString(),
@@ -319,6 +332,7 @@ export function runExec(
         completed = true;
         clearTimeout(timer);
         drain.cancel();
+        releaseEsc();
         resolve({
           stdout: '',
           stderr: err.message,

@@ -194,6 +194,7 @@ export function createMockPeer(overrides: Partial<PeerModule> = {}): PeerModule 
     sendPeerMail: vi.fn(() => false),
     hasActiveChannel: vi.fn(() => false),
     hasChannelWith: vi.fn(() => false),
+    getChannelJoinFailures: vi.fn(() => new Map()),
     start: vi.fn(),
     stop: vi.fn(),
     getSelfSessionId: vi.fn(() => ''),

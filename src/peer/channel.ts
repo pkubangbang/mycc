@@ -76,6 +76,24 @@ function appendMailToPath(mailboxPath: string, from: string, title: string, cont
 }
 
 /**
+ * Auto-join failure record for one channel (row peer-003).
+ *
+ * `count` and `lastError` are what `/channel list` renders ("join failed 12× —
+ * Channel file not found …"), and `nextAttemptAt` is the exponential backoff
+ * the sweep honours so a permanently broken channel stops costing a warning
+ * every 5 s while staying visible.
+ */
+export interface ChannelJoinFailure {
+  count: number;
+  lastError: string;
+  lastAttemptAt: number;
+  nextAttemptAt: number;
+}
+
+/** Backoff ladder for repeated auto-join failures (ms). Caps at 2 minutes. */
+const JOIN_RETRY_BACKOFF_MS = [5_000, 15_000, 60_000, 120_000];
+
+/**
  * ChannelManager handles channel listing, joining, and cross-instance mail.
  *
  * Channel discovery is automatic, driven by a 5-second poll on the channels
@@ -97,6 +115,16 @@ export class ChannelManager {
   /** Injected verbose reporter (see setVerboseLogger) — keeps this module free
    *  of loop imports while still surfacing failed sends. */
   private verboseLog: ((tool: string, message: string) => void) | null = null;
+  /**
+   * Per-channel auto-join failure bookkeeping (row peer-003). A channel whose
+   * file is malformed or vanished fails `joinChannel()` on EVERY 5 s sweep and,
+   * before this, only reached `console.warn` — a permanently broken channel was
+   * indistinguishable from one still waiting for its mediator. Recorded here and
+   * surfaced through `getJoinFailures()` (rendered by `/channel list`), and the
+   * retry backs off after repeated failures so a broken file does not cost a
+   * warn line every tick.
+   */
+  private joinFailures = new Map<string, ChannelJoinFailure>();
 
   constructor(sessionId: string, identityManager: IdentityManager, mailboxPath: string) {
     this.sessionId = sessionId;
@@ -139,18 +167,53 @@ export class ChannelManager {
    */
   private sweepChannels(): void {
     const channels = this.listChannels();
+    const now = Date.now();
     for (const channel of channels) {
-      if (!channel.joined) {
-        try {
-          this.joinChannel(channel.channelId);
-        } catch (err) {
-          // joinChannel throws if the channel file went missing or is malformed
-          // between listChannels() and joinChannel() — log it so a silently
-          // failing channel is observable instead of swallowed every 5s.
-          console.warn(`[channel] sweep auto-join failed for ${channel.channelId}: ${err instanceof Error ? err.message : String(err)}`);
+      if (channel.joined) continue;
+      // Honour the backoff of a channel that has been failing (row peer-003):
+      // a malformed/vanished file must not be retried (and warned about) every
+      // tick forever.
+      const failure = this.joinFailures.get(channel.channelId);
+      if (failure && now < failure.nextAttemptAt) continue;
+      try {
+        this.joinChannel(channel.channelId);
+        // A successful retry clears the record — the channel is healthy again.
+        if (failure) {
+          this.joinFailures.delete(channel.channelId);
+          this.verboseLog?.('channel', `${channel.channelId} joined after ${failure.count} failed attempt(s)`);
+        }
+      } catch (err) {
+        // joinChannel throws if the channel file went missing or is malformed
+        // between listChannels() and joinChannel(). Record it (count + reason +
+        // backoff) so `/channel list` can show "join failed N× — <reason>"
+        // instead of the channel looking like it is merely waiting.
+        const reason = err instanceof Error ? err.message : String(err);
+        const count = (failure?.count ?? 0) + 1;
+        const delay = JOIN_RETRY_BACKOFF_MS[Math.min(count - 1, JOIN_RETRY_BACKOFF_MS.length - 1)];
+        this.joinFailures.set(channel.channelId, {
+          count,
+          lastError: reason,
+          lastAttemptAt: now,
+          nextAttemptAt: now + delay,
+        });
+        // First failure is loud; repeats go to verbose (the count is on the
+        // listing and in the brief-style verbose trace).
+        if (count === 1) {
+          console.warn(`[channel] auto-join failed for ${channel.channelId}: ${reason} (will retry with backoff)`);
+        } else {
+          this.verboseLog?.('channel', `auto-join still failing for ${channel.channelId} (${count}×): ${reason}`);
         }
       }
     }
+  }
+
+  /**
+   * Auto-join failures recorded so far, keyed by channel id. Read by
+   * `/channel list` so a broken channel is VISIBLE as broken rather than
+   * looking like "not joined" forever.
+   */
+  getJoinFailures(): ReadonlyMap<string, ChannelJoinFailure> {
+    return this.joinFailures;
   }
 
   /**

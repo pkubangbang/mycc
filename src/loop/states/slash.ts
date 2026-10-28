@@ -44,6 +44,7 @@ export async function handleSlash(
     sequence: env.sequence,
     hookExecutor: env.hookExecutor,
     turn,
+    env,
   };
 
   try {

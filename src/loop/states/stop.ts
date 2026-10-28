@@ -23,7 +23,9 @@ import { AgentState, presentResult } from '../state-machine.js';
 import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
 import { agentIO } from '../agent-io.js';
 import { autoState } from '../auto-state.js';
-import { startWrapUp } from '../esc-wrap-up.js';
+import { startWrapUp, setWrapUpReporter } from '../esc-wrap-up.js';
+import { setWrapUpStateReporter } from '../wrap-up-state.js';
+import { exitAutoMode } from '../exit-auto.js';
 import { loader } from '../../context/shared/loader.js';
 import { stopSpinner } from '../../engine/chat-helpers.js';
 import { checkPreventStop } from './stop-prevent-stop.js';
@@ -61,13 +63,11 @@ export async function handleStop(
     // handles ALL neglection paths: mid-execution ESC (LLM/TOOL/COLLECT/HOOK)
     // and the HOOK→STOP text-only-response path.
     if (agentIO.isNeglectedMode()) {
-      // ESC always means "give me control back". If we were in auto mode,
-      // exit it now — auto is orthogonal to plan/normal, so plan/normal is
-      // preserved; we only stop the autonomous loop and return to PROMPT.
-      if (autoState.getAuto()) {
-        autoState.setAuto(false);
-        console.log(chalk.gray('auto mode is off. Prompt resumed.'));
-      }
+      // ESC always means "give me control back". The leave-auto sequence
+      // (flag flip, neglected-mode clear, output flush, the single
+      // "auto mode is off" line) is owned by exitAutoMode() — AWAIT's ESC
+      // branch calls the same helper, so the two entry points cannot drift.
+      exitAutoMode('stop');
 
       // Steering notes queued during the interrupted run are NOT drained
       // here. They stay in both the backend steeringQueue and the frontend
@@ -111,6 +111,12 @@ export async function handleStop(
       // Mid-execution ESC path: start background wrap-up for a letter-box summary.
       stopSpinner(); // Ensure spinner is stopped before returning to PROMPT
       const tools = loader.getToolsForScope(env.scope);
+      // A failed wrap-up must be visible, not silent.
+      setWrapUpReporter((level, tool, message) => env.ctx.core.brief(level, tool, message));
+      // Same for a wrap-up DISCARDED by a context reset (/clear, compact):
+      // the state-module reporter is otherwise never installed, so the
+      // "visible instead of swallowed" contract would be a dead seam.
+      setWrapUpStateReporter((level, tool, message) => env.ctx.core.brief(level, tool, message));
       startWrapUp(triologue, tools);
       agentIO.setNeglectedMode(false);
       markTurnBoundary();
@@ -219,13 +225,20 @@ export async function handleStop(
       case 'failed':
         return AgentState.COLLECT;
       case 'timeout': {
+        // The timeout IS the end of the wait — not a reason to keep working.
+        // Returning COLLECT here re-ran the whole STOP→await(60s)→COLLECT cycle
+        // forever, which is exactly the "prompt never reached" bug this bound
+        // exists to prevent. Report it once and give the turn back: the user
+        // decides whether to wait longer (tm_await) or stop the teammate.
         const teamInfo = ctx.team.printTeam();
-        triologue.note(
-          'SYSTEM',
-          `Timeout waiting for teammates.\n${teamInfo}\n\n` +
-          `Use tm_await to wait longer, or tm_remove to terminate.`,
+        ctx.core.brief(
+          'warn',
+          'stop',
+          `Still waiting on teammates after 60s.\n${teamInfo}\n` +
+            'Use tm_await to wait longer, or tm_remove to terminate.'
         );
-        return AgentState.COLLECT;
+        markTurnBoundary();
+        return AgentState.PROMPT;
       }
       case 'esc':
       case 'all done':

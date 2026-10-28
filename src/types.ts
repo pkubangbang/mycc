@@ -790,6 +790,21 @@ export interface PeerModule {
    */
   hasChannelWith(sessionId: string): boolean;
   /**
+   * Auto-join failures recorded by the 5 s channel sweep, keyed by channel id:
+   * `{ count, lastError, lastAttemptAt, nextAttemptAt }`. A channel whose file is
+   * malformed or vanished fails every sweep; without this it looked identical to
+   * a channel still waiting for its mediator, and the only signal was a
+   * `console.warn` in a process whose stdio is piped away. `/channel list`
+   * renders `join failed N× — <reason>` from it. Empty on the child
+   * (NoopPeerModule) — children do not poll channels.
+   */
+  getChannelJoinFailures(): ReadonlyMap<string, {
+    count: number;
+    lastError: string;
+    lastAttemptAt: number;
+    nextAttemptAt: number;
+  }>;
+  /**
    * Register a callback fired when a channel is joined (joinChannel sets
    * joined=true and injects the firstQuery). The callback lets the agent loop
    * react to a channel joining MID-PROMPT — i.e. after the Layer A gate was
@@ -1361,6 +1376,18 @@ export interface SlashCommandContext {
    * commands that don't touch turn state.
    */
   turn?: { lastUserQuery: string; lastBriefMessage: string; lastHintFocus: string };
+  /**
+   * The live MachineEnv (handed over by the SLASH handler). Commands that must
+   * perform a loop-owned operation — `/compact` resetting the same state the
+   * automatic compact resets — go through this rather than re-implementing a
+   * subset of it (row lead-036). Absent when a command runs outside the state
+   * machine (tests, /serve-time handlers).
+   */
+  env?: {
+    requestEmbeddingTracker: { clear(): void };
+    crossroadOccurred: boolean;
+    scope: ToolScope;
+  };
 }
 
 /**

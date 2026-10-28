@@ -8,16 +8,20 @@
 import type { PeerModule, IdentityEntry, ChannelFile } from '../types.js';
 import { IdentityManager } from './identity.js';
 import { ChannelManager } from './channel.js';
+import type { ChannelJoinFailure } from './channel.js';
 import {
   findBySid,
   liveSocketOf,
   sendWireMail,
+  describeWireSendFailure,
 } from './wire-registry.js';
 import { stopWireClient } from './wire-client.js';
 
 export class PeerManager implements PeerModule {
   private identity: IdentityManager;
   private channel: ChannelManager;
+  /** Verbose reporter for peer-level lines (wire send causes). */
+  private verboseLog: ((tool: string, message: string) => void) | null = null;
 
   constructor(sessionId: string, workDir: string, mailboxPath: string, role?: string, daemon?: boolean) {
     this.identity = new IdentityManager(sessionId, workDir, mailboxPath, role, daemon);
@@ -49,6 +53,11 @@ export class PeerManager implements PeerModule {
     return this.channel.listChannels();
   }
 
+  /** Auto-join failures per channel (row peer-003) — surfaced by `/channel list`. */
+  getChannelJoinFailures(): ReadonlyMap<string, ChannelJoinFailure> {
+    return this.channel.getJoinFailures();
+  }
+
   joinChannel(channelId: string): { joined: boolean; firstQuery?: string } {
     return this.channel.joinChannel(channelId);
   }
@@ -70,7 +79,13 @@ export class PeerManager implements PeerModule {
   sendPeerMail(sessionId: string, title: string, content: string): boolean {
     const local = this.channel.sendPeerMail(sessionId, title, content);
     if (local) return true;
-    return sendWireMail(sessionId, title, content);
+    const wire = sendWireMail(sessionId, title, content);
+    if (!wire.ok) {
+      // Name the cause (row lead-023): the previous bare `false` made
+      // "retrying" and "unknown peer" and "too big" indistinguishable here.
+      this.verboseLog?.('peer', `wire send to ${sessionId} failed: ${describeWireSendFailure(wire.failure, sessionId)}`);
+    }
+    return wire.ok;
   }
 
   /**
@@ -162,6 +177,7 @@ export class PeerManager implements PeerModule {
    */
   setVerboseLogger(fn: (tool: string, message: string) => void): void {
     this.channel.setVerboseLogger(fn);
+    this.verboseLog = fn;
   }
 
   /**
@@ -187,6 +203,7 @@ export class NoopPeerModule implements PeerModule {
   listIdentities(): IdentityEntry[] { return []; }
   isFresh(_sessionId: string): boolean { return false; }
   listChannels(): ChannelFile[] { return []; }
+  getChannelJoinFailures(): ReadonlyMap<string, ChannelJoinFailure> { return new Map(); }
   joinChannel(_channelId: string): { joined: boolean; firstQuery?: string } { return { joined: false }; }
   sendMail(_channelId: string, _sessionId: string, _topic: string, _content: string): boolean { return false; }
   sendPeerMail(_sessionId: string, _title: string, _content: string): boolean { return false; }

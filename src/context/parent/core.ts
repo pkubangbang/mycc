@@ -112,6 +112,8 @@ function sniffFileFormat(filePath: string): string {
 export class Core extends BaseCore implements CoreModule {
   private modeState: 'plan' | 'normal' = 'normal';
   private allowedFile?: string;
+  /** Mode-mirroring callback (WebUI `mode` broadcast); set by the serve wiring. */
+  private onModeChange: ((mode: 'plan' | 'normal', allowedFile?: string) => void) | null = null;
 
   /**
    * Ring buffer of the most recent REFUSED grant verdicts (lead scope).
@@ -152,6 +154,10 @@ export class Core extends BaseCore implements CoreModule {
   constructor(workDir?: string) {
     super(workDir || process.cwd());
     this.pictureCacheDir = getImgCacheDir();
+    // No default mode reporter: the serve wiring installs it once at boot
+    // (wireServeCallbacks → setModeChangeReporter), so the context layer keeps
+    // no serve dependency and there is exactly one path from setMode to the
+    // WebUI. A terminal session simply has no reporter → no-op.
   }
 
   /**
@@ -172,10 +178,24 @@ export class Core extends BaseCore implements CoreModule {
    * Set mode (implementation-only, NOT in CoreModule interface)
    * @param mode - The mode to set ('plan' or 'normal')
    * @param allowedFile - Optional file path that can be edited in plan mode
+   *
+   * Mode is a state the USER must be able to see (row obs-002): a browser user
+   * whose edits are being refused has no other clue why. Every write goes
+   * through here, so this is the one place that notifies — the mirroring
+   * callback is installed by the serve wiring and is a no-op in a terminal.
    */
   setMode(mode: 'plan' | 'normal', allowedFile?: string): void {
     this.modeState = mode;
     this.allowedFile = allowedFile;
+    this.onModeChange?.(mode, allowedFile);
+  }
+
+  /**
+   * Install the mode-mirroring callback (the WebUI `mode` broadcast). Injected
+   * rather than imported so the context layer keeps no serve dependency.
+   */
+  setModeChangeReporter(cb: ((mode: 'plan' | 'normal', allowedFile?: string) => void) | null): void {
+    this.onModeChange = cb;
   }
 
   /**
@@ -650,6 +670,21 @@ export class Core extends BaseCore implements CoreModule {
       };
     }
     return { approved: true };
+  }
+
+  /**
+   * Record a CHILD's refusal in the same ring as the lead's. The child's grant
+   * path reaches evaluateGrant through the IPC handler, never through
+   * Core.requestGrant, so without this a teammate's block is invisible to the
+   * hint round. Public: the IPC handler is the caller.
+   */
+  recordChildDenial(
+    sender: string,
+    tool: 'write_file' | 'edit_file' | 'bash',
+    args: { path?: string; command?: string; intent?: string },
+    reason: string | undefined,
+  ): void {
+    this.recordDenial(tool, args, reason ? `${reason} (requested by @${sender})` : `requested by @${sender}`);
   }
 
   /**

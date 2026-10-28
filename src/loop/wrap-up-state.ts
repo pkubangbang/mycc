@@ -54,6 +54,22 @@ let wrapUpState: WrapUpState = {
 };
 
 /**
+ * Reporter seam for lifecycle events that would otherwise be silent
+ * (a wrap-up discarded by a context reset, a failed wrap-up LLM call).
+ * Injected — this module stays framework-free and importable from tests that
+ * mock config/agent-io.
+ */
+let wrapUpReporter:
+  | ((level: 'info' | 'warn' | 'error', tool: string, message: string) => void)
+  | null = null;
+
+export function setWrapUpStateReporter(
+  fn: ((level: 'info' | 'warn' | 'error', tool: string, message: string) => void) | null,
+): void {
+  wrapUpReporter = fn;
+}
+
+/**
  * Whether a background wrap-up LLM call is currently in flight.
  * ServeHub reads this (pull) at every park-time delivery check so steering
  * notes arriving during the wrap-up window are HELD instead of submitted
@@ -88,6 +104,29 @@ export function markWrapUpShown(): void {
  * Clear wrap-up state (discard without showing)
  */
 export function clearWrapUp(): void {
+  wrapUpState = {
+    promise: null,
+    content: null,
+    completedAt: null,
+    shown: false,
+    triologue: null,
+  };
+}
+
+/**
+ * Release the capsule's in-flight promise WITHOUT claiming it (no content, no
+ * settle, no commit/rollback). Every exit that invalidates the surrounding
+ * conversation — compaction, /clear, double-Ctrl+L — must call this next to
+ * its triologue-side reset, so neither holder can be reset alone.
+ *
+ * Unlike a bare wipe, the in-flight `.then` still settles normally
+ * (settleWrapUp only applies to the live promise), it just finds no content to
+ * show. `reason` is surfaced to the wrap-up reporter so a discarded wrap-up is
+ * visible instead of silently swallowed.
+ */
+export function abortWrapUpCapsule(reason: string): void {
+  if (wrapUpState.promise === null) return;
+  wrapUpReporter?.('info', 'wrap-up', `in-flight wrap-up discarded (${reason})`);
   wrapUpState = {
     promise: null,
     content: null,

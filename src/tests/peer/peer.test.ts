@@ -371,8 +371,15 @@ describe('ChannelManager', () => {
     ch.stopChannelPoll();
     spy.mockRestore();
 
-    expect(warns.some(w => w.includes('sweep auto-join failed'))).toBe(true);
+    expect(warns.some(w => w.includes('auto-join failed'))).toBe(true);
     expect(warns.some(w => w.includes(cid))).toBe(true);
+    // Row peer-003: the failure is also RECORDED, counted, and given a backoff,
+    // so `/channel list` can show "join failed N× — <reason>" and the sweep
+    // stops retrying a permanently broken file every tick.
+    const failures = ch.getJoinFailures();
+    expect(failures.get(cid)?.count).toBe(1);
+    expect(failures.get(cid)?.lastError).toContain('Channel file not found');
+    expect(failures.get(cid)?.nextAttemptAt).toBeGreaterThan(Date.now());
   });
 
   it('joinChannel() sets joined=true and delivers firstQuery to the LOCAL mailbox', () => {

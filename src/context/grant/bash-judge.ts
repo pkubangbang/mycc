@@ -106,6 +106,48 @@ function planModeCommandViolation(command: string): string | null {
 }
 
 /**
+ * ONE batch-deletion confirmation, used by both routes (agent-declared
+ * `batch=i_know` and the LLM-uncertain fallback). Two hand-written copies had
+ * drifted into different wording for the same decision; the wording is now a
+ * `why` label, so the user always sees the same shape.
+ */
+async function confirmBatchDeletion(
+  command: string,
+  purpose: string | undefined,
+  why: string,
+  askUser?: (query: string, asker: string, options?: { onEsc?: string }) => Promise<string>
+): Promise<BashJudgeResult> {
+  if (!askUser) {
+    return { decision: 'block', reason: 'Batch deletion requires user confirmation' };
+  }
+  const answer = await askUser(
+    `Batch deletion (${why}).\n\nCommand: ${command}\nPurpose: ${purpose ?? '(none given)'}\n\nAllow this command? [y/N]`,
+    'bash-judge',
+    { onEsc: 'n' }
+  );
+  const approved = answer.toLowerCase().trim() === 'y' || answer.toLowerCase().trim() === 'yes';
+  return {
+    decision: approved ? 'allow' : 'block',
+    reason: approved ? undefined : 'User denied the batch deletion',
+  };
+}
+
+/**
+ * Why the LLM judge returned 'uncertain'. The grant gate must not report a
+ * broken checker as a property of the user's command (row lead-017):
+ * - 'llm-error'     the judge call failed (network, 429, outage, bad reply)
+ * - 'llm-uncertain' the judge ran and said it cannot tell
+ * - 'esc'           the user pressed ESC while the judge was running
+ */
+export type UncertainCause = 'llm-error' | 'llm-uncertain' | 'esc';
+
+/**
+ * Shape returned by the two LLM analyzers. `cause` distinguishes "the checker
+ * could not answer" from "the checker could not be reached".
+ */
+type AnalyzeResult = { decision: 'allow' | 'block' | 'uncertain'; reason?: string; cause?: UncertainCause };
+
+/**
  * Judge a bash command for plan mode safety
  *
  * Steps:
@@ -252,20 +294,7 @@ export async function judgeBash(
       // route directly to the user. The human's y/N is the real authorization.
       // (Intent grammar was already validated in step 3, so no re-validation.)
       if (declaresBatchIKnow(intent)) {
-        if (!askUser) {
-          return { decision: 'block', reason: 'Batch deletion requires user confirmation' };
-        }
-        const userResponse = await askUser(
-          `Batch deletion acknowledged by agent.\n\nCommand: ${command}\nPurpose: ${parsed!.purpose}\n\nAllow this command? [y/N]`,
-          'bash-judge',
-          { onEsc: 'n' }
-        );
-        const approved =
-          userResponse.toLowerCase().trim() === 'y' || userResponse.toLowerCase().trim() === 'yes';
-        return {
-          decision: approved ? 'allow' : 'block',
-          reason: approved ? undefined : 'User denied the batch deletion',
-        };
+        return confirmBatchDeletion(command, parsed!.purpose, 'acknowledged by agent', askUser);
       }
 
       // Parent process: use LLM to analyze batch deletion
@@ -279,21 +308,7 @@ export async function judgeBash(
       }
 
       // Uncertain — ask user
-      if (!askUser) {
-        return { decision: 'block', reason: 'Batch deletion requires user confirmation' };
-      }
-
-      const userResponse = await askUser(
-        `Batch deletion detected.\n\nCommand: ${command}\nPurpose: ${parsed!.purpose}\n\nAllow this command? [y/N]`,
-        'bash-judge',
-        { onEsc: 'n' }
-      );
-      const approved =
-        userResponse.toLowerCase().trim() === 'y' || userResponse.toLowerCase().trim() === 'yes';
-      return {
-        decision: approved ? 'allow' : 'block',
-        reason: approved ? undefined : 'User denied the batch deletion',
-      };
+      return confirmBatchDeletion(command, parsed!.purpose, 'detected', askUser);
     }
 
     return { decision: 'allow' };
@@ -345,13 +360,27 @@ export async function judgeBash(
 
     // Step 6: Uncertain - ask user (parent only)
     if (!askUser) {
-      // No askUser function provided (shouldn't happen in parent)
-      return { decision: 'block', reason: 'Unable to determine command safety' };
+      // No askUser function provided (shouldn't happen in parent).
+      // Name the CAUSE: in a child the parent agent reads this reason, and
+      // "the checker failed" must not look like "the command is suspicious".
+      return {
+        decision: 'block',
+        reason: llmResult.cause === 'llm-error'
+          ? 'The safety checker could not analyse this command (LLM error); retry when the provider is available'
+          : 'Unable to determine command safety',
+      };
     }
 
-    // Ask user via core.question (ESC-aware)
+    // Ask user via core.question (ESC-aware). The wording names the CAUSE — a
+    // provider outage or the user's own ESC is not "ambiguous intent", which
+    // would be a claim about their command (row lead-017).
+    const headline = llmResult.cause === 'llm-error'
+      ? 'The safety checker could not be reached, so this command was NOT analysed.'
+      : llmResult.cause === 'esc'
+        ? 'Analysis was interrupted (ESC), so this command was not fully analysed.'
+        : 'The command has ambiguous intent.';
     const userResponse = await askUser(
-      `The command has ambiguous intent.\n\nCommand: ${command}\nPurpose: ${parsed!.purpose}\n\nAllow this command in plan mode? [y/N]`,
+      `${headline}\n\nCommand: ${command}\nPurpose: ${parsed!.purpose}\n\nAllow this command in plan mode? [y/N]`,
       'bash-judge',
       { onEsc: 'n' }
     );
@@ -408,7 +437,7 @@ async function analyzeBatchDelete(
     operation: (abortController: AbortController) => Promise<T>,
     onCleanUp: () => T | Promise<T>
   ) => Promise<T>
-): Promise<{ decision: 'allow' | 'block' | 'uncertain'; reason?: string }> {
+): Promise<AnalyzeResult> {
   const systemPrompt = `You are a command safety analyzer. Classify batch deletion commands.
 
 SAFE = Expected cleanup targeting project build artifacts, temp files, or caches. Files are regeneratable.
@@ -447,7 +476,7 @@ Classify this batch deletion command: SAFE, DANGEROUS, or UNCERTAIN?`;
       result = await operation(abortController);
     }
 
-    if (result === null) return { decision: 'uncertain' };
+    if (result === null) return { decision: 'uncertain', cause: 'esc' };
 
     switch (result) {
       case 'SAFE':
@@ -456,10 +485,10 @@ Classify this batch deletion command: SAFE, DANGEROUS, or UNCERTAIN?`;
         return { decision: 'block', reason: 'LLM determined batch deletion is dangerous' };
       case 'UNCERTAIN':
       default:
-        return { decision: 'uncertain' };
+        return { decision: 'uncertain', cause: 'llm-uncertain' };
     }
   } catch {
-    return { decision: 'uncertain' };
+    return { decision: 'uncertain', cause: 'llm-error' };
   }
 }
 
@@ -474,7 +503,7 @@ async function analyzeWithLLM(
     operation: (abortController: AbortController) => Promise<T>,
     onCleanUp: () => T | Promise<T>
   ) => Promise<T>
-): Promise<{ decision: 'allow' | 'block' | 'uncertain'; reason?: string }> {
+): Promise<AnalyzeResult> {
   const systemPrompt = `You are a command analyzer. Determine if the following command modifies files or state.
 
 Answer ONLY with exactly one of these words (no other text):
@@ -522,7 +551,7 @@ Is this command read-only or does it modify state?`;
 
     // If ESC was pressed, result will be null
     if (result === null) {
-      return { decision: 'uncertain' };
+      return { decision: 'uncertain', cause: 'esc' };
     }
 
     // Handle each case explicitly
@@ -532,13 +561,13 @@ Is this command read-only or does it modify state?`;
       case 'WRITE':
         return { decision: 'block', reason: 'LLM determined command modifies state' };
       case 'UNCERTAIN':
-        return { decision: 'uncertain' };
+        return { decision: 'uncertain', cause: 'llm-uncertain' };
       default:
         // This shouldn't happen due to retryMultipleChoice validation
-        return { decision: 'uncertain' };
+        return { decision: 'uncertain', cause: 'llm-error' };
     }
   } catch {
     // If LLM fails or is interrupted, be conservative: ask user
-    return { decision: 'uncertain' };
+    return { decision: 'uncertain', cause: 'llm-error' };
   }
 }

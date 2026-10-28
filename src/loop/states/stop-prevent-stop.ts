@@ -26,11 +26,19 @@
  * than one call per guard. The call is wrapped in `escAware` so ESC aborts it
  * immediately instead of pinning the state machine at STOP.
  *
- * ANTI-HALLUCINATION
- * ------------------
- * The LLM echoes `id` AND `hash` for each guard. A fabricated hash does not
- * match a live guard, so a hallucinated verdict cannot hold the turn. The gate
- * never MUTATES the todo — it only reports.
+ * WHAT THE HASH DOES — AND DOES NOT — PROVE
+ * ------------------------------------------
+ * The prompt shows each guard's `hash` and the verdict must echo `id` AND that
+ * hash. This is NOT a defence against a hallucinated verdict: the model is
+ * handed the string it is asked to copy, so an invented "held" verdict with the
+ * copied hash verifies. What the hash actually buys is staleness detection — a
+ * guard released, re-pinned or edited between the prompt and the verdict has a
+ * different hash, so its verdict is voided instead of holding the turn on a
+ * deadline that no longer exists. Do not re-claim more than that. The real
+ * defence against confabulation is the escalation in `stop.ts`
+ * (`TurnVars.preventStopHolds`) plus the EVIDENCE rule in the prompt.
+ *
+ * The gate never MUTATES the todo — it only reports.
  *
  * FAIL-OPEN
  * ---------

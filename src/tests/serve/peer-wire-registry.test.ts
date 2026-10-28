@@ -119,7 +119,7 @@ describe('peer wire — registry invariants', () => {
     const cjk = '中'.repeat(WIRE_MAX_PAYLOAD_BYTES / 3 + 100); // chars < cap, bytes > cap
     expect(cjk.length).toBeLessThan(WIRE_MAX_PAYLOAD_BYTES); // char count passes
     expect(Buffer.byteLength(cjk, 'utf-8')).toBeGreaterThan(WIRE_MAX_PAYLOAD_BYTES); // byte count does not
-    const sent = sendWireMail('peer-x', 't', cjk);
+    const sent = sendWireMail('peer-x', 't', cjk).ok;
     expect(sent).toBe(false);
   });
 

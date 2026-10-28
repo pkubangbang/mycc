@@ -14,6 +14,31 @@
 import type { InputProvider } from '../loop/input-provider.js';
 import { UserInputProvider } from '../loop/input-provider.js';
 import { getSteeringManager } from '../loop/steering-manager.js';
+
+/**
+ * Wipe the steering queue from a terminal-fallback path, naming the notes it
+ * drops (row loop-b/005).
+ *
+ * The fallback wipes after the hub's observer is already unsubscribed, so the
+ * resulting snapshot has no subscriber — but each note was journaled into the
+ * durable transcript when the user pushed it. Recording the ids (and a brief,
+ * so the user sees it) is what keeps `/history` from asserting a delivery that
+ * never happened.
+ */
+function logSteeringWipe(reason: string): void {
+  const mgr = getSteeringManager();
+  const dropped = mgr.snapshot().notes;
+  mgr.clear(reason);
+  if (dropped.length > 0) {
+    agentIO.brief(
+      'warn',
+      'steering',
+      `${dropped.length} queued steering note(s) discarded on ${reason}: ids ${dropped.map((n) => n.id).join(', ')} — they remain in /history as user submissions`,
+    );
+  } else {
+    agentIO.verbose('steering', `queue wiped on ${reason} (empty)`);
+  }
+}
 import { tryGetServeHub, type ServeHubLike } from './serve-registry.js';
 import { agentIO } from '../loop/agent-io.js';
 import { tryDisplayWrapUp } from '../loop/esc-wrap-up.js';
@@ -82,7 +107,12 @@ export class WebInputProvider implements InputProvider {
       // but the fallback owns terminal-teardown symmetry with the post-abort
       // branch below. The restart branch above returns BEFORE this line, so
       // a 重启 cycle never wipes held notes.
-      getSteeringManager().clear();
+      //
+      // Row loop-b/005: name the wipe and RECORD the notes it discards. Those
+      // notes were journaled into the durable transcript when pushed, and the
+      // hub's observer is already unsubscribed here, so without this trace a
+      // /history bubble would claim the agent saw a note it never received.
+      logSteeringWipe('terminal-fallback (entry)');
       return this.userProvider.getInput(initialContent);
     }
 
@@ -120,7 +150,7 @@ export class WebInputProvider implements InputProvider {
       // a live hub) must not linger — wipe the queue (A2, plan §5), mirroring
       // stop()'s terminal-teardown wipe. The manager is loop-homed; reaching
       // here means this hub will never deliver to the webui again.
-      getSteeringManager().clear();
+      logSteeringWipe('terminal-fallback (post-await)');
       return this.userProvider.getInput(initialContent);
     }
     return result;

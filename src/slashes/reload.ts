@@ -55,22 +55,12 @@ import chalk from 'chalk';
  * The dispatch-time transformation applied to this Lead's own launch argv
  * before it is sent to the Coordinator in the 'reload' IPC message.
  *
- * Exported so the exact transformation can be pinned by a unit test: /reload
- * MUST forward every launch token that could carry a flag VALUE, including the
- * SEPARATE value of a `--flag value` pair (which does not itself start with
- * '-'). The historical `.filter((a) => a.startsWith('-'))` here dropped those
- * values, so `mycc --max-upload-mb 20` forwarded only `['--max-upload-mb']` and
- * the respawned Lead saw a bare flag → minimist `true` → getMaxUploadMb() =
- * Number(true) = 1, silently turning 20MB into 1MB (same for every STRING_FLAGS
- * value such as `--autofly <n>`).
- *
- * The function is deliberately IDENTITY: the dispatch site forwards the full
- * argv and lets the Coordinator-side buildReloadArgs() — which parses
- * `--flag value` correctly, consuming the next non-flag token — do all
- * positional/`--from`/serve filtering. Keeping it as a named function (rather
- * than inlining `process.argv.slice(2)`) makes the "forward everything"
- * contract an explicit, testable seam and prevents a future reintroduction of
- * a lossy pre-filter.
+ * IDENTITY on purpose, and exported so a test can pin it: every launch token
+ * must be forwarded — including the SEPARATE value of a `--flag value` pair,
+ * which does not itself start with '-'. All positional/`--from`/serve filtering
+ * belongs to the Coordinator-side buildReloadArgs(), which parses `--flag value`
+ * correctly; a lossy pre-filter here silently turned `--max-upload-mb 20` into
+ * a bare flag (minimist `true` → 1 MB).
  */
 export function collectReloadLeadArgs(argv: readonly string[]): string[] {
   return argv.slice(2);
@@ -78,21 +68,17 @@ export function collectReloadLeadArgs(argv: readonly string[]): string[] {
 
 /**
  * True when a PRE-SLICED launch-token list carries the compose-managed `--name`
- * flag (in either `--name <value>` or `--name=<value>` form).
+ * flag (either `--name <value>` or `--name=<value>` form).
  *
- * The caller passes tokens ALREADY stripped of `node <script>`:
- *   - the slash site calls it with no arg → defaults to process.argv.slice(2);
- *   - the coordinator (index.ts reloadLead) passes its `leadArgs`, which is
- *     itself process.argv.slice(2) — i.e. a pre-sliced list too.
+ * Callers pass tokens ALREADY stripped of `node <script>`: the slash site
+ * passes nothing (default = process.argv.slice(2)) and the coordinator passes
+ * its own pre-sliced `leadArgs`. The default MUST stay in the parameter, never
+ * a body-level slice — a second slice would drop a leading `--name` and
+ * silently defeat this guard (pinned by the double-slice regression test).
  *
- * The default MUST live here (inside the default expression), never as a
- * body-level slice: an explicit pre-sliced list would otherwise be sliced a
- * SECOND time, silently dropping a leading `--name` — the exact silent-veto
- * this guard exists to prevent. Pinned by the double-slice regression test.
- *
- * Only the LAUNCHER injects `--name` (mycc-compose's launchPeer spawns
- * `['--name', peer.name, ...argv]`), so its presence is a reliable marker that
- * this Lead is compose-managed and must not be /reload-ed.
+ * Only the launcher injects `--name` (mycc-compose spawns
+ * `['--name', peer.name, ...argv]`), so its presence reliably marks this Lead
+ * as compose-managed, which must not be /reload-ed.
  */
 export function hasNameFlag(tokens: readonly string[] = process.argv.slice(2)): boolean {
   return tokens.some((a) => a === '--name' || a.startsWith('--name='));
@@ -102,12 +88,10 @@ export const reloadCommand: SlashCommand = {
   name: 'reload',
   description: 'Restart mycc with fresh code (reuses coordinator, clears context). Web UI auto-reconnects if active.',
   handler: async () => {
-    // This Lead is a mycc-compose–managed peer (launched with `--name
-    // <group>:<peer>`). /reload respawns the Lead WITHOUT the compose launcher's
-    // coordination, orphaning the channel files compose materialized and
-    // desyncing the durable name↔sid mapping compose relies on. Refuse EARLY,
-    // with a visible message, and send NO IPC — the coordinator would otherwise
-    // respawn a lead compose never asked for. Renewal is compose's job.
+    // Guard: compose-managed Leads refuse /reload. Respawn would bypass the
+    // compose launcher, orphan the channel files it materialized and desync its
+    // durable name↔sid mapping. Refuse EARLY with a visible message and send NO
+    // IPC — renewal is compose's job.
     if (hasNameFlag()) {
       console.log(chalk.yellow(
         'This instance is managed by mycc-compose (launched with --name). ' +

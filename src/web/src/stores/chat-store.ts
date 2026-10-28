@@ -50,6 +50,8 @@ export const useChatStore = defineStore('chat', () => {
 
   // ── Orthogonal boolean (NOT derived from phase — see §2.3) ──
   const isAutoMode = ref(false);
+  /** Plan/normal mode mirrored from the backend `mode` broadcast (row obs-002). */
+  const isPlanMode = ref(false);
 
   // ── Orthogonal data (co-occurs with any phase) ──
   //
@@ -137,6 +139,11 @@ export const useChatStore = defineStore('chat', () => {
     if (value) pendingSteeringReview.value.splice(0);
   }
 
+  /** Set the plan/normal mode flag (see `isPlanMode`). */
+  function setPlanMode(value: boolean): void {
+    isPlanMode.value = value;
+  }
+
   /**
    * THE adoption rule for the server-owned steering queue.
    *
@@ -218,6 +225,7 @@ export const useChatStore = defineStore('chat', () => {
     phase,
     // orthogonal
     isAutoMode,
+    isPlanMode,
     steeringBuffer,
     steeringQueue,
     steeringRevision,
@@ -244,6 +252,7 @@ export const useChatStore = defineStore('chat', () => {
     // actions
     setPhase,
     setAutoMode,
+    setPlanMode,
     adoptSteering,
     resetSteering,
     populateSteeringReview,

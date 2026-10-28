@@ -72,6 +72,9 @@ import {
   type WireFrame,
 } from '../peer/wire-registry.js';
 import { isWireDebugLocal } from '../config.js';
+// The 401 handshake code is shared with the dialer so a refused upgrade and
+// the message the operator sees agree on the number (row peer-004).
+import { WIRE_CLOSE_UNAUTHORIZED } from '../peer/wire-registry.js';
 
 /** Dedicated maxPayload for peer mail frames — decoupled from the webui
  *  upload limit (getMaxUploadMb, default 50MB). Peer mail is agent-to-agent
@@ -86,6 +89,26 @@ export const PEER_WIRE_MAX_PAYLOAD_BYTES = 4 * 1024 * 1024;
  *  peers are detected from the serving side too. */
 const PING_INTERVAL_MS = 30_000;
 const MISSED_PONG_LIMIT = 2;
+
+/**
+ * Handshake close code used when a configured wire token is missing or wrong
+ * (row peer-004: a token mismatch used to be invisible on BOTH ends).
+ *
+ * The acceptor cannot answer with a WebSocket close frame — the HTTP upgrade
+ * was never completed, so there is no WS session to close. Instead it speaks
+ * the `ws` library's handshake convention: write the HTTP response line
+ * (`HTTP/1.1 401 <reason>`) and destroy the TCP socket. The dialer's `ws`
+ * client parses that response and reports it through `unexpected-response`,
+ * which `wire-client.ts` turns into the actionable "set the same
+ * MYCC_WIRE_TOKEN on both instances" message.
+ */
+
+/** The wire token this instance requires, or undefined when the in-app gate
+ *  is off (security then delegated to OSI L3 — see the module header). */
+function configuredWireToken(): string | undefined {
+  const token = process.env.MYCC_WIRE_TOKEN;
+  return token ? token : undefined;
+}
 
 /** Wire frame types + send helpers are SHARED with the dialer and the peer
  *  facade — they live in wire-registry.ts (the src/peer wire-plane module).
@@ -128,42 +151,35 @@ export class PeerWireAcceptor {
    * upgradeHandler when req.url starts with /peer/ws.
    *
    * Token verification (OPTIONAL, plan §5 Security): the dialer passes the
-   * shared secret as the `X-MYCC-Wire-Token` REQUEST HEADER (review finding
-   * 3: a header avoids leaking the secret into proxy/access logs and
-   * request-URL diagnostics the way a ?token= query param would). The token
-   * is a shared secret exchanged out-of-band (env `MYCC_WIRE_TOKEN`). It is
-   * OPTIONAL:
-   *   - If MYCC_WIRE_TOKEN is NOT configured on this acceptor → the upgrade
-   *     is accepted with NO token check (open). Security is the operator's
-   *     responsibility at OSI L3 (firewall / TLS reverse proxy / VPN / SSH
-   *     tunnel) — mycc does not impose an in-app auth gate by default.
-   *   - If MYCC_WIRE_TOKEN IS configured → a missing or mismatched token
-   *     destroys the underlying TCP socket (HTTP 401 first when possible).
-   *     Operators who want the in-app gate set the same value on both ends.
+   * shared secret in the `X-MYCC-Wire-Token` REQUEST HEADER — never a ?token=
+   * query param, which would leak the secret into proxy logs and request-URL
+   * diagnostics. Both ends read the same `MYCC_WIRE_TOKEN` env var:
+   *   - NOT configured here → the upgrade is accepted with no token check
+   *     (open). Security is then the operator's responsibility at OSI L3
+   *     (firewall / TLS reverse proxy / VPN / SSH tunnel).
+   *   - configured here → a missing or mismatched token is refused with the
+   *     handshake close code WIRE_CLOSE_UNAUTHORIZED, so the dialer surfaces
+   *     "unauthorized — set the same token on both ends" instead of a bare
+   *     1006 (row peer-004).
    */
   handleUpgrade(req: import('http').IncomingMessage, socket: import('stream').Duplex, head: Buffer): void {
-    const expected = process.env.MYCC_WIRE_TOKEN;
+    const expected = configuredWireToken();
     if (expected) {
-      // Token configured → enforce it (the optional in-app auth gate). The
-      // dialer sends the shared secret as the X-MYCC-Wire-Token REQUEST
-      // HEADER (review finding 3, MEDIUM): a ?token= query param would leak
-      // the secret into reverse-proxy access logs, HTTP debugging
-      // middleware, observability/tracing systems, and error messages — a
-      // header avoids that (headers are not echoed in request-URL
-      // diagnostics and are not logged by default in most access-log
-      // formats). Node lowercases request header names, so read via the
-      // lowercased key.
+      // Header names are lowercased by Node; a repeated header arrives as an
+      // array (take the first).
       const token = req.headers['x-mycc-wire-token'];
       const presented = Array.isArray(token) ? token[0] : token;
-      if (!presented || presented !== expected) {
-        this.refuseUpgrade(socket, 'unauthorized (bad or missing wire token)');
+      if (!presented) {
+        this.refuseUpgrade(socket, WIRE_CLOSE_UNAUTHORIZED, 'wire token required but not sent');
+        return;
+      }
+      if (presented !== expected) {
+        this.refuseUpgrade(socket, WIRE_CLOSE_UNAUTHORIZED, 'wire token mismatch');
         return;
       }
     }
-    // No token configured → open upgrade (security at OSI L3, operator's
-    // responsibility). Or token matched → proceed.
     if (!this.wsServer) {
-      this.refuseUpgrade(socket, 'wire server not running');
+      this.refuseUpgrade(socket, 503, 'wire server not running');
       return;
     }
     this.wsServer.handleUpgrade(req, socket, head, (ws) => {
@@ -171,13 +187,25 @@ export class PeerWireAcceptor {
     });
   }
 
-  /** Write a 401 + destroy — an unauthorized upgrade never becomes a WS. */
-  private refuseUpgrade(socket: import('stream').Duplex, reason: string): void {
+  /**
+   * Refuse an upgrade at the HTTP layer and destroy the socket. The status
+   * line's code becomes the dialer's close code (the `ws` client reports an
+   * unaccepted handshake as `close` with the response's status), which is how
+   * a token mismatch reaches the operator on BOTH ends.
+   */
+  private refuseUpgrade(socket: import('stream').Duplex, code: number, reason: string): void {
+    const phrase = code === WIRE_CLOSE_UNAUTHORIZED ? 'Unauthorized' : 'Service Unavailable';
     try {
-      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
-    } catch { /* ignore */ }
+      socket.write(`HTTP/1.1 ${code} ${phrase}\r\nConnection: close\r\n\r\n`);
+    } catch { /* socket already gone */ }
     socket.destroy();
-    getWireHooks()?.verbose('wire', `peer wire upgrade refused: ${reason}`);
+    const hooks = getWireHooks();
+    hooks?.verbose('wire', `peer wire upgrade refused (${code}): ${reason}`);
+    // Token mismatches are an operator misconfiguration, not background noise:
+    // say so where a human is looking instead of leaving it to a verbose log.
+    if (code === WIRE_CLOSE_UNAUTHORIZED) {
+      hooks?.briefPeerWireRefusal?.(reason);
+    }
   }
 
   /** Whether the local escape hatch allows same-store/self wire connects

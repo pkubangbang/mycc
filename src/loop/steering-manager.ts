@@ -106,6 +106,8 @@ export class SteeringManager {
   /** Ordered notes; ids are monotonic within the process (never reset by clear()). */
   private notes: SteeringNote[] = [];
   private idCounter = 0;
+  /** Reason passed to the last clear() — diagnostics for a silent wipe. */
+  private lastClearReason = 'never';
   /**
    * Monotonic queue version. Bumped by EVERY mutation (add / drain / resolve
    * / clear) so a client can order snapshots against each other without
@@ -232,10 +234,24 @@ export class SteeringManager {
    *
    * Emits even when already empty (unlike drainNotes): clear() is an
    * authoritative "queue is empty" statement, and a client that missed
-   * earlier events can then be re-synced by the resulting snapshot. */
-  clear(): void {
+   * earlier events can then be re-synced by the resulting snapshot.
+   *
+   * `reason` (row loop-b/005): the INPUT-FALLBACK wipe drops notes the user
+   * typed in the WebUI AFTER they were journaled into the durable transcript,
+   * with the hub's observer already unsubscribed — so the bubble survives in
+   * /history while the note never reaches the agent. Naming the reason lets the
+   * caller record that drop (see WebInputProvider's fallback) instead of it
+   * being silent.
+   */
+  clear(reason: string = 'clear'): void {
+    this.lastClearReason = reason;
     this.notes = [];
     this.emit();
+  }
+
+  /** Why the queue was last wiped — read by callers that log the drop. */
+  getLastClearReason(): string {
+    return this.lastClearReason;
   }
 }
 

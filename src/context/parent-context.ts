@@ -94,13 +94,25 @@ export class ParentContext implements AgentContext {
       // todo per remote PAIR, deduped by endpoint. recordAnnounce fires
       // done=false (establishment — refreshes instead of duplicating);
       // teardownPair fires done=true (annotated "re-run peer_connect", so
-      // the hint stays visible in /todos without nagging). Never throws —
-      // the reminder is best-effort and must not break the wire.
-      recordRemotePeerTodo: ({ sid, endpoint, done }) => {
+      // the hint stays visible in /todos without nagging). `reconnecting`
+      // (row peer-004) is the state in between: the socket dropped and the
+      // dialer is retrying, so the pinned banner must stop claiming the peer
+      // is wired — it is the one piece of context that survives every
+      // compaction, so a stale "connected" is the most misleading line the
+      // agent can carry. Never throws — the reminder is best-effort and must
+      // not break the wire.
+      recordRemotePeerTodo: ({ sid, endpoint, done, reconnecting }) => {
         try {
           const openName = `remote peer ${sid} at ${endpoint} — wire, mail_to("${sid}/lead")`;
           const doneName = `remote peer ${sid} at ${endpoint} — wire disconnected (re-run peer_connect to reconnect)`;
+          const reconnectingName = `remote peer ${sid} at ${endpoint} — wire DOWN, reconnecting (mail_to will fail until it returns)`;
           const existing = this.wireRemoteTodoIds.get(endpoint);
+          if (reconnecting) {
+            if (!existing) return;
+            const updated = this.todoModule.updateTodo(existing.id, existing.hash, reconnectingName, false, 'wire dropped — retrying');
+            if (updated) this.wireRemoteTodoIds.set(endpoint, { id: updated.id, hash: updated.hash });
+            return;
+          }
           if (done) {
             if (!existing) return;
             const updated = this.todoModule.updateTodo(existing.id, existing.hash, doneName, true, 'terminal close');
@@ -134,6 +146,21 @@ export class ParentContext implements AgentContext {
       verbose: (tool, message, data) => {
         try {
           agentIO.verbose(tool, message, data);
+        } catch { /* ignore */ }
+      },
+      // A refused upgrade caused by a WIRE-TOKEN mismatch is an operator
+      // misconfiguration, so it must be visible from the ACCEPTING side too
+      // (row peer-004: previously only the dialer logged anything, and the
+      // acceptor's only trace was a verbose line). The dialer sees the 401;
+      // this line tells the operator which end refused and why.
+      briefPeerWireRefusal: (reason) => {
+        try {
+          agentIO.brief(
+            'warn',
+            'peer',
+            `Refused a peer wire upgrade: ${reason}. ` +
+            'MYCC_WIRE_TOKEN must be identical on both instances (or unset on both to run the wire open).',
+          );
         } catch { /* ignore */ }
       },
     };
@@ -439,6 +466,12 @@ export class ParentContext implements AgentContext {
           // Cast to Core to access getMode() (implementation-only method)
           const core = ctx.core as Core;
           const result = await evaluateGrant(sender, { tool, path, command, intent }, core);
+          // A child's refusal must reach the SAME denial ring the lead's path
+          // uses (Core.requestGrant), or a teammate's block never appears in
+          // the hint round's "Recent Permission Blocks".
+          if (!result.approved) {
+            core.recordChildDenial(sender, tool, { path, command, intent }, result.reason);
+          }
           sendResponse('grant_result', true, result);
         },
       },

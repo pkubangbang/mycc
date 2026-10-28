@@ -55,6 +55,7 @@ vi.mock('../../../loop/esc-wrap-up.js', () => ({
   startWrapUp: vi.fn(),
   evaluateWrapUp: vi.fn(),
   clearWrapUp: vi.fn(),
+  setWrapUpReporter: vi.fn(),
 }));
 
 // loader: mock getToolsForScope (STOP calls it for the wrap-up tools list)
@@ -80,6 +81,10 @@ vi.mock('../../../loop/triologue.js', () => {
   }
   return { Triologue: TriologueStub };
 });
+
+vi.mock('../../../loop/exit-auto.js', () => ({
+  exitAutoMode: vi.fn(() => true),
+}));
 
 // --- Imports after mocks -----------------------------------------------------
 import { handleStop } from '../../../loop/states/stop.js';

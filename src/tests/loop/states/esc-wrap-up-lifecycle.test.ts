@@ -55,6 +55,10 @@ import {
   evaluateWrapUp,
   clearWrapUp,
   getWrapUpState,
+  abortWrapUpCapsule,
+  beginWrapUpState,
+  isWrapUpInFlight,
+  setWrapUpStateReporter,
 } from '../../../loop/wrap-up-state.js';
 import { retryChat } from '../../../engine/chat-provider.js';
 import { displayLetterBox } from '../../../utils/letter-box.js';
@@ -135,4 +139,49 @@ describe('ESC wrap-up lifecycle (esc-wrap-up.ts state management)', () => {
   });
 
   // [8] clearWrapUp resets the singleton state
+  it('should reset the singleton state on clearWrapUp', () => {
+    vi.mocked(retryChat).mockReturnValueOnce(new Promise(() => {}));
+    startWrapUp(triologue);
+    expect(getWrapUpState().promise).not.toBeNull();
+
+    clearWrapUp();
+
+    const state = getWrapUpState();
+    expect(state.promise).toBeNull();
+    expect(state.triologue).toBeNull();
+  });
+
+  // [9] Row 38: a context reset must release the capsule too. The capsule's
+  // promise is the "in flight" flag ServeHub polls, so a reset that only
+  // resets the triologue mark (compaction, /clear) would orphan it — the hub
+  // keeps holding steering notes for a turn that can never finish.
+  it('abortWrapUpCapsule releases an in-flight wrap-up and reports the reason', async () => {
+    const reporter = vi.fn();
+    setWrapUpStateReporter(reporter);
+    const inflight = new Promise<string>(() => {}); // never settles
+    beginWrapUpState(inflight, triologue);
+
+    expect(isWrapUpInFlight()).toBe(true);
+
+    abortWrapUpCapsule('compact');
+
+    expect(isWrapUpInFlight()).toBe(false);
+    expect(getWrapUpState().promise).toBeNull();
+    expect(reporter).toHaveBeenCalledWith(
+      'info',
+      'wrap-up',
+      expect.stringContaining('compact'),
+    );
+    setWrapUpStateReporter(null);
+  });
+
+  it('abortWrapUpCapsule is a no-op when no wrap-up is in flight', () => {
+    const reporter = vi.fn();
+    setWrapUpStateReporter(reporter);
+
+    abortWrapUpCapsule('clear');
+
+    expect(reporter).not.toHaveBeenCalled();
+    setWrapUpStateReporter(null);
+  });
 });

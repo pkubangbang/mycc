@@ -30,9 +30,15 @@
 import type { WebSocket } from 'ws';
 
 /** Wire-level close codes (plan §5 close-code registry).
- *  Both are TERMINAL for the reconnect loop — no re-dial. */
+ *  4000/4001 are TERMINAL for the reconnect loop — no re-dial. 401 is not a
+ *  wire code at all: it is the HTTP handshake status the acceptor answers with
+ *  when its configured `MYCC_WIRE_TOKEN` is missing/mismatched, which the
+ *  `ws` client surfaces as the close code of a refused upgrade. It lives here
+ *  so the acceptor (src/serve) and the dialer's message (wire-client.ts) agree
+ *  on the number the operator is told about (row peer-004). */
 export const WIRE_CLOSE_SUPERSEDED = 4000;
 export const WIRE_CLOSE_BYE = 4001;
+export const WIRE_CLOSE_UNAUTHORIZED = 401;
 
 /** Per-socket info inside a pair entry. `initiatorSid` is the sid of whoever
  *  DIALED this socket (my sid for my dialed socket; the peer's announced sid
@@ -94,12 +100,20 @@ export interface WireHooks {
    * peer_connect" state. Implemented by ParentContext against ctx.todo;
    * dedupes by endpoint (note key). Never throws.
    */
-  recordRemotePeerTodo(entry: { sid: string; endpoint: string; done: boolean }): void;
+  recordRemotePeerTodo(entry: { sid: string; endpoint: string; done: boolean; reconnecting?: boolean }): void;
   /** Append an inbound mail frame's payload to OUR OWN mailbox — the single
    *  mailbox writer (MailBox.appendMail), never a hand-rolled writer (§5). */
   appendLocalMail(from: string, title: string, content: string): void;
   /** Verbose log routed to agentIO (the wire plane owns no console). */
   verbose(tool: string, message: string, data?: unknown): void;
+  /**
+   * Surface a REFUSED peer-wire upgrade that a human must act on — currently
+   * only a wire-token mismatch, which is an operator misconfiguration rather
+   * than background noise (row peer-004: it used to leave a verbose line on
+   * one end and nothing at all on the other). Optional so test hooks and
+   * minimal embedders do not have to provide it.
+   */
+  briefPeerWireRefusal?(reason: string): void;
 }
 
 // ── Singleton state ────────────────────────────────────────────────────────
@@ -676,17 +690,54 @@ export function ensurePendingPair(endpoint: string, sid: string): RemotePairEntr
  * small for wire dedupe). Works for BOTH socket directions: the pair entry
  * holds dialed and accepted sockets alike.
  */
-export function sendWireMail(targetSid: string, title: string, content: string): boolean {
+/**
+ * Why a wire send failed — the four causes {@link sendWireMail} used to collapse
+ * into a bare `false` (row lead-023). `mail_to` needs to tell "retrying" from
+ * "unknown peer" from "too big", and the permanent one (oversize) is actionable
+ * while the transient ones are not.
+ */
+export type WireSendFailure =
+  | 'not-wired'
+  | 'unknown-sid'
+  | 'not-open'
+  | 'oversize'
+  | 'send-error';
+
+/**
+ * `true` when the frame went out, otherwise the reason. Callers that only need a
+ * boolean read `.ok`; callers building a user-facing message read `.failure`.
+ */
+export type WireSendResult =
+  | { ok: true }
+  | { ok: false; failure: WireSendFailure; detail?: string };
+
+/** One sentence per cause, for `mail_to`'s reply. */
+export function describeWireSendFailure(failure: WireSendFailure, targetSid: string): string {
+  switch (failure) {
+    case 'not-wired':
+      return 'the peer wire is not active in this process (internal wiring error)';
+    case 'unknown-sid':
+      return `no wire peer has announced sid ${targetSid} (unknown or never connected)`;
+    case 'not-open':
+      return `the wire to ${targetSid} is not open right now (retrying)`;
+    case 'oversize':
+      return 'the mail is too large for a single wire frame (split it or use a channel mailbox)';
+    case 'send-error':
+      return 'the wire closed while the mail was being sent';
+  }
+}
+
+export function sendWireMail(targetSid: string, title: string, content: string): WireSendResult {
   const hooks = getWireHooks();
-  if (!hooks) return false;
+  if (!hooks) return { ok: false, failure: 'not-wired' };
   const entry = findBySid(targetSid);
-  if (!entry) return false;
+  if (!entry) return { ok: false, failure: 'unknown-sid' };
   // Resolve by SID, not by 'any OPEN socket': after convergence the entry can
   // hold a socket for a different peer, and sending there misdelivers mail.
   const socket = entry.sockets.find(
     (s) => s.sid === targetSid && s.socket.readyState === s.socket.OPEN
   )?.socket;
-  if (!socket) return false;
+  if (!socket) return { ok: false, failure: 'not-open' };
   // Construct the ACTUAL frame first (review finding 5: the prior guard
   // measured a PARTIAL frame — {content, title, targetSid} — plus a +256
   // magic constant, an approximation of the real {type, id, from, title,
@@ -714,7 +765,8 @@ export function sendWireMail(targetSid: string, title: string, content: string):
   const frameBytes = Buffer.byteLength(JSON.stringify(frame), 'utf-8');
   if (frameBytes > WIRE_MAX_PAYLOAD_BYTES) {
     hooks.verbose('wire', `refusing to send oversize mail frame (${frameBytes} bytes > ${WIRE_MAX_PAYLOAD_BYTES} cap)`);
-    return false;
+    return { ok: false, failure: 'oversize', detail: `${frameBytes} bytes > ${WIRE_MAX_PAYLOAD_BYTES} cap` };
   }
-  return sendFrame(socket, frame);
+  const sent = sendFrame(socket, frame);
+  return sent ? { ok: true } : { ok: false, failure: 'send-error' };
 }

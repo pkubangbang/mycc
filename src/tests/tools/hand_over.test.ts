@@ -40,12 +40,16 @@ vi.mock('../../engine/chat-provider.js', () => ({
 // cleanly instead of throwing on a missing .on().
 import { EventEmitter } from 'events';
 vi.mock('child_process', () => ({
+  // spawnTmux's capture path needs a readable stdout stream: hand_back the
+  // pane text the assertions expect, then complete like a real subprocess.
   spawn: vi.fn(() => {
     const ee = new EventEmitter();
-    // Emit 'close' with code 0 asynchronously so the 'close' listener attaches
-    // first (mirrors a real subprocess completing successfully).
-    queueMicrotask(() => ee.emit('close', 0));
-    return Object.assign(ee, { unref: vi.fn() }) as unknown as never;
+    const stdout = new EventEmitter();
+    queueMicrotask(() => {
+      stdout.emit('data', 'user typed: secret-password\n$ sudo apt install foo\n');
+      ee.emit('close', 0);
+    });
+    return Object.assign(ee, { unref: vi.fn(), stdout }) as unknown as never;
   }),
   exec: vi.fn(),
   execSync: vi.fn((cmd: string) => {
@@ -448,6 +452,23 @@ import { agentIO } from '../../loop/agent-io.js';
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('Cluster D — 弱点2 summarizeOutput fallback + parseTerminalArgs', () => {
+  /**
+   * Fake child for the capture path: spawnTmux('capture-pane', …, captureStdout)
+   * reads `proc.stdout` 'data' events and resolves on 'close' with code 0. The
+   * pane text is emitted on the next microtask so the listeners attach first.
+   */
+  function makePaneProc(text: string) {
+    const ee = new EventEmitter() as EventEmitter & { stdout: EventEmitter; unref: () => void };
+    const stdout = new EventEmitter();
+    ee.stdout = stdout;
+    ee.unref = vi.fn();
+    queueMicrotask(() => {
+      stdout.emit('data', text);
+      ee.emit('close', 0);
+    });
+    return ee;
+  }
+
   let tempDir: string;
   let ctx: AgentContext;
 
@@ -472,13 +493,7 @@ describe('Cluster D — 弱点2 summarizeOutput fallback + parseTerminalArgs', (
     // callback as the LAST arg (no options object), so the mock must find
     // the callback positionally rather than assume a fixed arity.
     const longOutput = Array.from({ length: 150 }, (_, i) => `line ${i}`).join('\n');
-    vi.mocked(cp.exec).mockImplementation(((
-      ...args: unknown[]
-    ) => {
-      const cb = args[args.length - 1] as (e: Error | null, r: { stdout: string; stderr: string }) => void;
-      cb(null, { stdout: longOutput, stderr: '' });
-      return undefined as never;
-    }) as never);
+    vi.mocked(cp.spawn).mockImplementation((() => makePaneProc(longOutput)) as never)
     vi.mocked(retryChat).mockRejectedValue(new Error('model down'));
 
     const result = await handOverTool.handler(ctx, {
@@ -499,13 +514,7 @@ describe('Cluster D — 弱点2 summarizeOutput fallback + parseTerminalArgs', (
 
   it('uses the LLM summary when summarization succeeds (unchanged happy path)', async () => {
     const longOutput = Array.from({ length: 150 }, (_, i) => `line ${i}`).join('\n');
-    vi.mocked(cp.exec).mockImplementation(((
-      ...args: unknown[]
-    ) => {
-      const cb = args[args.length - 1] as (e: Error | null, r: { stdout: string; stderr: string }) => void;
-      cb(null, { stdout: longOutput, stderr: '' });
-      return undefined as never;
-    }) as never);
+    vi.mocked(cp.spawn).mockImplementation((() => makePaneProc(longOutput)) as never)
     vi.mocked(retryChat).mockResolvedValue({ message: { role: 'assistant', content: 'LLM summary of output' } } as never);
 
     const result = await handOverTool.handler(ctx, {
@@ -519,13 +528,7 @@ describe('Cluster D — 弱点2 summarizeOutput fallback + parseTerminalArgs', (
 
   it('does NOT call summarizeOutput for <=100-line output (raw passthrough)', async () => {
     const shortOutput = Array.from({ length: 50 }, (_, i) => `line ${i}`).join('\n');
-    vi.mocked(cp.exec).mockImplementation(((
-      ...args: unknown[]
-    ) => {
-      const cb = args[args.length - 1] as (e: Error | null, r: { stdout: string; stderr: string }) => void;
-      cb(null, { stdout: shortOutput, stderr: '' });
-      return undefined as never;
-    }) as never);
+    vi.mocked(cp.spawn).mockImplementation((() => makePaneProc(shortOutput)) as never)
 
     await handOverTool.handler(ctx, {
       command: 'short-cmd',

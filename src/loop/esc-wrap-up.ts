@@ -85,9 +85,25 @@ async function runWrapUpLLM(triologue: Triologue, tools?: Tool[]): Promise<strin
         );
 
     return response.message?.content || '';
-  } catch {
+  } catch (err) {
+    // A failed wrap-up must be VISIBLE: the user was told "wrapping up…" and
+    // would otherwise get nothing at all — no summary, no reason, no log.
+    const reason = err instanceof Error ? err.message : String(err);
+    // Report through an injected reporter: this module must not import
+    // agent-io (that drags config getters the tests mock away).
+    wrapUpReporter?.('warn', 'wrap-up', `Wrap-up failed (${reason}). The interrupted turn was not summarized.`);
     return '';
   }
+}
+
+/** Injected reporter (brief) so a failed wrap-up is never silent. */
+let wrapUpReporter: ((level: 'info' | 'warn' | 'error', tool: string, message: string) => void) | null = null;
+
+/** Wire the reporter once at startup (see esc-wrap-up callers). */
+export function setWrapUpReporter(
+  fn: (level: 'info' | 'warn' | 'error', tool: string, message: string) => void
+): void {
+  wrapUpReporter = fn;
 }
 
 /**

@@ -84,6 +84,9 @@ export interface ServeHubLike {
 
   // ── auto / running signals ──
   broadcastAuto(value: boolean): void;
+  /** Mirror plan/normal mode to the WebUI (row obs-002). */
+  broadcastMode(mode: 'plan' | 'normal', allowedFile?: string): void;
+  getMode(): 'plan' | 'normal';
   setAgentRunning(value: boolean): void;
   setAutoStateProvider(provider: (() => boolean) | null): void;
   setEnterAutoProvider(provider: (() => boolean) | null): void;
@@ -132,6 +135,22 @@ export function registerServeHubFactory(getInstance: () => ServeHubLike): void {
 }
 
 /**
+ * Report callbacks that are STILL parked once the hub is live (row lead-011).
+ * Call after `activateServe()` / `ensureServeHub()`: a non-empty queue at that
+ * point means a boot path's provider wiring will never be delivered, so the
+ * WebUI would silently read defaults. Returns the ids for the caller to log.
+ */
+export function reportParkedServeCallbacks(hub: { broadcast(type: string, content: string): void } | null): number {
+  if (!hub || readyCallbacks.length === 0) return 0;
+  const stuck = readyCallbacks.length;
+  hub.broadcast(
+    'info',
+    `[serve] ${stuck} wiring callback(s) were never delivered — the WebUI may show stale auto/enter-auto state.`,
+  );
+  return stuck;
+}
+
+/**
  * Run `cb` with the ServeHub once the serve layer is loaded — immediately if
  * it already is, otherwise queued until {@link registerServeHubFactory} fires.
  *
@@ -147,6 +166,24 @@ export function onServeHubReady(cb: (hub: ServeHubLike) => void): void {
   const hub = tryGetServeHub();
   if (hub) { cb(hub); return; }
   readyCallbacks.push(cb);
+  // A parked callback is a piece of wiring that exists but is not delivered.
+  // Name it at park time (row lead-011): `getParkedServeCallbacks()` reports the
+  // current count so a --serve boot can tell "everything is wired" from
+  // "N providers are still waiting", instead of the drop being silent.
+  parkedTotal++;
+}
+
+/** Total callbacks parked since process start (never decremented — audit only). */
+let parkedTotal = 0;
+
+/**
+ * Serve-callback queue diagnostics: how many callbacks are parked RIGHT NOW and
+ * how many were parked in total. The drain in `registerServeHubFactory` empties
+ * the queue, so `parkedNow > 0` after `activateServe()` means a wiring callback
+ * will never run — the failure this module's contract is supposed to exclude.
+ */
+export function getParkedServeCallbacks(): { parkedNow: number; parkedTotal: number } {
+  return { parkedNow: readyCallbacks.length, parkedTotal };
 }
 
 

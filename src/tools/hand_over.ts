@@ -15,15 +15,13 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
-import { spawn, exec, execSync } from 'child_process';
-import { promisify } from 'util';
+import { spawn, execSync } from 'child_process';
 import chalk from 'chalk';
 import { agentIO } from '../loop/agent-io.js';
 import { parseIntent } from '../context/grant/intent-parser.js';
 import { retryChat, MODEL } from '../engine/chat-provider.js';
 import { getShellInfo } from '../utils/shell-detect.js';
 
-const execAsync = promisify(exec);
 
 /**
  * Spawn `tmux` with an explicit arg array (NOT via a shell). This is the
@@ -31,18 +29,35 @@ const execAsync = promisify(exec);
  * without cmd.exe/PowerShell re-interpreting metacharacters (&, >, |, quotes).
  * Critical for `send-keys`, where the command must reach the pane byte-for-byte.
  */
-function spawnTmux(args: string[], cwd: string): Promise<void> {
+function spawnTmux(args: string[], cwd: string, captureStdout = false): Promise<string> {
   return new Promise((resolve, reject) => {
-    const proc = spawn('tmux', args, { cwd, stdio: 'ignore' });
+    const proc = spawn('tmux', args, {
+      cwd,
+      stdio: captureStdout ? ['ignore', 'pipe', 'ignore'] : 'ignore',
+    });
+    let out = '';
+    if (captureStdout) {
+      proc.stdout?.on('data', (chunk: Buffer | string) => { out += chunk.toString(); });
+    }
     proc.on('error', reject);
     proc.on('close', (code) => {
       if (code === 0) {
-        resolve();
+        resolve(out);
       } else {
         reject(new Error(`tmux exited with code ${code}`));
       }
     });
   });
+}
+
+/**
+ * Capture the popup pane's recent scrollback. The ONE capture path (row
+ * lead-042): array argv → tmux, never a shell string, so a future session-name
+ * scheme with a user-supplied or channel-derived part cannot inject through
+ * cmd.exe/PowerShell.
+ */
+function capturePane(sessionName: string): Promise<string> {
+  return spawnTmux(['capture-pane', '-t', sessionName, '-p', '-S', '-3000', '-E', '-1'], process.cwd(), true);
 }
 
 export const handOverTool: ToolDefinition = {
@@ -120,18 +135,11 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
 
   // 2b. tmux nesting self-check (UNCONDITIONAL).
   // hand_over wraps `command` as the INNER shell command of its own fresh tmux
-  // session (see the `tmux new-session ... "<command>"` call below). If `command`
-  // itself starts with `tmux`, it nests a tmux client inside hand_over's session:
-  //   - `tmux attach`/`switch-client` → tmux refuses ("sessions should be nested
-  //     with care, unset $TMUX to force") and the popup sits dead at a shell
-  //     prompt with no error reaching the agent;
-  //   - `tmux new-session`/`send-keys`/etc. → a genuine nested session is
-  //     created, which is never what the agent wants from hand_over.
-  // Reject ANY leading `tmux` regardless of $TMUX (the old check was
-  // $TMUX-gated AND only matched attach/switch, leaving two holes: $TMUX-unset
-  // rejected nothing, and new-session/send-keys slipped through). Tell the agent
-  // the contract (hand_over owns the tmux framing; pass the inner command) and
-  // point it at the bash tool for tmux management.
+  // session (the `send-keys` call below types it into the pane). A `command`
+  // that itself starts with `tmux` therefore nests a tmux client inside
+  // hand_over's session — `attach`/`switch-client` refuse to nest, and
+  // `new-session`/`send-keys` create a session the agent never wanted. Reject
+  // any leading `tmux` and point at the bash tool for tmux management.
   if (/^\s*tmux\s+/.test(command)) {
     ctx.core.brief(
       'warn',
@@ -148,16 +156,10 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
 
   try {
     // Create a BARE session whose default shell is the one detected at startup
-    // (shell-detect.ts). We no longer pass the user command as the session's
-    // initial shell-command argument: on Windows that string was built via
-    // `cmd /k ${command}` and re-interpreted by cmd.exe, so any shell
-    // metacharacter (&, >, |, quotes, spaces-in-paths) broke it — the session
-    // started blank or died, leaving "the command never got typed in".
-    //
-    // Instead we (1) set the shell by bare name, then (2) `send-keys` the
-    // command into the pane verbatim (via spawn arg array, no shell) so the
-    // pane's own shell parses it correctly. This also fixes the old
-    // cmd-vs-bash hardcoding: every platform now uses its native detected shell.
+    // (shell-detect.ts), then type the command into the pane. Passing the
+    // command as the session's initial shell-command argument would make the
+    // platform shell re-interpret it (metacharacters, spaces-in-paths), so the
+    // pane's own shell must parse it — delivered byte-for-byte by send-keys.
     const shellName = getShellInfo().shell_cmd;
     await spawnTmux(
       ['new-session', '-d', '-s', sessionName, '-c', cwd, '-x', '120', '-y', '40', shellName],
@@ -231,7 +233,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
     // Capture output
     let output = '';
     try {
-      const { stdout } = await execAsync(`tmux capture-pane -t ${sessionName} -p -S -3000 -E -1`);
+      const stdout = await capturePane(sessionName);
       output = stdout;
     } catch {
       // Session may have been closed by user
@@ -258,7 +260,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   let sessionExists = false;
 
   try {
-    const { stdout } = await execAsync(`tmux capture-pane -t ${sessionName} -p -S -3000 -E -1`);
+    const stdout = await capturePane(sessionName);
     output = stdout;
     sessionExists = true;
   } catch {
@@ -268,7 +270,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   // 7. Cleanup if not keeping
   if (sessionExists && !keepSession) {
     try {
-      await execAsync(`tmux kill-session -t ${sessionName}`);
+      await spawnTmux(['kill-session', '-t', sessionName], process.cwd());
     } catch {
       // Already dead
     }
@@ -315,12 +317,9 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
 /**
  * Summarize long terminal output using LLM.
  *
- * Wrapped in try/catch (dir-5 弱点2): if the LLM summarization call fails
- * (model error, network, abort), we must NOT drop the original output and
- * return a bare '(summarization failed)' — that loses the captured bytes
- * the agent needs (errors, exit codes, log lines). Fall back to a head
- * truncation of the RAW output (the same maxLines cap), so the agent still
- * sees real content instead of a placeholder.
+ * An LLM failure must never cost the captured bytes: on error we return a
+ * head-truncated copy of the RAW output (same maxLines cap) with a marker,
+ * so the agent still sees errors and exit codes instead of a placeholder.
  */
 async function summarizeOutput(output: string, command: string, maxLines: number): Promise<string> {
   try {
@@ -401,16 +400,11 @@ function whichSync(cmd: string): boolean {
 /**
  * Parse terminal launcher command into executable and arguments.
  *
- * dir-5 弱点2: previously this did a bare `launcher.split(' ')`, inferring
- * the exe/args boundary from whitespace. That is fragile — a launcher
- * whose path contains spaces (e.g. a future `/Applications/Visual Studio
- * Code.app/.../code`) would be split at the wrong position, yielding a
- * bogus exe and broken args. Instead, dispatch by the known launcher
- * string to a typed `[exe, ...fixedArgs]` tuple, so the exe/args boundary
- * is declared per-launcher rather than guessed from spaces. Each launcher
- * then gets the common tail `-- tmux attach -t <sessionName>` appended
- * (all supported launchers use `--` to separate their own args from the
- * command to run).
+ * Invariant: the launcher string is a KEY into a typed per-launcher dispatch
+ * table, never whitespace-split — a launcher path may contain spaces, so
+ * splitting would guess the exe/args boundary wrong. Every launcher then gets
+ * `-- tmux attach -t <sessionName>` appended (all supported launchers use `--`
+ * to separate their own args from the command to run).
  *
  * Exported for direct unit testing (the launcher spawn is a detached
  * fire-and-forget, hard to observe from the handler).

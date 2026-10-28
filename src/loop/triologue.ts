@@ -26,6 +26,7 @@ import { estimateTokensForMessages, estimateToolSchemaTokens } from '../utils/to
 import { PendingToolLedger } from './triologue/pending-tools.js';
 import { runAutoCompact as doRunAutoCompact } from './triologue/compact.js';
 import { WrapUpManager } from './triologue/wrap-up.js';
+import { abortWrapUpCapsule } from './wrap-up-state.js';
 
 /**
  * A note / user submission held back because tool_calls are still
@@ -236,6 +237,11 @@ export class Triologue {
     this.store.resetTokenCount();
     this.ledger.clear();
     this.dropDeferredInputs('clear()');
+    // Both holders of the wrap-up lifecycle reset here: the mark above and the
+    // capsule (whose promise is the "in flight" flag ServeHub polls). Resetting
+    // only the mark would orphan the in-flight promise; resetting only the
+    // capsule would leave an active mark that no reply can ever settle.
+    abortWrapUpCapsule('clear');
     this.wrapUp.reset();
     // Journal the truncation boundary: the writer records a control event
     // so read-time collation resets its view here — restored context honors
@@ -699,6 +705,12 @@ export class Triologue {
     // array, stretching it with undefined sparse holes that crash the next
     // raw reader (minifyMessages in runAutoCompact, )
     // with "Cannot read properties of undefined (reading 'role')".
+    // The capsule has to be released too: compaction invalidates the in-flight
+    // wrap-up exactly like /clear does, and the capsule's promise is the only
+    // holder of the "wrap-up in flight" flag that ServeHub polls. Resetting the
+    // mark alone would leave the hub holding steering notes for a turn that can
+    // never finish, and the eventual .then would find a dead mark.
+    abortWrapUpCapsule('compact');
     this.wrapUp.reset();
     // Refresh dynamic project context (README, mindmap, hooks) at the compact
     // boundary — the conversation prefix already changed, so no extra cache

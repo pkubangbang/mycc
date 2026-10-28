@@ -48,6 +48,7 @@ import {
   sendFrame,
   WIRE_CLOSE_SUPERSEDED,
   WIRE_CLOSE_BYE,
+  WIRE_CLOSE_UNAUTHORIZED,
   type AnnounceFrame,
   type MailFrame,
   type WireFrame,
@@ -88,6 +89,17 @@ const liveness = new Map<WebSocket, { misses: number }>();
 
 /** Sockets that completed the announce exchange (established). */
 const established = new WeakSet<WebSocket>();
+
+/** Endpoint key each DIALED socket was opened for. Needed because an upgrade
+ *  refused during the handshake produced no pair entry and was pruned from the
+ *  registry before the close event — the failed dial must still stop THAT
+ *  endpoint's redial loop, not all of them (row peer-004). */
+const socketEndpoints = new WeakMap<WebSocket, string>();
+
+/** HTTP status of a REFUSED upgrade per socket (the `ws` client reports every
+ *  unaccepted handshake as close 1006, so the status line is the only evidence
+ *  of a token refusal — row peer-004). */
+const refusalStatus = new WeakMap<WebSocket, number>();
 
 /** Pair-keyed reconnect loop state. */
 interface LoopState {
@@ -298,6 +310,7 @@ function dialSocket(endpoint: string, dialBase: string, epoch0: number, cb: Dial
   const headers: Record<string, string> = token ? { 'X-MYCC-Wire-Token': token } : {};
   const url = dialBase; // token travels via header, never the query string
   const ws = new WebSocket(url, { handshakeTimeout: HANDSHAKE_TIMEOUT_MS, headers });
+  socketEndpoints.set(ws, endpoint);
 
   let replyTimer: ReturnType<typeof setTimeout> | null = null;
   let failed = false;
@@ -369,15 +382,51 @@ function dialSocket(endpoint: string, dialBase: string, epoch0: number, cb: Dial
     return false;
   };
 
+  ws.on('unexpected-response', (req: import('http').ClientRequest, res: import('http').IncomingMessage) => {
+    // A refused HTTP upgrade never becomes a WebSocket, so the close event
+    // cannot say WHY (the `ws` client reports 1006 for every unaccepted
+    // handshake). Capture the status line here — the only place the dialer
+    // learns "the remote enforced a different wire token" (row peer-004:
+    // a token mismatch used to look like a network drop).
+    //
+    // terminate() is MANDATORY, not hygiene: attaching this listener makes `ws`
+    // treat the response as handled and skip its internal `abortHandshake`,
+    // which is the only emitter of `close` for a refused upgrade. Without it
+    // nothing settles — connectPeer's promise hangs forever and the TCP handle
+    // leaks (verified: no close even past handshakeTimeout).
+    refusalStatus.set(ws, res.statusCode ?? 0);
+    try { ws.terminate(); } catch { /* closing */ }
+    if (!req.destroyed) req.destroy();
+  });
+
   ws.on('close', (code: number) => {
     clearReplyTimer();
     liveness.delete(ws);
     const wasEstablished = established.has(ws);
     const prunedPair = pruneSocket(ws);
+    // The handshake status outranks the close code: an unaccepted upgrade
+    // always closes as 1006, which would render as "connection reset".
+    const refusedCode = refusalStatus.get(ws);
+    refusalStatus.delete(ws);
+    const effectiveCode = refusedCode && refusedCode >= 400 ? refusedCode : code;
+    if (effectiveCode === WIRE_CLOSE_UNAUTHORIZED) {
+      // A refused upgrade stays broken until the operator fixes the token, so
+      // it is TERMINAL for the endpoint: settle the dial AND stop the redial,
+      // keeping the one actionable line visible instead of burying it under an
+      // endless retry storm (row peer-004).
+      fail(describeCloseCode(effectiveCode));
+      const endpoint = prunedPair?.endpoint ?? socketEndpoints.get(ws);
+      if (endpoint) {
+        cancelLoop(endpoint);
+        getWireHooks()?.briefPeerWireRefusal?.(`the remote refused our token (${endpoint})`);
+        verbose(`redial for ${endpoint} paused: wire token refused`);
+      }
+      return;
+    }
     if (!prunedPair) {
       // Unrecorded socket (the dial closed before an announce): there is no
       // pair to decide on — but the DIAL still has to settle, otherwise
-      // connectPeer's promise hangs forever on a 401 / ECONNREFUSED.
+      // connectPeer's promise hangs forever on ECONNREFUSED.
       if (!wasEstablished) fail(describeCloseCode(code));
       return;
     }
@@ -441,6 +490,16 @@ function dialSocket(endpoint: string, dialBase: string, epoch0: number, cb: Dial
       verbose(`redial for ${pairEndpoint} cancelled: peer reachable at ${announced[0]}`);
       return;
     }
+    // The wire is DOWN and we are about to retry (row peer-004). Tell the user
+    // once, and flip the pinned reminder to "reconnecting" — otherwise the only
+    // trace of an established peer going away is a verbose line while the
+    // persistent banner keeps claiming it is wired. The banner is re-pointed at
+    // "connected" by recordAnnounce when the peer returns.
+    const downSid = findByEndpoint(pairEndpoint)?.sid;
+    if (downSid) {
+      getWireHooks()?.recordRemotePeerTodo({ sid: downSid, endpoint: pairEndpoint, done: false, reconnecting: true });
+    }
+    verbose(`wire to ${pairEndpoint} dropped — reconnecting`);
     scheduleRedial(pairEndpoint, dialBase);
   });
 
@@ -537,7 +596,7 @@ function startPingTimer(): void {
 function describeCloseCode(code: number): string {
   if (code === 4000) return 'superseded (4000) — pair torn down mid-dial';
   if (code === 4001) return 'remote hung up (bye 4001) — wire was disconnected, re-run peer_connect';
-  if (code === 401) return 'unauthorized — the remote enforces a wire token (MYCC_WIRE_TOKEN) and the one this side sent was missing or mismatched. Set the same value on both instances, or unset it on both to run the wire open (security then delegated to OSI L3).';
+  if (code === WIRE_CLOSE_UNAUTHORIZED) return 'unauthorized — the remote enforces a wire token (MYCC_WIRE_TOKEN) that this side did not send or sent differently. Set the SAME value on both instances, or unset it on both to run the wire open (security then delegated to OSI L3). The redial loop is stopped for this endpoint: fix the token, then re-run peer_connect.';
   if (code === 1006) return 'abnormal close (connection reset / refused / host down)';
   return `close code ${code}`;
 }
@@ -636,9 +695,13 @@ export async function connectPeer(rawUrl: string): Promise<string> {
   });
 
   if (!outcome.ok) {
-    // Redial loop stays armed by the close handler — surface the failure
-    // to the caller while background retries continue (plan §5).
-    return `Error: wire to ${endpoint} not established: ${outcome.error}. The redial loop is armed (capped exponential backoff, ~30s max) — mail_to will report "retrying" until it connects; use peer_disconnect to cancel.`;
+    // The redial loop may be armed by the close handler — but NOT for a refused
+    // handshake (401): that branch is terminal and stops the loop, so promising
+    // "retrying" there would contradict the message the caller just read.
+    const loopNote = /unauthorized/.test(outcome.error)
+      ? 'The redial loop is stopped for this endpoint — fix the token, then re-run peer_connect.'
+      : 'The redial loop is armed (capped exponential backoff, ~30s max) — mail_to will report "retrying" until it connects; use peer_disconnect to cancel.';
+    return `Error: wire to ${endpoint} not established: ${outcome.error} ${loopNote}`;
   }
 
   const daemonNote = peerDaemon ? '' : '\nNote: the remote webui is NOT daemon-backed — it auto-shuts-down ~30s after its last human leaves; the wire will drop and this side will keep retrying.';

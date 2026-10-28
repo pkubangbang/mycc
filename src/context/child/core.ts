@@ -30,6 +30,11 @@ export class ChildCore extends BaseCore implements CoreModule {
     if (level === 'error') {
       ipc.sendNotification('error', { error: message, detail, tool, synthetic: opts?.synthetic ?? false });
     } else {
+      // The child's brief level rides along as `level` (row lead: teammate
+      // warn → info de-escalation). The old wire collapsed info and warn into
+      // one 'log' type, so the parent could only re-brief 'info' and a warn
+      // surfaced as info in the lead transcript. `type: 'log'` is kept for
+      // wire compatibility; `level` is the authoritative severity.
       // Forward `tool` so the parent can build the @-prefix teammate label
       // (@sender/tool) for the WebUI teammate timeline. Without this, the
       // tool tag is lost at the IPC boundary and all teammate messages end
@@ -38,7 +43,7 @@ export class ChildCore extends BaseCore implements CoreModule {
       // `synthetic` rides along so machine-originated briefs emitted inside
       // the child (hook engine, debug evaluator) stay hidden in the WebUI
       // after the parent re-briefs them under the @label.
-      ipc.sendNotification('log', { message, detail, tool, synthetic: opts?.synthetic ?? false });
+      ipc.sendNotification('log', { message, detail, tool, level, synthetic: opts?.synthetic ?? false });
     }
   }
 
@@ -123,11 +128,16 @@ export class ChildCore extends BaseCore implements CoreModule {
     command?: string;
     intent?: string;
   }): Promise<{ approved: boolean; reason?: string }> {
-    // Always ask parent via IPC - parent knows the mode
+    // NO TIMEOUT. The parent's grant path can block on a human [y/N] prompt
+    // (dangerous/batch confirmations) or on a slow LLM safeguard — both are
+    // unbounded by design. A 5 s timeout here used to turn a still-pending
+    // verdict into "denied" in the child, after which the user's "y" was
+    // discarded against a deleted pendingRequests slot. Waiting is correct:
+    // the parent always answers, and a dead parent is caught by IPC disconnect.
     const response = await ipc.sendRequest<{ approved: boolean; reason?: string }>(
       'grant_request',
       { tool, ...args },
-      5000
+      0
     );
     return response;
   }

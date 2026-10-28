@@ -156,7 +156,7 @@ describe('peer wire — mail routing', () => {
     await connectPeer(remote.endpoint);
 
     // Outbound (self → remote): the frame lands on the remote's socket.
-    const sent = sendWireMail(SID_REMOTE, 'hello', 'from self');
+    const sent = sendWireMail(SID_REMOTE, 'hello', 'from self').ok;
     expect(sent).toBe(true);
     await vi.waitFor(() => {
       expect(remote.received.some((f) => f.type === 'mail' && f.title === 'hello')).toBe(true);
@@ -175,18 +175,18 @@ describe('peer wire — mail routing', () => {
   }, 20_000);
 
   it('fails fast (returns false) when no live socket exists', async () => {
-    expect(sendWireMail('unknown-sid', 't', 'c')).toBe(false);
+    expect(sendWireMail('unknown-sid', 't', 'c').ok).toBe(false);
     await connectPeer(remote.endpoint);
     // Kill the wire abruptly; the entry prunes and the send fails.
     stopWireClient();
     await new Promise((r) => setTimeout(r, 300));
-    expect(sendWireMail(SID_REMOTE, 't', 'c')).toBe(false);
+    expect(sendWireMail(SID_REMOTE, 't', 'c').ok).toBe(false);
   }, 20_000);
 
   it('refuses an oversize mail frame WITHOUT sending (sender-side guard)', async () => {
     await connectPeer(remote.endpoint);
     const huge = 'x'.repeat(WIRE_MAX_PAYLOAD_BYTES + 1);
-    const sent = sendWireMail(SID_REMOTE, 'big', huge);
+    const sent = sendWireMail(SID_REMOTE, 'big', huge).ok;
     expect(sent).toBe(false);
     // Nothing reached the remote.
     expect(remote.received.some((f) => f.type === 'mail')).toBe(false);

@@ -37,11 +37,18 @@ export const channelCommand: SlashCommand = {
         return;
       }
       console.log(chalk.cyan(`Channels (${channels.length}):`));
+      // Auto-join failures are the difference between "waiting for the
+      // mediator" and "permanently broken" — render them instead of leaving
+      // the channel at the anonymous "not joined" state.
+      const joinFailures = ctx.peer.getChannelJoinFailures();
       for (const ch of channels) {
         const fresh = ch.peerSessionId ? ctx.peer.isFresh(ch.peerSessionId) : false;
-        const state = ch.joined
-          ? (ch.peerSessionId ? (fresh ? chalk.green('active') : chalk.yellow('joined (peer stale)')) : chalk.yellow('joined (no peer)'))
-          : chalk.gray('not joined');
+        const failure = joinFailures.get(ch.channelId);
+        const state = failure && !ch.joined
+          ? chalk.red(`join failed ${failure.count}× — ${failure.lastError}`)
+          : ch.joined
+            ? (ch.peerSessionId ? (fresh ? chalk.green('active') : chalk.yellow('joined (peer stale)')) : chalk.yellow('joined (no peer)'))
+            : chalk.gray('not joined');
         console.log(`  ${chalk.bold(ch.channelId)}  peer=${ch.peerSessionId ?? '—'}  ${state}  title="${ch.title}"`);
       }
       return;

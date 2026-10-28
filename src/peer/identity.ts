@@ -20,8 +20,9 @@
  */
 
 import * as fs from 'fs';
+import * as path from 'path';
 import type { IdentityEntry } from '../types.js';
-import { getIdentityFile, getHeartbeatFile, getLaunchArgs, getPeerName } from '../config.js';
+import { getIdentityFile, getHeartbeatFile, getLaunchArgs, getPeerName, getDiscoveryDir } from '../config.js';
 import { isOriginalHolderAlive, heartbeatMtimeMs } from '../utils/process-liveness.js';
 import { truncateToTokens } from '../utils/token.js';
 import { atomicWrite } from '../utils/atomic-write.js';
@@ -176,10 +177,20 @@ function withIdentityLock<T>(fn: () => T): T {
  *
  * Standalone (module-level) form of the freshness rule so callers that have no
  * IdentityManager — the session bootstrap, and the `mycc-compose` repair path —
- * can ask the same question without re-deriving it. A THIRD variant of this
- * check would be a drift hazard: `IdentityManager.isFresh()`,
- * `pruneStaleEntries()` and `cleanupEmptySessions()` already touch the same
- * ground, and a disagreement silently turns a live peer into an "offline" one.
+ * can ask the same question without re-deriving it.
+ *
+ * OWNERSHIP OF "IS X ALIVE" (one reader, three policies):
+ * - `probeLiveBeat()` below is the ONLY place that reads a heartbeat file and
+ *   applies the absolute window. Every other question is expressed on top of it.
+ * - `isSessionLive()` (here) = registered + probe live. Dispatch/bootstrap.
+ * - `IdentityManager.isFresh()` = the same probe plus the relative and "recent"
+ *   clauses that need the caller's own heartbeat. Peer dispatch.
+ * - `pruneStaleEntries()` = the probe's age plus a PID-alive check, at the
+ *   longer {@link IDENTITY_PRUNE_CUTOFF_MS} cutoff. Reclaiming orphans.
+ * - `cleanupEmptySessions()` (session/index.ts) calls `probeLiveBeat()` too, so
+ *   the discovery root and the schema handling cannot drift from this file.
+ * A new caller must ask "which of these four purposes am I?" and reuse that
+ * predicate; re-deriving the window is the drift hazard.
  *
  * Live ⟺ the sid is registered AND its heartbeat file has a beat newer than
  * {@link FRESHNESS_WINDOW_MS}. An instance that is registered but has never
@@ -197,6 +208,53 @@ export function isSessionLive(sessionId: string): boolean {
   const beats = readHeartbeats(sessionId);
   if (beats.length === 0) return false;
   return Date.now() - beats[beats.length - 1] <= FRESHNESS_WINDOW_MS;
+}
+
+export interface LiveBeatProbe {
+  /** Highest heartbeat timestamp found for the session, or null when none. */
+  latestBeat: number | null;
+  /** True when `latestBeat` is within the shared liveness window of now. */
+  live: boolean;
+}
+
+/**
+ * Read the highest heartbeat of a session from `heartbeat/{id}.json`.
+ *
+ * THE ONLY heartbeat reader on disk. Callers that used to inline this (the
+ * session bootstrap's cleanup guard) must go through it so a schema change or
+ * a different discovery root cannot make two predicates disagree about the
+ * same session. Accepts both the current `{heartbeats}` and the legacy
+ * `{timestamps}` schema, and takes the MAXIMUM beat rather than the last one:
+ * the raw file can be non-monotonic (concurrent writers, legacy migration), and
+ * `.pop()` would then pick an older beat and call a live session dead.
+ *
+ * `discoveryRoot` defaults to the configured discovery dir (honouring
+ * MYCC_DISCOVERY_DIR); pass a different root only for tests/importers.
+ */
+export function probeLiveBeat(sessionId: string, discoveryRoot: string = getDiscoveryDir()): LiveBeatProbe {
+  if (!sessionId) return { latestBeat: null, live: false };
+  const hbFile = path.join(discoveryRoot, 'heartbeat', `${sessionId}.json`);
+  try {
+    if (!fs.existsSync(hbFile)) return { latestBeat: null, live: false };
+    const parsed = JSON.parse(fs.readFileSync(hbFile, 'utf-8')) as {
+      heartbeats?: unknown[];
+      timestamps?: unknown[];
+    };
+    const beats = Array.isArray(parsed.heartbeats)
+      ? parsed.heartbeats
+      : Array.isArray(parsed.timestamps)
+        ? parsed.timestamps
+        : [];
+    // reduce over no numeric beats yields -Infinity → (now - (-Inf)) is Infinity
+    // → not live, which is the correct verdict for "no evidence of life".
+    const latestBeat = beats
+      .filter((t): t is number => typeof t === 'number')
+      .reduce((max, t) => (t > max ? t : max), -Infinity);
+    if (!Number.isFinite(latestBeat)) return { latestBeat: null, live: false };
+    return { latestBeat, live: Date.now() - latestBeat < FRESHNESS_WINDOW_MS };
+  } catch {
+    return { latestBeat: null, live: false };
+  }
 }
 
 /**

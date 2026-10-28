@@ -89,6 +89,17 @@ export function parseEnvFile(filePath: string): Record<string, string> {
  *
  * Cmd-args (e.g. --ollama-model, --token-threshold) are the highest priority,
  * overriding .env files and system environment variables.
+ *
+ * INHERITANCE (the one statement of this rule — row lead-012): CLI flags are
+ * written into `process.env`, so they ARE inherited by every child process
+ * (a teammate, a `--from` spawn, a `/reload` respawn) and by anything this
+ * process later starts. A per-getter "reads argv, not process.env" comment only
+ * protects THAT getter inside THIS process; it cannot protect a child, whose
+ * own argv carries no flag. Consequence in practice: a flag is a one-way grant
+ * (`--debug-tp`, `--allow-plan-off`, …) that propagates downward, and reading
+ * process.env in a child sees the parent's flag. If a future change must stop
+ * that, it has to happen HERE (keep flags in this module and stop writing them
+ * into process.env) — not at the getters.
  */
 export function loadEnv(): void {
   const userConfig = fs.existsSync(getUserConfigPath())
@@ -575,7 +586,77 @@ export function isWireDebugLocal(): boolean {
  * Get token threshold for context management
  */
 export function getTokenThreshold(): number {
-  return parseInt(process.env.TOKEN_THRESHOLD || '100000', 10);
+  return parseInt(process.env.TOKEN_THRESHOLD || DEFAULT_TOKEN_THRESHOLD, 10);
+}
+
+/**
+ * THE default context budget (row lead-013). It lives in one named constant so
+ * the docs, the flag table and the getter cannot disagree about it (they used
+ * to: code 100000, README 50000).
+ */
+export const DEFAULT_TOKEN_THRESHOLD = '100000';
+
+/** One knob of the effective configuration and the layer that supplied it. */
+export interface EffectiveConfigEntry {
+  key: string;
+  value: string;
+  source: 'cli' | 'env' | 'project-env' | 'user-env' | 'default';
+}
+
+/**
+ * Describe the EFFECTIVE configuration with provenance (rows lead-012/lead-013).
+ *
+ * The four merge layers (user .env → project .env → system env → CLI) are
+ * flattened into `process.env` by {@link loadEnv}, so once boot is over nothing
+ * can say WHY a value is what it is. This recomputes the layers read-only and
+ * reports the winning source per key — the diagnostic a user needs for "I set
+ * TOKEN_THRESHOLD in ./.mycc/.env and something overrode it".
+ *
+ * Only KEYS the caller asks about (or the known table) are reported; values are
+ * included verbatim (including secrets) because this is a local diagnostic —
+ * callers that print it do so on explicit request (`--print-config`).
+ */
+export function describeEffectiveConfig(keys?: string[]): EffectiveConfigEntry[] {
+  const userConfig = fs.existsSync(getUserConfigPath()) ? parseEnvFile(getUserConfigPath()) : {};
+  const projConfig = fs.existsSync(getProjectConfigPath()) ? parseEnvFile(getProjectConfigPath()) : {};
+  const cli = cmdArgsEnv as Record<string, string>;
+  const systemEnv = process.env as Record<string, string | undefined>;
+
+  const known = keys ?? [
+    'API_PROVIDER', 'OLLAMA_HOST', 'OLLAMA_MODEL', 'OLLAMA_VISION_MODEL',
+    'OLLAMA_EMBEDDING_MODEL', 'DEEPSEEK_HOST', 'DEEPSEEK_MODEL', 'TOKEN_THRESHOLD',
+    'SKILL_MATCH_THRESHOLD', 'MYCC_MAX_UPLOAD_MB', 'EDITOR', 'MYCC_ALLOW_PLAN_OFF',
+    'MYCC_ALLOW_AUTO_COMMIT', 'MYCC_DISCOVERY_DIR', 'MYCC_DEBUG_TP', 'MYCC_DEBUG_EVAL',
+  ];
+
+  const out: EffectiveConfigEntry[] = [];
+  for (const key of known) {
+    if (key in cli) { out.push({ key, value: cli[key], source: 'cli' }); continue; }
+    // A value in process.env that no .env layer supplied came from the shell.
+    if (key in projConfig && systemEnv[key] === projConfig[key]) {
+      out.push({ key, value: projConfig[key], source: 'project-env' });
+      continue;
+    }
+    if (key in userConfig && systemEnv[key] === userConfig[key]) {
+      out.push({ key, value: userConfig[key], source: 'user-env' });
+      continue;
+    }
+    if (systemEnv[key] !== undefined) {
+      out.push({ key, value: String(systemEnv[key]), source: 'env' });
+      continue;
+    }
+    // Report the getter's default where one exists, without inventing one.
+    const dflt = key === 'TOKEN_THRESHOLD' ? DEFAULT_TOKEN_THRESHOLD : undefined;
+    if (dflt !== undefined) out.push({ key, value: dflt, source: 'default' });
+  }
+  return out;
+}
+
+/** Render {@link describeEffectiveConfig} as one line per knob. */
+export function formatEffectiveConfig(keys?: string[]): string {
+  return describeEffectiveConfig(keys)
+    .map((e) => `${e.key.padEnd(26)} ${e.value.padEnd(24)} (${e.source})`)
+    .join('\n');
 }
 
 /**

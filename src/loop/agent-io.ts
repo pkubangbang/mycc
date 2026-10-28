@@ -170,6 +170,12 @@ class AgentIO {
   private outputBuffer: Array<{
     method: 'log' | 'warn' | 'error';
     args: unknown[];
+    /** WebUI mirror state at emit time. 'sent' = already delivered;
+     *  'no-sink' = no callback yet (serve started later) → replay on flush;
+     *  'suppressed' = deliberately held back because brief() will mirror the
+     *  clean message itself → NEVER replay, or the browser gets a second,
+     *  chalk-formatted copy of the same line. */
+    mirror: 'sent' | 'no-sink' | 'suppressed';
   }> = [];
 
   // Output callback — mirrors console output to the web UI (WebSocket).
@@ -179,7 +185,9 @@ class AgentIO {
   // Flag set while brief() is executing. When true, log/warn/error suppress
   // their own outputCallback call so brief() can fire it once with the
   // clean (non-chalk-formatted) message.
-  private inBrief = false;
+  private briefDepth = 0;
+  /** True while any brief() is mid-flight (see briefDepth). */
+  private get inBrief(): boolean { return this.briefDepth > 0; }
 
   // ESC-during-ask() cancellation support
   private askResolver: ((value: string) => void) | null = null;
@@ -420,8 +428,14 @@ class AgentIO {
    * Console replacement: log (buffers if in interaction mode)
    */
   log(...args: unknown[]): void {
+    // Classify the WebUI mirror state so flushOutput() replays ONLY the lines
+    // serve never received. "Inside brief()" and "no callback yet" are
+    // different facts: brief() mirrors its own clean message, so replaying its
+    // chalk-formatted body would duplicate it as garbled ANSI (row lead-044).
+    const mirror: 'sent' | 'no-sink' | 'suppressed' =
+      this.outputCallback ? (this.inBrief ? 'suppressed' : 'sent') : 'no-sink';
     if (this.isInteractionMode()) {
-      this.outputBuffer.push({ method: 'log', args });
+      this.outputBuffer.push({ method: 'log', args, mirror });
     } else {
       console.log(...args);
     }
@@ -434,8 +448,10 @@ class AgentIO {
    * Console replacement: warn (buffers if in interaction mode)
    */
   warn(...args: unknown[]): void {
+    const mirror: 'sent' | 'no-sink' | 'suppressed' =
+      this.outputCallback ? (this.inBrief ? 'suppressed' : 'sent') : 'no-sink';
     if (this.isInteractionMode()) {
-      this.outputBuffer.push({ method: 'warn', args });
+      this.outputBuffer.push({ method: 'warn', args, mirror });
     } else {
       console.warn(...args);
     }
@@ -448,8 +464,10 @@ class AgentIO {
    * Console replacement: error (buffers if in interaction mode)
    */
   error(...args: unknown[]): void {
+    const mirror: 'sent' | 'no-sink' | 'suppressed' =
+      this.outputCallback ? (this.inBrief ? 'suppressed' : 'sent') : 'no-sink';
     if (this.isInteractionMode()) {
-      this.outputBuffer.push({ method: 'error', args });
+      this.outputBuffer.push({ method: 'error', args, mirror });
     } else {
       console.error(...args);
     }
@@ -478,7 +496,10 @@ class AgentIO {
     // Suppress outputCallback inside log/warn/error during brief() — the
     // chalk-formatted header would render as garbled ANSI codes in the WebUI.
     // Instead, brief() fires outputCallback once below with the clean message.
-    this.inBrief = true;
+    // Refcount (row lead-044): a nested brief()/verbose() inside this one must
+    // not clear the suppression early, or the inner chalk line is mirrored as
+    // garbled ANSI before brief() fires its clean callback.
+    this.briefDepth++;
     switch (level) {
       case 'error':
         this.error(`${header}\n${chalk.red(message)}`);
@@ -489,7 +510,7 @@ class AgentIO {
       default:
         this.log(`${header}\n${message}`);
     }
-    this.inBrief = false;
+    this.briefDepth = Math.max(0, this.briefDepth - 1);
 
     // Mirror to web UI (serve mode) — send the clean message text once,
     // carrying the tool label so the web UI can render the same
@@ -532,7 +553,15 @@ class AgentIO {
     const buffer = [...this.outputBuffer];
     this.outputBuffer = [];
 
-    for (const { method, args } of buffer) {
+    for (const { method, args, mirror } of buffer) {
+      // Replay ONLY what serve never received: a line emitted before the
+      // output callback existed. 'suppressed' lines were mirrored by brief()
+      // itself (clean text, tool label) — replaying them would send a second,
+      // chalk-formatted copy. Order is preserved so the browser transcript
+      // matches the terminal one (row lead-044).
+      if (mirror === 'no-sink' && this.outputCallback) {
+        this.outputCallback(method, args, undefined);
+      }
       switch (method) {
         case 'log':
           console.log(...args);

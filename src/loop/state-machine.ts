@@ -144,6 +144,13 @@ export interface ChatData {
    * where the tool list is not in scope.
    */
   deferredCompact: boolean;
+  /**
+   * Set when HOOK delivered the round's deferred hook messages as REMINDER
+   * notes. A no-call round that carried hook feedback must loop back to
+   * COLLECT once instead of ending the turn, so the LLM can respond to it.
+   * Pass-scoped: reset with every ChatData rebuild.
+   */
+  hookFeedbackDelivered?: boolean;
 }
 
 // ============================================================================

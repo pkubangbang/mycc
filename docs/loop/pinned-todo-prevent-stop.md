@@ -54,11 +54,15 @@ Every guard is judged in a SINGLE call:
 
 The fork is asked for a JSON array and parsed defensively (see Robustness).
 
-### Anti-hallucination by id + hash
+### Staleness detection by id + hash
 
-The evaluator must echo each guard's `id` AND `hash`. A fabricated hash does
-not match a live guard and the verdict is discarded, so a hallucinated "held"
-cannot trap the turn. The gate never mutates the todo: releasing a guard is the
+The evaluator must echo each guard's `id` AND `hash`. This is **not** an
+anti-hallucination device — the hash is shown in the prompt, so an invented
+verdict carrying the copied hash verifies. What it detects is staleness: a
+guard released, re-pinned or edited between the prompt and the verdict has a
+different hash, so its verdict is discarded instead of holding the turn on a
+deadline that no longer exists. The defences against confabulation are the
+EVIDENCE rule in the prompt and the hold escalation in `stop.ts`. The gate never mutates the todo: releasing a guard is the
 agent's job (`todo_pinning(..., pinned=false)`), which keeps one authority over
 the item's state.
 

@@ -264,7 +264,7 @@ describe.skipIf(!canRun)('peer wire two-instance smoke (live tmux)', () => {
 
     const title = `[smoke] wire mail ${Date.now()}`;
     const content = 'two-instance smoke: dialer → real acceptor → MailBox.appendMail';
-    const sent = sendWireMail(remoteSid, title, content);
+    const sent = sendWireMail(remoteSid, title, content).ok;
     expect(sent).toBe(true);
 
     // The mail must land in instance A's REAL on-disk inbox. This exercises

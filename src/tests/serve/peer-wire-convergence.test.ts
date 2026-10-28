@@ -144,7 +144,7 @@ describe('peer wire — review round-2 regressions (Tests A, B, D)', () => {
     expect(endpointOfSid(peerSid)).toBe(survivorEndpoint);
     // ...and sendWireMail succeeds over the survivor (mail is routable).
     expect(sentFrames.length).toBe(0);
-    const sent = sendWireMail(peerSid, 'survivor-mail', 'still alive');
+    const sent = sendWireMail(peerSid, 'survivor-mail', 'still alive').ok;
     expect(sent).toBe(true);
     expect(sentFrames.length).toBe(1);
     const delivered = JSON.parse(sentFrames[0]) as Record<string, unknown>;

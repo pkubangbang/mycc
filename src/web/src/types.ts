@@ -17,6 +17,7 @@ export type MessageType =
   | 'file-upload'
   | 'file-flush'
   | 'auto'
+  | 'mode'
   | 'running';
 
 export interface ChatMessage {
@@ -137,6 +138,11 @@ export interface ChatState {
    *  at the next COLLECT) — never a fresh prompt. Set by a backend 'auto'
    *  broadcast on every flag flip + on WS connect. */
   isAutoMode: boolean;
+  /** Plan/normal mode of the lead, mirrored from the backend `mode` broadcast.
+   *  Plan mode refuses edits except the allowed file, so the browser user needs
+   *  to SEE it — otherwise a refused instruction looks like a broken agent.
+   *  Set on every mode change + on WS connect (serve-hub replays it). */
+  isPlanMode: boolean;
   connectionStatus: ConnectionStatus;
   /** true when a retry prompt is pending (network failure / error recovery) */
   showRetry: boolean;

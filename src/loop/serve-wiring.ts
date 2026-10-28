@@ -33,15 +33,42 @@ import type { AgentContext } from '../types.js';
  *    --serve mode; the callback is queued until the serve layer loads.
  */
 export function wireServeCallbacks(ctx: AgentContext): void {
-  // ── onAutoChange: mirror auto-state flips to the webui ──
+  // ── onAutoChange / auto providers: mirror auto-state flips to the webui ──
   // Previously agentIO.setAuto() called getServeHub().broadcastAuto directly;
   // now the singleton owns the flag and fires this callback on a real flip,
   // so the webui chat input box stays enabled for steering and the 停止 button
   // stays visible+spinning while the lead is in AWAIT. Best-effort: a plain
   // terminal session has no hub → null → no-op.
+  //
+  // Row 39: this ALSO installs the pull-side providers through
+  // onServeHubReady. The boot flips (--auto / --daemon) happen earlier in
+  // agent-repl, so `onAutoChange` is still null when they fire and the
+  // broadcast never happens. A client that connects AFTER the flip reads the
+  // provider instead and is told 'auto: on'; a client already connected in
+  // --serve mode connects only after activateServe(), i.e. after this
+  // registration, and is covered by the delta. Registering the provider here
+  // (not only in agent-io, which runs before the hub exists) removes the
+  // window where the hub exists but has no provider.
   autoState.onAutoChange = (value: boolean) => {
     tryGetServeHub()?.broadcastAuto(value);
   };
+  onServeHubReady((hub) => {
+    hub.setAutoStateProvider(() => autoState.getAuto());
+  });
+
+  // ── plan-mode changes: one reporter, installed once, at boot ──
+  // Core.setMode() used to reach into the serve layer itself
+  // (`tryGetServeHub()?.broadcastMode`), coupling the context layer to serve
+  // and making the injected reporter dead API. The reporter is installed here
+  // — before any mode change can happen — so the constructor default can be
+  // removed and the seam is the only path. Best-effort: no hub → no-op, and a
+  // non-serving session simply has nothing to broadcast to.
+  const core = ctx.core as { setModeChangeReporter?: (cb: ((mode: 'plan' | 'normal', allowedFile?: string) => void) | null) => void };
+  core.setModeChangeReporter?.((mode, allowedFile) => {
+    try {
+      tryGetServeHub()?.broadcastMode(mode, allowedFile);
+    } catch { /* serve is optional */ }
+  });
 
   // ── channel-join: engage auto + abort a blocked PROMPT ──
   // When a peer channel joins (the 5s poll sweep calls joinChannel, or

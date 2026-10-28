@@ -69,6 +69,8 @@ import type { ChatMessage, SteeringNote, WebuiPhase } from './types';
 export interface DispatchState {
   phase: WebuiPhase;
   isAutoMode: boolean;
+  /** Plan/normal mode of the lead (mirrored `mode` broadcast). */
+  isPlanMode: boolean;
   steeringBuffer: SteeringNote[];
   steeringQueue: SteeringNote[];
   pendingSteeringReview: SteeringNote[];
@@ -78,6 +80,8 @@ export interface DispatchState {
   lastServerMsg?: { type: string; at: number };
   setPhase: (newPhase: WebuiPhase) => void;
   setAutoMode: (value: boolean) => void;
+  /** Set the orthogonal plan-mode flag (mirrored `mode` broadcast). */
+  setPlanMode: (value: boolean) => void;
   adoptSteering: (revision: number, notes: SteeringNote[]) => boolean;
   populateSteeringReview: () => void;
 }
@@ -205,6 +209,15 @@ export function applyServerMessage(
         state.setPhase('idle');
       }
     }
+    return;
+  }
+
+  if (msg.type === 'mode') {
+    // Plan/normal mode (row obs-002). A state report, never chat content: the
+    // browser must be able to see that edits are prohibited (or that plan mode
+    // ended) without it costing a chat bubble. Phase is intentionally untouched
+    // — mode is orthogonal to prompt/working/await.
+    state.setPlanMode(msg.content === 'plan');
     return;
   }
 

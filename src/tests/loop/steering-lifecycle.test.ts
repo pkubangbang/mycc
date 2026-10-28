@@ -96,9 +96,11 @@ describe('A2 hub/provider wipe-site pins (source-text guards)', () => {
   it('WebInputProvider wipes in BOTH terminal-fallback branches, restart branches return before the wipe', () => {
     const src = read(PROVIDER_PATH);
     const provider = src.slice(src.indexOf('export class WebInputProvider'));
-    // Exactly two live wipes + none elsewhere (pushSteer/write sites own other paths).
-    const wipeCount = provider.split('getSteeringManager().clear()').length - 1;
+    // Exactly two live wipes (both through logSteeringWipe, which records the
+    // discarded note ids — row loop-b/005) and no bare clear() elsewhere.
+    const wipeCount = provider.split("logSteeringWipe('terminal-fallback").length - 1;
     expect(wipeCount).toBe(2);
+    expect(provider).not.toContain('getSteeringManager().clear();');
 
     // The hub is resolved LAZILY (liveHub → tryGetServeHub, never a ctor
     // field) so the lazy-serve refactor keeps the boot path hub-free. The
@@ -106,7 +108,7 @@ describe('A2 hub/provider wipe-site pins (source-text guards)', () => {
     // Branch 1: entry fallback — wipe AFTER the shouldDaemon throw, and the
     // isRestarting branch above it must `return` before reaching the wipe.
     const entryIdx = provider.indexOf('async getInput(');
-    const branch1 = provider.slice(entryIdx, provider.indexOf('getSteeringManager().clear()', entryIdx));
+    const branch1 = provider.slice(entryIdx, provider.indexOf("logSteeringWipe('terminal-fallback", entryIdx));
     expect(branch1).toContain('if (hub && hub.isRestarting()) return hub.waitForInput();');
     expect(branch1).toContain('if (shouldDaemon()) throw new ServeDetachedExitError();');
     // The hub comes from the lazy accessor, not a stored field.
@@ -116,7 +118,7 @@ describe('A2 hub/provider wipe-site pins (source-text guards)', () => {
 
     // Branch 2: post-abort fallback — same guard shape.
     const abortIdx = provider.indexOf("abortInput() resolved waitForInput() with null");
-    const branch2 = provider.slice(abortIdx, provider.indexOf('getSteeringManager().clear()', abortIdx));
+    const branch2 = provider.slice(abortIdx, provider.indexOf("logSteeringWipe('terminal-fallback", abortIdx));
     expect(branch2).toContain('if (hub.isRestarting()) return hub.waitForInput();');
     expect(branch2).toContain('if (shouldDaemon()) throw new ServeDetachedExitError();');
   });

@@ -56,4 +56,21 @@ describe('runExec timeout — partial output preservation', () => {
     expect(result.exitCode).toBe(137);
     expect(result.interrupted).toBe(false);
   });
+
+  it('releases its ESC callback on a normal exit (no callback leak per bash)', async () => {
+    // The closure registered on onNeglected captures the replay buffers. If it
+    // is never unsubscribed, every bash call leaks one closure holding its full
+    // stdout/stderr. The success path must drop it.
+    let registered = 0;
+    let released = 0;
+    await runExec(
+      { cwd: process.cwd(), command: `node -e ""`, timeout: 30 },
+      () => {
+        registered += 1;
+        return () => { released += 1; };
+      },
+    );
+    expect(registered).toBe(1);
+    expect(released).toBe(1);
+  });
 });

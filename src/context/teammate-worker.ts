@@ -522,10 +522,11 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
         // Empty turn guard (see MAX_EMPTY_TURN_RETRIES): an assistant turn with
         // neither content nor tool calls is a non-response, NOT task completion.
-        // Do NOT mail "Teammate phase completed" — that would tell the lead the
-        // phase is done while the deliverable is still unsent. Re-prompt instead,
-        // bounded so a persistently-silent LLM can't spin forever.
-        if (!hasContent && budgetSent && !ctx.todo.hasOpenTodo()) {
+        // It is a stall whether or not the first eta has been sent — gating this
+        // on `budgetSent` let a teammate that never mailed a budget emit empty
+        // turns forever with no counter and no notification. Re-prompt, bounded,
+        // then tell the lead.
+        if (!hasContent && !ctx.todo.hasOpenTodo()) {
           emptyTurnRetries++;
           if (emptyTurnRetries > MAX_EMPTY_TURN_RETRIES) {
             // The LLM keeps returning empty even after re-prompts. Surface it
@@ -546,9 +547,13 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
             continue;
           }
           triologue.note('REMINDER',
-            'Your previous response was EMPTY (no content and no tool calls) — that is not a completion. ' +
-            'If you have a deliverable, send it now via mail_to(name="lead", eta=<seconds>, title="<subject>", content="<your report>"). ' +
-            'Otherwise call the tool that advances the next step.');
+            budgetSent
+              ? 'Your previous response was EMPTY (no content and no tool calls) — that is not a completion. ' +
+                'If you have a deliverable, send it now via mail_to(name="lead", eta=<seconds>, title="<subject>", content="<your report>"). ' +
+                'Otherwise call the tool that advances the next step.'
+              : 'Your previous response was EMPTY (no content and no tool calls) — that is not a completion, and you have not ' +
+                'reported a time budget yet. Send mail_to(name="lead", eta=<seconds>, title="<subject>", content="<details>") FIRST, ' +
+                'then do the work.');
           continue;
         }
 
