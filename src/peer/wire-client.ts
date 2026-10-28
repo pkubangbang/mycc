@@ -428,6 +428,19 @@ function dialSocket(endpoint: string, dialBase: string, epoch0: number, cb: Dial
       verbose(`socket to ${pairEndpoint} died; live survivor carries the pair`);
       return;
     }
+    // Retarget: a pair entry that reappeared under the peer's ANNOUNCED
+    // endpoint means the peer came back on a different key (restart behind a
+    // DHCP change / re-established tunnel). Redialing only the typed endpoint
+    // would fail forever while the peer is reachable under the new address.
+    const announced = (findByEndpoint(pairEndpoint)?.sid
+      ? endpointsForSid(findByEndpoint(pairEndpoint)!.sid)
+      : []
+    ).filter((ep) => ep !== pairEndpoint && hasLiveWireForEndpoint(ep));
+    if (announced.length > 0) {
+      cancelLoop(pairEndpoint);
+      verbose(`redial for ${pairEndpoint} cancelled: peer reachable at ${announced[0]}`);
+      return;
+    }
     scheduleRedial(pairEndpoint, dialBase);
   });
 

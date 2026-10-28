@@ -94,6 +94,9 @@ export class ChannelManager {
   // agent loop wires a callback that aborts a blocked PROMPT wait so a channel
   // joining mid-PROMPT redirects the loop to AWAIT. Single listener (overwrite).
   private onChannelJoin: ((channelId: string) => void) | null = null;
+  /** Injected verbose reporter (see setVerboseLogger) — keeps this module free
+   *  of loop imports while still surfacing failed sends. */
+  private verboseLog: ((tool: string, message: string) => void) | null = null;
 
   constructor(sessionId: string, identityManager: IdentityManager, mailboxPath: string) {
     this.sessionId = sessionId;
@@ -310,16 +313,49 @@ export class ChannelManager {
    * path used by mail_to when the target name matches the session-id/lead
    * identity pattern. The title is used verbatim (no channel prefix).
    */
+  /**
+   * Channel-independent peer mail: append a JSONL line to the remote mailbox.
+   * Freshness-gated: a stale (dead) peer returns false WITHOUT writing, so the
+   * caller can report "peer not live" instead of a phantom success.
+   *
+   * @returns true only when the peer is live AND the append landed.
+   */
+  /**
+   * Register a verbose reporter (tool label + message). Injected by the peer
+   * facade so this module stays a pure file+mail layer with no loop imports.
+   * Without it, failed sends are silent — the bug this fixes.
+   */
+  setVerboseLogger(fn: (tool: string, message: string) => void): void {
+    this.verboseLog = fn;
+  }
+
+  /**
+   * Channel-independent peer mail: append a JSONL line to the remote mailbox.
+   * Freshness-gated: a stale (dead) peer returns false WITHOUT writing, so the
+   * caller can report "peer not live" instead of a phantom success.
+   *
+   * @returns true only when the peer is live AND the append landed.
+   */
   sendPeerMail(sessionId: string, title: string, content: string): boolean {
     if (!this.identityManager.isFresh(sessionId)) {
+      this.verboseLog?.('peer', `mailbox send to ${sessionId} skipped: peer not live`);
       return false;
     }
     const remoteMailbox = this.identityManager.getRemoteMailbox(sessionId);
     if (!remoteMailbox) {
+      this.verboseLog?.('peer', `mailbox send to ${sessionId} skipped: no mailbox entry`);
       return false;
     }
     const from = this.identityManager.getIdentityString();
-    appendMailToPath(remoteMailbox, from, title, content);
+    try {
+      appendMailToPath(remoteMailbox, from, title, content);
+    } catch (err) {
+      this.verboseLog?.(
+        'peer',
+        `mailbox append to ${sessionId} failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return false;
+    }
     return true;
   }
 }

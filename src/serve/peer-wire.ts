@@ -62,6 +62,7 @@ import {
   teardownPair,
   liveSocketOf,
   seenMailIdRegister,
+  listRemotePeers,
   getWireHooks,
   sendFrame,
   WIRE_CLOSE_SUPERSEDED,
@@ -282,11 +283,27 @@ export class PeerWireAcceptor {
    * mailbox writer (MailBox.appendMail), which rouses the existing 1s
    * awaitTeammates poll → AWAIT → COLLECT. Zero agent-loop changes (§4).
    */
-  private onMail(_ws: WebSocket, frame: MailFrame): void {
+  private onMail(ws: WebSocket, frame: MailFrame): void {
     const hooks = getWireHooks();
     if (!hooks) return;
     if (!frame.id || !frame.from) {
       hooks.verbose('wire', 'dropping mail frame without id/from');
+      return;
+    }
+    // The envelope's `from` must belong to the peer that OWNS this socket: a
+    // wire peer can only speak as itself. Without this an accepted peer could
+    // inject mail that looks like it came from any session on this machine.
+    const owner = this.announcedSidOf(ws);
+    if (!owner) {
+      hooks.verbose('wire', `dropping mail frame before announce (${frame.id})`);
+      return;
+    }
+    const claimed = frame.from.split('/')[0];
+    if (claimed !== owner) {
+      hooks.verbose(
+        'wire',
+        `dropping mail frame ${frame.id}: from "${frame.from}" but socket announced ${owner}`
+      );
       return;
     }
     if (!seenMailIdRegister(frame.id)) {
@@ -294,6 +311,16 @@ export class PeerWireAcceptor {
       return;
     }
     hooks.appendLocalMail(frame.from, frame.title, frame.content);
+  }
+
+  /** The sid a socket announced (identity evidence for mail validation). */
+  private announcedSidOf(ws: WebSocket): string | null {
+    for (const entry of listRemotePeers()) {
+      for (const s of entry.sockets) {
+        if (s.socket === ws && s.announceReceived) return s.sid;
+      }
+    }
+    return null;
   }
 
   /**

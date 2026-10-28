@@ -152,6 +152,39 @@ describe('peer wire — review round-2 regressions (Tests A, B, D)', () => {
     expect(delivered.title).toBe('survivor-mail');
   });
 
+  it('Test A2: an accepted socket that merely claims an established sid cannot evict the live wire', () => {
+    // Threat: /peer/ws is open by default, so an unauthenticated host can
+    // announce a victim's sid. For accepted sockets initiatorSid is whatever
+    // the remote sent, so both sockets TIE — and a tie must not be decided by
+    // registry order (whichever announced first would otherwise keep the pair,
+    // letting an impostor displace a healthy wire, and 4000-with-no-survivor is
+    // TERMINAL on the dialer). Established first, impostor second: the
+    // impostor must be the loser.
+    const establishedEndpoint = '10.0.0.5:3195';
+    const impostorEndpoint = 'sid:evil-claims-victim';
+    const peerSid = 'victim-sid';
+
+    const makeSock = (): WebSocket => ({
+      readyState: 1,
+      OPEN: 1,
+      close: vi.fn(),
+      send: vi.fn(),
+    } as unknown as WebSocket);
+
+    const sockEstablished = makeSock(); // accepted from the real peer
+    const sockImpostor = makeSock();    // accepted from anyone at all
+
+    recordAnnounce({ endpoint: establishedEndpoint, dialed: false, socket: sockEstablished, sid: peerSid, initiatorSid: peerSid, meta: {} });
+    recordAnnounce({ endpoint: impostorEndpoint, dialed: false, socket: sockImpostor, sid: peerSid, initiatorSid: peerSid, meta: {} });
+
+    const losers = convergePairBySid(peerSid);
+    expect(losers).not.toBeNull();
+    expect(losers!.map((l) => l.socket)).toContain(sockImpostor);
+    expect(losers!.map((l) => l.socket)).not.toContain(sockEstablished);
+    expect(sockEstablished.close).not.toHaveBeenCalled();
+    expect(sockImpostor.close).toHaveBeenCalledWith(WIRE_CLOSE_SUPERSEDED, 'superseded');
+  });
+
   it('Test B: parseWireTarget retains wss:// (and https://) in dialBase for the reconnect loop', () => {
     // The reconnect loop reuses the dialBase parseWireTarget derived — it
     // must carry the ORIGINAL scheme so a TLS-only deployment does not

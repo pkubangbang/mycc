@@ -157,6 +157,14 @@ export class PeerManager implements PeerModule {
   }
 
   /**
+   * Route the channel layer's verbose lines into the agent's logger, so a
+   * failed mailbox send says WHY instead of returning a bare false.
+   */
+  setVerboseLogger(fn: (tool: string, message: string) => void): void {
+    this.channel.setVerboseLogger(fn);
+  }
+
+  /**
    * Register the tombstone reaction (§6.7). Forwarded to the IdentityManager,
    * which fires it ONCE when a stopper (`mycc-stop` / `down`) marks this
    * instance's heartbeat file. Wired once at startup by agent-repl.ts to run the

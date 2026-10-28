@@ -45,6 +45,11 @@ export interface WireSocketInfo {
   initiatorSid: string;
   /** True when the peer's announce has been received on this socket. */
   announceReceived: boolean;
+  /** True when WE dialed this socket (false for a socket we accepted).
+   *  Used as the deterministic convergence tie-break. */
+  dialedByUs: boolean;
+  /** When this socket's announce was recorded (tie-break: earlier wins). */
+  announcedAt: number;
   /** Peer announce metadata — display only. */
   meta: { workDir?: string; role?: string; daemon?: boolean };
 }
@@ -285,7 +290,15 @@ export function recordAnnounce(params: {
     info.meta = meta;
     info.announceReceived = true;
   } else {
-    info = { socket, sid, initiatorSid, meta, announceReceived: true };
+    info = {
+      socket,
+      sid,
+      initiatorSid,
+      meta,
+      announceReceived: true,
+      dialedByUs: dialed,
+      announcedAt: Date.now(),
+    };
     entry.sockets.push(info);
   }
 
@@ -333,12 +346,40 @@ export function recordAnnounce(params: {
 export function convergePairBySid(sid: string): WireSocketInfo[] | null {
   const group = socketsBySid.get(sid) ?? [];
   if (group.length < 2) return null;
-  // Winner: socket initiated by the smaller sid. Ties are impossible (a
-  // self-pair is refused by the announce-time backstop before this runs).
+  // Winner: socket initiated by the smaller sid. A TIE is possible and MUST be
+  // handled deterministically: for accepted sockets `initiatorSid` is the value
+  // the remote announced, so two sockets claiming the same sid tie — and an
+  // attacker announcing a victim's sid must not win by registering first.
+  // Tie-break (same on every side, independent of array order):
+  //   1. a socket WE dialed beats an accepted one (we opened it, so its
+  //      identity is ours to assert);
+  //   2. otherwise the socket that announced earlier wins.
   let winner = group[0];
   for (const s of group) {
-    if (s.initiatorSid < winner.initiatorSid) winner = s;
+    if (s.initiatorSid < winner.initiatorSid) {
+      winner = s;
+      continue;
+    }
+    if (s.initiatorSid === winner.initiatorSid) {
+      const sDialed = s.dialedByUs ? 1 : 0;
+      const wDialed = winner.dialedByUs ? 1 : 0;
+      if (sDialed !== wDialed) {
+        if (sDialed > wDialed) winner = s;
+        continue;
+      }
+      if (s.announcedAt < winner.announcedAt) winner = s;
+    }
   }
+  // Never let an UNPROVEN newcomer evict an ESTABLISHED pair. A socket whose
+  // announce we accepted but whose identity ties an existing live one is only
+  // allowed to replace it when it was dialed by us (we initiated it, so its
+  // identity is ours to assert). Otherwise the established socket wins and the
+  // newcomer becomes the loser — closing it is the safe, self-healing outcome
+  // (the legitimate remote redials; an impostor simply fails).
+  const established = group.find(
+    (s) => s !== winner && s.announceReceived && s.dialedByUs !== winner.dialedByUs && s.dialedByUs
+  );
+  if (established && !winner.dialedByUs) winner = established;
   const losers = group.filter((s) => s !== winner && s.socket.readyState === s.socket.OPEN);
   for (const loser of losers) {
     try { loser.socket.close(WIRE_CLOSE_SUPERSEDED, 'superseded'); } catch { /* closing */ }

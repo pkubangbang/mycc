@@ -668,6 +668,7 @@ export function getSessionId(filePath: string): string {
  */
 export function cleanupEmptySessions(currentSessionId: string): number {
   let removed = 0;
+  const removedIds: string[] = [];
   const now = Date.now();
   const oneMinuteAgo = now - 60 * 1000;
 
@@ -712,6 +713,7 @@ export function cleanupEmptySessions(currentSessionId: string): number {
         }
         fs.rmdirSync(sessionDir);
         removed++;
+        removedIds.push(session.id);
       }
     }
   }
@@ -735,10 +737,20 @@ export function cleanupEmptySessions(currentSessionId: string): number {
         }
         fs.rmdirSync(sessionDir);
         removed++;
+        removedIds.push(session.id);
       }
     }
   }
 
+  // Deletion without names is unauditable: a whole session directory (session
+  // json + transcript + mailbox) is gone, so name every one of them.
+  if (removedIds.length > 0) {
+    agentIO.brief(
+      'info',
+      'session',
+      `Cleanup removed ${removedIds.length} empty session(s): ${removedIds.join(', ')}`
+    );
+  }
   return removed;
 }
 

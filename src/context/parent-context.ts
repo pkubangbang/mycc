@@ -60,6 +60,13 @@ export class ParentContext implements AgentContext {
     const peerWorkDir = process.cwd();
     const peerMailboxPath = path.resolve(getSessionDir(peerSessionId), 'unread-lead.jsonl');
     this.peerModule = new PeerManager(peerSessionId, peerWorkDir, peerMailboxPath, getDaemonSkill(), shouldDaemon());
+    // Failed mailbox sends must say why (dead peer / no mailbox / append error)
+    // instead of returning a bare false — same channel the wire plane uses.
+    this.peerModule.setVerboseLogger((tool, message) => {
+      try {
+        agentIO.verbose(tool, message);
+      } catch { /* ignore */ }
+    });
     // Remote peer wire hooks (docs/peers/remote-peer-protocol.md §2 step 3, G3):
     // the wire plane (acceptor in src/serve/peer-wire.ts + dialer in
     // src/peer/wire-client.ts + registry in src/peer/wire-registry.ts)
