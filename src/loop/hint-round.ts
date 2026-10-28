@@ -62,6 +62,7 @@ import { retryChat, MODEL } from '../engine/chat-provider.js';
 import type { NoteCategory, WikiModule, SearchResult } from '../types.js';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { agentIO } from './agent-io.js';
+import { formatLocalDateTime } from '../utils/time.js';
 
 /** Signal returned by HintRound.run to steer the orchestrator. */
 export type HintSignal = 'continue' | 'stop';
@@ -140,6 +141,7 @@ CRITICAL INSTRUCTIONS:
    - When "## Recent Permission Blocks" is present, the goal is right but the REQUEST is wrong: name the rule and give the exact fix (reformat the intent to VERB OBJECT PARAM TO PURPOSE, switch off plan mode, call git_commit instead of bash git commit, or ask the lead to run it).
    - "No repeated-action evidence in the recent window" is EVIDENCE OF ABSENCE: do not invent a tool loop; treat the blocker as an unresolved task.
 8. Reply with ONLY a JSON object. No commentary, no markdown fences.
+   - "## Recent Briefs (this session)" lists the last status updates YOUR agent posted, oldest first. They are its own words about what it is doing. Use them to judge whether the work has drifted from the user's request or from the agent's own stated plan — a loop is often an agent faithfully executing a stale intention. Do NOT copy a brief into next_step, and do NOT treat a brief as the user's request.
 The schema is:
 ${JSON.stringify(HINT_SCHEMA, null, 2)}
 
@@ -725,6 +727,91 @@ function readRecentDenials(env: MachineEnv): RecordedDenial[] | null {
 }
 
 /**
+ * One recorded brief, as read back from this instance's own heartbeat file.
+ * The shape mirrors `BriefEntry` in src/peer/identity.ts — restated here so the
+ * hint round stays decoupled from the peer module (same reason
+ * `readRecentDenials` duck-types core).
+ */
+interface RecentBriefLine {
+  time: number;
+  content: string;
+  confidence: number;
+}
+
+/**
+ * How many of this instance's own briefs the analysis prompt carries.
+ *
+ * THREE is not arbitrary: it is MAX_BRIEFS in src/peer/identity.ts — the same
+ * rolling window the heartbeat file keeps and the `peer_list` tool displays. A
+ * brief is a rewind anchor (validateBriefIsolation), so the last three ARE the
+ * instance's working identity: the most recent one is its current focus, the
+ * two before it show the direction it arrived from. Feeding them to the
+ * analyzer lets it judge whether the agent has drifted from its own stated
+ * intent — evidence the transcript view cannot give, because each brief's text
+ * is already summarised into the conversation and the ORDER the briefs were
+ * posted in is exactly what "drifting" means.
+ *
+ * Mirrors `identity.json` → heartbeat file: identity names WHERE each session's
+ * mailbox lives per session-id; the heartbeat file holds the briefs. We read
+ * OUR OWN session-id through that same registry (ctx.peer), so the briefs we
+ * read are the ones `peer_list` would show for us — one source of truth.
+ */
+const RECENT_BRIEF_LIMIT = 3;
+
+/**
+ * Read this instance's own last {@link RECENT_BRIEF_LIMIT} briefs.
+ *
+ * Returns [] — and the section is then OMITTED — whenever the evidence is not
+ * available: a child process (NoopPeerModule returns an empty session id and
+ * no briefs), a lead whose discovery identity has not registered yet, or any
+ * throw from the peer module. Following the module's out-of-band rule, silence
+ * is the truthful output for "no briefs available"; a placeholder line is not.
+ * A brief the agent posts DURING the current turn is included — it is part of
+ * the same self-reported intent the analyzer judges.
+ *
+ * Exported for unit testing (the section builder is otherwise private).
+ */
+export function readRecentBriefs(env: MachineEnv): RecentBriefLine[] {
+  try {
+    const selfId = env.ctx.peer.getSelfSessionId();
+    if (!selfId) return [];
+    const briefs = env.ctx.peer.getBriefs(selfId);
+    if (!Array.isArray(briefs) || briefs.length === 0) return [];
+    return briefs
+      .filter((b) => b && typeof b.content === 'string' && b.content.trim() !== '')
+      // Heartbeat files are append-ordered, but sort defensively: a peer listing
+      // must never present a brief as "the latest" when it is not.
+      .slice()
+      .sort((a, b) => a.time - b.time)
+      .slice(-RECENT_BRIEF_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * One line per brief, plus an explicit reading instruction.
+ *
+ * Returns null on an empty list, which makes the caller OMIT the section — the
+ * same self-omitting contract as `## Recent Permission Blocks`. Confidence is
+ * rendered as the USER-FACING percentage the terminal shows (confidence × 10),
+ * not the raw 0-10 score, so the analyzer and the user read the same number.
+ */
+function formatRecentBriefs(briefs: RecentBriefLine[]): string | null {
+  if (briefs.length === 0) return null;
+  const lines: string[] = [
+    '## Recent Briefs (this session)',
+    `The last ${briefs.length} status update${briefs.length === 1 ? '' : 's'} your agent posted, newest last.`,
+    'These are its SELF-REPORTED intent, in order: the last one is what it is working on now, and the order reveals whether its direction has drifted from the user\'s request. Judge the gap against THEM — do not restate them as your next_step.',
+  ];
+  for (const b of briefs) {
+    const conf = Math.round((typeof b.confidence === 'number' ? b.confidence : 0) * 10);
+    lines.push(`- [${formatLocalDateTime(b.time)}] (conf ${conf}%) ${sanitizeField(b.content)}`);
+  }
+  return lines.join('\n');
+}
+
+/**
  * One line per denial: what was refused, and why.
  *
  * Returns null on an empty list, which makes the caller OMIT the section
@@ -817,9 +904,9 @@ function readHeldGuards(env: MachineEnv): HeldGuardLine[] {
  * Build the OUT-OF-BAND state sections prefixed to the analysis prompt.
  *
  * The module's design rule: the prompt carries only state `minifyMessages`
- * cannot reconstruct from the transcript. Todos, the write scope and recent
- * permission blocks all qualify; counters do not, which is why the confusion
- * score / turn count / error count are absent.
+ * cannot reconstruct from the transcript. Todos, the write scope, recent
+ * permission blocks and the instance's own recent briefs all qualify; counters
+ * do not, which is why the confusion score / turn count / error count are absent.
  *
  * Every section self-omits when it has nothing to say, so a quiet session adds
  * little beyond `## Todo List`.
@@ -848,6 +935,17 @@ function buildStateSections(env: MachineEnv): string[] {
     }
   }
   parts.push(todoLines.join('\n'));
+
+  // ── Recent Briefs (this session) ──
+  // Out-of-band: the briefs are read from this instance's own heartbeat file
+  // (the file identity.json points at for OUR session-id), NOT from the
+  // transcript. The transcript only carries the brief TOOL RESULTS, not the
+  // posted messages, and it never preserves "which of these was the latest" —
+  // so drift between the agent's stated intent and its actual work is
+  // invisible to a transcript-only analysis. Omitted when unavailable (child
+  // process, unregistered identity, or a session with no briefs yet).
+  const briefEvidence = formatRecentBriefs(readRecentBriefs(env));
+  if (briefEvidence) parts.push(briefEvidence);
 
   // ── Mode & Write Scope ──
   // Plan mode only: "normal — writes permitted" is a constant and would be the
