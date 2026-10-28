@@ -74,7 +74,9 @@ describe('A2 hub/provider wipe-site pins (source-text guards)', () => {
     // `this.steeringQueue = []` / bare clear() in stop(); the guard must be
     // present between stop() start and the wipe call.
     const stopIdx = hubSrc.indexOf('async stop(skipAbortInput');
-    const clearIdx = hubSrc.indexOf('getSteeringManager().clear()');
+    // The CALL site, not the comments: comments above stop() also mention
+    // `getSteeringManager().clear()`, so match the statement form.
+    const clearIdx = hubSrc.indexOf('{ getSteeringManager().clear(); }');
     expect(stopIdx).toBeGreaterThan(-1);
     expect(clearIdx).toBeGreaterThan(stopIdx);
     const stopBody = hubSrc.slice(stopIdx, clearIdx + 40);

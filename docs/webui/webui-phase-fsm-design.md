@@ -120,8 +120,10 @@ These can co-occur with any phase and are stored independently:
   `working`-in-auto and `working`-in-manual are the same phase; the auto
   flag is independent. `await` is the idle-auto phase; `auto:on` while
   `working` flips the boolean without changing phase.
-- `steeringBuffer: SteeringNote[]` — buffered notes (chips in buffer bar)
-- `pendingSteeringReview: SteeringNote[]` — review card notes (co-occurs with `prompt` only)
+- `steeringBuffer: SteeringNote[]` — DERIVED: queued notes minus review (chips in buffer bar)
+- `steeringQueue: SteeringNote[]` — authoritative snapshot of the backend queue
+- `steeringRevision: number` — the adopted revision (per serve process; reset on session change)
+- `pendingSteeringReview: SteeringNote[]` — review card notes (subset of `steeringQueue`, co-occurs with `prompt` only)
 - `messages`, `teammateMessages` — chat history
 - `inputText`, `pendingFiles` — input state
 - `connectionStatus`, `showRetry`, `verboseLogs`, `darkMode`, `debugMode`
@@ -193,16 +195,25 @@ await           → working        (no-op)             → prompt        → car
 > handles wire messages; the disconnect-clear path is handled separately in
 > the `onclose` handler (sets phase to `idle`, clears `hasPendingCard`).
 
-**Steering-specific transitions** (orthogonal, do not change phase):
+**Steering-specific transitions** (orthogonal, do not change phase).
+**SUPERSEDED (2026-10-27):** the delta protocol (`steer-echo` / `steer-flush` /
+optimistic `steer-resolve`) was replaced by ONE revisioned snapshot wire type,
+`steer-state`, and `resolve-guard.ts` was deleted with it. The current rules:
 
 | Event | Condition | Effect |
 |-------|-----------|--------|
-| `steer-echo` | any phase | Push note to `steeringBuffer` |
-| `steer-flush` | any phase | Clear `steeringBuffer` |
-| `prompt` | `steeringBuffer.length > 0` + non-auto | Move to `pendingSteeringReview`, clear buffer |
-| `prompt` | `steeringBuffer.length > 0` + auto | Clear buffer (abandon) |
+| `steer-state` | `steeringRevision > store.steeringRevision` | **Adopt**: replace `steeringQueue`, prune `pendingSteeringReview` to ids still in the snapshot, set `steeringBuffer = queue − review` |
+| `steer-state` | revision `<=` current | **Ignore** (a stale `/history` reply or a replayed frame) |
+| `/history` 200 | same adoption rule | The snapshot rides with `steeringRevision` |
+| `prompt` | queue non-empty + non-auto | Move every queued note into `pendingSteeringReview` (id-deduped), bar empties |
+| `prompt` | queue non-empty + auto | Abandon: no card, notes stay chips in the bar |
 | `auto:on` | any | Clear `pendingSteeringReview`, set `isAutoMode=true` |
-| `steer-resolve` | any | Clear `pendingSteeringReview` + `steeringBuffer` (optimistic) |
+| `steer-resolve` (client→server) | any | Send only. The card disappears when a snapshot stops containing its ids — no optimistic clear, no guard |
+
+Why: a `steer-flush` carried no ids, so the client could not tell which drain it
+was looking at. It had to *guess* delivery (the now-deleted `resolve-guard`),
+and an in-flight `/history` snapshot could re-insert a note the user had just
+resolved. With a revision, "consumed" is an ordering fact, not a boolean.
 
 **Client-side optimistic transitions** (in `chatApi`, via store actions):
 
@@ -377,25 +388,22 @@ never persist — the next event must resolve it.
 > produce false failures.
 
 **Invariant 2 — No-lost-notes:**
-Every `steer-echo` note is eventually:
-- Consumed by the agent (`steer-flush` — drained at COLLECT/PROMPT), OR
+Every steering note is eventually:
+- Consumed by the agent (drained at COLLECT/PROMPT or delivered at a seam), OR
 - Surfaced as a review card (`pendingSteeringReview` populated at `prompt`), OR
 - Explicitly discarded by the user (`steer-resolve` with partial/empty `sendIds`), OR
 - Abandoned by auto-mode entry (acceptable loss)
 
-No note vanishes silently.
+No note vanishes silently. (The snapshot protocol makes this checkable by id —
+see Invariant 3.)
 
-**Invariant 3 — Dual-buffer sync (with auto-abandon exception):**
-After every event, `backend.steeringQueue.length === frontend.steeringBuffer.length`,
-**EXCEPT** during the auto-abandon window: when `prompt` arrives in auto
-mode, the frontend clears `steeringBuffer` (abandon) but the backend queue
-still holds the notes until COLLECT drains them. So the invariant is:
-
-> `backend.length >= frontend.length`, and they converge after the next
-> `steer-flush` (COLLECT drain) or `steer-resolve`.
-
-> **Peer finding (DeepSeek):** Without this exception, the harness would
-> produce false failures in the auto-abandon case.
+**Invariant 3 — Review ⊆ queue, and buffer = queue − review** (replaces the
+old dual-buffer-sync invariant, whose auto-abandon exception is gone):
+`pendingSteeringReview` may only hold ids present in `steeringQueue`, and
+`steeringBuffer` is exactly the remainder. Both are recomputed by
+`adoptSteering`, so a client can never show a note the server no longer queues,
+nor render one id twice. There is no drift window to except: the bar is a
+projection, not a copy.
 
 **Invariant 4 — Review-card-only-in-prompt:**
 `pendingSteeringReview.length > 0` implies `phase === 'prompt'`. The review
@@ -450,11 +458,16 @@ Assertions (after each event in every sequence):
   - assertNoDeadlock(store)          — phase must not be 'idle' at sequence end
                                        (gated on connectionStatus === 'connected')
   - assertNoLostNotes(backend, store) — note accounting
-  - assertDualBufferSync(backend, store) — backend.length >= frontend.length,
-                                            converge after flush/resolve
+  - assertReviewSubsetOfQueue(store)  — every review id is in steeringQueue, and
+                                        steeringBuffer ∪ review partitions it
   - assertReviewOnlyInPrompt(store)   — pendingSteeringReview.length > 0
                                          implies phase === 'prompt'
 ```
+
+> **superseded (2026-10-27):** `assertDualBufferSync` is gone with the delta
+> protocol; `assertReviewSubsetOfQueue` replaces it and has no exception window.
+> The chaos-monkey vocabulary is now `steer-state {revision, notes}` in place of
+> `steer-echo` / `steer-flush` throughout Section 4's event list.
 
 > **Peer finding (glm-5.3-flash):** Keep the `lastServerMsg` diagnostic hook
 > and the vacuum stage ('空窗·疑似失同步') in the migrated store.

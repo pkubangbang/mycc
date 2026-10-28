@@ -406,14 +406,15 @@ export async function handlePrompt(
   // Peek/drain go through the loop-homed manager (plan §6 — hub steering
   // methods would side-effect-instantiate a hub in non-serve runs, Δ3). The
   // old hub.isRunning() outer gate is dropped for the SAME reason as
-  // collect.ts 2c: an empty manager is a natural no-op. The steer-flush
-  // broadcast still rides the hub and only fires when something drained.
+  // collect.ts 2c: an empty manager is a natural no-op. The drain is reported
+  // to the WebUI by the manager's onChange observer, so this state never
+  // broadcasts steering itself.
   if (query !== null) {
     const staleNotes = getSteeringManager().drainNotes().map((note) => note.text);
     if (staleNotes.length > 0) {
-      // Flush the UI for exactly this drained snapshot before awaiting synthesis.
-      // Notes arriving during the await remain queued and visible for later.
-      hub?.broadcast('steer-flush', '');
+      // The drain already emitted its (now empty) snapshot before the await,
+      // so the UI clears for exactly this drained set. Notes arriving during
+      // the await remain queued and visible for later.
       const freshQuery: string = query;
       const fullMessages = [...triologue.getMessages()];
       const tools = loader.getToolsForScope(env.scope);

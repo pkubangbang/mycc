@@ -29,6 +29,18 @@ const { forkChat } = vi.hoisted(() => ({ forkChat: vi.fn(async () => '') }));
 
 vi.mock('../../../engine/chat-provider.js', () => ({ forkChat }));
 
+// The spinner is a REAL module-global animation (an 80ms interval writing
+// "\r<frame>" plus cursor-hide/show escapes to stdout) and hook.ts now owns a
+// start/stop pair around the reflection fork. Unmocked, every test below would
+// paint raw ANSI into the vitest stdout AND leak a live interval when the fork
+// rejects (the pair's `finally` still runs, but the assertion order matters
+// only if we can observe the calls at all). Mocking it pins the ownership
+// contract: the wait indicator belongs to the CALLER.
+vi.mock('../../../engine/chat-helpers.js', () => ({
+  startSpinner: vi.fn(),
+  stopSpinner: vi.fn(),
+}));
+
 vi.mock('../../../loop/agent-io.js', () => {
   let neglected = false;
   return {
@@ -66,6 +78,7 @@ vi.mock('../../../mindmap/patch-jsonl.js', () => ({
 import { handleHook } from '../../../loop/states/hook.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { agentIO } from '../../../loop/agent-io.js';
+import { startSpinner, stopSpinner } from '../../../engine/chat-helpers.js';
 import { Triologue } from '../../../loop/triologue.js';
 import { PLAN_SCOPE_HEADING } from '../../../loop/triologue/recap-note.js';
 import {
@@ -136,6 +149,78 @@ describe('HOOK-stage plan-mode scope reflection', () => {
     expect(call).toBeDefined();
     expect(call![2]).toBe('recon done');
     expect(call![3]).toBe('confidence: 70%');
+  });
+
+  it('PLAN mode: the reflection fork is PAINTED — the caller owns the spinner pair', async () => {
+    const { env, chat } = makeEnv('plan');
+    await handleHook(env, createTurnVars(), chat);
+
+    // forkChat is permanently noSpinner and retryChat's own spinner died in the
+    // provider's finally before HOOK, so without this pair the terminal shows
+    // NOTHING for the whole reflection. Assert the order: start → fork → stop.
+    expect(startSpinner).toHaveBeenCalledTimes(1);
+    expect(stopSpinner).toHaveBeenCalledTimes(1);
+    const startedAt = vi.mocked(startSpinner).mock.invocationCallOrder[0];
+    const forkedAt = vi.mocked(forkChat).mock.invocationCallOrder[0];
+    const stoppedAt = vi.mocked(stopSpinner).mock.invocationCallOrder[0];
+    expect(startedAt).toBeLessThan(forkedAt);
+    expect(forkedAt).toBeLessThan(stoppedAt);
+  });
+
+  it('PLAN mode: the spinner is stopped even when the fork fails (no leaked line)', async () => {
+    forkChat.mockRejectedValue(new Error('provider down'));
+    const { env, chat } = makeEnv('plan');
+    await handleHook(env, createTurnVars(), chat);
+
+    // `finally`, not a success-path stop: a leaked spinner leaves the cursor
+    // hidden and the terminal spinning into the next state.
+    expect(startSpinner).toHaveBeenCalledTimes(1);
+    expect(stopSpinner).toHaveBeenCalledTimes(1);
+  });
+
+  it('PLAN mode: the assistant PROSE is printed too, before the brief line', async () => {
+    const { env, chat } = makeEnv('plan');
+    await handleHook(env, createTurnVars(), chat);
+
+    // This path answers the turn itself, so the normal step-6 print never runs.
+    // Without an explicit call the model's explanation of WHY it is briefing
+    // was registered into the triologue and then never shown to the user.
+    const brief = vi.mocked(env.ctx.core.brief);
+    const prose = brief.mock.calls.find((c) => c[1] === 'assistant');
+    expect(prose).toBeDefined();
+    expect(prose![2]).toBe('briefing');
+
+    // Ordering: prose → brief → plan-scope, the same order every other path uses.
+    const labels = brief.mock.calls.map((c) => c[1]).filter((l) => l === 'assistant' || l === 'brief' || l === 'plan-scope');
+    expect(labels).toEqual(['assistant', 'brief', 'plan-scope']);
+  });
+
+  it('PLAN mode: a failing fork still prints the prose — exactly once', async () => {
+    forkChat.mockRejectedValue(new Error('provider down'));
+    const { env, chat } = makeEnv('plan');
+    await handleHook(env, createTurnVars(), chat);
+
+    // Falls through to the normal turn, which prints the prose at step 6 — so
+    // this path must NOT print it here as well. One print, not zero, not two:
+    // zero was the pre-fix behaviour on the ANSWERED path, and duplicating it
+    // here would be the mirror-image bug.
+    const brief = vi.mocked(env.ctx.core.brief);
+    expect(brief.mock.calls.filter((c) => c[1] === 'assistant')).toHaveLength(1);
+  });
+
+  it('PLAN mode: the fork runs on the tight retry budget, not the loop defaults', async () => {
+    const { env, chat } = makeEnv('plan');
+    await handleHook(env, createTurnVars(), chat);
+
+    // The reflection is an enhancement attached to a brief; the brief's work
+    // waits behind it. The loop defaults (20s first token escalating to a 120s
+    // response cap, 3 retries) would blank the terminal for ~4 min on a hung
+    // endpoint, against a note that is dropped on failure anyway.
+    const cfg = (vi.mocked(forkChat).mock.calls[0] as unknown[])[5] as Record<string, number>;
+    expect(cfg).toBeDefined();
+    expect(cfg.firstTokenTimeoutMs).toBeLessThanOrEqual(10_000);
+    expect(cfg.responseTimeoutMs).toBeLessThanOrEqual(30_000);
+    expect(cfg.maxRetries).toBeLessThanOrEqual(1);
   });
 
   it('PLAN mode: the reflection is a SEPARATE plan-scope block, not a note on the brief', async () => {

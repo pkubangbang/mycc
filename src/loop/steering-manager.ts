@@ -34,12 +34,42 @@
  * Pure, framework-free, side-effect-free: no imports at all, so it can be
  * unit-tested in the node-environment Vitest suite WITHOUT importing the
  * heavy serve-hub.ts module graph (Express + Vite + agent-io).
+ *
+ * ── Revisioned snapshots (the identity fix) ──────────────────────────────
+ * The WebUI used to reconstruct this queue from DELTA events: `steer-echo`
+ * (add one, carries an id) and `steer-flush` (clear all, carries NOTHING).
+ * A clear-all event cannot be attributed to a specific drain, so the client
+ * had to GUESS whether its own `steer-resolve` had landed (see the deleted
+ * src/web/src/resolve-guard.ts) and an in-flight /history snapshot could
+ * re-insert an already-resolved note.
+ *
+ * Every mutation now bumps a monotonic `revision` and notifies subscribers
+ * with the WHOLE queue ({revision, notes}). The hub registers ONE observer
+ * (ServeHub.start) and broadcasts it as `steer-state`; the client adopts a
+ * snapshot iff `revision > lastAdopted`. Consequences:
+ *   - drains need not name what they consumed (the snapshot says what
+ *     SURVIVED), so attribution is structural rather than inferred;
+ *   - a stale /history snapshot carries an older revision and is rejected;
+ *   - the resolve guard, id-deduping on echoes, and the `steer:<length>`
+ *     ETag all disappear (length cannot see id churn; revision can).
+ * The revision is per-process: a new serve process starts at 0, so a client
+ * that outlives the process must reset its adopted revision (see
+ * fetchConfig's session-change branch in main.ts).
  */
 
 export interface SteeringNote {
   id: number;
   text: string;
 }
+
+/** The queue plus its version — the unit of client adoption. */
+export interface SteeringSnapshot {
+  revision: number;
+  notes: SteeringNote[];
+}
+
+/** Observer signature: called once per mutation with the post-mutation state. */
+export type SteeringListener = (snapshot: SteeringSnapshot) => void;
 
 /**
  * Resolve a steering queue with positive "boomerang" semantics:
@@ -76,6 +106,51 @@ export class SteeringManager {
   /** Ordered notes; ids are monotonic within the process (never reset by clear()). */
   private notes: SteeringNote[] = [];
   private idCounter = 0;
+  /**
+   * Monotonic queue version. Bumped by EVERY mutation (add / drain / resolve
+   * / clear) so a client can order snapshots against each other without
+   * relying on arrival order — the whole point of the revisioned-snapshot
+   * protocol (see the header). Never reset, not even by clear().
+   */
+  private revision = 0;
+  /** Registered observers (the hub registers exactly one, at start()). */
+  private listeners = new Set<SteeringListener>();
+
+  /** Current queue + version. The client-side unit of adoption. */
+  snapshot(): SteeringSnapshot {
+    return { revision: this.revision, notes: this.notes.slice() };
+  }
+
+  /** Current version only (read by the /history ETag composition). */
+  getRevision(): number {
+    return this.revision;
+  }
+
+  /**
+   * Register a mutation observer. Returns an unsubscribe function.
+   *
+   * Emission is INTRINSIC to mutation, deliberately: the previous design made
+   * each drain site hand-broadcast `steer-flush`, so a new drain site added
+   * later would silently forget to notify anyone. Callers of the mutators
+   * cannot forget a listener they never call.
+   *
+   * A throwing listener is isolated — one bad observer must not break a
+   * mutation (the queue has already been mutated by then; the emit is a
+   * report, not part of the transaction).
+   */
+  onChange(listener: SteeringListener): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+
+  /** Bump the revision and report the post-mutation snapshot to all observers. */
+  private emit(): void {
+    this.revision++;
+    const snapshot = this.snapshot();
+    for (const listener of this.listeners) {
+      try { listener(snapshot); } catch { /* isolate observer failures */ }
+    }
+  }
 
   /**
    * Append a note, minting its stable id. Sole entry point for new notes —
@@ -84,6 +159,7 @@ export class SteeringManager {
   addNote(text: string): SteeringNote {
     const note: SteeringNote = { id: ++this.idCounter, text };
     this.notes.push(note);
+    this.emit();
     return note;
   }
 
@@ -111,11 +187,16 @@ export class SteeringManager {
     return this.notes.map((n) => n.text);
   }
 
-  /** Atomically take all notes; queue becomes empty. */
+  /**
+   * Atomically take all notes; queue becomes empty. A no-op drain does NOT
+   * emit — an empty queue has no state change to report (a drain site runs on
+   * every COLLECT, and a pointless emit per turn would spam every client).
+   */
   drainNotes(): SteeringNote[] {
     if (this.notes.length === 0) return [];
     const drained = this.notes;
     this.notes = [];
+    this.emit();
     return drained;
   }
 
@@ -147,9 +228,14 @@ export class SteeringManager {
   }
 
   /** Wipe the queue. Lifecycle-only: terminal stop / input fallback (A2) —
-   * never called by restartServe() or any park-time seam. */
+   * never called by restartServe() or any park-time seam.
+   *
+   * Emits even when already empty (unlike drainNotes): clear() is an
+   * authoritative "queue is empty" statement, and a client that missed
+   * earlier events can then be re-synced by the resulting snapshot. */
   clear(): void {
     this.notes = [];
+    this.emit();
   }
 }
 

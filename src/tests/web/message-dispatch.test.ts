@@ -29,7 +29,9 @@ function makeState(): DispatchState & {
 } {
   const phase = ref<WebuiPhase>('idle');
   const isAutoMode = ref(false);
+  const steeringQueue = reactive<SteeringNote[]>([]);
   const steeringBuffer = reactive<SteeringNote[]>([]);
+  const steeringRevision = ref(-1);
   const pendingSteeringReview = reactive<SteeringNote[]>([]);
   const messages = reactive<ChatMessage[]>([]);
   const teammateMessages = reactive<ChatMessage[]>([]);
@@ -48,6 +50,34 @@ function makeState(): DispatchState & {
     isAutoMode.value = value;
     if (value) pendingSteeringReview.splice(0);
   }
+  // Mirror of stores/chat-store.ts adoptSteering/populateSteeringReview — the
+  // dispatch tests exercise the WIRING, and the real rule itself is pinned by
+  // the store suite. Kept identical in intent so a divergence shows up here.
+  function adoptSteering(revision: number, notes: SteeringNote[]): boolean {
+    if (revision <= steeringRevision.value) return false;
+    steeringRevision.value = revision;
+    steeringQueue.splice(0, steeringQueue.length, ...notes.slice());
+    const liveIds = new Set(notes.map((n) => n.id));
+    const kept = pendingSteeringReview.filter((n) => liveIds.has(n.id));
+    pendingSteeringReview.splice(0, pendingSteeringReview.length, ...kept);
+    const reviewIds = new Set(kept.map((n) => n.id));
+    steeringBuffer.splice(0, steeringBuffer.length, ...steeringQueue.filter((n) => !reviewIds.has(n.id)));
+    return true;
+  }
+  function populateSteeringReview(): void {
+    if (isAutoMode.value) {
+      pendingSteeringReview.splice(0);
+      steeringBuffer.splice(0, steeringBuffer.length, ...steeringQueue.slice());
+      return;
+    }
+    const seen = new Set(pendingSteeringReview.map((n) => n.id));
+    for (const note of steeringQueue) {
+      if (seen.has(note.id)) continue;
+      seen.add(note.id);
+      pendingSteeringReview.push(note);
+    }
+    steeringBuffer.splice(0, steeringBuffer.length, ...steeringQueue.filter((n) => !seen.has(n.id)));
+  }
 
   // Return a reactive proxy so .value refs are unwrapped on access (matching
   // how a Pinia store instance exposes its state). Using reactive() on an
@@ -55,6 +85,7 @@ function makeState(): DispatchState & {
   return reactive({
     phase,
     isAutoMode,
+    steeringQueue,
     steeringBuffer,
     pendingSteeringReview,
     messages,
@@ -67,6 +98,8 @@ function makeState(): DispatchState & {
     hasReview,
     setPhase,
     setAutoMode,
+    adoptSteering,
+    populateSteeringReview,
   }) as DispatchState & {
     isWaiting: boolean;
     isRunning: boolean;
@@ -85,16 +118,19 @@ function makeCtx(overrides: { sendInput?: (text: string) => void } = {}) {
   };
 }
 
-function steerEcho(content: string, steerId: number): ChatMessage {
-  return { type: 'steer-echo', content, steerId };
+/**
+ * Build a 'steer-state' snapshot frame. `revision` is the queue version the
+ * server stamped; the client adopts only strictly newer ones.
+ */
+function steerState(revision: number, notes: { id: number; text: string }[]): ChatMessage {
+  return { type: 'steer-state', content: '', steeringRevision: revision, notes };
 }
 
-describe('applyServerMessage — steering review card', () => {
-  it('moves pending steering notes into review at prompt (non-auto)', () => {
+describe('applyServerMessage — steering snapshot adoption', () => {
+  it('adopts a snapshot into the buffer bar and moves notes into review at prompt (non-auto)', () => {
     const state = makeState();
     const ctx = makeCtx();
-    applyServerMessage(state, steerEcho('note A', 1), ctx);
-    applyServerMessage(state, steerEcho('note B', 2), ctx);
+    applyServerMessage(state, steerState(1, [{ id: 1, text: 'note A' }, { id: 2, text: 'note B' }]), ctx);
     expect(state.steeringBuffer.map((n) => n.id)).toEqual([1, 2]);
     expect(state.pendingSteeringReview).toEqual([]);
 
@@ -105,55 +141,101 @@ describe('applyServerMessage — steering review card', () => {
     expect(state.isWaiting).toBe(true);
   });
 
-
-  it('does NOT stack duplicate review cards when the same steer id arrives twice (boomerang)', () => {
+  it('a STALE snapshot is rejected — a consumed id cannot come back (the boomerang)', () => {
     const state = makeState();
     const ctx = makeCtx();
-    // A note is queued, surfaced at prompt, then — after a reconnect whose
-    // /history replay repopulates the buffer — the server sends `prompt` again.
-    applyServerMessage(state, steerEcho('once', 1), ctx);
+    // Queued (rev 1), surfaced at prompt (rev 1), then resolved server-side.
+    applyServerMessage(state, steerState(1, [{ id: 7, text: 'consumed' }]), ctx);
+    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
+    expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([7]);
+    // The resolve drained the queue: rev 2, empty.
+    applyServerMessage(state, steerState(2, []), ctx);
+    expect(state.pendingSteeringReview).toEqual([]);
+    expect(state.steeringBuffer).toEqual([]);
+    expect(state.steeringQueue).toEqual([]);
+
+    // An in-flight /history reply snapshotted BEFORE the resolve arrives late.
+    // It must be ignored: older revision, and it still carries id 7.
+    const adopted = state.adoptSteering(1, [{ id: 7, text: 'consumed' }]);
+    expect(adopted).toBe(false);
+    expect(state.steeringBuffer).toEqual([]);
+    expect(state.pendingSteeringReview).toEqual([]);
+  });
+
+  it('an equal revision is a no-op (idempotent replay)', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, steerState(3, [{ id: 1, text: 'a' }]), ctx);
+    applyServerMessage(state, steerState(3, [{ id: 1, text: 'a' }, { id: 2, text: 'b' }]), ctx);
+    expect(state.steeringQueue.map((n) => n.id)).toEqual([1]);
+  });
+
+  it('review is pruned to live ids — the ESC contract survives', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, steerState(1, [{ id: 1, text: 'a' }, { id: 2, text: 'b' }]), ctx);
+    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
+    expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([1, 2]);
+    // ESC kept both notes queued; a later snapshot still holds both → the card
+    // must NOT be emptied by the adoption itself.
+    applyServerMessage(state, steerState(2, [{ id: 1, text: 'a' }, { id: 2, text: 'b' }]), ctx);
+    expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([1, 2]);
+    // The agent consumes id 1: the card drops exactly that one.
+    applyServerMessage(state, steerState(3, [{ id: 2, text: 'b' }]), ctx);
+    expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([2]);
+  });
+
+  it('does NOT stack duplicate review cards when the same id is reviewed twice (reconnect prompt)', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, steerState(1, [{ id: 1, text: 'once' }]), ctx);
     applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
     expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([1]);
 
-    applyServerMessage(state, steerEcho('once', 1), ctx);
+    // A reconnect re-sends prompt against the same snapshot (304 path).
     applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
-
-    // Exactly one card for id 1 — the old code pushed a duplicate, and
-    // resolving one left the twin to be submitted a second time.
     expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([1]);
   });
 
   it('still surfaces a genuinely NEW note alongside an already-reviewed one', () => {
     const state = makeState();
     const ctx = makeCtx();
-    applyServerMessage(state, steerEcho('first', 1), ctx);
+    applyServerMessage(state, steerState(1, [{ id: 1, text: 'first' }]), ctx);
     applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
-    applyServerMessage(state, steerEcho('second', 2), ctx);
+    applyServerMessage(state, steerState(2, [{ id: 1, text: 'first' }, { id: 2, text: 'second' }]), ctx);
     applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
 
     expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([1, 2]);
   });
 
-  it('steer-flush clears only the buffer, never populates review', () => {
+  it('a drained snapshot clears only the buffer, never populates review', () => {
     const state = makeState();
     const ctx = makeCtx();
-    applyServerMessage(state, steerEcho('consumed', 1), ctx);
-    applyServerMessage(state, { type: 'steer-flush', content: '' }, ctx);
+    applyServerMessage(state, steerState(1, [{ id: 1, text: 'consumed' }]), ctx);
+    applyServerMessage(state, steerState(2, []), ctx);
     expect(state.steeringBuffer).toEqual([]);
     expect(state.pendingSteeringReview).toEqual([]);
     expect(state.isWaiting).toBe(false);
   });
 
-
   it('auto:on abandons any pending review', () => {
     const state = makeState();
     const ctx = makeCtx();
-    applyServerMessage(state, steerEcho('note A', 1), ctx);
+    applyServerMessage(state, steerState(1, [{ id: 1, text: 'note A' }]), ctx);
     applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
     expect(state.pendingSteeringReview).toHaveLength(1);
     applyServerMessage(state, { type: 'auto', content: 'on' }, ctx);
     expect(state.isAutoMode).toBe(true);
     expect(state.pendingSteeringReview).toEqual([]);
+  });
+
+  it('a steer-state frame NEVER lands in the chat log (unknown-type fallthrough guard)', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    const before = state.messages.length;
+    applyServerMessage(state, steerState(1, [{ id: 1, text: 'note' }]), ctx);
+    expect(state.messages.length).toBe(before);
+    expect(state.teammateMessages.length).toBe(0);
   });
 });
 

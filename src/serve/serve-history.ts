@@ -75,7 +75,7 @@ function djb2(str: string): string {
 export function computeHistoryVersion(
   transcriptPath: string | null,
   messageLog: LogEntry[],
-  steeringLength: number,
+  steeringRevision: number,
   isRunning: boolean,
 ): string {
   const parts: string[] = [];
@@ -100,7 +100,11 @@ export function computeHistoryVersion(
     : 0;
   parts.push(`log:${messageLog.length}:${lastTs}`);
   // Transient fields that live in the body but NOT in the durable files.
-  parts.push(`steer:${steeringLength}`);
+  // The steering queue is folded in by REVISION, not by length: a drain that
+  // removes one note while another arrives keeps the length identical but
+  // changes the set the client must adopt (see the revisioned-snapshot note
+  // in src/loop/steering-manager.ts).
+  parts.push(`steer:${steeringRevision}`);
   parts.push(`running:${isRunning ? 1 : 0}`);
   return `W/"h${djb2(parts.join('|'))}"`;
 }

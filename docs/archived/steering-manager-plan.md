@@ -162,7 +162,17 @@ registration stubs). Hub seam tests use the REAL manager singleton (no manager m
 
 ## 11. Non-goals
 
-- No change to the WS steer protocol, `HubHandler` shape, journal 'steer' record, or steer-echo payload.
+> **SUPERSEDED (2026-10-27).** The first bullet below is void. The WS steer
+> protocol WAS changed: `steer-echo` + `steer-flush` → one revisioned
+> `steer-state {steeringRevision, notes}` emitted from `SteeringManager.onChange`
+> (hub subscribes in `start()`), `/history` carries `steeringRevision`, and
+> `src/web/src/resolve-guard.ts` was deleted. Reason: a payload-less flush could
+> not be attributed to a drain, so the client had to guess delivery and an
+> in-flight `/history` snapshot could re-insert a resolved note — the "boomerang".
+> See the header of `src/loop/steering-manager.ts` and
+> `docs/webui/webui-phase-fsm-design.md` §3 (steering transitions).
+
+- ~~No change to the WS steer protocol, `HubHandler` shape, journal 'steer' record, or steer-echo payload.~~
 - No callback registration API (user directive); the wake rides a direct gated hub call.
 - File-upload queuing stays hub-owned.
 - stop.ts bounded-await reconciliation and centralized neglection wrap-up in STOP are untouched (pitfall

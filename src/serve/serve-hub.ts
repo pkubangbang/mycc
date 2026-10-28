@@ -87,6 +87,14 @@ export class ServeHub implements HubHandler, ServeHubLike {
   // ServeHub is the sole WRITER (the only reader of the WS 'steer' frame);
   // loop states READ the process-wide singleton via peek/drain/isNonEmpty
   // (src/loop/steering-manager.ts). The hub holds no queue field anymore.
+  //
+  // EMISSION is intrinsic to mutation (SteeringManager.onChange), not a
+  // call-site duty: this hub registers exactly ONE observer in start() and
+  // unsubscribes it in stop(), so every add/drain/resolve/clear — including
+  // the ones the loop states perform — reaches the WebUI as one versioned
+  // `steer-state` snapshot. The old hand-written `steer-flush` broadcasts at
+  // four call sites are gone with the delta protocol they served.
+  private unsubscribeSteering: (() => void) | null = null;
 
   // ── File upload queue — ephemeral in-memory buffer ──
   private fileUploadQueue: FileUploadEntry[] = [];
@@ -250,6 +258,22 @@ export class ServeHub implements HubHandler, ServeHubLike {
     this.port = port;
     this.host = host ?? null;
 
+    // Subscribe to steering mutations as the stack comes up, so a note queued
+    // during startup is still reported. Gated on isRunning() inside the
+    // observer: web-input-provider's terminal-fallback paths call
+    // getSteeringManager().clear() AFTER the hub began shutting down, and
+    // emitting onto a dead hub there would be the 停止-button race the manager
+    // was created to kill. Unsubscribed in stop(), so a restartServe() recycle
+    // re-subscribes exactly once instead of double-emitting.
+    this.unsubscribeSteering?.();
+    this.unsubscribeSteering = getSteeringManager().onChange((snapshot) => {
+      if (!this.isRunning()) return;
+      this.clients.broadcastBespoke('steer-state', {
+        steeringRevision: snapshot.revision,
+        notes: snapshot.notes,
+      });
+    });
+
     try {
       this.expressApp = express();
       this.httpServer = http.createServer(this.expressApp);
@@ -406,12 +430,15 @@ export class ServeHub implements HubHandler, ServeHubLike {
       // (via If-None-Match) before using a stored copy. When the revalidation
       // ETag matches, the server returns a 0-byte 304 and the client keeps its
       // hydrated copy — the lock-screen wake path. The ETag folds in transient
-      // fields (steering-length, isRunning) so a state flip is never masked by a
-      // 304.
+      // fields (steering REVISION, isRunning) so a state flip is never masked
+      // by a 304. The revision, not the queue length: a drain that removes one
+      // note while another is queued keeps the length constant but changes the
+      // set, and length cannot see id churn.
       this.expressApp.get('/history', (req, res) => {
+        const steering = getSteeringManager().snapshot();
         const etag = computeHistoryVersion(
           this.transcriptPath, this.messageLog,
-          getSteeringManager().peekNotes().length, this.agentRunning,
+          steering.revision, this.agentRunning,
         );
         res.set('ETag', etag);
         res.set('Cache-Control', 'no-cache');
@@ -432,11 +459,13 @@ export class ServeHub implements HubHandler, ServeHubLike {
         const history = readHistory(this.transcriptPath, this.messageLog);
         const payload = JSON.stringify({
           messages: history,
-          // steeringBuffer is now {id,text}[] (plan §5 — C6 fix): the frontend
-          // types it SteeringNote[] (main.ts/types.ts) and uses the ids for
-          // per-note discard/send on the review card; serializing string[] lost
-          // the ids on every reconnect.
-          steeringBuffer: getSteeringManager().peekNotes(),
+          // Revisioned snapshot (see steering-manager.ts header): the client
+          // adopts it only when `steeringRevision` is newer than what it holds,
+          // so an in-flight snapshot can never re-insert a note the user just
+          // resolved. `steeringBuffer` keeps its name/shape {id,text}[] for the
+          // buffer bar; the ids are what per-note discard/send acts on.
+          steeringRevision: steering.revision,
+          steeringBuffer: steering.notes,
           isRunning: this.agentRunning,
         });
         res.status(200).set({ 'Content-Type': 'application/json' }).end(payload);
@@ -582,6 +611,11 @@ export class ServeHub implements HubHandler, ServeHubLike {
       // deliver it).
       if (!this.restarting) { getSteeringManager().clear(); }
       this.fileUploadQueue = [];
+      // Steering observer teardown (paired with the start() subscription). A
+      // restartServe() recycle re-subscribes in start(), so this must happen on
+      // BOTH paths or the recycled hub would emit twice per mutation.
+      this.unsubscribeSteering?.();
+      this.unsubscribeSteering = null;
     } finally {
       this.stopping = false;
     }
@@ -695,13 +729,19 @@ export class ServeHub implements HubHandler, ServeHubLike {
   // Steering (webui-only — user mid-task direction while LLM runs)
   //
   // The hub is the sole WRITER of the shared manager; loop states are
-  // READERS (docs/archived/steering-manager-plan.md §2). Queue state and the
-  // monotonic id counter live in src/loop/steering-manager.ts.
+  // READERS (docs/archived/steering-manager-plan.md §2). Queue state, the
+  // monotonic id counter and the queue REVISION live in
+  // src/loop/steering-manager.ts.
+  //
+  // No broadcast calls remain in this section: every mutation (addNote /
+  // drainNotes / resolveBoomerang / clear) emits through the observer
+  // registered in start(), so the loop states' drains reach the WebUI too.
   // ===========================================================================
 
-  /** Buffer a steering note, journal it, and echo it to all clients' buffer bars. */
+  /** Buffer a steering note and journal it. The clients learn about it from
+   *  the manager's onChange observer (start()), not from a local echo. */
   pushSteer(text: string): void {
-    const note = getSteeringManager().addNote(text);
+    getSteeringManager().addNote(text);
     // Journal the note as user input so it survives a page refresh and
     // re-renders as a right-side bubble (the transcript is the single source
     // of truth for user bubbles). Journaled at SUBMISSION time: the text is a
@@ -709,10 +749,6 @@ export class ServeHub implements HubHandler, ServeHubLike {
     // injects it as a [REMINDER] note or PROMPT folds it into a synthesised
     // query. A no-op when the loop has not registered the provider yet.
     this.journalUserSubmission(text, 'steer');
-    // steer-echo carries the stable steerId for per-note discard/send; sent
-    // directly (not via broadcast()) because broadcast() takes a flat string.
-    const echoPayload = JSON.stringify({ type: 'steer-echo', content: text, steerId: note.id });
-    this.clients.forEachOpen((ws) => ws.send(echoPayload));
     // Write-point delivery (plan §5, seam B instant 1 of 3): when a PROMPT
     // wait is already parked and the wrap-up window is closed, the note can
     // ride the wait immediately; takeForDelivery otherwise HOLDS it for the
@@ -735,7 +771,8 @@ export class ServeHub implements HubHandler, ServeHubLike {
   private flushSteeringAtSeam(): void {
     const deliverable = getSteeringManager().takeForDelivery(this.isInputBlocked(), isWrapUpInFlight());
     if (deliverable) {
-      this.broadcast('steer-flush', '');
+      // No broadcast: takeForDelivery drained the manager, whose onChange
+      // observer reports the new (empty) snapshot as 'steer-state'.
       this.submitInput(joinSteeringNotes(deliverable));
     }
   }
@@ -759,10 +796,23 @@ export class ServeHub implements HubHandler, ServeHubLike {
   /**
    * Atomically resolve the queue: sendIds declares which notes to SEND; the
    * rest are discarded. The whole queue drains in one step so PROMPT never
-   * re-synthesizes. Always broadcasts 'steer-flush'.
+   * re-synthesizes. The drain is reported to clients by the manager's
+   * onChange observer as a 'steer-state' snapshot — including when the queue
+   * was already empty and nothing is drained (see the ack note below).
    */
   resolveSteering(sendIds: number[] = []): string[] {
-    if (!getSteeringManager().isNonEmpty()) return [];
+    if (!getSteeringManager().isNonEmpty()) {
+      // ACK the resolve even though there is nothing to drain. The client no
+      // longer guesses delivery (the old steer-flush/guard dance is gone): it
+      // clears its card locally and waits for the snapshot to reconcile. A
+      // silent return here would leave a client that resolved a
+      // already-consumed note staring at a card the server will never
+      // re-report. clear() re-emits the (already empty) snapshot, which is a
+      // no-op for a client whose adopted revision is current and a full
+      // re-sync for one that is out of order (e.g. it outlived a restart).
+      getSteeringManager().clear();
+      return [];
+    }
     // Boomerang is atomic: one drain splits the note set into selected (to
     // submit) + discarded (for observability only). Filter-by-id semantics —
     // duplicate sendIds entries select BOTH notes (A4, no dedupe).
@@ -776,7 +826,6 @@ export class ServeHub implements HubHandler, ServeHubLike {
       agentIO.verbose('serve',
         `Steering notes discarded (not sent): ids=[${discarded.map((n) => n.id).join(',')}] count=${discarded.length}`);
     }
-    this.broadcast('steer-flush', '');
     if (selected.length > 0) { this.submitInput(joinSteeringNotes(selected)); }
     return selected.map((n) => n.text);
   }

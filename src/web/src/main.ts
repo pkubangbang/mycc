@@ -19,7 +19,6 @@ import type { App as VueApp } from 'vue';
 import App from './App.vue';
 import type { ChatMessage, CardOption, FileInfo, SteeringNote } from './types';
 import { applyServerMessage } from './message-dispatch';
-import { armResolve, rollbackResolve, confirmResolve, disarmResolve, createResolveGuard } from './resolve-guard';
 import { registerDebugSeam } from './debug';
 import { ensureHighlighterReady } from './highlight';
 import { useChatStore } from './stores/chat-store';
@@ -50,15 +49,14 @@ function nextId(): number {
 }
 
 // pendingSteeringReview lifecycle: notes surfaced as the "继续…" card persist
-// across PROMPT cycles until the user explicitly acts on the card (send as
-// query / discard). They are populated ONLY from steeringBuffer at the moment
-// a 'prompt' message transitions to the `prompt` phase (notes still pending in
-// the backend queue — the agent never consumed them), NOT from the
-// 'steer-flush' event (which fires AFTER the agent already consumed the
-// notes, so capturing there would resurface already-received notes — the
-// original bug). The array is cleared only at explicit abandon events
-// (auto-mode entry via setAutoMode, and the ws.onclose handler below), so
-// unhandled notes resurface at the next PROMPT instead of being silently lost.
+// pendingSteeringReview lifecycle: notes surfaced as the "继续…" card persist
+// across PROMPT cycles until the server stops holding them (consumed, or the
+// user resolved them). They are populated at the moment a 'prompt' message
+// transitions to the `prompt` phase, FROM the authoritative snapshot
+// (`steeringQueue`), and pruned by every later snapshot adoption — so a card
+// can never show a note the backend no longer queues. Not captured in auto
+// mode (the agent processes steering automatically there). Kept across a WS
+// drop so the reconnect's snapshot can rebuild it.
 
 /**
  * Whether a given message should be shown given the current 详细日志 setting.
@@ -115,14 +113,6 @@ let lastHistoryEtag: string | null = null;
 // snapshot replaces the store. Contract: 304 is valid only when the client
 // has made no local changes since the last authoritative snapshot.
 let historyDirty = false;
-
-/**
- * Boomerang guard: a steer-resolve stays unconfirmed until the server's
- * steer-flush ack. Armed in resolveSteering() BEFORE the optimistic clear so
- * an undelivered resolve can restore the card; confirmed on steer-flush,
- * disarmed on prompt (see resolve-guard.ts).
- */
-const resolveGuard = createResolveGuard<SteeringNote>();
 
 // Serialize cache writes so they complete in CALL ORDER, not whichever
 // IndexedDB transaction happens to finish first. Without this, two
@@ -264,18 +254,22 @@ async function fetchHistory(): Promise<boolean> {
     // applied (which would make the next If-None-Match 304 and freeze a stale
     // store until another history change).
     const etag = res.headers.get('ETag');
-    const data = await res.json() as { messages: ChatMessage[]; steeringBuffer?: SteeringNote[]; isRunning?: boolean };
+    const data = await res.json() as {
+      messages: ChatMessage[];
+      steeringBuffer?: SteeringNote[];
+      steeringRevision?: number;
+      isRunning?: boolean;
+    };
     // Empty-content prompts are "waiting for input" signals, not chat content.
     // Drop them from the visible record; non-empty prompts (e.g. 'Retry? [Y/n]')
-    // remain visible. Also drop steer-echo/steer-flush entries — those belong
-    // in the buffer bar (restored separately below), not the chat log.
+    // remain visible. Also drop steering state frames — those belong in the
+    // buffer bar (restored separately below), not the chat log.
     // Synthetic messages (machine-originated briefs: hook engine, debug
     // evaluator, recap bookkeeping) are dropped too — the live WS path
     // filters them in applyServerMessage; this mirrors that for /history.
     const visible = data.messages.filter(
       m => !(m.type === 'prompt' && !m.content)
-        && m.type !== 'steer-echo'
-        && m.type !== 'steer-flush'
+        && m.type !== 'steer-state'
         && m.type !== 'file-upload'
         && m.type !== 'file-flush'
         && !m.synthetic,
@@ -308,10 +302,12 @@ async function fetchHistory(): Promise<boolean> {
     // the same-length replacement as 'none' and keep a now-invalid window
     // position. See #22.
     store.historyRevision++;
-    // Restore the steering buffer bar from the server's current queue (peek,
-    // not consume). Survives a page refresh within the same serve session.
-    const queued = data.steeringBuffer ?? [];
-    store.steeringBuffer.splice(0, store.steeringBuffer.length, ...queued);
+    // Adopt the server's steering snapshot (peek, not consume) through the SAME
+    // rule the live `steer-state` frames use. Survives a page refresh within
+    // the same serve session; a snapshot older than one we already adopted is
+    // rejected, so a /history reply that raced a resolve cannot re-insert the
+    // resolved note.
+    store.adoptSteering(data.steeringRevision ?? -1, data.steeringBuffer ?? []);
     // Restore the agent running state from the server. The backend owns the
     // single source of truth — we set the phase, never a loose flag.
     if (typeof data.isRunning === 'boolean') {
@@ -397,11 +393,14 @@ async function fetchConfig(): Promise<boolean> {
     if (newSid !== sessionId) {
       sessionId = newSid;
       lastHistoryEtag = null;
-      // Drop the previous session's chatlog immediately. (Steering buffer +
-      // pendingSteeringReview are PROMPT-gated transient state cleared by
-      // ws.onclose / setPhase; they do not carry cross-session history.)
+      // Drop the previous session's chatlog immediately. Steering state is
+      // reset too, and for a DIFFERENT reason: the queue revision is
+      // per-process, so a new serve process numbers it from 1 again. A client
+      // holding a higher revision would reject every new snapshot as stale and
+      // the buffer bar would freeze empty forever.
       store.messages.splice(0, store.messages.length);
       store.teammateMessages.splice(0, store.teammateMessages.length);
+      store.resetSteering();
       // Bump the history revision — clearing the arrays is an authoritative
       // replacement (to empty), so the collapse watcher must reset its
       // window just as it does on a /history 200. See #22.
@@ -444,19 +443,14 @@ function connectWebSocket(): void {
     }
     // Delegate the pure state-transition logic to the DOM-free dispatch module.
     // The store is the single mutation surface; applyServerMessage calls
-    // store.setPhase() / store.setAutoMode() per the transition table.
+    // store.setPhase() / store.setAutoMode() per the transition table, and
+    // store.adoptSteering() / populateSteeringReview() for steering.
+    //
+    // No resolve guard any more: the old protocol confirmed a resolve on a
+    // payload-less `steer-flush`, which only proved that SOME drain happened.
+    // Steering is now a revisioned snapshot, so confirmation is structural —
+    // the card's notes simply stop appearing in an adopted snapshot.
     applyServerMessage(store, msg, { nextId, chatApi });
-    // Boomerang guard, one-way only:
-    //  - steer-flush IS the delivery ack for a `steer-resolve` → confirm, so a
-    //    later drop cannot roll the delivered snapshot back.
-    //  - prompt ends the turn and DISARMS (the notes it held are no longer
-    //    restorable). It must NOT confirm: a turn end proves nothing about
-    //    whether the drain ever reached the server.
-    if (msg.type === 'steer-flush') {
-      confirmResolve(resolveGuard);
-    } else if (msg.type === 'prompt') {
-      disarmResolve(resolveGuard);
-    }
   };
 
   ws.onclose = () => {
@@ -474,12 +468,12 @@ function connectWebSocket(): void {
     store.setPhase('idle');
     store.showRetry = false;
     // Disconnect abandons any pending steering review: the review card is
-    // PROMPT-gated (isWaiting), which is now false, and the user can't act
-    // on it while disconnected. On reconnect the server re-sends 'prompt' if
-    // the agent is still waiting, and the continue card is repopulated from
-    // the (still-pending) steeringBuffer at that point — but stale notes
-    // captured before the drop may have since been consumed by the agent, so
-    // resurfacing them would be misleading. Drop them.
+    // PROMPT-gated (isWaiting), which is now false. On reconnect /history
+    // re-delivers the queue and the server re-sends 'prompt' if it is still
+    // waiting, at which point populateSteeringReview rebuilds the card from
+    // the authoritative snapshot — notes consumed meanwhile are simply absent
+    // from it. Keep the queue itself: its revision is what lets the
+    // reconnect's snapshot be accepted rather than rejected as stale.
     store.pendingSteeringReview.splice(0);
     // Do NOT reset isAutoMode here: it is a durable session-level flag the
     // server resends on reconnect (see the on-connect broadcast in
@@ -711,10 +705,10 @@ export const chatApi = {
    * (injected as a REMINDER) or PROMPT (synthesized with the next query via
    * forkChat after an interrupt). Locally we echo the note as a user bubble
    * for immediate feedback — but DO NOT push to steeringBuffer here: the
-   * server's 'steer-echo' broadcast is the single source of truth for the
-   * buffer bar (it populates the bar for all clients, including this one).
-   * Pushing locally would double-count on the originating client. Also DO
-   * NOT change phase: the LLM is still working.
+   * server's 'steer-state' snapshot is the single source of truth for the
+   * buffer bar (it reaches every client, including this one). Pushing locally
+   * would double-count on the originating client. Also DO NOT change phase:
+   * the LLM is still working.
    */
   sendSteer(text: string, files?: FileInfo[]): void {
     if (!text.trim() && (!files || files.length === 0)) return;
@@ -726,38 +720,29 @@ export const chatApi = {
     wsSend({ type: 'steer', text: text || undefined, files: files && files.length > 0 ? files : undefined });
   },
   /**
-   * Resolve the pending steering-review card with positive "boomerang"
-   * semantics: `sendIds` declares which note ids the user wants to SEND; every
-   * note NOT in `sendIds` is implicitly discarded. The backend atomically
-   * drains the whole queue on 'steer-resolve', so no note is re-synthesized at
-   * the next PROMPT. Locally we clear the review card (and buffer bar) so the
-   * UI reflects the resolution immediately, then send the single WS message.
+   * Resolve the pending steering-review card: `sendIds` declares which note ids
+   * the user wants to SEND; every note NOT in `sendIds` is implicitly
+   * discarded. The backend atomically drains the whole queue on
+   * 'steer-resolve', so no note is re-synthesized at the next PROMPT.
    *
    * - sendIds = all remaining ids → "发送为查询" (send-as-query)
    * - sendIds = subset → partial discard (send the rest)
    * - sendIds = [] → discard-all (drain without submitting)
+   *
+   * No optimistic clear and no guard: the card disappears when the server's
+   * next 'steer-state' snapshot stops containing these ids (adoptSteering
+   * prunes review to live ids), which is the delivery confirmation. Clearing
+   * locally would mean the card lies about state we do not own — that lie was
+   * the old boomerang.
    */
   resolveSteering(sendIds: number[]): void {
-    // SNAPSHOT BEFORE CLEARING (the boomerang fix). A dropped socket used to
-    // make the fire-and-forget send a silent no-op while the backend still held
-    // every note, so the next /history + prompt resurfaced the card and the
-    // user could submit the same instruction twice. The guard keeps the notes
-    // restorable until the server's `steer-flush` acknowledges the drain.
-    armResolve(resolveGuard, store.pendingSteeringReview, sendIds);
-    // Local optimistic clear: the card disappears and the input box re-enables.
-    store.pendingSteeringReview.splice(0);
-    store.steeringBuffer.splice(0);
     // The backend owns the authoritative queue; this is a single positive
     // message (no separate discard-then-input ordering problem).
     const sent = wsSend({ type: 'steer-resolve', sendIds });
     if (!sent) {
-      // The frame was never handed to a socket. Put the card back exactly as
-      // the user saw it and force the next /history to be a real 200 (a 304
-      // would keep our optimistic snapshot and hide the backend's queue).
-      const snapshot = rollbackResolve(resolveGuard);
-      if (snapshot) {
-        store.pendingSteeringReview.push(...snapshot.notes);
-      }
+      // The frame was never handed to a socket: nothing reached the server, so
+      // neither surface changed and the card is still on screen. Reconnect to
+      // revalidate; the next /history adopts the real queue.
       historyDirty = true;
       void reconnect();
     }

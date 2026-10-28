@@ -36,6 +36,7 @@ import { buildCrossroadCard, formatCrossroadCard, toCrossroadCardWire } from '..
 import { briefToolCall, newBriefCallId, validateBriefIsolation } from '../triologue/brief.js';
 import { briefResultLine } from '../triologue/recap-note.js';
 import { buildPlanScopeNote, formatPlanScopeForDisplay, withPlanScopeNote } from '../plan-scope.js';
+import { startSpinner, stopSpinner } from '../../engine/chat-helpers.js';
 
 /**
  * Display the assistant's text content mid-loop via brief, stripping internal
@@ -127,16 +128,40 @@ async function handlePlanScopeBrief(
 
   // The prefix is the pre-turn history: assistant(tool_calls) for THIS turn has
   // not been registered yet (see the caller), so it is fully answered.
-  const note = await buildPlanScopeNote({
-    messages: [...triologue.getMessages()],
-    tools: loader.getToolsForScope(env.scope),
-    briefMessage,
-    resultThreshold: triologue.getResultThreshold(),
-    // The fork gets its OWN ESC-aware slot: it must be interruptible while it
-    // runs, which the tool-execution wrapper cannot provide here.
-    escAware: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) =>
-      ctx.core.escAware(fn, cleanup),
-  });
+  //
+  // ── SPINNER: this caller OWNS the wait indicator for the fork ──
+  // forkChat is permanently noSpinner (see its header), and retryChat's own
+  // spinner was stopped in the provider's finally before we reached HOOK — so
+  // without this pair the terminal is completely blank for the whole
+  // reflection: no brief line (printed below), no plan-scope block, nothing.
+  // Plan-scope was the only HOOK-stage fork without a painter; the recap fork
+  // ("Recapping context") owns one, and the crossroad fork is painted by its
+  // caller-owned pair in the LLM stage.
+  //
+  // ONE pair, here at the caller — not inside plan-scope.ts, which is
+  // documented pure I/O. The spinner is a NON-refcounted module global
+  // (chat-helpers.ts): startSpinner no-ops if one is already running and
+  // stopSpinner clears unconditionally, so ownership must be single and
+  // outermost. `finally` guarantees we never leak a spinning line on throw or
+  // on the early `if (!note) return null` below — which would otherwise leave
+  // the cursor hidden and the terminal spinning into the next state.
+  // startSpinner no-ops in plain output; stopSpinner is idempotent.
+  let note: string | null;
+  startSpinner('Reflecting on the larger scope...');
+  try {
+    note = await buildPlanScopeNote({
+      messages: [...triologue.getMessages()],
+      tools: loader.getToolsForScope(env.scope),
+      briefMessage,
+      resultThreshold: triologue.getResultThreshold(),
+      // The fork gets its OWN ESC-aware slot: it must be interruptible while it
+      // runs, which the tool-execution wrapper cannot provide here.
+      escAware: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) =>
+        ctx.core.escAware(fn, cleanup),
+    });
+  } finally {
+    stopSpinner();
+  }
   if (!note) return null; // failed / cancelled / empty — run the turn normally
 
   // Register the FULL turn here (assistant call + its result), exactly like the
@@ -150,6 +175,16 @@ async function handlePlanScopeBrief(
   // The `brief` TOOL never runs on this path (the turn is answered above), so
   // its own prints are skipped too. Print them here, in the tool's exact shape,
   // or the user never sees what the agent actually said while planning.
+  //
+  // The model's PROSE comes first, in the same order every other path uses
+  // (normal HOOK path and crossroad branch both call
+  // briefAssistantContent before printing the tool's own line). This branch
+  // used to print ONLY the brief message, so the sentence that explains WHY
+  // the agent is briefing — already registered into the triologue above —
+  // never reached the terminal: the user saw a bare "confidence: x%" line
+  // attached to nothing. Ordering matters as much as presence: the brief line
+  // must follow the prose it belongs to.
+  briefAssistantContent(ctx, chat.assistantContent);
   const confidence = typeof args?.confidence === 'number' ? args.confidence : undefined;
   if (briefMessage) {
     ctx.core.brief('info', 'brief', briefMessage,

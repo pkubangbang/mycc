@@ -13,8 +13,7 @@ export type MessageType =
   | 'prompt'
   | 'system'
   | 'card'
-  | 'steer-echo'
-  | 'steer-flush'
+  | 'steer-state'
   | 'file-upload'
   | 'file-flush'
   | 'auto'
@@ -43,10 +42,19 @@ export interface ChatMessage {
    *  the top-level cardId/query/kind fields below); persisted onto messages
    *  pushed into `state.messages` and replayed via /history. */
   card?: CardPayload;
-  /** Stable steering-note id — present only on 'steer-echo' broadcasts, so the
+  /** Stable steering-note id — present only on 'steer-state' broadcasts, so the
    *  frontend can key duplicate-text notes by id and target them for the
    *  boomerang 'steer-resolve' API. */
   steerId?: number;
+  /**
+   * Queue REVISION carried by a 'steer-state' broadcast (and by /history as
+   * `steeringRevision`). Monotonic per serve process; the client adopts a
+   * snapshot only when it is newer than the one it holds. See
+   * src/loop/steering-manager.ts (revisioned snapshots).
+   */
+  steeringRevision?: number;
+  /** The full steering queue carried by a 'steer-state' broadcast. */
+  notes?: SteeringNote[];
   /**
    * STRUCTURED crossroad card — attached to the ONE crossroad note (see
    * src/loop/crossroad-card.ts). Carries the drafted directions, which one was
@@ -156,25 +164,26 @@ export interface ChatState {
   /** Transient error string shown in the StatusBar when a send fails (e.g.
    *  input submitted while the socket isn't OPEN). Cleared on next success. */
   connectionError?: string;
-  /** Queued steering notes (mid-task direction the user sent while the LLM
-   *  was working). Displayed as chips in the SteeringBuffer bar; cleared when
-   *  the backend broadcasts 'steer-flush' (notes consumed at COLLECT/PROMPT),
-   *  OR moved into pendingSteeringReview at the next PROMPT (notes still
-   *  pending — the agent never consumed them). */
+  /** DERIVED: the steering queue MINUS the notes in review — the chips in the
+   *  buffer bar. Recomputed by `adoptSteering` (the single adoption rule), never
+   *  patched incrementally. A note leaves the bar when the server's queue stops
+   *  holding it. */
   steeringBuffer: SteeringNote[];
-  /** Steering notes still pending in the backend queue when the agent reached
-   *  PROMPT — i.e. notes the agent never consumed (neither drained at COLLECT
-   *  as a REMINDER nor sent/resolved by the user). Populated by main.ts at the
-   *  'prompt' message (when isWaiting flips true and the buffer is non-empty),
-   *  NOT from 'steer-flush' (which fires AFTER consumption, so capturing there
-   *  would resurface already-received notes — the original bug). Surfaced as a
-   *  temporary "继续…" card inside the chat log (SteeringReviewCard) so the
-   *  user can send them as a fresh query or discard them, rather than leaving
-   *  them stuck in the queue. Cleared when the user resolves them (send/discard
-   *  via the boomerang 'steer-resolve' API), or at explicit abandon events
-   *  (disconnect, auto-mode entry). Not captured in auto mode (the agent
-   *  processes steering automatically, no PROMPT to review at). Not persisted
-   *  to the message list — purely transient, never survives a refresh. */
+  /** AUTHORITATIVE steering queue (server-owned) plus the revision it came
+   *  from. `adoptSteering(revision, notes)` replaces it only when `revision` is
+   *  newer; a stale /history snapshot (or a replayed frame) is ignored, which
+   *  is what stops an already-resolved note from coming back. */
+  steeringQueue: SteeringNote[];
+  steeringRevision: number;
+  /** Steering notes the agent left queued when it reached PROMPT — the notes
+   *  it never consumed. Surfaced as a temporary "继续…" card inside the chat log
+   *  (SteeringReviewCard) so the user can send them as a fresh query or discard
+   *  them. Maintained as a SUBSET of `steeringQueue`: `adoptSteering` prunes
+   *  entries whose id the server no longer holds (consumed or resolved), so the
+   *  card disappears exactly when the server confirms it — no client-side
+   *  delivery guessing. Not captured in auto mode (the agent processes steering
+   *  automatically, no PROMPT to review at). Purely transient, never persisted
+   *  to the message list. */
   pendingSteeringReview: SteeringNote[];
   /** Dark mode toggle (default light). Persisted in localStorage so the
    *  preference survives page reloads. */

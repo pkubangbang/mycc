@@ -172,9 +172,10 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
   //     methods would side-effect-instantiate a hub in non-serve runs, Δ3),
   //     and the old getServeHub().isRunning() guard is DROPPED: the empty
   //     manager is a natural no-op since only the hub writes, so a non-serve
-  //     drain is free. The steer-flush broadcast still rides the hub (already
-  //     imported for file uploads) and only fires when something drained, so
-  //     nothing is emitted on the no-op path in terminal sessions.
+  //     drain is free. The WebUI learns about the drain from the manager's
+  //     onChange observer (registered by ServeHub.start) — this state no
+  //     longer calls the hub for steering at all, so a terminal session emits
+  //     nothing by construction rather than by a guard.
   let firstSteerNote: string | null = null;
   {
     const drainedNotes = getSteeringManager().drainNotes();
@@ -183,7 +184,6 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
       const steerContent = steerNotes.map((n, i) => `(${i + 1}) ${n}`).join('\n');
       triologue.note('REMINDER', `Steering notes from the user (mid-task direction):\n${steerContent}`);
       agentIO.verbose('steer', `Drained ${steerNotes.length} steering note(s) at COLLECT`);
-      tryGetServeHub()?.broadcast('steer-flush', '');
       // Mid-task user direction is a user intervention — reset the autofly
       // streak so the LLM stages that follow aren't counted as "consecutive
       // successful since last user input". An empty drain (no notes) is NOT

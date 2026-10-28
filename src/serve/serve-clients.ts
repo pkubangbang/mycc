@@ -57,6 +57,26 @@ export class ClientRegistry {
     }
   }
 
+  /**
+   * Broadcast a BESPOKE payload to every OPEN client — the structured sibling
+   * of {@link broadcast} for messages whose state lives in a structured field
+   * rather than `content` (an interactive card, a revisioned steering
+   * snapshot). Always stamped with `timestamp`, and NEVER appended to the
+   * message log: these are transient state reports, not chat content, so they
+   * must not replay through /history.messages.
+   *
+   * Extracted because bespoke sends had accumulated as ad-hoc `forEachOpen`
+   * loops in ServeHub (steer-echo before, steer-state now, cards next). One
+   * implementation keeps the OPEN-state guard and try/catch in a single place.
+   *
+   * @param type - the wire discriminator (e.g. 'steer-state').
+   * @param fields - the structured payload; must not contain `type`/`timestamp`.
+   */
+  broadcastBespoke(type: string, fields: Record<string, unknown>): void {
+    const payload = JSON.stringify({ type, timestamp: Date.now(), ...fields });
+    this.forEachOpen((ws) => this.sendTo(ws, payload));
+  }
+
   /** Close every connection and clear the set (stop / suspend-resume). */
   closeAll(): void {
     for (const ws of this.clients) {

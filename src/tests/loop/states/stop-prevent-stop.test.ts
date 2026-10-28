@@ -18,6 +18,16 @@ vi.mock('../../../context/shared/loader.js', () => ({
   loader: { getToolsForScope: vi.fn(() => []) },
 }));
 
+// The guard fork now owns a caller-side spinner pair. Unmocked, the real
+// module would start an 80ms interval writing cursor escapes into the test
+// process's stdout. Mocking it also pins the ownership contract.
+const startSpinnerMock = vi.fn();
+const stopSpinnerMock = vi.fn();
+vi.mock('../../../engine/chat-helpers.js', () => ({
+  startSpinner: (...args: unknown[]) => startSpinnerMock(...args),
+  stopSpinner: (...args: unknown[]) => stopSpinnerMock(...args),
+}));
+
 import { checkPreventStop } from '../../../loop/states/stop-prevent-stop.js';
 import { Todo } from '../../../context/shared/todo.js';
 import type { MachineEnv } from '../../../loop/state-machine.js';
@@ -187,5 +197,66 @@ describe('checkPreventStop', () => {
     await checkPreventStop(env);
 
     expect(JSON.stringify(todo.getItems())).toBe(before);
+  });
+
+  it('PAINTS the wait: one spinner pair around the guard fork, start → fork → stop', async () => {
+    const a = todo.createTodo('guarded');
+    todo.pinTodo(a.id, a.hash, true, 'condition met');
+    reply(todo, a.id, true);
+    startSpinnerMock.mockClear();
+    stopSpinnerMock.mockClear();
+
+    await checkPreventStop(env);
+
+    // forkChat is permanently noSpinner and retryChat stopped its own spinner
+    // before STOP, so the guard was judged against a completely blank terminal.
+    // A held guard deliberately does not return to the prompt, so a silent wait
+    // here reads as a hang.
+    expect(startSpinnerMock).toHaveBeenCalledTimes(1);
+    expect(stopSpinnerMock).toHaveBeenCalledTimes(1);
+    const startedAt = startSpinnerMock.mock.invocationCallOrder[0];
+    const forkedAt = forkChatMock.mock.invocationCallOrder[0];
+    const stoppedAt = stopSpinnerMock.mock.invocationCallOrder[0];
+    expect(startedAt).toBeLessThan(forkedAt);
+    expect(forkedAt).toBeLessThan(stoppedAt);
+  });
+
+  it('stops the spinner on a FAILING fork (no leaked line at STOP)', async () => {
+    const a = todo.createTodo('guarded');
+    todo.pinTodo(a.id, a.hash, true, 'condition met');
+    forkChatMock.mockRejectedValueOnce(new Error('provider down'));
+    startSpinnerMock.mockClear();
+    stopSpinnerMock.mockClear();
+
+    expect((await checkPreventStop(env)).held).toBe(false); // fail-open
+    expect(startSpinnerMock).toHaveBeenCalledTimes(1);
+    expect(stopSpinnerMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('spends NO spinner when there is nothing to judge', async () => {
+    todo.createTodo('plain task');
+    startSpinnerMock.mockClear();
+    stopSpinnerMock.mockClear();
+
+    await checkPreventStop(env);
+
+    expect(startSpinnerMock).not.toHaveBeenCalled();
+    expect(stopSpinnerMock).not.toHaveBeenCalled();
+  });
+
+  it('runs the guard fork on the tight budget, not the loop defaults', async () => {
+    const a = todo.createTodo('guarded');
+    todo.pinTodo(a.id, a.hash, true, 'condition met');
+    reply(todo, a.id, true);
+
+    await checkPreventStop(env);
+
+    // Minutes of held STOP on a hung endpoint would be indistinguishable from
+    // a dead process, and every failure path is fail-open anyway.
+    const cfg = forkChatMock.mock.calls[0][5] as Record<string, number>;
+    expect(cfg).toBeDefined();
+    expect(cfg.firstTokenTimeoutMs).toBeLessThanOrEqual(10_000);
+    expect(cfg.responseTimeoutMs).toBeLessThanOrEqual(30_000);
+    expect(cfg.maxRetries).toBeLessThanOrEqual(1);
   });
 });

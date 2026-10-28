@@ -38,10 +38,34 @@
  */
 import type { Message, Tool } from '../types.js';
 import { forkChat } from '../engine/chat-provider.js';
+import type { RetryConfig } from '../engine/chat-helpers.js';
 import { BRIEF_OK, PLAN_SCOPE_HEADING } from './triologue/recap-note.js';
 
 /** Head room for the fork's signal + the result threshold's own safety slack. */
 const SCOPE_NOTE_OVERHEAD_CHARS = 512;
+
+/**
+ * Deliberately TIGHT retry budget for the reflection fork.
+ *
+ * The defaults (chat-helpers.ts DEFAULT_RETRY_CONFIG: 20s first token → 120s
+ * response cap, escalating per attempt, maxRetries 3) exist for the MAIN loop,
+ * where waiting is how the turn makes progress. This fork is not the turn —
+ * it is an enhancement attached to a `brief`, and the brief's own work is
+ * waiting behind it. Under the defaults a hung endpoint would blank the
+ * terminal for roughly 20+40+80+120s plus backoff (~4 min) on EVERY plan-mode
+ * brief, for a note that is dropped when it fails anyway.
+ *
+ * Same shape as CROSSROAD_RETRY_CONFIG (crossroad.ts), which tightens for the
+ * same reason. The caller owns the matching "Reflecting…" spinner, so even
+ * this shortened wait is visible.
+ */
+const PLAN_SCOPE_RETRY_CONFIG: Partial<RetryConfig> = {
+  firstTokenTimeoutMs: 10_000,
+  responseTimeoutMs: 30_000,
+  maxRetries: 1,
+  baseDelayMs: 500,
+  maxDelayMs: 3_000,
+};
 
 /** The prompt. TEXT ONLY — the reflection must not take actions. */
 function buildPrompt(briefMessage: string): string {
@@ -155,7 +179,9 @@ export async function buildPlanScopeNote(deps: PlanScopeDeps): Promise<string | 
     // the reflection actually cancels it (a tool-stage wrapper's signal is
     // already dead by then and cannot).
     out = await deps.escAware(
-      async (ac) => await forkChat(deps.messages, deps.tools, prompt, ac.signal, 'none'),
+      async (ac) => await forkChat(
+        deps.messages, deps.tools, prompt, ac.signal, 'none', PLAN_SCOPE_RETRY_CONFIG,
+      ),
       () => null as string | null,
     );
   } catch {

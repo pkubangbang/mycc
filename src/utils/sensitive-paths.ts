@@ -74,7 +74,7 @@ export function checkSensitivePath(p: string): { reason: string } | null {
 
   for (const { prefix, reason } of SENSITIVE_PREFIXES) {
     // Drive-agnostic prefix match: exact or subdirectory.
-    if (normalized === prefix || normalized.startsWith(prefix + '/')) {
+    if (normalized === prefix || normalized.startsWith(`${prefix}/`)) {
       return { reason };
     }
   }
@@ -90,7 +90,7 @@ export function checkSensitivePath(p: string): { reason: string } | null {
     { suffix: normalizeForComparison(path.join(os.homedir(), '.gitconfig')), reason: 'global git configuration' },
   ];
   for (const { suffix, reason } of homeAnchored) {
-    if (normalized === suffix || normalized.startsWith(suffix + '/')) {
+    if (normalized === suffix || normalized.startsWith(`${suffix}/`)) {
       return { reason };
     }
   }

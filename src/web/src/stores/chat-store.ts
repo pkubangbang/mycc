@@ -52,6 +52,17 @@ export const useChatStore = defineStore('chat', () => {
   const isAutoMode = ref(false);
 
   // ── Orthogonal data (co-occurs with any phase) ──
+  //
+  // Steering is a REPLICA of a server-owned queue, so it follows one rule:
+  // adoptSteering() replaces it wholesale from a versioned snapshot. The two
+  // UI surfaces are derived from that one array rather than patched by delta
+  // events:
+  //   steeringQueue     (authoritative)
+  //     ├─ pendingSteeringReview (subset surfaced at PROMPT, pruned to live ids)
+  //     └─ steeringBuffer        (the rest — chips in the bar)
+  // See src/loop/steering-manager.ts for why the protocol is revisioned.
+  const steeringRevision = ref(-1);
+  const steeringQueue = ref<SteeringNote[]>([]);
   const steeringBuffer = ref<SteeringNote[]>([]);
   const pendingSteeringReview = ref<SteeringNote[]>([]);
   const messages = ref<ChatMessage[]>([]);
@@ -126,12 +137,90 @@ export const useChatStore = defineStore('chat', () => {
     if (value) pendingSteeringReview.value.splice(0);
   }
 
+  /**
+   * THE adoption rule for the server-owned steering queue.
+   *
+   * Replaces the old delta protocol (`steer-echo` add / `steer-flush` clear)
+   * and, with it, src/web/src/resolve-guard.ts. The invariants it enforces:
+   *
+   * 1. ORDER — a snapshot is adopted only when its revision is STRICTLY newer.
+   *    This is what kills the boomerang: a `/history` response snapshotted
+   *    before the user's resolve (or a replayed frame) carries an older
+   *    revision and is ignored, instead of splicing the resolved note back
+   *    into the bar.
+   * 2. REVIEW ⊆ QUEUE — a note still in review whose id the server no longer
+   *    holds has been consumed/discarded, so it leaves the card. This is the
+   *    whole delivery confirmation: no flush, no guard, no sendIds math. It
+   *    also PRESERVES the ESC contract (stop.ts keeps notes queued so they
+   *    survive into review) — those ids are still in the snapshot.
+   * 3. BUFFER = QUEUE − REVIEW — the bar is a projection, never an independent
+   *    copy, so the two surfaces cannot disagree or duplicate an id.
+   *
+   * @returns true when the snapshot was adopted, false when it was stale.
+   */
+  function adoptSteering(revision: number, notes: SteeringNote[]): boolean {
+    if (revision <= steeringRevision.value) return false;
+    steeringRevision.value = revision;
+    steeringQueue.value = notes.slice();
+    const liveIds = new Set(notes.map((n) => n.id));
+    const inReview = new Set(
+      pendingSteeringReview.value.filter((n) => liveIds.has(n.id)).map((n) => n.id),
+    );
+    pendingSteeringReview.value = pendingSteeringReview.value.filter((n) => inReview.has(n.id));
+    steeringBuffer.value = steeringQueue.value.filter((n) => !inReview.has(n.id));
+    return true;
+  }
+
+  /**
+   * Forget the adopted revision (session change / new serve process).
+   *
+   * The revision is per-PROCESS, so a client that outlives the process must
+   * reset it or every subsequent snapshot (starting again at 1) would look
+   * stale and the bar would freeze empty forever.
+   */
+  function resetSteering(): void {
+    steeringRevision.value = -1;
+    steeringQueue.value = [];
+    steeringBuffer.value = [];
+    pendingSteeringReview.value = [];
+  }
+
+  /**
+   * Move every still-queued note into the review card (called at PROMPT).
+   * Ids are deduped, so a re-delivered `prompt` (reconnect re-send) cannot
+   * stack a second card for the same note. In auto mode the notes are
+   * ABANDONED instead — the agent processes steering there, there is no
+   * review to do.
+   */
+  function populateSteeringReview(): void {
+    if (isAutoMode.value) {
+      // Auto mode ABANDONS the review: the agent consumes steering itself, so
+      // the notes stay chips in the bar (they are still queued) and no card is
+      // surfaced.
+      pendingSteeringReview.value.splice(0);
+      steeringBuffer.value = steeringQueue.value.slice();
+      return;
+    }
+    const seen = new Set(pendingSteeringReview.value.map((n) => n.id));
+    for (const note of steeringQueue.value) {
+      if (seen.has(note.id)) continue;
+      seen.add(note.id);
+      pendingSteeringReview.value.push(note);
+    }
+    steeringBuffer.value = steeringQueue.value.filter(
+      (n) => !seen.has(n.id),
+    );
+  }
+
+
   return {
     // source of truth
     phase,
     // orthogonal
     isAutoMode,
     steeringBuffer,
+    steeringQueue,
+    steeringRevision,
     pendingSteeringReview,
     messages,
     teammateMessages,
@@ -155,6 +244,9 @@ export const useChatStore = defineStore('chat', () => {
     // actions
     setPhase,
     setAutoMode,
+    adoptSteering,
+    resetSteering,
+    populateSteeringReview,
   };
 });
 

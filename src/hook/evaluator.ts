@@ -444,9 +444,7 @@ export function evaluateExpression(expression: string, ctx: EvalContext): boolea
       'warn',
       'hook',
       `A hook condition could not be checked and was skipped.`,
-      `Expr: ${expression}\n` +
-        (nodeText ? `Failed at: ${nodeText}\n` : '') +
-        `Reason: ${error.message}`,
+      `Expr: ${expression}\n${nodeText ? `Failed at: ${nodeText}\n` : ''}Reason: ${error.message}`,
       { synthetic: true },
     );
     if (isDebuggingEval()) {

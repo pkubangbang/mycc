@@ -44,6 +44,8 @@
 import type { MachineEnv } from '../state-machine.js';
 import { loader } from '../../context/shared/loader.js';
 import { forkChat } from '../../engine/chat-provider.js';
+import { startSpinner, stopSpinner } from '../../engine/chat-helpers.js';
+import type { RetryConfig } from '../../engine/chat-helpers.js';
 
 /**
  * Shape of a single guard verdict returned by the LLM via forkChat.
@@ -67,6 +69,26 @@ export interface PreventStopResult {
 
 /** The value returned when nothing blocks the turn. */
 const NO_HOLD: PreventStopResult = { held: false };
+
+/**
+ * Tight retry budget for the guard fork.
+ *
+ * The loop defaults (20s first token escalating to a 120s response cap over 3
+ * retries) would let a hung endpoint hold the machine at STOP for minutes with
+ * nothing on screen — the worst place to hang, since a held guard deliberately
+ * does NOT return to the prompt. The defaults serve the MAIN loop, where
+ * waiting makes progress; this fork only decides whether the turn may end, and
+ * every failure path is already fail-open (NO_HOLD). Mirrors
+ * CROSSROAD_RETRY_CONFIG (crossroad.ts) and PLAN_SCOPE_RETRY_CONFIG
+ * (plan-scope.ts).
+ */
+const PREVENT_STOP_RETRY_CONFIG: Partial<RetryConfig> = {
+  firstTokenTimeoutMs: 10_000,
+  responseTimeoutMs: 30_000,
+  maxRetries: 1,
+  baseDelayMs: 500,
+  maxDelayMs: 3_000,
+};
 
 /**
  * Parse the forkChat result into a list of verdicts.
@@ -140,15 +162,32 @@ export async function checkPreventStop(env: MachineEnv): Promise<PreventStopResu
 
   let result: string;
   try {
-    // escAware: a slow endpoint must not pin the machine at STOP, and ESC
-    // (user interrupt) always wins over a guard. On ESC, return '' so parsing
-    // yields null → fail-open.
-    result = await ctx.core.escAware(
-      async (abortController) => {
-        return await forkChat(fullMessages, allTools, prompt, abortController.signal, 'none');
-      },
-      () => '' as const,
-    );
+    // ── SPINNER: this gate OWNS the wait indicator for its fork ──
+    // forkChat is permanently noSpinner (see its header) and retryChat stopped
+    // its own spinner in the provider's finally long before STOP, so without
+    // this pair the terminal sits completely blank while a guard is judged —
+    // exactly the state where the operator is most likely to think mycc hung,
+    // because the turn was NOT allowed to end and no prompt has returned.
+    // Same caller-owned, single-pair, `finally`-stopped discipline as
+    // plan-scope (hook.ts), the recap fork (collapse.ts) and crossroad.
+    // startSpinner no-ops in plain output with no TTY; stopSpinner is idempotent.
+    startSpinner('Checking stop guards...');
+    try {
+      // escAware: a slow endpoint must not pin the machine at STOP, and ESC
+      // (user interrupt) always wins over a guard. On ESC, return '' so parsing
+      // yields null → fail-open.
+      result = await ctx.core.escAware(
+        async (abortController) => {
+          return await forkChat(
+            fullMessages, allTools, prompt, abortController.signal, 'none',
+            PREVENT_STOP_RETRY_CONFIG,
+          );
+        },
+        () => '' as const,
+      );
+    } finally {
+      stopSpinner();
+    }
   } catch (err) {
     ctx.core.verbose('prevent-stop', `forkChat failed: ${(err as Error).message}, allowing stop`);
     return NO_HOLD;

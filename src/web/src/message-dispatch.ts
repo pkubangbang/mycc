@@ -61,16 +61,16 @@ import type { ChatMessage, SteeringNote, WebuiPhase } from './types';
  * store via `setActivePinia(createPinia())`.
  *
  * `phase` is read to guard transitions (NO-OP rules). `setPhase` /
- * `setAutoMode` are the single mutation surface. The orthogonal data arrays
- * (`steeringBuffer` / `pendingSteeringReview` / `messages` /
- * `teammateMessages`) are mutated directly — they are NOT part of the phase
- * enum and have no invalid combinations to guard. `isAutoMode` is read for the
- * auto-abandon branch at `prompt`.
+ * `setAutoMode` are the single mutation surface for the FSM. The steering
+ * replica has its own single surface: `adoptSteering` (a versioned snapshot —
+ * never patched directly) and `populateSteeringReview` (the PROMPT projection).
+ * `messages` / `teammateMessages` are the plain chat arrays.
  */
 export interface DispatchState {
   phase: WebuiPhase;
   isAutoMode: boolean;
   steeringBuffer: SteeringNote[];
+  steeringQueue: SteeringNote[];
   pendingSteeringReview: SteeringNote[];
   messages: ChatMessage[];
   teammateMessages: ChatMessage[];
@@ -78,6 +78,8 @@ export interface DispatchState {
   lastServerMsg?: { type: string; at: number };
   setPhase: (newPhase: WebuiPhase) => void;
   setAutoMode: (value: boolean) => void;
+  adoptSteering: (revision: number, notes: SteeringNote[]) => boolean;
+  populateSteeringReview: () => void;
 }
 
 /**
@@ -105,7 +107,8 @@ export interface DispatchContext {
  *
  * This is the single chokepoint for message handling. Keep the branching here
  * exhaustive and deterministic: id assignment uses `ctx.nextId()`, and the
- * steering review card population reads `steeringBuffer` at `prompt` time only.
+ * steering surfaces are only ever produced by the store's adoption rule
+ * (`adoptSteering`) and its PROMPT projection (`populateSteeringReview`).
  */
 export function applyServerMessage(
   state: DispatchState,
@@ -130,32 +133,14 @@ export function applyServerMessage(
     if (msg.content) {
       state.messages.push(msg);
     }
-    // Surface the "继续…" review card from steering notes STILL PENDING in the
-    // backend queue at PROMPT — i.e. notes the agent never consumed. Move them
-    // into pendingSteeringReview (which renders the card) and clear the buffer
-    // bar — they are now "in review", no longer just queued.
-    //
-    // Skipped in auto mode: the agent processes steering automatically there,
-    // so the notes are ABANDONED (cleared from the buffer without surfacing a
-    // card) rather than stranded.
-    if (state.steeringBuffer.length > 0) {
-      if (state.isAutoMode) {
-        state.steeringBuffer.splice(0, state.steeringBuffer.length);
-      } else {
-        // DEDUPE BY ID. A reconnect replays /history (which repopulates the
-        // buffer) and THEN sends `prompt`, and a note may already have been
-        // moved into review by an earlier prompt. Pushing the buffer wholesale
-        // stacked duplicate cards for the SAME note, and resolving one left the
-        // twin to be "sent" again. One card per steer id, ever.
-        const seen = new Set(state.pendingSteeringReview.map((n) => n.id));
-        for (const note of state.steeringBuffer) {
-          if (seen.has(note.id)) continue;
-          seen.add(note.id);
-          state.pendingSteeringReview.push(note);
-        }
-        state.steeringBuffer.splice(0, state.steeringBuffer.length);
-      }
-    }
+    // Surface the "继续…" review card from the steering notes STILL QUEUED in
+    // the server's snapshot at PROMPT — i.e. notes the agent never consumed.
+    // Reads `steeringQueue` (authoritative), NOT `steeringBuffer` (which is
+    // derived FROM review): reading the bar here would be circular. The auto
+    // mode abandon and the per-id dedupe live in the store action. The server
+    // re-sends `prompt` on reconnect, so `populateSteeringReview` must be
+    // idempotent — it is (dedupe by id).
+    state.populateSteeringReview();
     return;
   }
 
@@ -182,27 +167,17 @@ export function applyServerMessage(
     return;
   }
 
-  if (msg.type === 'steer-echo') {
-    // Backend echoed a steering note the user (or another client) queued.
-    // Push to the buffer bar with its stable id — do NOT touch phase and do
-    // NOT add to the chat message list. (steeringBuffer is orthogonal data,
-    // co-occurs with any phase.)
-    if (msg.content) {
-      // Reuse the id already assigned at the top of this function (msg.id) so
-      // a steer-echo with no explicit steerId does not consume a SECOND
-      // nextId(). Explicit steerId (from the server echo) always wins.
-      const steerId = msg.steerId ?? msg.id ?? ctx.nextId();
-      const note: SteeringNote = { id: steerId, text: msg.content };
-      state.steeringBuffer.push(note);
-    }
-    return;
-  }
-
-  if (msg.type === 'steer-flush') {
-    // Backend drained/resolved the queued steering notes. Clear the buffer bar
-    // (but NOT pendingSteeringReview — that is resolved explicitly via
-    // steer-resolve, never by a flush). No phase change.
-    state.steeringBuffer.splice(0, state.steeringBuffer.length);
+  if (msg.type === 'steer-state') {
+    // THE steering wire event (replaces 'steer-echo' + 'steer-flush'): the
+    // server's full queue plus its revision. The store's adoption rule decides
+    // whether it is newer than what we hold — a stale snapshot (an in-flight
+    // /history reply, a replayed frame) is dropped, which is what stops an
+    // already-resolved note from reappearing in the bar.
+    //
+    // MUST return here: `steer-state` is a state report, never chat content. A
+    // client that fell through to the chat-log branch would render the whole
+    // queue as a bubble.
+    state.adoptSteering(msg.steeringRevision ?? -1, msg.notes ?? []);
     return;
   }
 

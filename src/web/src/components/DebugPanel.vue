@@ -17,8 +17,8 @@ function injectSteeringSequence(): void {
   const seam = window.__myccDebug;
   if (!seam) return;
   void seam.injectSequence([
-    { type: 'steer-echo', content: 'note A', steerId: 9001 },
-    { type: 'steer-echo', content: 'note B', steerId: 9002 },
+    { type: 'steer-state', content: '', steeringRevision: 1, notes: [{ id: 9001, text: 'note A' }] },
+    { type: 'steer-state', content: '', steeringRevision: 2, notes: [{ id: 9001, text: 'note A' }, { id: 9002, text: 'note B' }] },
     { type: 'prompt', content: '' },
   ]);
 }
