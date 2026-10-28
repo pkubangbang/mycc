@@ -6,7 +6,7 @@
  * Coordinator that serve mode is active.
  */
 
-import { ensureServeHub, reportParkedServeCallbacks } from './serve-registry.js';
+import { ensureServeHub } from './serve-registry.js';
 import { agentIO } from '../loop/agent-io.js';
 import { setWebUiUp } from '../loop/loop-events.js';
 import { setResultCallback } from '../utils/letter-box.js';
@@ -96,12 +96,6 @@ export async function activateServe(port: number, host?: string | null): Promise
     sendToParent({ type: 'serve_mode', active: false });
     return;
   }
-
-  // Row lead-011: every callback queued by a boot path that could not force the
-  // hub into existence is drained by ensureServeHub(). If any are STILL parked
-  // now, those providers will never reach the WebUI (it would read defaults);
-  // say so instead of leaving the wiring silently undelivered.
-  reportParkedServeCallbacks(hub);
 
   // Set up output + result mirroring to WebSocket (shared with restartServe).
   wireOutputMirroring(hub);

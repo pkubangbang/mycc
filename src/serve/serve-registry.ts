@@ -135,20 +135,16 @@ export function registerServeHubFactory(getInstance: () => ServeHubLike): void {
 }
 
 /**
- * Report callbacks that are STILL parked once the hub is live (row lead-011).
- * Call after `activateServe()` / `ensureServeHub()`: a non-empty queue at that
- * point means a boot path's provider wiring will never be delivered, so the
- * WebUI would silently read defaults. Returns the ids for the caller to log.
+ * Report callbacks that are STILL parked once the hub is live — REMOVED.
+ *
+ * This guard could never fire: `ensureServeHub()` calls
+ * `registerServeHubFactory()`, which drains `readyCallbacks` before
+ * `activateServe()` could inspect the queue. An empty queue after activation is
+ * the SUCCESS state, so the only reachable information ("N scheduled, K threw")
+ * has to be recorded inside the drain itself. Rather than keep a check that
+ * reads as coverage but reports 0 unconditionally, the drain's per-callback
+ * try/catch below stays (a bad provider must not break hub init).
  */
-export function reportParkedServeCallbacks(hub: { broadcast(type: string, content: string): void } | null): number {
-  if (!hub || readyCallbacks.length === 0) return 0;
-  const stuck = readyCallbacks.length;
-  hub.broadcast(
-    'info',
-    `[serve] ${stuck} wiring callback(s) were never delivered — the WebUI may show stale auto/enter-auto state.`,
-  );
-  return stuck;
-}
 
 /**
  * Run `cb` with the ServeHub once the serve layer is loaded — immediately if
@@ -157,36 +153,19 @@ export function reportParkedServeCallbacks(hub: { broadcast(type: string, conten
  * This is the bridge for shared BOOT paths that must wire hub providers but
  * cannot assume (or force) the hub: e.g. `agent-io.initMain()` registering the
  * auto-state provider, and `wireServeCallbacks()` registering the enter-auto
- * provider. Both run before `activateServe()` in `--serve` mode, so a plain
- * `tryGetServeHub()?.…` would silently drop the provider there. Never triggers
- * a module load — an app that never serves simply leaves the callback parked
- * (harmless: nothing will read the provider).
+ * provider and the mode reporter. Both run before `activateServe()` in
+ * `--serve` mode, so a plain `tryGetServeHub()?.…` would silently drop the
+ * provider there. Never triggers a module load — an app that never serves
+ * simply leaves the callback parked (harmless: nothing will read the provider,
+ * and the next boot re-queues it).
  */
 export function onServeHubReady(cb: (hub: ServeHubLike) => void): void {
   const hub = tryGetServeHub();
   if (hub) { cb(hub); return; }
   readyCallbacks.push(cb);
-  // A parked callback is a piece of wiring that exists but is not delivered.
-  // Name it at park time (row lead-011): `getParkedServeCallbacks()` reports the
-  // current count so a --serve boot can tell "everything is wired" from
-  // "N providers are still waiting", instead of the drop being silent.
-  parkedTotal++;
 }
-
-/** Total callbacks parked since process start (never decremented — audit only). */
-let parkedTotal = 0;
 
 /**
- * Serve-callback queue diagnostics: how many callbacks are parked RIGHT NOW and
- * how many were parked in total. The drain in `registerServeHubFactory` empties
- * the queue, so `parkedNow > 0` after `activateServe()` means a wiring callback
- * will never run — the failure this module's contract is supposed to exclude.
- */
-export function getParkedServeCallbacks(): { parkedNow: number; parkedTotal: number } {
-  return { parkedNow: readyCallbacks.length, parkedTotal };
-}
-
-
 /**
  * The ServeHub singleton, or null when the serve layer has not been loaded.
  * Never triggers a module load — this is what makes state-only reads free.
