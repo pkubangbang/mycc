@@ -327,8 +327,13 @@ export class PeerWireAcceptor {
     }
     // Abnormal/network close: if the pair has no live socket left, drop the
     // entry (the remote's dialer owns any redial; our acceptor never dials).
+    // NOT terminal: a transient blip must not rewrite the pinned peer todo to
+    // "disconnected" while the dialer is still retrying.
     if (prunedPair.sockets.length === 0) {
-      teardownPair(prunedPair.endpoint);
+      teardownPair(prunedPair.endpoint, {
+        notifyTodo: false,
+        reason: `transient close ${code} — dialer owns the redial`,
+      });
     }
   }
 

@@ -114,6 +114,7 @@ export function createMockIssue(overrides: Partial<IssueModule> = {}): IssueModu
     createBlockage: vi.fn(async () => {}),
     removeBlockage: vi.fn(async () => {}),
     publishIssue: vi.fn(async () => true),
+    releaseIssuesOwnedBy: vi.fn().mockResolvedValue([]),
     clearAll: vi.fn(),
     ...overrides,
   };

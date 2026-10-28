@@ -158,9 +158,10 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
 
     expect(awaitTeammates).toHaveBeenCalledTimes(1);
     const opts = awaitTeammates.mock.calls[0][0]!;
-    // The teammate-event set is accepted so the lead wakes promptly on mail.
+    // The teammate-event set is accepted so the lead wakes promptly on mail
+    // and on a CRASH ('failed' — a dead teammate is not "all done").
     // 'esc' is NOT in the list: the interrupt is handled first-tick, not here.
-    expect(opts.reasons).toEqual(['all done', 'holding', 'mail', 'steering', 'timeout']);
+    expect(opts.reasons).toEqual(['all done', 'failed', 'holding', 'mail', 'steering', 'timeout']);
     expect(opts.reasons).not.toContain('esc');
     // The bound (not the reasons list) keeps the prompt from being deferred
     // indefinitely.

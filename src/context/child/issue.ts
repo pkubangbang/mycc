@@ -67,8 +67,13 @@ export class ChildIssue implements IssueModule {
     await ipc.sendRequest<void>('db_issue_close', { id, status, comment, poster });
   }
 
-  async addComment(id: number, comment: string, poster?: string): Promise<void> {
-    await ipc.sendRequest<void>('db_issue_comment', { id, comment, poster });
+  /** Child-side no-op: releasing a dead owner's issues is the LEAD's job (it
+   *  owns removal), so a child has nothing to release and no IPC op exists. */
+  async releaseIssuesOwnedBy(_owner: string, _reason: string): Promise<number[]> {
+    return [];
+  }
+
+  async addComment(id: number, comment: string, poster?: string): Promise<void> {    await ipc.sendRequest<void>('db_issue_comment', { id, comment, poster });
   }
 
   async createBlockage(blocker: number, blocked: number): Promise<void> {

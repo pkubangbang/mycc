@@ -20,6 +20,7 @@ function createMockIssueModule(): IssueModule {
     createBlockage: vi.fn().mockResolvedValue(undefined),
     removeBlockage: vi.fn().mockResolvedValue(undefined),
     publishIssue: vi.fn().mockResolvedValue(true),
+    releaseIssuesOwnedBy: vi.fn().mockResolvedValue([]),
     clearAll: vi.fn(),
   };
 }

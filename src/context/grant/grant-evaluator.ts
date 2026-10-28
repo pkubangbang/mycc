@@ -25,15 +25,27 @@ export type { GrantRequest, GrantTool } from './types.js';
  * @returns true if the path is inside a plan-mode-writable directory
  */
 export function isPlanModeWritablePath(resolvedPath: string, workDir: string): boolean {
-  const sep = path.sep;
-  for (const rel of getPlanModeWritableDirs()) {
-    const dirAbs = path.isAbsolute(rel) ? rel : path.resolve(workDir, rel);
-    // Match the directory itself or anything strictly beneath it.
-    if (resolvedPath === dirAbs || resolvedPath.startsWith(dirAbs + sep)) {
-      return true;
-    }
-  }
-  return false;
+  return getPlanModeWritableDirs().some((rel) =>
+    isPathContained(
+      resolvedPath,
+      path.isAbsolute(rel) ? rel : path.resolve(workDir, rel)
+    )
+  );
+}
+
+/**
+ * True when `candidate` is `root` itself or lies strictly beneath it.
+ *
+ * A bare `startsWith(root)` accepts SIBLING prefixes: `D:\dev\mycc-scratch`
+ * passes for root `D:\dev\mycc`, and `.worktrees/rev-ctx-2` passes for
+ * `.worktrees/rev-ctx`. Always compare whole path segments.
+ */
+export function isPathContained(candidate: string, root: string): boolean {
+  const normCandidate = path.resolve(candidate);
+  const normRoot = path.resolve(root);
+  if (normCandidate === normRoot) return true;
+  const rel = path.relative(normRoot, normCandidate);
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
 /**
@@ -125,7 +137,7 @@ export async function evaluateGrant(
 
     if (ownedWt) {
       const resolved = path.resolve(core.getWorkDir(), request.path);
-      if (resolved.startsWith(ownedWt.path)) {
+      if (isPathContained(resolved, ownedWt.path)) {
         return { approved: true }; // Auto-grant for owned worktree
       }
     }
@@ -133,7 +145,7 @@ export async function evaluateGrant(
     // No owned worktree — fall back to allowing writes within the project root.
     // This supports teammates spawned for general project work (not worktree-specific tasks).
     const resolved = path.resolve(core.getWorkDir(), request.path);
-    if (resolved.startsWith(core.getWorkDir())) {
+    if (isPathContained(resolved, core.getWorkDir())) {
       return { approved: true };
     }
 

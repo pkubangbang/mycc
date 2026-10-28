@@ -234,6 +234,55 @@ Skills are loaded from three layers: built-in (`skills/`), project (`.mycc/skill
 
 **Loop Notation (LN):** a compact notation for message role rotation in the agent loop. Each comma-separated unit is one message. Units: `system` (system prompt), `user` (user query), `[tool1, tool2]?` (assistant's batched tool call, `?` = called by LLM), `tool1!` (tool result, one at a time), `agent` (assistant text reply), `_tool1_` (tool call replaced with placeholder after compaction). Example single-turn: `system, user, [tool1]?, tool1!, agent`. Example with batching + compaction: `system, user, [tool1]?, tool1!, [tool2, tool3]?, tool2!, _tool3_, agent, user, agent` (system → user → tool1 call → result → tool2+tool3 batched → tool2 result → tool3 compacted → agent reply → user → agent reply). Conventions: `[]?` groups batched calls from the same delta; `!` marks a result; `_` wraps a compacted call; bare units (system/user/agent) are pure text.
 
+## Design Rationale & History
+
+The "why it is like this" record. Source comments state the **invariant**; the
+story of how the invariant was discovered lives here, so a file never has to be
+read as a changelog.
+
+**Triologue: no message merging.** `triologue.note()` / `user()` used to merge a
+new note into the preceding message when the role matched. That made one
+triologue message stand for several facts, so compaction could drop half of them
+and TP repair could not tell which. Every note is now its own message; the cost
+is a longer transcript, the benefit is a transcript that can be reasoned about
+message by message. `TriologueLite` (child side) still merges and therefore still
+has the old failure mode.
+
+**Wire registry: three indexes, one live socket per sid.** A remote peer used to
+be keyed by endpoint alone. A simultaneous mutual dial keys the same peer twice
+(our typed URL vs its announced endpoint), and a peer restart changes its sid
+under a stable endpoint — so `pairs` (endpoint → entry), `sidIndex`
+(sid → endpoint) and `socketsBySid` (sid → socket census) now coexist. Rules that
+fall out: `sidIndex` may point at a *surviving* endpoint after a teardown
+(never delete it blindly), the census is the authority for "who still holds this
+sid", and a teardown must close the sockets it removes or they keep delivering
+mail from an entry nobody lists.
+
+**Peer wire: a close code is not an HTTP status.** An unauthorized upgrade is
+refused with a bare `HTTP/1.1 401` at the upgrade handshake, which never becomes
+a WS close frame — the dialer observes 1006. Any diagnosable auth failure must
+therefore be reported by the *acceptor* (brief, not verbose), and the dialer
+must treat an unrecorded socket close as a settled failure rather than waiting
+for a pair that will never exist.
+
+**Teammate lifecycle: status follows the process, not the request.** Removing a
+teammate is a request; its exit is a fact. Status is written by the exit/error
+handler (`failed` for a non-zero exit, `shutdown` for a clean one), the process
+map entry stays until that fires so late IPC responses are not dropped, and the
+issue board is released at removal — a claimed issue with a dead owner is
+unclaimable forever, because claiming accepts draft/pending only.
+
+**Agent loop: one owner per cross-turn flag.** `crossroadOccurred`,
+`hasSeededFirstQuery`, the skill-suggester throttle and `wrapUpState` were each
+reset from several states. A flag cleared by two states is a flag whose lifetime
+nobody owns; each now has one writer, and any skip it causes is reported (a
+silent skip is indistinguishable from "checked, nothing there").
+
+**Plan mode gates commands, not verbs.** The declared intent verb is written by
+the agent being gated, so it cannot be the gate. Plan mode checks the command's
+shape (dangerous list, batch delete, write verbs, git writers) before honouring a
+read-only verb.
+
 ## Reference Documents
 
 - `docs/context/agent-context.md` - AgentContext module (Chinese)

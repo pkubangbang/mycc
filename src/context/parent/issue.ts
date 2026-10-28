@@ -117,6 +117,26 @@ export class IssueManager implements IssueModule {
   }
 
   /**
+   * Release every issue claimed by an owner that is going away (teammate
+   * removed / crashed). Without this a claimed issue stays `in_progress` with
+   * a dead owner forever: `claimIssue` only accepts draft/pending, and the
+   * worker auto-claim filter only offers `pending && !owner`.
+   *
+   * @returns the ids released (now `pending`, no owner).
+   */
+  async releaseIssuesOwnedBy(owner: string, reason: string): Promise<number[]> {
+    const released: number[] = [];
+    for (const issue of MemoryStore.listIssues()) {
+      if (issue.owner !== owner) continue;
+      if (issue.status !== 'in_progress' && issue.status !== 'draft') continue;
+      MemoryStore.updateIssue(issue.id, { status: 'pending', owner: undefined });
+      MemoryStore.addIssueComment(issue.id, `Released by @${owner} (${reason}) → pending`, 'system');
+      released.push(issue.id);
+    }
+    return released;
+  }
+
+  /**
    * Add a comment to an issue
    */
   async addComment(id: number, comment: string, poster?: string): Promise<void> {

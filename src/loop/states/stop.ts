@@ -206,14 +206,17 @@ export async function handleStop(
     }
 
     const reason = await ctx.team.awaitTeammates({
-      reasons: ['all done', 'holding', 'mail', 'steering', 'timeout'],
+      reasons: ['all done', 'failed', 'holding', 'mail', 'steering', 'timeout'],
       timeoutMs: 60_000,
     });
     switch (reason) {
       // Teammate events that need the lead to ACT — continue the turn.
+      // 'failed' is a CRASH: collect so the lead can inspect, re-spawn or
+      // reassign instead of ending the turn as if it finished.
       case 'holding':
       case 'mail':
       case 'steering':
+      case 'failed':
         return AgentState.COLLECT;
       case 'timeout': {
         const teamInfo = ctx.team.printTeam();

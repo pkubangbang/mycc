@@ -156,8 +156,12 @@ export class TeamManager implements TeamModule {
 
     // Handle process exit
     child.on('exit', (code) => {
-      this.statuses.set(name, 'shutdown');
-      MemoryStore.updateTeammateStatus(name, 'shutdown');
+      // A non-zero exit is a CRASH, not a clean shutdown — report it as such
+      // so `tm_await` cannot answer "all done" for a teammate that died.
+      const crashed = code !== 0 && code !== null;
+      const status: TeammateStatus = crashed ? 'failed' : 'shutdown';
+      this.statuses.set(name, status);
+      MemoryStore.updateTeammateStatus(name, status);
       this.processes.delete(name);
       // Route the exit notice into the teammate's own drawer (not the main
       // chat log) by using the @name/tool label convention. The `exit` tool
@@ -165,14 +169,18 @@ export class TeamManager implements TeamModule {
       // message has toolTag==='exit' as "retired" (已完成). This lets the
       // TeammateCard collapse to a thin trigger once every teammate is done.
       // (Re-activation appends a newer non-exit message, clearing the state.)
-      this.context.core.brief('info', `@${name}/exit`, `Process exited (code ${code})`);
+      if (crashed) {
+        this.context.core.brief('error', `@${name}/exit`, `Teammate crashed (exit code ${code})`);
+      } else {
+        this.context.core.brief('info', `@${name}/exit`, `Process exited (code ${code})`);
+      }
     });
 
     // Handle errors
     child.on('error', (err) => {
       this.context.core.brief('error', name, `Process error: ${err.message}`);
-      this.statuses.set(name, 'shutdown');
-      MemoryStore.updateTeammateStatus(name, 'shutdown');
+      this.statuses.set(name, 'failed');
+      MemoryStore.updateTeammateStatus(name, 'failed');
       this.processes.delete(name);
     });
 
@@ -190,7 +198,10 @@ export class TeamManager implements TeamModule {
     // Wait for 'teammate_ready' notification with 30s timeout
     const ready = await new Promise<boolean>((resolve) => {
       const timeout = setTimeout(() => {
-        child.removeAllListeners('message');
+        // Remove ONLY our own handler. removeAllListeners('message') would
+        // also sever the router installed above, leaving a live child that can
+        // never answer us (a zombie: alive, unreachable, still in the maps).
+        child.removeListener('message', handler);
         resolve(false);
       }, 30000);
 
@@ -205,7 +216,12 @@ export class TeamManager implements TeamModule {
     });
 
     if (!ready) {
+      // Roll back every registration this spawn created BEFORE reporting
+      // failure, so a failed spawn leaves no phantom teammate behind.
       child.kill('SIGTERM');
+      this.processes.delete(name);
+      this.statuses.delete(name);
+      MemoryStore.updateTeammateStatus(name, 'shutdown');
       return `Error: Teammate '${name}' failed to initialize within 30s. The child process was killed.`;
     }
 
@@ -477,7 +493,16 @@ export class TeamManager implements TeamModule {
       }
 
       // No working teammates → all done. (Idle/shutdown are the resting state.)
-      // Only fired when the caller accepts 'all done' (STOP does; AWAIT does not).
+      // A `failed` teammate is NOT done: it stopped without finishing, so the
+      // caller must be told instead of receiving "all done".
+      if (
+        accepts('all done') &&
+        live.some((t) => t.status === 'failed') &&
+        !live.some((t) => t.status === 'working')
+      ) {
+        return 'failed';
+      }
+
       if (accepts('all done') && !live.some((t) => t.status === 'working')) {
         return 'all done';
       }
@@ -553,6 +578,13 @@ export class TeamManager implements TeamModule {
 
   /**
    * Remove a teammate
+   *
+   * The issue board and the process map are released here; the STATUS is
+   * released only when the child actually exits (its 'exit' handler owns
+   * that), so an in-flight IPC response is never dropped against a deleted
+   * entry. `releaseIssuesOwnedBy` keeps a claimed issue from staying
+   * `in_progress` with a dead owner forever.
+   *
    * @param name - Teammate name
    * @param force - If true, kill the process immediately; otherwise send soft shutdown
    */
@@ -568,10 +600,17 @@ export class TeamManager implements TeamModule {
       }
     }
 
-    this.processes.delete(name);
-    this.statuses.delete(name);
+    // Hand back every issue this teammate held — otherwise the board keeps
+    // showing "worker-3 is working on #7" for a teammate that no longer exists
+    // and the issue can never be re-claimed (draft/pending only).
+    void this.context.issue.releaseIssuesOwnedBy(name, 'teammate removed').catch(() => {
+      /* best-effort: the board must never block removal */
+    });
+
     this.teammateEta.delete(name);
     MemoryStore.removeTeammate(name);
+    // Keep statuses[name] until the child's exit handler fires so `tm_await`
+    // reports a crash as 'failed' rather than forgetting the teammate.
   }
 
   /**

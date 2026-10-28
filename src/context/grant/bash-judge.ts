@@ -67,6 +67,45 @@ function dangerousSocraticHint(reason: string): string {
 }
 
 /**
+ * Command-shape guard for plan mode.
+ *
+ * Plan mode restricts MUTATIONS, so the check must look at the command, not
+ * only at the verb the model declared — `rm -rf src/` declared `READ SOURCE`
+ * would otherwise run unprompted. The verb still gates RUN (needs the LLM) and
+ * the mutation verbs; this guard catches a mutating command hidden under a
+ * read-only verb.
+ *
+ * @returns a block reason when the command mutates state or is batch-shaped.
+ */
+function planModeCommandViolation(command: string): string | null {
+  if (findDangerousCommand(command)) {
+    return 'This command is on the dangerous-command list; plan mode never runs it.';
+  }
+  if (isBatchDelete(command)) {
+    return 'Batch deletion is not allowed in plan mode — it modifies state.';
+  }
+  // Whole-segment write verbs: redirects, rm/mv/cp/tee/touch/mkdir/rmdir/
+  // truncate, in-place editors, and git commands that write (commit/push/
+  // checkout/reset/clean/stash).
+  const mutating =
+    /(^|[^\d\s])>{1,2}\s*[^\s&|]/ // > file, >> file (not 2>&1)
+      .test(command) ||
+    /(^|[\s;&|])(rm|rmdir|mv|cp|tee|touch|mkdir|truncate|chmod|chown|ln|dd|sed\s+-i|perl\s+-[a-z]*i)\b/.test(
+      command
+    ) ||
+    /\bgit\s+(commit|push|checkout|switch|reset|clean|stash|merge|rebase|cherry-pick|apply|am|add)\b/.test(
+      command
+    ) ||
+    /\bnpm\s+(publish|install|i|uninstall|update)\b/.test(command) ||
+    /\bnpx?\s+(prettier\s+--write)\b/.test(command) ||
+    /\bfind\b.*-delete\b/.test(command);
+  if (mutating) {
+    return 'The command modifies state (write/copy/delete/git-write), which plan mode forbids. Switch to normal mode first or use a read-only command.';
+  }
+  return null;
+}
+
+/**
  * Judge a bash command for plan mode safety
  *
  * Steps:
@@ -260,8 +299,13 @@ export async function judgeBash(
     return { decision: 'allow' };
   }
 
-  // Plan mode: check verb
+  // Plan mode: the command itself must be read-only. The declared verb is
+  // agent-authored, so it cannot be the only gate.
   if (isReadOnlyVerb(parsed!.verb)) {
+    const violation = planModeCommandViolation(command);
+    if (violation) {
+      return { decision: 'block', reason: violation };
+    }
     // READ, TEST are allowed in plan mode
     return { decision: 'allow' };
   }

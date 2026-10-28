@@ -31,6 +31,7 @@ export const LOOP_EVENT_TYPES = [
   'esc_interrupt',
   'brief_message',
   'serve_state',
+  'crossroad_skipped',
 ] as const;
 
 export type LoopEventType = (typeof LOOP_EVENT_TYPES)[number];

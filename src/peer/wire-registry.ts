@@ -1,51 +1,30 @@
 /**
- * wire-registry.ts - Remote peer wire registry (level-3, cross-machine)
+ * wire-registry.ts — remote peer wire registry (level-3, cross-machine).
  *
- * Module-level singleton holding every REMOTE peer this instance knows about,
- * whether dialed by us (outbound WS client, src/peer/wire-client.ts) or
- * accepted by our serve stack (inbound WS on /peer/ws, src/serve/peer-wire.ts).
- * Process-lifetime, in-memory only — the plan (docs/peers/remote-peer-protocol.md
- * §3) forbids persisting remotes into ~/.mycc-store/discovery: the wire
- * exists ONLY for peers not reachable through the local discovery store, so
- * remotes live in ctx, not in files.
+ * One process-lifetime, in-memory registry holding every REMOTE peer, whether
+ * dialed by us (src/peer/wire-client.ts) or accepted by our serve stack
+ * (inbound WS on /peer/ws, src/serve/peer-wire.ts). Remotes are never
+ * persisted: the wire exists only for peers the local discovery store cannot
+ * reach.
  *
- * Ownership (plan §2 step 3, "one registry, one owner"):
- *   - The registry lives here in `src/peer` as a singleton — the SAME map
- *     written by both the dialer and the acceptor (via the WireHooks
- *     injection). `src/serve` touches the wire plane ONLY through this
- *     module, avoiding the circular import src/serve → src/peer → ctx
- *     (round-1 finding G3).
- *
- * Keying (plan §5): pair entries are keyed by ENDPOINT — "endpoint is the
- * stable thing; session-id follows it" — with `sid` as a MUTABLE field
- * re-keyed from announces (a remote restart yields a new sid; the pairing
- * migrates automatically on re-announce). The endpoint key is:
- *   - the serving address we DIALED, for dialer-side entries ("host:port");
- *   - the peer's ANNOUNCED serving endpoint for accepted entries; or
- *     "sid:<sid>" when a NAT'd/non-serving dialer announces no endpoint.
- * A secondary sid index serves the facade route lookup (sendPeerMail/
- * isFresh resolve by sid) and peer_disconnect's sid-first resolution.
- *
- * Convergence window (plan §5, pair-dedupe layer 2): a pair entry normally
- * holds ONE socket; during a simultaneous mutual dial it transiently holds
- * TWO. Each side, after both announces are received, computes the same
- * winner (the socket whose initiator has the lexicographically smaller sid)
- * and closes ITS loser socket with 4000 (superseded). The entry converges
- * back to one socket.
- *
- * Registry mutation rules (plan §5, round-1 finding G7): last-writer-wins
- * per endpoint; close-pruning is SOCKET-IDENTITY-GUARDED — a close event may
- * only prune the socket info whose stored socket object matches the closed
- * socket, never just the map key. This guards the announce/close race: wire
- * S dies; the redial S' arrives and re-announces BEFORE old S's close event
- * is processed; a naive key-based prune would delete the FRESH S' entry.
- *
- * Info-symmetry reminder (plan §2 step 3, steering round-3): on wire
- * establishment BOTH sides record a PINNED todo (via WireHooks) so the LLM's
- * awareness of the remote survives auto-compaction. Lifecycle follows the
- * PAIR ENTRY, not the socket: terminal teardown (4000/4001/peer_disconnect)
- * marks the todo done; a transient close with the redial loop running keeps
- * it. Deduped by endpoint.
+ * INVARIANTS — read these before editing. The reasoning behind each one lives
+ * in MYCC.md "Design Rationale & History" → Wire registry.
+ *  - ONE registry, one owner: the dialer and the acceptor both write here via
+ *    WireHooks; src/serve touches the wire plane only through this module.
+ *  - Pair entries are keyed by ENDPOINT (the stable locator); `sid` is MUTABLE
+ *    and re-keyed from announces. `sidIndex` (sid → endpoint) and
+ *    `socketsBySid` (sid → socket census) are secondary views, and the census
+ *    is the authority for "who still holds this sid".
+ *  - A pair normally holds ONE socket; a simultaneous mutual dial transiently
+ *    holds TWO. Each side computes the same winner (smaller initiator sid) and
+ *    closes ITS loser with 4000, so both converge.
+ *  - Pruning is SOCKET-IDENTITY-GUARDED: a close event prunes only the socket
+ *    info whose object matches, so a fresh redial's entry survives the stale
+ *    close of the socket it replaced.
+ *  - Teardown means teardown: the entry is removed AND its sockets are closed.
+ *    A socket left OPEN keeps injecting mail from an entry nobody lists.
+ *  - The pinned "remote peer" todo follows the PAIR ENTRY, not the socket:
+ *    terminal teardown marks it done, a transient close leaves it alone.
  */
 
 import type { WebSocket } from 'ws';
@@ -405,11 +384,22 @@ export function pruneSocket(socket: WebSocket): RemotePairEntry | null {
  *
  * @returns the torn-down entry, or null when no entry exists.
  */
-export function teardownPair(endpoint: string): RemotePairEntry | null {
+export function teardownPair(
+  endpoint: string,
+  options: { notifyTodo?: boolean; reason?: string } = {}
+): RemotePairEntry | null {
+  const { notifyTodo = true, reason } = options;
   const entry = pairs.get(endpoint);
   bumpEpoch(endpoint);
   if (!entry) return null;
   pairs.delete(endpoint);
+  // Close the pair's sockets: the entry is gone, so a socket left OPEN would
+  // keep injecting mail through onMail while being invisible to peer_list,
+  // /health and every count.
+  for (const s of [...entry.sockets]) {
+    try { s.socket.close(WIRE_CLOSE_BYE, 'pair torn down'); } catch { /* closing */ }
+    try { s.socket.terminate(); } catch { /* ignore */ }
+  }
   // Sid-index ownership + survivor re-point (review finding 1, CRITICAL):
   // one peer sid can transiently span MULTIPLE endpoint keys (a simultaneous
   // mutual dial: the socket we dialed is keyed by the URL we typed; the
@@ -462,9 +452,13 @@ export function teardownPair(endpoint: string): RemotePairEntry | null {
       else socketsBySid.set(entry.sid, remaining);
     }
   }
-  if (hooks) {
+  if (hooks && notifyTodo) {
     try {
       hooks.recordRemotePeerTodo({ sid: entry.sid, endpoint: entry.endpoint, done: true });
+    } catch { /* best-effort */ }
+  } else if (hooks && reason) {
+    try {
+      hooks.verbose('wire', `${endpoint} torn down non-terminally: ${reason} (todo left as-is)`);
     } catch { /* best-effort */ }
   }
   return entry;
@@ -646,7 +640,11 @@ export function sendWireMail(targetSid: string, title: string, content: string):
   if (!hooks) return false;
   const entry = findBySid(targetSid);
   if (!entry) return false;
-  const socket = entry.sockets.find((s) => s.socket.readyState === s.socket.OPEN)?.socket;
+  // Resolve by SID, not by 'any OPEN socket': after convergence the entry can
+  // hold a socket for a different peer, and sending there misdelivers mail.
+  const socket = entry.sockets.find(
+    (s) => s.sid === targetSid && s.socket.readyState === s.socket.OPEN
+  )?.socket;
   if (!socket) return false;
   // Construct the ACTUAL frame first (review finding 5: the prior guard
   // measured a PARTIAL frame — {content, title, targetSid} — plus a +256

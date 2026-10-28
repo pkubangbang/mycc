@@ -287,19 +287,12 @@ export class Triologue {
       // 'recovered': bridge was injected, fall through to add user message
     }
     if (lastRole === 'user') {
-      // NOTE: no combine. A second genuine query in the same move stays its
-      // OWN message (previously the fragments were concatenated into one
-      // host, with a 'user' journal piece emitted for the fragment).
-      // Rationale: the combine was the *user-side* half of the merge design
-      // and produced the same coupling defects as the note merge —
-      // lastUserQuery had to be re-read from the grown host, and the merged
-      // text was indistinguishable from a note block once a note joined it.
-      // Two consecutive user messages are a legal wire shape on ollama and
-      // deepseek (tools are flushed by tool()/skipPendingTools before any
-      // producer runs, so lastRole==='user' here means NO call is pending);
-      // for any provider that rejects user → user, tpFix bridges it.
-      // lastUserQuery therefore always holds exactly the latest query.
-      void lastRole;
+      // INVARIANT: a second genuine query stays its OWN message; never merge
+      // it into the previous one. Two consecutive user messages are a legal
+      // wire shape (pending calls are flushed by tool()/skipPendingTools
+      // before any producer runs, so lastRole==='user' means no call is
+      // pending); a provider that rejects user → user is bridged by tpFix.
+      // This keeps lastUserQuery exactly the latest query.
     }
     // Track last real user query for auto-compact context preservation
     this.store.setLastUserQuery(content);
@@ -440,29 +433,12 @@ export class Triologue {
       // 'recovered': bridge was injected, now lastRole is 'assistant'
     }
     const noteContent = `[${category}] ${message}`;
-    // NOTE: no merge. Every note is its OWN message — including the case
-    // where the last role is 'user'. This is deliberate:
-    //
-    //  - The merge existed only to keep ONE host message per move. It bought
-    //    that at the cost of a coupled, fragile contract: a sorted block
-    //    whose FIRST fragment had to stay pinned so the leading '[CATEGORY] '
-    //    prefix stayed stable for the ^-anchored raw readers (hint-round
-    //    noise filter, collect-skill isHintNote), plus a WeakMap of side-state
-    //    keyed by message object.
-    //  - It also produced an attribution inversion: once a note joined a host
-    //    holding genuine user text, the query and the note became one message
-    //    and lastUserQuery was read off the combined text (Review A).
-    //  - Going standalone makes EVERY reader's job exact: one message = one
-    //    '[CATEGORY] ' prefix, so the anchored filters fire precisely per
-    //    note; lastUserQuery is written only by user(); the transcript emits
-    //    an ordinary 'new' piece (the 'merge' kind is now written by nobody —
-    //    it survives only as a legacy read shape).
-    //  - Legality: a note may only land after an assistant that has NO
-    //    outstanding tool_calls (the ledger guard above + the tool()/
-    //    skipPendingTools flush points guarantee that), so 'user' after
-    //    'assistant'/'user'/'tool' is legal on ollama and deepseek. For any
-    //    provider that would reject it, tpFix recovers (handled above for the
-    //    tool case; the delegate covers the rest).
+    // INVARIANT: one note = one message, each starting with its '[CATEGORY] '
+    // prefix. Never merge a note into a neighbouring message — readers anchor
+    // on that prefix, and a merged message makes lastUserQuery ambiguous.
+    // Legality: a note lands only after an assistant with no outstanding
+    // tool_calls (the ledger guard + the tool()/skipPendingTools flushes
+    // guarantee it); tpFix recovers for any provider that objects.
     this.addMessage({ role: 'user', content: noteContent, ...(hookName ? { hook_name: hookName } : {}) });
   }
 
@@ -615,10 +591,8 @@ export class Triologue {
    * Skip all pending tool calls with placeholder results.
    * Called when ESC interrupts tool execution.
    *
-   * API NOTE (Phase 2.5 audit correction): this method HAS an external
-   * consumer — states/tool.ts ESC path (flush remaining pending calls to
-   * maintain TP parity before STOP). It therefore stays PUBLIC; the earlier
-   * "internal-only" classification was wrong. Documented for accuracy.
+   * PUBLIC ON PURPOSE: states/tool.ts's ESC path calls this to flush remaining
+   * pending calls (TP parity) before STOP.
    *
    * @param firstMessage - Message for the first interrupted tool
    * @param subsequentMessage - Message for remaining skipped tools (defaults to firstMessage)

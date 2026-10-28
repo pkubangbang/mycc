@@ -31,6 +31,7 @@ import type { InputProvider } from './input-provider.js';
 import type { RequestEmbeddingTracker } from './request-embedding.js';
 import { displayLetterBox } from '../utils/letter-box.js';
 import { loopEvents } from './loop-events.js';
+import { agentIO } from './agent-io.js';
 import { skillSuggester } from './states/collect-skill.js';
 import { hintRound } from './hint-round.js';
 
@@ -281,6 +282,12 @@ export class AgentStateMachine {
 
       // Observability: emit state transition (silent when no listeners)
       loopEvents.emit('state_transition', { from: state, to: result });
+      // AWAIT is otherwise invisible: "waiting for an event" and "hung" look
+      // identical to the user. Give the wait a one-line trace (verbose-only —
+      // `verbose()` is a no-op unless the session is verbose).
+      if (result === AgentState.AWAIT) {
+        agentIO.verbose('loop', `waiting in AWAIT (from ${state})`);
+      }
 
       prevState = state;
       state = result;

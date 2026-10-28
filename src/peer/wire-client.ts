@@ -1,68 +1,31 @@
 /**
- * wire-client.ts - Remote peer wire DIALER (level-3, cross-machine)
+ * wire-client.ts — remote peer wire DIALER (level-3, cross-machine).
  *
- * Implements the dialer half of the remote peer wire protocol
- * (docs/peers/remote-peer-protocol.md §2, §5). The acceptor (src/serve/peer-wire.ts)
- * lives inside the serve stack; the DIALER is a first-class member of
- * src/peer so an instance with NO webui at all (a NAT'd headless --auto/
- * daemon instance) can still dial OUT to a serving peer — "because we dial
- * out, this works even if we are the firewalled side" (plan §1).
+ * The dialer half of the protocol (docs/peers/remote-peer-protocol.md). It
+ * lives in src/peer, not src/serve, so an instance with no webui at all can
+ * still dial OUT.
  *
- * Connect sequence (plan §2 step 1-3):
- *   1.  Health probe: GET <url>/health — the `peer` block {sessionId,
- *       daemon} tells us WHO answers and whether the webui is daemon-backed.
- *   1.5 Self-connect + same-store sid filter (STORE-based, not URL-based):
- *       refuse self-connects (probed sid === own sid) and same-store peers
- *       (sid in identity.json — those run on THIS machine and are already
- *       reachable via discovery + channel files; the wire is for
- *       cross-machine pairs only). NOTE: this is keyed on the peer's SID,
- *       not on the URL host — a 127.0.0.1/localhost URL is allowed when the
- *       peer's sid is NOT in the local store (VS Code Remote-SSH / remote
- *       tunnels forward a remote machine's port to localhost; that remote
- *       instance is not in this machine's identity.json, so it passes).
- *       Escape hatch: --debug-wire (mirrors MYCC_WIRE_ALLOW_LOCAL; same-machine
- *       smoke test).
- *   2.  Registry pre-check (pair-dedupe layer 1): a live wire for this
- *       endpoint — or for the probed sid — means "already connected".
- *   3.  Dial ws://<host>:<port>/peer/ws (with the X-MYCC-Wire-Token request
- *       header set to MYCC_WIRE_TOKEN when that env is set — the token is
- *       OPTIONAL; when unset the dial carries no token header and an
- *       acceptor with no token configured accepts openly).
- *       Send our announce on open, record the pair when the acceptor's
- *       announce reply arrives. The acceptor's reply is the identity
- *       evidence — the probed sid is used only for the pre-checks (a remote
- *       restart between probe and dial yields a NEW sid; recordAnnounce
- *       re-keys).
+ * INVARIANTS (the ones worth knowing before editing):
+ *  - Same-store/self refusal is keyed on the peer's SID, never the URL host —
+ *    a remote machine tunneled to localhost must still be dialable.
+ *  - The acceptor's announce reply is the identity evidence; the /health probe
+ *    is only a pre-check (a restart between probe and dial yields a new sid).
+ *  - Every dial captures the pair epoch at start and re-checks it on open, so a
+ *    torn-down pair never resurrects.
+ *  - The redial loop is survivor-aware and has NO max-attempts rule: only 4000,
+ *    4001 or peer_disconnect end it. Dropping the pending entry earlier would
+ *    turn "not connected, retrying" into "unknown peer".
+ *  - The `ws` library answers pings but never sends them; the dialer pings and
+ *    terminates after 2 missed pongs ("socket state = liveness" is otherwise a
+ *    lie for half-open TCP).
+ *  - A close that never produced a recorded pair must still SETTLE the dial —
+ *    otherwise connectPeer hangs forever on a 401 or a refused connection.
+ *  - Todos are created by recordAnnounce on both sides; nothing here does.
  *
- * Reconnect loop (plan §5): pair-keyed and SURVIVOR-AWARE — before any
- * redial it checks hasLiveWireForEndpoint; a live survivor suppresses the
- * loop regardless of which side dialed it. Capped exponential backoff
- * (1s → 30s). The loop's ONLY end conditions are close 4000/4001 or
- * peer_disconnect — a peer_connect to a peer that never comes back means a
- * capped-redial loop for the process lifetime BY DESIGN (dropping the
- * pending entry would change mail_to's error from "not connected,
- * retrying" to "unknown peer" — a worse failure mode). No silent
- * max-attempts rule exists; do not invent one.
- *
- * Epoch guard (plan §5 registry mutation rules): each dial captures the
- * pair's epoch at START; on completion (open) it re-checks — a disconnect
- * mid-flight bumped the epoch, so the completed dial aborts and no torn-
- * down pair resurrects. ensurePendingPair/ensurePair bumps the epoch at
- * pair creation; teardownPair bumps it at teardown.
- *
- * Liveness (plan §5): the `ws` library auto-RESPONDS to pings but never
- * auto-SENDS them. The dialer pings every 30s and TERMINATES the socket
- * after 2 missed pongs — a half-open TCP otherwise stays 'OPEN' forever,
- * and "socket state = liveness" (plan §4) would be a lie.
- *
- * Info-symmetry reminder: recordAnnounce (wire-registry) fires
- * hooks.recordRemotePeerTodo on establishment — the pinned todo on BOTH
- * sides that survives compaction. Nothing here creates todos directly.
- *
- * Ref semantics (plan §5): a dialed socket is kept REF'd — a headless
- * --auto/daemon instance that has dialed out stays alive as long as the
- * wire pair exists. stopWireClient() (peer.stop() path) closes AND unrefs
- * every dialed socket so process-exit semantics are unchanged.
+ * Ref semantics: a dialed socket is kept REF'd — a headless --auto/daemon
+ * instance that has dialed out stays alive while the pair exists.
+ * stopWireClient() closes AND unrefs every dialed socket so process-exit
+ * semantics are unchanged.
  */
 
 import { WebSocket } from 'ws';
@@ -411,7 +374,13 @@ function dialSocket(endpoint: string, dialBase: string, epoch0: number, cb: Dial
     liveness.delete(ws);
     const wasEstablished = established.has(ws);
     const prunedPair = pruneSocket(ws);
-    if (!prunedPair) return; // never recorded — nothing to decide on
+    if (!prunedPair) {
+      // Unrecorded socket (the dial closed before an announce): there is no
+      // pair to decide on — but the DIAL still has to settle, otherwise
+      // connectPeer's promise hangs forever on a 401 / ECONNREFUSED.
+      if (!wasEstablished) fail(describeCloseCode(code));
+      return;
+    }
 
     const pairEndpoint = prunedPair.endpoint;
 

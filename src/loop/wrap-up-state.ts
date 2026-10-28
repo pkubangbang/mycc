@@ -142,8 +142,8 @@ export function settleWrapUp(promise: Promise<string>, content: string): boolean
 export function evaluateWrapUp(): 'commit' | 'rollback' {
   const { completedAt, shown, content } = wrapUpState;
 
-  // No wrap-up content, empty (failed), or already shown - rollback
-  if (!content || shown) {
+  // No wrap-up content, or the LLM produced an empty one - rollback
+  if (!content) {
     return 'rollback';
   }
 
@@ -152,15 +152,15 @@ export function evaluateWrapUp(): 'commit' | 'rollback' {
     return 'rollback';
   }
 
-  // Check if within grace period (3s after wrap-up shows)
+  // `shown` means the user HAS SEEN this wrap-up. Every display path sets it
+  // before/with rendering, so treating it as "nothing to keep" made `commit`
+  // unreachable exactly when it mattered. What the user read is the wrap-up
+  // that belongs in the transcript.
   const now = Date.now();
-  const timeSinceCompletion = now - completedAt;
-
-  // If more than 3s since completion, commit the wrap-up
-  if (timeSinceCompletion >= WRAP_UP_GRACE_PERIOD_MS) {
+  if (shown || now - completedAt >= WRAP_UP_GRACE_PERIOD_MS) {
     return 'commit';
   }
 
-  // Within grace period - rollback
+  // Within the grace period and never displayed - rollback
   return 'rollback';
 }

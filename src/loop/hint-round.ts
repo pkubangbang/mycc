@@ -312,7 +312,7 @@ export class HintRound {
     // Use escAware for ESC-interruptible hint generation
     const result = await ctx.core.escAware(
       async (abortController) => {
-        return await this.generate(abortController, pendingSkills);
+        return await this.generate(abortController, turn, pendingSkills);
       },
       () => {
         // ESC pressed during hint generation — return 'aborted' so the
@@ -368,6 +368,7 @@ export class HintRound {
    */
   private async generate(
     abortController: AbortController,
+    turn: TurnVars,
     pendingSkills?: string[],
   ): Promise<'aborted' | 'failed' | { status: 'success'; focusOn: string }> {
     const env = this.env;
@@ -421,7 +422,7 @@ export class HintRound {
     const duplicationReport = env.requestEmbeddingTracker.getDuplicationReport();
 
     const userPrompt = [
-      ...buildStateSections(env),
+      ...buildStateSections(env, turn),
       '## Conversation Context',
       compactContext,
       '',
@@ -885,9 +886,8 @@ interface HeldGuardLine {
  * Duck-typed on purpose: the hint round stays decoupled from the state
  * machine's TurnVars shape (same reason `readRecentDenials` duck-types core).
  */
-function readHeldGuards(env: MachineEnv): HeldGuardLine[] {
-  const turn = (env as unknown as { turn?: { preventStopHolds?: Record<number, number> } }).turn;
-  const holds = turn?.preventStopHolds;
+function readHeldGuards(env: MachineEnv, turn: TurnVars): HeldGuardLine[] {
+  const holds = turn.preventStopHolds;
   if (!holds) return [];
   const out: HeldGuardLine[] = [];
   for (const [idStr, count] of Object.entries(holds)) {
@@ -911,7 +911,7 @@ function readHeldGuards(env: MachineEnv): HeldGuardLine[] {
  * Every section self-omits when it has nothing to say, so a quiet session adds
  * little beyond `## Todo List`.
  */
-function buildStateSections(env: MachineEnv): string[] {
+function buildStateSections(env: MachineEnv, turn: TurnVars): string[] {
   const parts: string[] = [];
 
   // ── Todo List ──
@@ -977,7 +977,7 @@ function buildStateSections(env: MachineEnv): string[] {
   // not say how many times it was already bounced. Without this section the
   // analyzer sees a repeated "I`m done" and invents a generic blocker instead
   // of telling the agent what the guard is actually waiting for.
-  const heldGuards = readHeldGuards(env);
+  const heldGuards = readHeldGuards(env, turn);
   if (heldGuards.length > 0) {
     const guardLines = ['## Stop Guards (held)'];
     guardLines.push('A pinned-todo guard blocked the turn. Repeating the same claim will not release it:');

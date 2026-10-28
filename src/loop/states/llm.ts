@@ -209,8 +209,12 @@ export async function handleLlm(
         // execute its committed actions. Crossroad can re-fire next pass if
         // turning words persist. See docs/crossroad/crossroad-cooldown.md.
         if (env.crossroadOccurred) {
-          // Consume cooldown: pass through unchanged, reset the flag
+          // Consume cooldown: pass through unchanged, reset the flag. Report
+          // it — otherwise "not examined" and "examined, nothing found" look
+          // identical to the user.
           env.crossroadOccurred = false;
+          ctx.core.verbose('crossroad', 'detection skipped: cooldown from the previous turn');
+          loopEvents.emit('crossroad_skipped', { reason: 'cooldown' });
         } else {
           const crossroadResult = await ctx.core.escAware(
             async (abortController) => {

@@ -348,9 +348,13 @@ export interface WorkTree {
 // ============================================================================
 
 /**
- * Teammate status
+ * Teammate status.
+ *
+ * `failed` is a CRASH (non-zero exit / process error), distinct from
+ * `shutdown` (a clean exit). Without the distinction a crashed teammate is
+ * reported to the user as "finished".
  */
-export type TeammateStatus = 'working' | 'idle' | 'holding' | 'shutdown';
+export type TeammateStatus = 'working' | 'idle' | 'holding' | 'shutdown' | 'failed';
 
 /**
  * Reason `awaitTeammates` stopped waiting.
@@ -378,6 +382,7 @@ export type TeammateStatus = 'working' | 'idle' | 'holding' | 'shutdown';
  */
 export type TeammateWaitReason =
   | 'all done'
+  | 'failed'
   | 'holding'
   | 'mail'
   | 'steering'
@@ -938,6 +943,12 @@ export interface IssueModule {
    * issue does not exist or is not in 'draft' status.
    */
   publishIssue(id: number): Promise<boolean>;
+  /**
+   * Release every issue held by a departing owner (teammate removed or
+   * crashed): status → pending, owner cleared, so the issue becomes
+   * claimable again instead of staying in_progress with a dead owner.
+   */
+  releaseIssuesOwnedBy(owner: string, reason: string): Promise<number[]>;
   closeIssue(id: number, status: 'completed' | 'failed' | 'abandoned', comment?: string, poster?: string): Promise<void>;
   addComment(id: number, comment: string, poster?: string): Promise<void>;
   createBlockage(blocker: number, blocked: number): Promise<void>;

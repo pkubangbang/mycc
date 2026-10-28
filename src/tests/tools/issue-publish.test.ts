@@ -23,6 +23,7 @@ function createMockIssueModule(): IssueModule {
     addComment: vi.fn().mockResolvedValue(undefined),
     createBlockage: vi.fn().mockResolvedValue(undefined),
     removeBlockage: vi.fn().mockResolvedValue(undefined),
+    releaseIssuesOwnedBy: vi.fn().mockResolvedValue([]),
     clearAll: vi.fn(),
   };
 }

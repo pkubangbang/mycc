@@ -8,7 +8,8 @@
  */
 
 import type { SlashCommand } from '../types.js';
-import { Core } from '../context/parent/core.js';
+import type { Core } from '../context/parent/core.js';
+import type { TeamManager } from '../context/parent/team.js';
 import chalk from 'chalk';
 
 export const modeCommand: SlashCommand = {
@@ -17,6 +18,7 @@ export const modeCommand: SlashCommand = {
   handler: (context) => {
     const { args, ctx } = context;
     const core = ctx.core as Core;
+    const team = ctx.team as TeamManager;
 
     // No args: display current mode
     if (args.length <= 1) {
@@ -31,10 +33,12 @@ export const modeCommand: SlashCommand = {
 
     if (modeArg === 'plan') {
       core.setMode('plan');
+      team.broadcastModeChange('plan');
       console.log(chalk.yellow('Mode changed to PLAN.'));
       console.log(chalk.gray('Code changes are now prohibited.'));
     } else if (modeArg === 'normal') {
       core.setMode('normal');
+      team.broadcastModeChange('normal');
       console.log(chalk.green('Mode changed to NORMAL.'));
       console.log(chalk.gray('Code changes are now allowed.'));
     } else {

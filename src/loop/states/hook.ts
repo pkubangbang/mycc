@@ -69,6 +69,27 @@ function briefAssistantContent(
  * call, or any fork failure) — the caller then proceeds with the normal turn and
  * the brief executes exactly as before. A reflection never fails a brief.
  */
+/**
+ * Inject every deferred hook message as a REMINDER note.
+ *
+ * ONE owner for the deferred-message queue: it used to be re-implemented at
+ * each early-return site (crossroad branch, no-tool-calls branch), so a new
+ * early return silently dropped the queue. Call this before EVERY return that
+ * abandons the round without running the tool calls.
+ */
+function injectDeferredHookMessages(
+  triologue: MachineEnv['triologue'],
+  deferred: ProcessToolCallsResult['deferredMessages']
+): void {
+  for (const dm of deferred) {
+    triologue.note(
+      'REMINDER',
+      dm.hookName ? `Hook "${dm.hookName}" deferred this message: ${dm.message}` : dm.message,
+      dm.hookName
+    );
+  }
+}
+
 async function handlePlanScopeBrief(
   env: MachineEnv,
   chat: ChatData,
@@ -251,7 +272,12 @@ export async function handleHook(
     //     error, ESC, empty output, no room — falls through and the brief runs
     //     normally, so a reflection is never a dependency of a brief.
     const planScope = await handlePlanScopeBrief(env, chat, hookResult);
-    if (planScope) return planScope;
+    if (planScope) {
+      // The plan-scope branch abandons the round; the deferred queue still
+      // has to reach the LLM, or a hook message is silently lost here.
+      injectDeferredHookMessages(triologue, hookResult.deferredMessages);
+      return planScope;
+    }
 
     // 5. Crossroad: FIRST-CLASS branch — handled BEFORE normal registration.
     //    Emits a SINGLE triologue.agent() call with merged content + brief tool call
@@ -351,9 +377,7 @@ export async function handleHook(
 
       // Inject deferred hook messages so the LLM sees them in the next round.
       // Each deferred message carries its originating hook name for attribution.
-      for (const dm of hookResult.deferredMessages) {
-        triologue.note('REMINDER', dm.hookName ? `Hook "${dm.hookName}" deferred this message: ${dm.message}` : dm.message, dm.hookName);
-      }
+      injectDeferredHookMessages(triologue, hookResult.deferredMessages);
 
       chat.crossroadContinuation = undefined;
       chat.crossroadFilePath = undefined;
@@ -395,11 +419,8 @@ export async function handleHook(
     if (hookResult.calls.length === 0) {
       // Inject deferred hook messages so the LLM can respond to them
       // (e.g., lint-after-edit, test-after-edit block messages).
-      // Each deferred message carries its originating hook name for attribution.
       if (hookResult.deferredMessages.length > 0) {
-        for (const dm of hookResult.deferredMessages) {
-          triologue.note('REMINDER', dm.hookName ? `Hook "${dm.hookName}" deferred this message: ${dm.message}` : dm.message, dm.hookName);
-        }
+        injectDeferredHookMessages(triologue, hookResult.deferredMessages);
         return AgentState.COLLECT;
       }
       return AgentState.STOP;

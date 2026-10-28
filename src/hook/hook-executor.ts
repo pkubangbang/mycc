@@ -181,14 +181,16 @@ export class HookExecutor {
     skillContent: string,
     cond?: Condition
   ): Promise<HookResult> {
-    // Prevent duplicate injection within the same chat (one LLM response)
-    if (this.injectedThisChat.has(skillName)) {
+    // Per-chat dedupe is for INJECTIONS only. It used to run before the
+    // switch, so a `block` hook fired on just the first tool call of a
+    // multi-call response and calls 2..N ran unblocked.
+    if (action.type !== 'block' && this.injectedThisChat.has(skillName)) {
       return {
         action: 'proceed',
         message: `[Hook: ${skillName}] (already injected this chat)`,
       };
     }
-    this.injectedThisChat.add(skillName);
+    if (action.type !== 'block') this.injectedThisChat.add(skillName);
 
     switch (action.type) {
       case 'inject_before':
