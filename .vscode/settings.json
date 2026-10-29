@@ -17,5 +17,7 @@
         "triologues",
         "worktree",
         "worktrees"
-    ]
+    ],
+    "js/ts.sdk.path": "node_modules/typescript/lib",
+    "js/ts.sdk.promptToUseWorkspaceVersion": true
 }

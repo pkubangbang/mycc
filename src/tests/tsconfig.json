@@ -1,0 +1,10 @@
+{
+  // VS Code's TS server picks the nearest tsconfig.json walking up from the
+  // open file, so it will NOT discover ../tsconfig.test.json on its own.
+  // This shim makes every file under src/tests use the project's dedicated
+  // test config (node + vitest global types) instead of the root tsconfig,
+  // which excludes src/tests and would leave these files in an inferred
+  // project with no node typings. CI still type-checks via
+  // `tsc --noEmit -p tsconfig.test.json`; this file is editor-only.
+  "extends": "../../tsconfig.test.json"
+}
