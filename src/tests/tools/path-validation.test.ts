@@ -27,6 +27,7 @@ import {
   createMockContext,
   createTempDir,
   removeTempDir,
+  pathTraversalPatterns,
 } from './test-utils.js';
 import type { AgentContext } from '../../types.js';
 
@@ -72,6 +73,18 @@ describe('path validation', () => {
         expect(result).toContain('Error: Path escapes workspace');
       });
     }
+
+    // The shared security corpus (`pathTraversalPatterns`) must NOT be refused
+    // vacuously: every entry has to reach the guard and be denied, and the
+    // denial reason must be the traversal rule — not e.g. "file not found".
+    it.each(pathTraversalPatterns)(
+      'denies the shared traversal corpus entry %s at the guard (not by accident)',
+      async (pattern) => {
+        const result = await readTool.handler(ctx, { path: pattern });
+        expect(result).toContain('Error: Path escapes workspace');
+        expect(result).not.toContain('File not found');
+      },
+    );
   });
 
   describe('writeTool', () => {

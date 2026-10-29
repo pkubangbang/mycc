@@ -126,6 +126,21 @@ export function removeTempDir(dir: string): void {
 /**
  * Path traversal patterns for security testing
  */
+/**
+ * Assert a tool's error result matches a message (and optionally a stable
+ * error code). Replaces fragment-only `toContain('Error')` assertions that
+ * could not distinguish a real guard from an incidental failure.
+ */
+export function expectToolError(
+  result: string,
+  expected: { message?: string | RegExp; code?: string },
+): void {
+  const { message, code } = expected;
+  if (message instanceof RegExp) expect(result).toMatch(message);
+  else if (message !== undefined) expect(result).toContain(message);
+  if (code !== undefined) expect(result).toContain(code);
+}
+
 export const pathTraversalPatterns = [
   '../../../etc/passwd',
   '..%2F..%2F..%2Fetc/passwd',
