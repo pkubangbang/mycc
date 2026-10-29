@@ -28,6 +28,7 @@
  *      imports config.isPlainOutput directly.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { mutedSlowSuite } from './utils/slow-suite.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
@@ -236,7 +237,7 @@ describe('decoration writers are clean in plain mode (integration)', () => {
   });
 });
 
-describe('--help honours the plain-output contract (real subprocess)', () => {
+describe.skipIf(mutedSlowSuite(import.meta.url))('--help honours the plain-output contract (real subprocess)', () => {
   it('mycc --help with piped stdout contains no ANSI escape sequences', () => {
     const repoRoot = path.resolve(__dirname, '../..');
     const myccBin = path.join(repoRoot, 'bin', 'mycc.js');

@@ -18,6 +18,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mutedSlowSuite } from './utils/slow-suite.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -74,7 +75,7 @@ afterEach(() => {
   try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 
-describe('mycc-stop CLI — form dispatch + exit codes', () => {
+describe.skipIf(mutedSlowSuite(import.meta.url))('mycc-stop CLI — form dispatch + exit codes', () => {
   it('--help exits 0 and states the two synopses (ADDRESS + SESSION ID) and the LIST form', () => {
     const { code, stdout } = runStop(['--help']);
     expect(code).toBe(0);

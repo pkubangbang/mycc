@@ -13,6 +13,7 @@
  *   non-existent directory, maxResults capping, binary file handling
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mutedSlowSuite } from './slow-suite.js';
 import {
   shellQuote,
   collectGitignores,
@@ -349,7 +350,7 @@ describe('grep constants', () => {
 // grepSearch — fallback behavior (mocked execSync)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('grepSearch - fallback behavior (mocked)', () => {
+describe.skipIf(mutedSlowSuite(import.meta.url))('grepSearch - fallback behavior (mocked)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -407,7 +408,7 @@ function isRgAvailable(): boolean {
   return rgAvailableCache;
 }
 
-describe('grepSearch - integration with native rg', () => {
+describe.skipIf(mutedSlowSuite(import.meta.url))('grepSearch - integration with native rg', () => {
   it('should find patterns in the project source', async () => {
     if (!isRgAvailable()) return;
 
@@ -508,7 +509,7 @@ describe('grepSearch - integration with native rg', () => {
 // grepSearch — edge cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('grepSearch - edge cases', () => {
+describe.skipIf(mutedSlowSuite(import.meta.url))('grepSearch - edge cases', () => {
   it('should answer an empty pattern, never leaving the tool unsettled', async () => {
     const result = await grepSearch('', process.cwd(), undefined, 10);
     // An empty pattern is a degenerate query: rg may reject it (exit 2, caught)
@@ -569,7 +570,7 @@ describe('grepSearch - edge cases', () => {
 // grepSearch — output format
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('grepSearch - output format', () => {
+describe.skipIf(mutedSlowSuite(import.meta.url))('grepSearch - output format', () => {
 
   it('should return output in "file:line:content" format', async () => {
     if (!isRgAvailable()) return;

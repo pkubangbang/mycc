@@ -18,6 +18,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mutedSlowSuite } from '../tests/utils/slow-suite.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -41,7 +42,7 @@ afterEach(() => {
   }
 });
 
-describe('withFileLock', () => {
+describe.skipIf(mutedSlowSuite(import.meta.url))('withFileLock', () => {
   it('creates the lock dir, runs the section, and releases the lock', () => {
     let sawLock = false;
     const ret = withFileLock(target, () => {

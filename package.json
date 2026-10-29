@@ -33,7 +33,8 @@
     "lint": "eslint src/",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
-    "test:cov": "vitest run --coverage"
+    "test:cov": "vitest run --coverage",
+    "test:slow": "cross-env RUN_SLOW=1 vitest run"
   },
   "dependencies": {
     "@pkubangbang/crossroad-detector": "^0.1.3",
