@@ -398,6 +398,29 @@ describe('issueCloseTool', () => {
     expect(result).toBe('No issues.');
   });
 
+  it('a real IssueManager.closeIssue UNBLOCKS the dependent issue', async () => {
+    // The test above only proves the handler forwards its arguments; the
+    // unblocking behaviour it names lives INSIDE IssueManager.closeIssue. Drive
+    // the real manager against the real MemoryStore so deleting the
+    // `removeBlockage` loop in src/context/parent/issue.ts fails here.
+    const store = await import('../../context/memory-store.js');
+    const { IssueManager } = await import('../../context/parent/issue.js');
+    store.clearAll();
+    try {
+      const blockerId = store.createIssue('Blocker', 'body', []);
+      const dependentId = store.createIssue('Dependent', 'body', [blockerId]);
+      expect(store.getIssue(dependentId)?.blockedBy).toContain(blockerId);
+
+      await new IssueManager().closeIssue(blockerId, 'completed', 'done', 'lead');
+
+      expect(store.getIssue(blockerId)?.status).toBe('completed');
+      expect(store.getIssue(blockerId)?.blocks).toEqual([]);
+      expect(store.getIssue(dependentId)?.blockedBy).toEqual([]);
+    } finally {
+      store.clearAll();
+    }
+  });
+
   // ========== Tool Metadata Tests ==========
 
   it('should have correct tool name', () => {

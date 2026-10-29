@@ -270,7 +270,14 @@ describe('AgentStateMachine', () => {
         // Second call: from SLASH, TurnVars should be preserved
         return null;
       }),
-      [AgentState.SLASH]: vi.fn(async () => AgentState.PROMPT),
+      // SLASH mutates the live TurnVars, exactly as the real slash handler does
+      // (e.g. recording the consumed command). If the machine's STOP-branch
+      // reset ran on the PROMPT entry, these markers would be wiped.
+      [AgentState.SLASH]: vi.fn(async (_env, turn) => {
+        turn.isFirstRound = false;
+        turn.lastUserQuery = '/slash-side-strip';
+        return AgentState.PROMPT;
+      }),
       [AgentState.COLLECT]: vi.fn(),
       [AgentState.LLM]: vi.fn(),
       [AgentState.HOOK]: vi.fn(),
@@ -287,9 +294,10 @@ describe('AgentStateMachine', () => {
 
     await machine.run();
 
-    // Both PROMPT calls should have isFirstRound=true (TurnVars preserved from SLASH)
-    expect(turnVarsHistory[0].isFirstRound).toBe(true);
-    expect(turnVarsHistory[1].isFirstRound).toBe(true);
+    // The SLASH write must have been visible to the next PROMPT — otherwise
+    // this test could not tell a preserved TurnVars from a reset one.
+    expect(turnVarsHistory[1].isFirstRound).toBe(false);
+    expect(turnVarsHistory[1].lastUserQuery).toBe('/slash-side-strip');
   });
 
   it('should reset ChatData on each COLLECT entry', async () => {

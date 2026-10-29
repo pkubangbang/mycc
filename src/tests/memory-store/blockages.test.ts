@@ -124,9 +124,9 @@ describe('memory-store', () => {
 
         // Removing a pair that was never linked is a silent no-op: no throw,
         // no mutation of any issue it touches, no phantom issue created.
-        removeBlockage(id, 999);
-        removeBlockage(999, id);
-        removeBlockage(999, 888);
+        expect(removeBlockage(id, 999)).toBeUndefined();
+        expect(removeBlockage(999, id)).toBeUndefined();
+        expect(removeBlockage(999, 888)).toBeUndefined();
 
         expect(getIssue(id)?.blockedBy).toEqual([]);
         expect(getIssue(id)?.blocks).toEqual([]);

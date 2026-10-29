@@ -15,7 +15,7 @@
  * void on any error) is asserted separately against the node (no-IDB)
  * environment: they must resolve, not reject.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   buildCacheKey,
   validateCacheRecord,
@@ -172,5 +172,104 @@ describe('I/O wrappers — failure-tolerant in node (no IndexedDB)', () => {
 
   it('clearCachedChatlog resolves void for a null session id (no key)', async () => {
     await expect(clearCachedChatlog(null)).resolves.toBeUndefined();
+  });
+});
+// ───────────────────────────────────────────────────────────────────────────
+// I/O wrappers against an INJECTED fake IndexedDB.
+//
+// The no-IDB suite above can only prove "the no-op is a no-op" — a wrapper
+// that returned without ever touching the cache would pass it identically.
+// These tests install a minimal in-memory IDB on globalThis.indexedDB and
+// require a value to ROUND-TRIP through write → read, and to be GONE after
+// clear.
+// ───────────────────────────────────────────────────────────────────────────
+type FakeStore = Map<string, unknown>;
+
+function makeFakeIndexedDb(store: FakeStore) {
+  const request = <T>(compute: () => T) => {
+    const req = { onsuccess: null as null | (() => void), onerror: null as null | (() => void), result: undefined as T };
+    queueMicrotask(() => {
+      req.result = compute();
+      req.onsuccess?.();
+    });
+    return req;
+  };
+
+  const objectStore = {
+    keyPath: 'sessionId',
+    get: (key: string) => request(() => store.get(key)),
+    getAllKeys: () => request(() => [...store.keys()]),
+    put: (rec: { sessionId: string }) => request(() => { store.set(rec.sessionId, rec); return rec.sessionId; }),
+    delete: (key: string) => request(() => void store.delete(key)),
+  };
+
+  const db = {
+    objectStoreNames: { contains: () => true },
+    transaction: () => ({
+      objectStore: () => objectStore,
+      oncomplete: null,
+      onerror: null,
+      onabort: null,
+    }),
+    close: () => undefined,
+  };
+
+  const factory = {
+    open: () => {
+      const req = {
+        onsuccess: null as null | (() => void),
+        onerror: null as null | (() => void),
+        onblocked: null as null | (() => void),
+        onupgradeneeded: null as null | (() => void),
+        result: undefined as unknown,
+      };
+      queueMicrotask(() => {
+        req.result = db;
+        req.onsuccess?.();
+      });
+      return req;
+    },
+  };
+  return factory;
+}
+
+describe('I/O wrappers — round-trip through an injected fake IndexedDB', () => {
+  it('write then read returns the same messages; clear removes the record', async () => {
+    const store: FakeStore = new Map();
+    vi.stubGlobal('indexedDB', makeFakeIndexedDb(store));
+    try {
+      expect(await readCachedChatlog('sid-1')).toBeNull(); // miss on an empty store
+
+      await writeCachedChatlog('sid-1', [msg('hello')], [msg('@coder hi')]);
+      expect([...store.keys()]).toEqual(['sid-1']);
+
+      const rec = await readCachedChatlog('sid-1');
+      expect(rec?.sessionId).toBe('sid-1');
+      expect(rec?.messages).toEqual([msg('hello')]);
+      expect(rec?.teammateMessages).toEqual([msg('@coder hi')]);
+
+      await clearCachedChatlog('sid-1');
+      expect(store.has('sid-1')).toBe(false);
+      expect(await readCachedChatlog('sid-1')).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('a write prunes every OTHER session, keeping only the active one', async () => {
+    // Pins the bounded-cache contract: without pruneOtherSessions wiring in
+    // writeCachedChatlog the store would grow one record per session.
+    const store: FakeStore = new Map([
+      ['old-a', { sessionId: 'old-a', version: CACHE_VERSION, savedAt: 1, messages: [], teammateMessages: [] }],
+      ['old-b', { sessionId: 'old-b', version: CACHE_VERSION, savedAt: 1, messages: [], teammateMessages: [] }],
+    ]);
+    vi.stubGlobal('indexedDB', makeFakeIndexedDb(store));
+    try {
+      await writeCachedChatlog('sid-2', [msg('new')], []);
+      expect([...store.keys()]).toEqual(['sid-2']);
+      expect((await readCachedChatlog('sid-2'))?.messages).toEqual([msg('new')]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

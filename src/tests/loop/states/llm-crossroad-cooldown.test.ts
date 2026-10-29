@@ -85,6 +85,7 @@ import { agentIO } from '../../../loop/agent-io.js';
 import { handleCrossroad } from '../../../loop/crossroad.js';
 import { retryChat } from '../../../engine/chat-provider.js';
 import { Triologue } from '../../../loop/triologue.js';
+import { loader } from '../../../context/shared/loader.js';
 import {
   createTurnVars,
   createChatData,
@@ -111,6 +112,11 @@ describe('handleLlm — crossroad cooldown gate', () => {
     // would bleed into the next test and be mistaken for that test's response.
     vi.mocked(retryChat).mockReset();
     vi.mocked(handleCrossroad).mockReset();
+    // Restore the module's default loader (tools available): the no-tools test
+    // below overrides it, and a leaked override would silently disable crossroad
+    // for every later test in the file.
+    vi.mocked(loader.getToolsForScope).mockReset();
+    vi.mocked(loader.getToolsForScope).mockReturnValue([{ function: { name: 'bash' } }] as never);
     agentIO.setNeglectedMode(false);
     triologue = new Triologue();
   });
@@ -275,35 +281,32 @@ describe('handleLlm — crossroad cooldown gate', () => {
   // ---------------------------------------------------------------------------
   // Test 4: No tools / neglected mode resets the flag
   // ---------------------------------------------------------------------------
-  it('should reset crossroadOccurred when no tools available (neglected mode)', async () => {
+  it('should reset crossroadOccurred when the loader exposes no tools', async () => {
     const env = createMockMachineEnv({ triologue });
     env.ctx.core.escAware = runOperationEscAware();
 
-    // Force neglected mode so tools.length === 0
-    agentIO.setNeglectedMode(true);
+    // NOT neglected mode (which early-returns STOP before the LLM call): the
+    // LLM round really executes and the only reason the crossroad block is
+    // skipped is the empty tool list. This is the `tools.length > 0` else-
+    // branch at the bottom of the crossroad section — the one that clears a
+    // stale cooldown so a later pass can detect again.
+    vi.mocked(loader.getToolsForScope).mockReturnValue([] as never);
 
     const turn = createTurnVars();
     const chat = createChatData();
-    env.crossroadOccurred = true; // stale flag
+    env.crossroadOccurred = true; // stale cooldown armed by a previous pass
 
     vi.mocked(retryChat).mockResolvedValueOnce(
-      createMockChatResponse({ content: 'text-only response' }) as never,
+      createMockChatResponse({ content: 'text-only response with turning words. However, still fine.' }) as never,
     );
 
-    // In neglected mode, the early-return at the top of handleLlm fires
-    // (ESC pressed before LLM call) and returns STOP for centralized wrap-up.
-    // The no-tools `else` branch is hard to reach because neglected mode
-    // returns early. We verify the function returns STOP and the flag is
-    // unchanged (will be reset at PROMPT entry).
-    //
-    // Note: the early return path does NOT reset crossroadOccurred — that's
-    // handled by the PROMPT reset (prompt.ts). So here we just verify the
-    // function returns STOP and the flag is unchanged (will be reset at
-    // PROMPT entry).
     const result = await handleLlm(env, turn, chat);
-    expect(result).toBe(AgentState.STOP);
-    // Flag is NOT reset here — it's reset at PROMPT entry (prompt.ts).
-    // This is by design: the PROMPT reset is the boundary that clears it.
+
+    expect(retryChat).toHaveBeenCalledTimes(1);              // the round ran
+    expect(loader.getToolsForScope).toHaveReturnedWith([]);  // and it saw no tools
+    expect(handleCrossroad).not.toHaveBeenCalled();          // detection skipped
+    expect(env.crossroadOccurred).toBe(false);               // stale flag cleared
+    expect(result).not.toBe(AgentState.STOP);                // not an ESC early-return
   });
 
   // ---------------------------------------------------------------------------
