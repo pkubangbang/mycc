@@ -46,7 +46,7 @@ describe('Node required fields (enforced by the real validator)', () => {
   it.each(['id', 'text', 'title', 'summary', 'level', 'children', 'links'] as const)(
     'rejects a node missing %s',
     (field) => {
-      const n = baseNode() as Record<string, unknown>;
+      const n = baseNode() as unknown as Record<string, unknown>;
       delete n[field];
       expect(validate_mindmap_structure(base({ root: n as unknown as Node }))).toBe(false);
     },
@@ -95,7 +95,7 @@ describe('Link union is closed at four variants', () => {
 
 describe('MindmapJSON requires source_file (the compile provenance field)', () => {
   it('rejects a record without it', () => {
-    const j = base() as Record<string, unknown>;
+    const j = base() as unknown as Record<string, unknown>;
     delete j.source_file;
     expect(validate_mindmap_structure(j)).toBe(false);
   });

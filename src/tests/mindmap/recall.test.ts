@@ -34,8 +34,8 @@ function createTestMindmap(): Mindmap {
     dir: '/test/dir',
     source_file: 'MYCC.md',
     hash: 'test-hash',
-    compiled_at: new Date(),
-    updated_at: new Date(),
+    compiled_at: '2024-01-15T10:00:00Z',
+    updated_at: '2024-01-15T10:00:00Z',
     root: node('/', 'Root', 0, [
       node('/architecture', 'Architecture', 1, [
         node('/architecture/core', 'Core', 2),

@@ -36,7 +36,21 @@ import {
   applyPatchAction,
 } from '../../mindmap/patch.js';
 import { get_node, get_ancestors, get_descendants } from '../../mindmap/get-node.js';
-import type { Mindmap, Node } from '../../mindmap/types.js';
+import type { Link, Mindmap, MindmapPatchAction, Node } from '../../mindmap/types.js';
+
+/**
+ * Every MindmapPatchAction carries provenance (timestamp / reason /
+ * mindmap_hash) in the real type — build fixtures through this helper so the
+ * optional-vs-required split stays honest instead of `as never`.
+ */
+function patchAction(partial: Pick<MindmapPatchAction, 'action' | 'path'> & Partial<MindmapPatchAction>): MindmapPatchAction {
+  return {
+    timestamp: '2024-01-15T10:00:00Z',
+    reason: 'test',
+    mindmap_hash: 'test-hash',
+    ...partial,
+  };
+}
 
 function node(id: string, title: string, level: number, children: Node[] = []): Node {
   return { id, text: `#${level} ${title}`, title, summary: `${title} summary`, level, children, links: [] };
@@ -152,7 +166,7 @@ describe('add_child_node (real implementation)', () => {
   it('adds a child at parent.level + 1 and returns it', async () => {
     const added = await add_child_node(mindmap, '/parent', 'New Kid', 'text');
     expect(added).not.toBeNull();
-    expect(get_node(mindmap, '/parent').children.map((c) => c.title)).toContain('New Kid');
+    expect(get_node(mindmap, '/parent')!.children.map((c) => c.title)).toContain('New Kid');
     expect(added!.level).toBe(2);
   });
 
@@ -168,7 +182,7 @@ describe('applyPatchAction (real implementation)', () => {
   });
 
   it('add: creates a node whose id is safeNodeId(title) and flags it as a patch node', () => {
-    expect(applyPatchAction(mindmap, { action: 'add', path: '/parent', title: 'Code Cleanup', text: 't' })).toBe(true);
+    expect(applyPatchAction(mindmap, patchAction({ action: 'add', path: '/parent', title: 'Code Cleanup', text: 't' }))).toBe(true);
     const added = get_node(mindmap, '/parent/code-cleanup');
     expect(added?.title).toBe('Code Cleanup');
     expect(added?.is_patch).toBe(true);
@@ -177,37 +191,39 @@ describe('applyPatchAction (real implementation)', () => {
   });
 
   it('add: is idempotent (replaying the same line does not duplicate)', () => {
-    const action = { action: 'add', path: '/parent', title: 'Dup', text: 't' } as const;
+    const action = patchAction({ action: 'add', path: '/parent', title: 'Dup', text: 't' });
     applyPatchAction(mindmap, action);
     applyPatchAction(mindmap, action);
-    expect(get_node(mindmap, '/parent').children.filter((c) => c.id === '/parent/dup')).toHaveLength(1);
+    expect(get_node(mindmap, '/parent')!.children.filter((c) => c.id === '/parent/dup')).toHaveLength(1);
   });
 
   it('add: rejects a missing parent or empty title/text', () => {
-    expect(applyPatchAction(mindmap, { action: 'add', path: '/nope', title: 'X', text: 't' })).toBe(false);
-    expect(applyPatchAction(mindmap, { action: 'add', path: '/parent', title: '', text: 't' })).toBe(false);
-    expect(applyPatchAction(mindmap, { action: 'add', path: '/parent', title: 'X', text: '' })).toBe(false);
+    expect(applyPatchAction(mindmap, patchAction({ action: 'add', path: '/nope', title: 'X', text: 't' }))).toBe(false);
+    expect(applyPatchAction(mindmap, patchAction({ action: 'add', path: '/parent', title: '', text: 't' }))).toBe(false);
+    expect(applyPatchAction(mindmap, patchAction({ action: 'add', path: '/parent', title: 'X', text: '' }))).toBe(false);
   });
 
   it('add: sanitizes optional links, keeping only well-formed ones', () => {
-    applyPatchAction(mindmap, {
+    applyPatchAction(mindmap, patchAction({
       action: 'add',
       path: '/parent',
       title: 'Linked',
       text: 't',
+      // Deliberately malformed entries: sanitizeLinks must drop the two bad
+      // ones. They are cast because the Link union correctly refuses them.
       links: [
         { target_type: 'term', term_name: 'letter-box', comment: 'ok' },
         { target_type: 'url', comment: 'missing url' },
         { target_type: 'bogus', comment: 'bad type' },
-      ],
-    } as never);
+      ] as unknown as Link[],
+    }));
     expect(get_node(mindmap, '/parent/linked')?.links).toEqual([
       { target_type: 'term', term_name: 'letter-box', comment: 'ok' },
     ]);
   });
 
   it('update: rewrites text, clears the summary, and marks is_patch', () => {
-    expect(applyPatchAction(mindmap, { action: 'update', path: '/parent/child', text: 'NEW' })).toBe(true);
+    expect(applyPatchAction(mindmap, patchAction({ action: 'update', path: '/parent/child', text: 'NEW' }))).toBe(true);
     const n = get_node(mindmap, '/parent/child')!;
     expect(n.text).toBe('NEW');
     expect(n.summary).toBe('');
@@ -215,25 +231,25 @@ describe('applyPatchAction (real implementation)', () => {
   });
 
   it('update: refuses the root, an empty text, and a missing path', () => {
-    expect(applyPatchAction(mindmap, { action: 'update', path: '/', text: 'x' })).toBe(false);
-    expect(applyPatchAction(mindmap, { action: 'update', path: '/parent/child', text: '' })).toBe(false);
-    expect(applyPatchAction(mindmap, { action: 'update', path: '/nope', text: 'x' })).toBe(false);
+    expect(applyPatchAction(mindmap, patchAction({ action: 'update', path: '/', text: 'x' }))).toBe(false);
+    expect(applyPatchAction(mindmap, patchAction({ action: 'update', path: '/parent/child', text: '' }))).toBe(false);
+    expect(applyPatchAction(mindmap, patchAction({ action: 'update', path: '/nope', text: 'x' }))).toBe(false);
   });
 
   it('delete: removes a node and refuses the root', () => {
-    expect(applyPatchAction(mindmap, { action: 'delete', path: '/parent/child/grandchild' })).toBe(true);
+    expect(applyPatchAction(mindmap, patchAction({ action: 'delete', path: '/parent/child/grandchild' }))).toBe(true);
     expect(get_node(mindmap, '/parent/child/grandchild')).toBeNull();
-    expect(applyPatchAction(mindmap, { action: 'delete', path: '/' })).toBe(false);
+    expect(applyPatchAction(mindmap, patchAction({ action: 'delete', path: '/' }))).toBe(false);
   });
 
   it('delete: matches by safeNodeId(title), not by literal title', () => {
-    applyPatchAction(mindmap, { action: 'add', path: '/parent', title: 'Code Cleanup', text: 't' });
-    expect(applyPatchAction(mindmap, { action: 'delete', path: '/parent/code-cleanup' })).toBe(true);
+    applyPatchAction(mindmap, patchAction({ action: 'add', path: '/parent', title: 'Code Cleanup', text: 't' }));
+    expect(applyPatchAction(mindmap, patchAction({ action: 'delete', path: '/parent/code-cleanup' }))).toBe(true);
     expect(get_node(mindmap, '/parent/code-cleanup')).toBeNull();
   });
 
   it('returns false for an unknown action', () => {
-    expect(applyPatchAction(mindmap, { action: 'nope', path: '/parent' } as never)).toBe(false);
+    expect(applyPatchAction(mindmap, { ...patchAction({ action: 'add', path: '/parent' }), action: 'nope' } as unknown as MindmapPatchAction)).toBe(false);
   });
 });
 

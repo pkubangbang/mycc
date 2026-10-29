@@ -89,7 +89,7 @@ describe('validate_mindmap_structure (real module)', () => {
   it.each(['dir', 'hash', 'compiled_at', 'updated_at'] as const)(
     'rejects a missing/ill-typed %s',
     (field) => {
-      const j = jsonFixture() as Record<string, unknown>;
+      const j = jsonFixture() as unknown as Record<string, unknown>;
       delete j[field];
       expect(validate_mindmap_structure(j)).toBe(false);
       expect(validate_mindmap_structure({ ...jsonFixture(), [field]: 42 })).toBe(false);
@@ -97,7 +97,7 @@ describe('validate_mindmap_structure (real module)', () => {
   );
 
   it('rejects a missing source_file (the old local copy accepted it)', () => {
-    const j = jsonFixture() as Record<string, unknown>;
+    const j = jsonFixture() as unknown as Record<string, unknown>;
     delete j.source_file;
     expect(validate_mindmap_structure(j)).toBe(false);
   });
