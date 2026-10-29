@@ -370,9 +370,20 @@ describe('grepSearch - fallback behavior (mocked)', () => {
   });
 
 
-  it('should return method "none" when all engines fail', async () => {
+  // NOTE: with rg installed the chain answers 'rg' for every case below;
+  // 'none' is only reachable when NO engine answers (rg missing AND the WASM
+  // package unavailable) — the probe cannot force that, so the LAST-resort
+  // case asserts the settle-and-label contract instead.
+  it('settles on a known engine for a non-existent parent directory (never throws)', async () => {
+    // Why this is a documented quirk, not a pinned engine: with rg present the
+    // native call throws (rg exits 2) and IS caught below, but the catch path
+    // still falls through to the npm-WASM engine — rg is probed for the empty
+    // pattern and for a missing directory, and both take the fallback. Both
+    // outcomes settle deterministically; what must hold is that grepSearch
+    // RESOLVES with a real answer instead of throwing out of the tool.
     const result = await grepSearch('test', '/nonexistent', undefined, 10);
     expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
+    expect(typeof result.output).toBe('string');
   });
 
 
@@ -382,16 +393,21 @@ describe('grepSearch - fallback behavior (mocked)', () => {
 // grepSearch — integration with native rg
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('grepSearch - integration with native rg', () => {
-  function isRgAvailable(): boolean {
+/** True when the native `rg` binary is installed (probed ONCE per file, not per test). */
+let rgAvailableCache: boolean | undefined;
+function isRgAvailable(): boolean {
+  if (rgAvailableCache === undefined) {
     try {
       require('child_process').execSync('rg --version', { encoding: 'utf-8', timeout: 3000 });
-      return true;
+      rgAvailableCache = true;
     } catch {
-      return false;
+      rgAvailableCache = false;
     }
   }
+  return rgAvailableCache;
+}
 
+describe('grepSearch - integration with native rg', () => {
   it('should find patterns in the project source', async () => {
     if (!isRgAvailable()) return;
 
@@ -493,41 +509,55 @@ describe('grepSearch - integration with native rg', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('grepSearch - edge cases', () => {
-  it('should handle empty pattern', async () => {
+  it('should answer an empty pattern, never leaving the tool unsettled', async () => {
     const result = await grepSearch('', process.cwd(), undefined, 10);
+    // An empty pattern is a degenerate query: rg may reject it (exit 2, caught)
+    // and the chain falls back. The contract is that the tool always settles
+    // with a real engine answer — it never throws and never returns undefined.
     expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
+    expect(typeof result.output).toBe('string');
   });
 
   it('should cap maxResults at MAX_MAX_RESULTS', async () => {
     const result = await grepSearch('import', process.cwd(), '*.ts', 9999);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
+    expect(result.method).toBe('rg');
+    if (rgAvailableCache !== false) {
+      const lines = result.output === 'No matches found' ? [] : result.output.split('\n').filter(l => l.trim());
+      // Capped at MAX_MAX_RESULTS, NOT at the requested 9999.
+      expect(lines.length).toBeLessThanOrEqual(MAX_MAX_RESULTS + 1);
+    }
   });
 
-
-
-
-
-  it('should handle non-existent directory', async () => {
+  it('should handle a non-existent directory', async () => {
     const result = await grepSearch('test', '/nonexistent/directory/xyz123', undefined, 10);
+    // rg answers for the missing dir too (reporting the IO error on stderr) —
+    // the point is the call SETTLES with the native engine instead of throwing
+    // out of grepSearch. If the machine has no rg, the chain still settles
+    // (never throws) on a later engine.
     expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
   });
 
-
-
-
-
-
-  it('should handle maxResults of 0', async () => {
-    const result = await grepSearch('import', process.cwd(), '*.ts', 0);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
+  it('should handle maxResults of 0 — keeps at most ONE line, never all', async () => {
+    const all = await grepSearch('import', process.cwd(), '*.ts', 50);
+    const zero = await grepSearch('import', process.cwd(), '*.ts', 0);
+    expect(zero.method).toBe('rg');
+    // The native engine truncates to maxResults + 1 (it needs the extra line
+    // to DETECT truncation), and the sentinel absorbs the trailing "" — so the
+    // contract is "≤ 1 line", not "sentinel". The falsifiable half is that a
+    // zero cap must never return the full corpus.
+    const zeroLines = zero.output === 'No matches found' ? [] : zero.output.split('\n').filter(Boolean);
+    const allLines = all.output.split('\n').filter(Boolean);
+    expect(zeroLines.length).toBeLessThanOrEqual(1);
+    expect(zeroLines.length).toBeLessThan(allLines.length);
   });
 
-  it('should handle negative maxResults (treated as 0 after Math.min)', async () => {
+  it('should treat a negative maxResults as 0 (never as slice(-N))', async () => {
     const result = await grepSearch('import', process.cwd(), '*.ts', -5);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
+    // Regression guard: `slice(0, -5)` used to return 2772 lines from the END.
+    const lines = result.output === 'No matches found' ? [] : result.output.split('\n').filter(Boolean);
+    expect(result.method).toBe('rg');
+    expect(lines.length).toBeLessThanOrEqual(1);
   });
-
-
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -540,14 +570,6 @@ describe('grepSearch - edge cases', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('grepSearch - output format', () => {
-  function isRgAvailable(): boolean {
-    try {
-      require('child_process').execSync('rg --version', { encoding: 'utf-8', timeout: 3000 });
-      return true;
-    } catch {
-      return false;
-    }
-  }
 
   it('should return output in "file:line:content" format', async () => {
     if (!isRgAvailable()) return;

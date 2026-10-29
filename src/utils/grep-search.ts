@@ -405,7 +405,10 @@ export async function grepSearch(
   maxResults: number = DEFAULT_MAX_RESULTS,
   exclude?: string
 ): Promise<{ output: string; method: 'rg' | 'ripgrep_wasm' | 'grep' | 'powershell' | 'none' }> {
-  const cappedMax = Math.min(maxResults, MAX_MAX_RESULTS);
+  // Clamp BOTH ends: Math.min alone let a negative maxResults through, and
+  // `slice(0, -5)` (WASM engine) silently drops the LAST 5 lines instead of
+  // returning none. 0 is the documented "no results" floor.
+  const cappedMax = Math.max(0, Math.min(maxResults, MAX_MAX_RESULTS));
 
   // 1. Try native ripgrep (fastest, respects .gitignore)
   const rgResult = tryNativeRg(pattern, dir, include, exclude, cappedMax);

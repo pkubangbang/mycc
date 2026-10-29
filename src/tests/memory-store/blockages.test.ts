@@ -122,10 +122,15 @@ describe('memory-store', () => {
       it('should handle removing non-existent blockage', () => {
         const id = createIssue('Test', 'Content', []);
 
-        // Should not throw
+        // Removing a pair that was never linked is a silent no-op: no throw,
+        // no mutation of any issue it touches, no phantom issue created.
         removeBlockage(id, 999);
         removeBlockage(999, id);
         removeBlockage(999, 888);
+
+        expect(getIssue(id)?.blockedBy).toEqual([]);
+        expect(getIssue(id)?.blocks).toEqual([]);
+        expect(getIssue(999)).toBeUndefined();
       });
 
       it('should update issue relationships after removal', () => {

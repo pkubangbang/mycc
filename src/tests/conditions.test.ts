@@ -334,13 +334,23 @@ describe("ConditionRegistry", () => {
     });
 
 
-    it("should match even when previously injected", () => {
+    it("should match even when previously injected (matches() ignores injection state)", () => {
       seq.add({ tool: "bash", args: { command: "test" }, result: "Error: failed", timestamp: 1000 });
       const matches1 = registry.matches("bash", seq);
       expect(matches1).toContain("any-error");
+      expect(registry.hasInjected("any-error")).toBe(false);
+
       registry.markInjected("any-error");
+      // `matches()` is a pure predicate over the sequence: it does not consult
+      // the injected set, so a previously-injected skill still matches. The
+      // dedupe lives in the EXECUTOR (it checks hasInjected before acting) —
+      // this test pins exactly that split.
+      expect(registry.hasInjected("any-error")).toBe(true);
       const matches2 = registry.matches("bash", seq);
       expect(matches2).toContain("any-error");
+
+      // ...and the marker really tracks state (a fresh key is not injected).
+      expect(registry.hasInjected("never-marked")).toBe(false);
     });
 
   });

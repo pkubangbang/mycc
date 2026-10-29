@@ -89,12 +89,17 @@ describe('todoCreateTool', () => {
     expect(mockTodo.createTodo).toHaveBeenCalledWith('Task', 'padded note');
   });
 
-  it('should include full todo list in output', () => {
+  it('should NOT print the todo list itself (the loop owns rendering)', () => {
     vi.mocked(mockTodo.createTodo).mockReturnValue({ id: 1, name: 'Task', done: false, hash: 'abc12345' });
     vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [ ] 1. Task [hash: abc12345]');
 
     const result = todoCreateTool.handler(ctx, { name: 'Task' });
-      expect(result).not.toContain('Todo list:');
+    // The tool returns the item + hash; the list is rendered by the loop
+    // (collect.ts nudge) and `/todos` — so it MUST NOT echo it, or every
+    // create would duplicate the rendering. (The title asserted the opposite
+    // of what the code does; pinned to the real contract.)
+    expect(result).not.toContain('Todo list:');
+    expect(result).toContain('hash: abc12345');
   });
 
   it('should call brief with todo info', () => {

@@ -243,6 +243,13 @@ describe('HookExecutor pipeline (processToolCalls)', () => {
 
       expect(result.action).toBe('injected');
       expect(result.newCalls?.[0].function.name).toBe('wiki_get');
+      // A name-only assertion passes even when the injected args are dropped
+      // or mangled; pin the arguments the condition's action declared.
+      // (arguments is the ollama-shape OBJECT, not a JSON string.)
+      expect(result.newCalls?.[0].function.arguments).toEqual({
+        query: 'error',
+        domain: 'pitfall',
+      });
     });
   });
 

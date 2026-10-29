@@ -94,12 +94,14 @@ describe('todo-create', () => {
       expect(mockTodo.createTodo).toHaveBeenCalledWith('Task', 'padded note');
     });
 
-    it('should include full todo list in output', () => {
+    it('should NOT print the todo list itself (the loop owns rendering)', () => {
       vi.mocked(mockTodo.createTodo).mockReturnValue({ id: 1, name: 'Task', done: false, hash: 'abc12345' });
       vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [ ] 1. Task [hash: abc12345]');
 
       const result = todoCreateTool.handler(ctx, { name: 'Task' });
+      // Rendering belongs to the loop / `/todos`; the tool must not duplicate it.
       expect(result).not.toContain('Todo list:');
+      expect(result).toContain('hash: abc12345');
     });
 
     it('should call brief with todo info', () => {
@@ -328,12 +330,14 @@ describe('todo-update', () => {
     });
 
     // Output formatting
-    it('should include full todo list in output', () => {
+    it('should NOT print the todo list itself (the loop owns rendering)', () => {
       vi.mocked(mockTodo.updateTodo).mockReturnValue({ id: 1, name: 'Task A', done: true, hash: 'newhash10' });
       vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [x] 1. Task A [hash: newhash10]');
 
       const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'abc12345', name: 'Task A', done: true });
+      // Rendering belongs to the loop / `/todos`; the tool must not duplicate it.
       expect(result).not.toContain('Todo list:');
+      expect(result).toContain('hash: newhash10');
     });
 
     it('should include new hash in output', () => {

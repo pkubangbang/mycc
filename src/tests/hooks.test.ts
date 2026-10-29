@@ -184,8 +184,13 @@ describe('HookExecutor', () => {
 
       expect(result.action).toBe('injected');
       expect(result.newCalls).toHaveLength(2);
-      expect(result.newCalls?.[0].function.name).toBe('bash'); // Original first
-      expect(result.newCalls?.[1].function.name).toBe('bash'); // Injected second
+      // Both calls target `bash`, so names alone cannot prove ordering —
+      // compare the ARGUMENTS: the original first, the hook's after it.
+      // (arguments is the ollama-shape OBJECT, not a JSON string.)
+      expect(result.newCalls?.[0].function.name).toBe('bash');
+      expect(result.newCalls?.[0].function.arguments).toMatchObject({ command: 'original' });
+      expect(result.newCalls?.[1].function.name).toBe('bash');
+      expect(result.newCalls?.[1].function.arguments).toMatchObject({ command: 'pnpm test' });
     });
 
   });

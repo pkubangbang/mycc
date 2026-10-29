@@ -455,7 +455,10 @@ describe('ChildCore - requestGrant Method', () => {
     expect(mockSendRequest).toHaveBeenCalledWith(
       'grant_request',
       expect.objectContaining({ tool: 'write_file', path: '/test/file.ts' }),
-      expect.any(Number)
+      // NO-TIMEOUT CONTRACT: a grant may wait unboundedly on a human [y/N] or a
+      // slow LLM safeguard. Literal 0 (not any Number) — a 5 s default here
+      // would deny the grant after the user's "y" was still pending.
+      0
     );
   });
 
@@ -467,7 +470,7 @@ describe('ChildCore - requestGrant Method', () => {
     expect(mockSendRequest).toHaveBeenCalledWith(
       'grant_request',
       expect.objectContaining({ tool: 'bash', command: 'echo test' }),
-      expect.any(Number)
+      0 // no timeout — see the contract above
     );
   });
 

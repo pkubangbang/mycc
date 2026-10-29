@@ -141,6 +141,11 @@ describe('createSessionFile: caller-supplied id over an existing session (never 
     const id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
     seedExistingSession(sess, id);
 
+    const sessionFile = path.join(projectTmp, '.mycc', 'sessions', id, `session-${id}.json`);
+    // Snapshot the seeded session BEFORE the colliding call: the only honest
+    // no-clobber proof is surviving-vs-before, not surviving-vs-itself.
+    const before = JSON.parse(fs.readFileSync(sessionFile, 'utf-8')) as Record<string, unknown>;
+
     let caught: unknown;
     try {
       sess.createSessionFile('/new/start.jsonl', id);
@@ -149,11 +154,9 @@ describe('createSessionFile: caller-supplied id over an existing session (never 
     }
     expect((caught as Error).name).toBe('SessionExistsError');
 
-    const surviving = JSON.parse(
-      fs.readFileSync(path.join(projectTmp, '.mycc', 'sessions', id, `session-${id}.json`), 'utf-8'),
-    );
+    const surviving = JSON.parse(fs.readFileSync(sessionFile, 'utf-8')) as Record<string, unknown>;
     for (const field of SESSION_FILE_FIELDS) {
-      expect(surviving[field]).toEqual((surviving as Record<string, unknown>)[field]); // shape intact
+      expect(surviving[field], `field ${field} was clobbered`).toEqual(before[field]);
     }
     expect(surviving.teammates).toEqual(['canary-teammate']);
     expect(surviving.first_query).toBe('canary query that must survive a collision');
