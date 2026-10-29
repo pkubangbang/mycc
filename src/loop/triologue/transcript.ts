@@ -442,12 +442,61 @@ export function asAppendablePiece(piece: unknown): AppendablePiece {
  * a crashed turn) — the callback invocation itself is guarded so an
  * observer that throws cannot break the writer either.
  */
+/**
+ * Append-only line sink: the ONE place a transcript line reaches a destination.
+ *
+ * The writer takes a sink rather than a path so that the destination is a
+ * *dependency* (injectable, fakes-able) instead of a global: tests hand it an
+ * in-memory sink and cannot touch the live `.mycc/sessions/**` transcripts, and
+ * disk-full / permission failures are representable (a throwing sink) instead
+ * of being un-testable. `fileLineSink()` is the production implementation; it
+ * is the only thing in this module that knows about `fs`.
+ */
+export interface LineSink {
+  /** Append exactly one already-serialised line (the sink adds its own newline handling). */
+  append(line: string, encoding: 'utf-8'): void;
+  /** Destination identifier for diagnostics only — never used to build a path. */
+  readonly destination: string;
+}
+
+/** Production sink: one `fs.appendFileSync` per line (never seek / truncate). */
+export function fileLineSink(filePath: string): LineSink {
+  return {
+    destination: filePath,
+    append(line, encoding) {
+      fs.appendFileSync(filePath, line, encoding);
+    },
+  };
+}
+
+/** In-memory sink for tests: nothing leaves the process. */
+export function memoryLineSink(): LineSink & { readonly lines: string[] } {
+  const lines: string[] = [];
+  return {
+    destination: '<memory>',
+    lines,
+    append(line) {
+      lines.push(line);
+    },
+  };
+}
+
 export class JsonlTranscriptWriter {
+  private readonly sink: LineSink;
   private readonly filePath: string;
   private readonly onError: (err: unknown, filePath: string) => void;
 
-  constructor(filePath: string, onError?: (err: unknown, filePath: string) => void) {
-    this.filePath = filePath;
+  /**
+   * @param sinkOrPath - a {@link LineSink} (preferred: inject a fake in tests) or
+   *   a file path, kept for source compatibility at the existing call sites.
+   * @param onError - observed write failures; the writer itself never throws.
+   */
+  constructor(
+    sinkOrPath: LineSink | string,
+    onError?: (err: unknown, filePath: string) => void,
+  ) {
+    this.sink = typeof sinkOrPath === 'string' ? fileLineSink(sinkOrPath) : sinkOrPath;
+    this.filePath = this.sink.destination;
     this.onError = onError ?? (() => {});
   }
 
@@ -470,7 +519,7 @@ export class JsonlTranscriptWriter {
       timestamp: Date.now(),
     };
     try {
-      fs.appendFileSync(this.filePath, `${JSON.stringify(record)}\n`, 'utf-8');
+      this.sink.append(`${JSON.stringify(record)}\n`, 'utf-8');
     } catch (err) {
       try {
         this.onError(err, this.filePath);

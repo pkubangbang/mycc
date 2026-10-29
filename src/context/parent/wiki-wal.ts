@@ -23,6 +23,7 @@ import * as path from 'path';
 import type { WALEntry } from '../../types.js';
 import { getWikiLogsDir, ensureDirs } from '../../config.js';
 import { parseWALFile, formatDate } from './wiki-utils.js';
+import { fileLineSink, type LineSink } from '../../loop/triologue/transcript.js';
 
 /** Resolve the WAL file path for a given date (default: today). */
 function walPathFor(date?: string): string {
@@ -45,22 +46,22 @@ export function readWAL(date?: string): WALEntry[] {
 /**
  * Append a single entry to today's WAL as one JSON line.
  */
-export function appendWALEntry(entry: WALEntry): void {
+export function appendWALEntry(entry: WALEntry, sink?: LineSink): void {
   ensureDirs();
   const walPath = walPathFor();
-  fs.appendFileSync(walPath, `${JSON.stringify(entry)}\n`, 'utf-8');
+  (sink ?? fileLineSink(walPath)).append(`${JSON.stringify(entry)}\n`, 'utf-8');
 }
 
 /**
  * Append many entries to today's WAL in a SINGLE write (one JSON line each).
  * Used by the batch-put path so a batch is one filesystem append, not N.
  */
-export function appendWALEntries(entries: WALEntry[]): void {
+export function appendWALEntries(entries: WALEntry[], sink?: LineSink): void {
   if (entries.length === 0) return;
   ensureDirs();
   const walPath = walPathFor();
   const lines = entries.map((e) => JSON.stringify(e)).join('\n');
-  fs.appendFileSync(walPath, `${lines}\n`, 'utf-8');
+  (sink ?? fileLineSink(walPath)).append(`${lines}\n`, 'utf-8');
 }
 
 /**

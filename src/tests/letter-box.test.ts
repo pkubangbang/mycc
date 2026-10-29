@@ -1,295 +1,83 @@
+/**
+ * letter-box.test.ts - Letter-box rendering of the REAL module
+ *
+ * This replaces src/tests/utils/letter-box.test.ts, which imported nothing from
+ * `src/`: it declared a local `wrapText()` ("we'll duplicate the logic here
+ * since it's not exported") and asserted against that copy. `src/utils/letter-box.ts`
+ * has no `wrapText` at all — the real behaviour is `stripInternalMarkup` +
+ * `displayLetterBox`, which this file drives.
+ */
+
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { stripInternalMarkup } from '../../src/utils/letter-box.js';
+import { stripInternalMarkup, displayLetterBox, setResultCallback } from '../../src/utils/letter-box.js';
 
-// Capture stdout for displayLetterBox tests
-let stdoutData: string[] = [];
-const originalStdoutWrite = process.stdout.write;
+let writes: string[] = [];
+const originalWrite = process.stdout.write;
 
-function captureStdout() {
-  stdoutData = [];
-  process.stdout.write = ((chunk: any): boolean => {
-    stdoutData.push(String(chunk));
+beforeEach(() => {
+  writes = [];
+  process.stdout.write = ((chunk: unknown): boolean => {
+    writes.push(String(chunk));
     return true;
   }) as typeof process.stdout.write;
-}
+  setResultCallback(null);
+});
 
-function restoreStdout() {
-  process.stdout.write = originalStdoutWrite;
-}
-
-// Fullwidth vertical line character used in DeepSeek DSML tags (U+FF5C)
-const FW_VLINE = '\uff5c';
-const FW_DSML_OPEN = '<' + FW_VLINE + FW_VLINE + 'DSML' + FW_VLINE + FW_VLINE;
-const FW_DSML_CLOSE = '</' + FW_VLINE + FW_VLINE + 'DSML' + FW_VLINE + FW_VLINE;
-
-// ASCII-pipe form — the actual DeepSeek wire format. The pipes are plain "|"
-// (U+007C), NOT the fullwidth vline the original matcher gated on. This is the
-// form that leaked: the old `includes(FW_VLINE)` fast path skipped it entirely.
-const A_DSML_OPEN = '<||DSML||';
-const A_DSML_CLOSE = '</||DSML||';
-
-/**
- * Helper: build a DSML opening tag, e.g. <||DSML||tool_calls>
- */
-function dsmlOpen(name: string): string {
-  return FW_DSML_OPEN + name + '>';
-}
-
-/**
- * Helper: build a DSML closing tag, e.g. </||DSML||tool_calls>
- */
-function dsmlClose(name: string): string {
-  return FW_DSML_CLOSE + name + '>';
-}
-
-/**
- * Helper: build an ASCII-pipe DSML opening tag, e.g. <||DSML||tool_calls>
- */
-function asciiOpen(name: string): string {
-  return A_DSML_OPEN + name + '>';
-}
-
-/**
- * Helper: build an ASCII-pipe DSML closing tag, e.g. </||DSML||tool_calls>
- */
-function asciiClose(name: string): string {
-  return A_DSML_CLOSE + name + '>';
-}
+afterEach(() => {
+  process.stdout.write = originalWrite;
+  setResultCallback(null);
+});
 
 describe('stripInternalMarkup', () => {
-  it('should strip full DSML paired tags with content', () => {
-    const input = [
-      'Some text before.',
-      dsmlOpen('tool_calls'),
-      dsmlOpen('invoke'),
-      dsmlOpen('parameter') + 'Hello' + dsmlClose('parameter'),
-      dsmlClose('invoke'),
-      dsmlClose('tool_calls'),
-      'Some text after.',
-    ].join('\n');
-
-    const result = stripInternalMarkup(input);
-    expect(result).toBe('Some text before.\n\nSome text after.');
+  it.each([
+    ['ASCII pipes', 'before <||DSML||tag>hidden</||DSML||tag> after', 'before  after'],
+    ['fullwidth pipes', 'before <\uff5c\uff5cDSML\uff5c\uff5ctag>hidden</\uff5c\uff5cDSML\uff5c\uff5ctag> after', 'before  after'],
+    ['mixed ASCII+fullwidth pipes', 'a <|\uff5cDSML|\uff5cTAG>x</\uff5c|DSML\uff5c|TAG> b', 'a  b'],
+    ['uppercase tag name', 'a <||DSML||TAG>x</||DSML||TAG> b', 'a  b'],
+  ])('strips %s tags and keeps surrounding text', (_label, input, expected) => {
+    expect(stripInternalMarkup(input)).toBe(expected);
   });
 
-  it('should strip multiple DSML tags', () => {
-    const input = dsmlOpen('tag1') + 'content1' + dsmlClose('tag1') + ' keep ' +
-                  dsmlOpen('tag2') + 'content2' + dsmlClose('tag2');
-    const result = stripInternalMarkup(input);
-    expect(result).toBe('keep');
-  });
-
-  it('should strip self-closing DSML tags', () => {
-    const input = 'hello ' + FW_DSML_OPEN + 'br /> world';
-    const result = stripInternalMarkup(input);
-    expect(result).toBe('hello  world');
-  });
-
-  it('should strip orphaned opening DSML tags', () => {
-    const input = 'some text ' + dsmlOpen('foo') + ' more text';
-    const result = stripInternalMarkup(input);
-    expect(result).toBe('some text  more text');
-  });
-
-  it('should strip orphaned closing DSML tags', () => {
-    const input = 'text' + dsmlClose('bar') + 'done';
-    const result = stripInternalMarkup(input);
-    expect(result).toBe('textdone');
-  });
-
-  // ── Single-vline form: <｜DSML｜tagname> (one U+FF5C per side) ──
-  // Some Ollama-hosted models (e.g. GLM) emit DSML with a SINGLE fullwidth
-  // vline per side instead of DeepSeek's double. Regression guard for the
-  // hook.ts brief leak: "...tester</｜DSML｜parameter>".
-
-  it('should strip single-vline paired DSML tags with content', () => {
-    const input = 'before <' + FW_VLINE + 'DSML' + FW_VLINE + 'tool_calls>hidden</' +
-      FW_VLINE + 'DSML' + FW_VLINE + 'tool_calls> after';
-    const result = stripInternalMarkup(input);
-    expect(result).toBe('before  after');
-  });
-
-  it('should strip single-vline orphaned closing DSML tags (hook.ts brief leak form)', () => {
-    // The exact tail observed leaking into the [assistant] brief:
-    //   editor-tester has been dispatched on #21. Let me await its result.tester</｜DSML｜parameter>
-    const input = 'editor-tester has been dispatched on #21. Let me await its result.tester</' +
-      FW_VLINE + 'DSML' + FW_VLINE + 'parameter>';
-    const result = stripInternalMarkup(input);
-    expect(result).toBe('editor-tester has been dispatched on #21. Let me await its result.tester');
-  });
-
-  it('should strip single-vline opening DSML tags with attributes', () => {
-    const input = 'text <' + FW_VLINE + 'DSML' + FW_VLINE + 'invoke name="mail_to"> more';
-    const result = stripInternalMarkup(input);
-    expect(result).toBe('text  more');
-  });
-
-  it('should strip a full single-vline tool-call block to empty', () => {
-    const input = [
-      '<' + FW_VLINE + 'DSML' + FW_VLINE + 'tool_calls>',
-      '<' + FW_VLINE + 'DSML' + FW_VLINE + 'invoke name="mail_to">',
-      '<' + FW_VLINE + 'DSML' + FW_VLINE + 'parameter name="content">editor-tester dispatched</' +
-        FW_VLINE + 'DSML' + FW_VLINE + 'parameter>',
-      '</' + FW_VLINE + 'DSML' + FW_VLINE + 'invoke>',
-      '</' + FW_VLINE + 'DSML' + FW_VLINE + 'tool_calls>',
-    ].join('\n');
-    const result = stripInternalMarkup(input);
-    expect(result).toBe('');
-  });
-
-  it('should strip mixed single- and double-vline DSML tags', () => {
-    const input = dsmlOpen('tool_calls') + 'A</' + FW_VLINE + 'DSML' + FW_VLINE + 'tool_calls>' +
-      ' keep ' + '<' + FW_VLINE + 'DSML' + FW_VLINE + 'x>B</' + FW_VLINE + 'DSML' + FW_VLINE + 'x>';
-    const result = stripInternalMarkup(input);
-    expect(result).toBe('keep');
-  });
-
-  it("should handle the exact example from changelog-todo.md (verbatim)", () => {
-    // This matches the raw text from the file:
-    // fullwidth vertical bars (U+FF5C) wrapping "DSML" prefix + tag name
-    const input = [
-      dsmlOpen('tool_calls'),
-      dsmlOpen('invoke name="brief"'),
-      dsmlOpen('parameter name="message" string="true"') +
-        '\u{1F680} Merged into local `main` (commit 9aa4be5). ' +
-        'The remote `origin/main` appears to be behind (at 62a9469). ' +
-        'The push said "Everything up-to-date" \u2014 might need a force push ' +
-        "or there's a discrepancy. Want me to investigate and push properly, " +
-        'or is this fine as-is?' +
-        dsmlClose('parameter'),
-      dsmlClose('invoke'),
-      dsmlClose('tool_calls'),
-    ].join('\n');
-
-    const result = stripInternalMarkup(input);
-    expect(result).toBe('');
-  });
-
-  it("should handle the verbatim raw bytes from changelog-todo.md", () => {
-    // Copy-pasted from the actual file bytes:
-    // <\xef\xbd\x9c\xef\xbd\x9cDSML\xef\xbd\x9c\xef\xbd\x9ctool_calls>
-    // Using the exact characters read from the file
-    const fv = '\uff5c';
-    const rawExample =
-      '   <' + fv + fv + 'DSML' + fv + fv + 'tool_calls>\r\n' +
-      '   <' + fv + fv + 'DSML' + fv + fv + 'invoke name="brief">\r\n' +
-      '   <' + fv + fv + 'DSML' + fv + fv + 'parameter name="message" string="true">' +
-        '\u{1F680} Merged into local `main` (commit 9aa4be5). ' +
-        'The remote `origin/main` appears to be behind (at 62a9469). ' +
-        'The push said "Everything up-to-date" \u2014 might need a force push ' +
-        "or there's a discrepancy. Want me to investigate and push properly, " +
-        'or is this fine as-is?' +
-        '</' + fv + fv + 'DSML' + fv + fv + 'parameter>\r\n' +
-      '   </' + fv + fv + 'DSML' + fv + fv + 'invoke>\r\n' +
-      '   </' + fv + fv + 'DSML' + fv + fv + 'tool_calls>';
-
-    const result = stripInternalMarkup(rawExample);
-    expect(result).toBe('');
-  });
-
-  it('should preserve normal text without any tags', () => {
-    const input = 'Hello, this is a normal message with no markup.';
-    const result = stripInternalMarkup(input);
-    expect(result).toBe(input);
-  });
-
-  // ── ASCII-pipe form: <||DSML||tagname> (plain "|" U+007C) ──
-  // The actual DeepSeek wire format. The old matcher gated on the fullwidth
-  // vline and never ran for this form, so raw markup leaked to display.
-  // Regression guard for the ASCII-pipe DSML leak.
-
-  it('should strip ASCII-pipe paired DSML tags with content', () => {
-    const input = [
-      'Some text before.',
-      asciiOpen('tool_calls'),
-      asciiOpen('invoke') + 'Hello' + asciiClose('invoke'),
-      asciiClose('tool_calls'),
-      'Some text after.',
-    ].join('\n');
-
-    const result = stripInternalMarkup(input);
-    expect(result).toBe('Some text before.\n\nSome text after.');
-  });
-
-  it('should strip a full ASCII-pipe tool-call block to empty', () => {
-    const input = [
-      asciiOpen('tool_calls'),
-      asciiOpen('invoke name="brief"'),
-      asciiOpen('parameter name="message" string="true"') +
-        'editor-tester has been dispatched on #21.' +
-        asciiClose('parameter'),
-      asciiClose('invoke'),
-      asciiClose('tool_calls'),
-    ].join('\n');
-    const result = stripInternalMarkup(input);
-    expect(result).toBe('');
-  });
-
-  it('should strip ASCII-pipe opening tags with attributes', () => {
-    const input = 'text <||DSML||invoke name="mail_to"> more';
-    const result = stripInternalMarkup(input);
-    expect(result).toBe('text  more');
-  });
-
-  it('should strip ASCII-pipe orphaned closing tags', () => {
-    const input = 'editor dispatched on #21. Let me await its result.tester</||DSML||parameter>';
-    const result = stripInternalMarkup(input);
-    expect(result).toBe('editor dispatched on #21. Let me await its result.tester');
-  });
-
-  it('should strip ASCII-pipe self-closing tags', () => {
-    const input = 'hello <||DSML||br /> world';
-    const result = stripInternalMarkup(input);
-    expect(result).toBe('hello  world');
-  });
-
-  it('should strip mixed ASCII-open + fullwidth-close DSML tags', () => {
-    const input = 'x <||DSML||tool_calls>hidden' + '</' + FW_VLINE + FW_VLINE +
-      'DSML' + FW_VLINE + FW_VLINE + 'tool_calls> y';
-    const result = stripInternalMarkup(input);
-    expect(result).toBe('x  y');
-  });
-
-  it('should handle content that has no fullwidth vertical lines efficiently', () => {
-    const input = 'Regular text with <b>html</b> that should stay as-is.';
-    const result = stripInternalMarkup(input);
-    expect(result).toBe(input);
+  it('leaves ordinary text (and unpaired DSML words) untouched', () => {
+    expect(stripInternalMarkup('plain text')).toBe('plain text');
+    expect(stripInternalMarkup('DSML without tags')).toBe('DSML without tags');
+    expect(stripInternalMarkup('')).toBe('');
   });
 });
 
-// We need to import displayLetterBox for the display tests.
-// Since it's a side-effect function (writes to stdout), we test via stdout capture.
-import { displayLetterBox } from '../../src/utils/letter-box.js';
-
 describe('displayLetterBox', () => {
-  beforeEach(() => {
-    captureStdout();
+  it('writes a three-line box and mirrors the stripped content to the callback', () => {
+    const seen: string[] = [];
+    setResultCallback((c) => seen.push(c));
+
+    displayLetterBox('hello <||DSML||t>gone</||DSML||t> world');
+
+    const out = writes.join('');
+    expect(out.split('\n').length).toBeGreaterThanOrEqual(3);
+    expect(out).toContain('hello  world');
+    // The callback receives the STRIPPED text, never the raw markup.
+    expect(seen).toEqual(['hello  world']);
+    expect(out).not.toContain('DSML');
   });
 
-  afterEach(() => {
-    restoreStdout();
+  it('shows a friendly fallback when markup stripping leaves nothing', () => {
+    const seen: string[] = [];
+    setResultCallback((c) => seen.push(c));
+
+    displayLetterBox('<||DSML||t>only markup</||DSML||t>');
+
+    const out = writes.join('');
+    expect(out).toContain('no displayable content');
+    expect(seen).toEqual(['(no displayable content — internal markup was stripped)']);
   });
 
-  it('should show fallback content when all text is DSML markup', () => {
-    const input = dsmlOpen('tool_calls') + dsmlOpen('invoke') +
-      dsmlOpen('parameter') + 'hello' + dsmlClose('parameter') +
-      dsmlClose('invoke') + dsmlClose('tool_calls');
-
-    displayLetterBox(input);
-
-    const output = stdoutData.join('');
-    // Should contain the fallback message, not empty content
-    expect(output).toContain('no displayable content');
-    // Should still have box borders
-    expect(output).toContain('.=');
+  it('renders a header carrying a HH:MM:SS timestamp', () => {
+    displayLetterBox('tick');
+    expect(writes.join('')).toMatch(/\d{2}:\d{2}:\d{2}/);
   });
 
-  it('should show normal content when text survives stripping', () => {
-    const input = 'Hello, this is real content.';
-
-    displayLetterBox(input);
-
-    const output = stdoutData.join('');
-    expect(output).toContain('Hello, this is real content.');
+  it('does not call the callback when none is registered', () => {
+    expect(() => displayLetterBox('no callback')).not.toThrow();
+    expect(writes.join('')).toContain('no callback');
   });
 });

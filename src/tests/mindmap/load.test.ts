@@ -1,154 +1,173 @@
 /**
  * load.test.ts - Loading tests for mindmap
+ *
+ * Binds to the REAL src/mindmap/load.ts. The previous revision re-implemented
+ * `load_mindmap` locally and never imported the production module, so deleting
+ * src/mindmap/load.ts (or its throw-on-invalid branch, or set_in_memory_flags /
+ * strip_in_memory_flags) left this suite green.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import {
+  load_mindmap,
+  load_mindmap_from_json,
+  try_load_mindmap,
+  serialize_mindmap,
+  save_mindmap,
+  get_default_mindmap_path,
+  mindmap_exists,
+} from '../../mindmap/load.js';
+import { parse_mindmap_json } from '../../mindmap/validate.js';
+import { compute_hash } from '../../mindmap/validate.js';
+import type { MindmapJSON } from '../../mindmap/types.js';
 
-// Types
-interface Link {
-  target_type: 'node' | 'file' | 'url';
-  node_id?: string;
-  file_path?: string;
-  url?: string;
-  comment: string;
-}
-
-interface Node {
-  id: string;
-  text: string;
-  title: string;
-  summary: string;
-  level: number;
-  children: Node[];
-  links: Link[];
-}
-
-interface Mindmap {
-  dir: string;
-  hash: string;
-  compiled_at: Date;
-  updated_at: Date;
-  root: Node;
-}
-
-// Implementation of load_mindmap
-function load_mindmap(json: unknown): Mindmap | null {
-  // Check if json is an object
-  if (typeof json !== 'object' || json === null) {
-    return null;
-  }
-
-  const m = json as Record<string, unknown>;
-
-  // Validate required fields
-  if (typeof m.dir !== 'string') return null;
-  if (typeof m.hash !== 'string') return null;
-  if (!m.root) return null;
-
-  // Parse dates
-  const compiled_at = m.compiled_at instanceof Date 
-    ? m.compiled_at 
-    : new Date(m.compiled_at as string);
-  const updated_at = m.updated_at instanceof Date 
-    ? m.updated_at 
-    : new Date(m.updated_at as string);
-
-  // Validate and convert root node
-  const root = validateAndConvertNode(m.root);
-  if (!root) return null;
-
+/** A structurally valid MindmapJSON fixture (validate_mindmap_structure requires source_file). */
+function validJson(overrides: Partial<MindmapJSON> = {}): MindmapJSON {
   return {
-    dir: m.dir as string,
-    hash: m.hash as string,
-    compiled_at,
-    updated_at,
-    root
-  };
+    dir: '/test/dir',
+    source_file: 'MYCC.md',
+    hash: 'abc123',
+    compiled_at: '2024-01-15T10:00:00Z',
+    updated_at: '2024-01-15T10:00:00Z',
+    root: {
+      id: '/',
+      text: '# Root\n\nRoot content',
+      title: 'Root',
+      summary: 'Root summary',
+      level: 0,
+      children: [],
+      links: [],
+    },
+    ...overrides,
+  } as MindmapJSON;
 }
 
-function validateAndConvertNode(node: unknown): Node | null {
-  if (typeof node !== 'object' || node === null) return null;
-  const n = node as Record<string, unknown>;
+describe('load_mindmap_from_json (real implementation)', () => {
+  it('loads a valid mindmap JSON', () => {
+    const result = load_mindmap_from_json(validJson());
+    expect(result.dir).toBe('/test/dir');
+    expect(result.hash).toBe('abc123');
+    expect(result.root.id).toBe('/');
+  });
 
-  if (typeof n.id !== 'string') return null;
-  if (typeof n.text !== 'string') return null;
-  if (typeof n.title !== 'string') return null;
-  if (typeof n.summary !== 'string') return null;
-  if (typeof n.level !== 'number') return null;
-  if (!Array.isArray(n.children)) return null;
-  if (!Array.isArray(n.links)) return null;
+  it('keeps nested children intact', () => {
+    const json = validJson();
+    json.root.children = [
+      {
+        id: '/child',
+        text: '## Child',
+        title: 'Child',
+        summary: 'Child summary',
+        level: 1,
+        children: [
+          {
+            id: '/child/grandchild',
+            text: '### Grandchild',
+            title: 'Grandchild',
+            summary: 'Grandchild summary',
+            level: 2,
+            children: [],
+            links: [],
+          },
+        ],
+        links: [],
+      },
+    ];
 
-  // Recursively convert children
-  const children: Node[] = [];
-  for (const child of n.children) {
-    const converted = validateAndConvertNode(child);
-    if (!converted) return null;
-    children.push(converted);
-  }
+    const result = load_mindmap_from_json(json);
+    expect(result.root.children).toHaveLength(1);
+    expect(result.root.children[0].children).toHaveLength(1);
+    expect(result.root.children[0].children[0].id).toBe('/child/grandchild');
+  });
 
-  // Convert links
-  const links: Link[] = [];
-  for (const link of n.links) {
-    const converted = validateAndConvertLink(link);
-    if (!converted) return null;
-    links.push(converted);
-  }
+  it('keeps links intact', () => {
+    const json = validJson();
+    json.root.links = [
+      { target_type: 'url', url: 'https://example.com', comment: 'External link' },
+    ];
 
-  return {
-    id: n.id,
-    text: n.text,
-    title: n.title,
-    summary: n.summary,
-    level: n.level,
-    children,
-    links
-  };
-}
+    const result = load_mindmap_from_json(json);
+    expect(result.root.links).toHaveLength(1);
+    expect(result.root.links[0].target_type).toBe('url');
+  });
 
-function validateAndConvertLink(link: unknown): Link | null {
-  if (typeof link !== 'object' || link === null) return null;
-  const l = link as Record<string, unknown>;
+  it('THROWS on an invalid structure (not `return null`)', () => {
+    // The production contract is a throw; the local copy this file used to
+    // carry returned null instead, so this branch was never verified.
+    expect(() => load_mindmap_from_json(null)).toThrow(/Invalid mindmap JSON structure/);
+    expect(() => load_mindmap_from_json([])).toThrow(/Invalid mindmap JSON structure/);
+    expect(() => load_mindmap_from_json({ ...validJson(), dir: 42 })).toThrow();
+    expect(() => load_mindmap_from_json({ ...validJson(), source_file: undefined })).toThrow();
+    expect(() => load_mindmap_from_json({ ...validJson(), root: { id: '/' } })).toThrow();
+  });
 
-  if (!['node', 'file', 'url'].includes(l.target_type as string)) return null;
-  if (typeof l.comment !== 'string') return null;
+  it('THROWS on an invalid child node', () => {
+    const json = validJson();
+    (json.root.children as unknown[]).push({ id: '/child', level: 1, children: [], links: [] });
+    expect(() => load_mindmap_from_json(json)).toThrow(/Invalid mindmap JSON structure/);
+  });
 
-  const result: Link = {
-    target_type: l.target_type as 'node' | 'file' | 'url',
-    comment: l.comment
-  };
+  it('THROWS on an invalid link type', () => {
+    const json = validJson();
+    (json.root.links as unknown[]).push({ target_type: 'invalid', comment: 'nope' });
+    expect(() => load_mindmap_from_json(json)).toThrow();
+  });
 
-  if (l.target_type === 'node') {
-    if (typeof l.node_id !== 'string') return null;
-    result.node_id = l.node_id;
-  } else if (l.target_type === 'file') {
-    if (typeof l.file_path !== 'string') return null;
-    result.file_path = l.file_path;
-  } else if (l.target_type === 'url') {
-    if (typeof l.url !== 'string') return null;
-    result.url = l.url;
-  }
+  it('accepts a `term` link (production supports it; the local copy did not)', () => {
+    const json = validJson();
+    json.root.links = [{ target_type: 'term', term_name: 'letter-box', comment: 'glossary' } as never];
+    expect(load_mindmap_from_json(json).root.links[0].target_type).toBe('term');
+  });
 
-  return result;
-}
+  it('sets in-memory flags on every node (is_mycc=true, is_patch=false)', () => {
+    const json = validJson();
+    json.root.children = [
+      { id: '/a', text: 'a', title: 'A', summary: '', level: 1, children: [], links: [] },
+    ];
+    const mm = load_mindmap_from_json(json);
+    expect(mm.root.is_mycc).toBe(true);
+    expect(mm.root.is_patch).toBe(false);
+    expect(mm.root.children[0].is_mycc).toBe(true);
+  });
+});
 
-// Helper to read JSON file
-function loadMindmapFromPath(jsonPath: string): Mindmap | null {
-  try {
-    if (!fs.existsSync(jsonPath)) {
-      return null;
-    }
-    const content = fs.readFileSync(jsonPath, 'utf-8');
-    const json = JSON.parse(content);
-    return load_mindmap(json);
-  } catch {
-    return null;
-  }
-}
+describe('serialize_mindmap / save_mindmap strip in-memory flags', () => {
+  let tempDir: string;
 
-describe('load_mindmap', () => {
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mindmap-load-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('serialize_mindmap never emits is_mycc/is_patch', () => {
+    // If stripping regressed, these flags would be written into the live
+    // .mycc/mindmap.json — the hazard the old local-copy suite could not see.
+    const json = validJson();
+    json.root.children = [
+      { id: '/a', text: 'a', title: 'A', summary: '', level: 1, children: [], links: [] },
+    ];
+    const out = serialize_mindmap(load_mindmap_from_json(json));
+    expect(out).not.toContain('is_mycc');
+    expect(out).not.toContain('is_patch');
+    expect(JSON.parse(out).root.children[0].id).toBe('/a');
+  });
+
+  it('save_mindmap writes to an explicit path and the file round-trips', () => {
+    const target = path.join(tempDir, 'mindmap.json');
+    save_mindmap(load_mindmap_from_json(validJson()), target);
+    const raw = fs.readFileSync(target, 'utf-8');
+    expect(raw).not.toContain('is_mycc');
+    expect(load_mindmap(target).root.title).toBe('Root');
+  });
+});
+
+describe('load_mindmap (file path)', () => {
   let tempDir: string;
   let jsonPath: string;
 
@@ -161,398 +180,118 @@ describe('load_mindmap', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  describe('Load Valid JSON', () => {
-    it('should load a valid mindmap JSON', () => {
-      const json = {
-        dir: '/test/dir',
-        hash: 'abc123',
-        compiled_at: '2024-01-15T10:00:00Z',
-        updated_at: '2024-01-15T10:00:00Z',
-        root: {
-          id: '/',
-          text: '# Root\n\nRoot content',
-          title: 'Root',
-          summary: 'Root summary',
-          level: 0,
-          children: [],
-          links: []
-        }
-      };
-
-      const result = load_mindmap(json);
-      expect(result).not.toBeNull();
-      expect(result?.dir).toBe('/test/dir');
-      expect(result?.hash).toBe('abc123');
-      expect(result?.root.id).toBe('/');
-    });
-
-    it('should load mindmap with nested nodes', () => {
-      const json = {
-        dir: '/test/dir',
-        hash: 'abc123',
-        compiled_at: '2024-01-15T10:00:00Z',
-        updated_at: '2024-01-15T10:00:00Z',
-        root: {
-          id: '/',
-          text: '# Root',
-          title: 'Root',
-          summary: 'Root summary',
-          level: 0,
-          children: [
-            {
-              id: '/child',
-              text: '## Child',
-              title: 'Child',
-              summary: 'Child summary',
-              level: 1,
-              children: [
-                {
-                  id: '/child/grandchild',
-                  text: '### Grandchild',
-                  title: 'Grandchild',
-                  summary: 'Grandchild summary',
-                  level: 2,
-                  children: [],
-                  links: []
-                }
-              ],
-              links: []
-            }
-          ],
-          links: []
-        }
-      };
-
-      const result = load_mindmap(json);
-      expect(result).not.toBeNull();
-      expect(result?.root.children).toHaveLength(1);
-      expect(result?.root.children[0].children).toHaveLength(1);
-    });
-
-    it('should load mindmap with links', () => {
-      const json = {
-        dir: '/test/dir',
-        hash: 'abc123',
-        compiled_at: '2024-01-15T10:00:00Z',
-        updated_at: '2024-01-15T10:00:00Z',
-        root: {
-          id: '/',
-          text: '# Root',
-          title: 'Root',
-          summary: 'Root summary',
-          level: 0,
-          children: [],
-          links: [
-            {
-              target_type: 'url',
-              url: 'https://example.com',
-              comment: 'External link'
-            }
-          ]
-        }
-      };
-
-      const result = load_mindmap(json);
-      expect(result).not.toBeNull();
-      expect(result?.root.links).toHaveLength(1);
-      expect(result?.root.links[0].target_type).toBe('url');
-    });
-
-    it('should parse date strings into Date objects', () => {
-      const json = {
-        dir: '/test/dir',
-        hash: 'abc123',
-        compiled_at: '2024-01-15T10:00:00Z',
-        updated_at: '2024-01-15T10:00:00Z',
-        root: {
-          id: '/',
-          text: '# Root',
-          title: 'Root',
-          summary: 'Root summary',
-          level: 0,
-          children: [],
-          links: []
-        }
-      };
-
-      const result = load_mindmap(json);
-      expect(result).not.toBeNull();
-      expect(result?.compiled_at).toBeInstanceOf(Date);
-      expect(result?.updated_at).toBeInstanceOf(Date);
-    });
+  it('THROWS for a non-existent file', () => {
+    expect(() => load_mindmap('/nonexistent/path/mindmap.json')).toThrow(/not found/);
+    expect(() => load_mindmap(path.join(tempDir, 'nonexistent.json'))).toThrow(/not found/);
   });
 
-  describe('Load Non-existent File', () => {
-    it('should return null for non-existent file', () => {
-      const result = loadMindmapFromPath('/nonexistent/path/mindmap.json');
-      expect(result).toBeNull();
-    });
-
-    it('should return null for non-existent file path', () => {
-      const result = loadMindmapFromPath(path.join(tempDir, 'nonexistent.json'));
-      expect(result).toBeNull();
-    });
+  it('THROWS for invalid JSON syntax', () => {
+    fs.writeFileSync(jsonPath, '{ invalid json }');
+    expect(() => load_mindmap(jsonPath)).toThrow(SyntaxError);
   });
 
-  describe('Load Invalid JSON', () => {
-    it('should return null for invalid JSON syntax', () => {
-      fs.writeFileSync(jsonPath, '{ invalid json }');
-      const result = loadMindmapFromPath(jsonPath);
-      expect(result).toBeNull();
-    });
-
-    it('should return null for non-object JSON', () => {
-      fs.writeFileSync(jsonPath, '"just a string"');
-      const result = loadMindmapFromPath(jsonPath);
-      expect(result).toBeNull();
-    });
-
-    it('should return null for null JSON', () => {
-      fs.writeFileSync(jsonPath, 'null');
-      const result = loadMindmapFromPath(jsonPath);
-      expect(result).toBeNull();
-    });
-
-    it('should return null for array JSON', () => {
-      fs.writeFileSync(jsonPath, '[]');
-      const result = loadMindmapFromFile(null);
-      expect(result).toBeNull();
-    });
-
-    it('should return null for missing dir', () => {
-      const json = {
-        hash: 'abc123',
-        compiled_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        root: {
-          id: '/',
-          text: '# Root',
-          title: 'Root',
-          summary: 'Summary',
-          level: 0,
-          children: [],
-          links: []
-        }
-      };
-      const result = load_mindmap(json);
-      expect(result).toBeNull();
-    });
-
-    it('should return null for missing hash', () => {
-      const json = {
-        dir: '/test/dir',
-        compiled_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        root: {
-          id: '/',
-          text: '# Root',
-          title: 'Root',
-          summary: 'Summary',
-          level: 0,
-          children: [],
-          links: []
-        }
-      };
-      const result = load_mindmap(json);
-      expect(result).toBeNull();
-    });
-
-    it('should return null for missing root', () => {
-      const json = {
-        dir: '/test/dir',
-        hash: 'abc123',
-        compiled_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
-      const result = load_mindmap(json);
-      expect(result).toBeNull();
-    });
-
-    it('should return null for invalid root node', () => {
-      const json = {
-        dir: '/test/dir',
-        hash: 'abc123',
-        compiled_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        root: {
-          id: '/',
-          // missing text, title, summary
-          level: 0,
-          children: [],
-          links: []
-        }
-      };
-      const result = load_mindmap(json);
-      expect(result).toBeNull();
-    });
-
-    it('should return null for invalid child node', () => {
-      const json = {
-        dir: '/test/dir',
-        hash: 'abc123',
-        compiled_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        root: {
-          id: '/',
-          text: '# Root',
-          title: 'Root',
-          summary: 'Summary',
-          level: 0,
-          children: [
-            {
-              id: '/child',
-              // missing fields
-              level: 1,
-              children: [],
-              links: []
-            }
-          ],
-          links: []
-        }
-      };
-      const result = load_mindmap(json);
-      expect(result).toBeNull();
-    });
+  it('THROWS for a non-object / null / array JSON payload', () => {
+    for (const payload of ['"just a string"', 'null', '[]']) {
+      fs.writeFileSync(jsonPath, payload);
+      expect(() => load_mindmap(jsonPath)).toThrow(/Invalid mindmap JSON structure/);
+    }
   });
 
-  describe('Link Validation', () => {
-    it('should load node link', () => {
-      const json = {
-        dir: '/test/dir',
-        hash: 'abc123',
-        compiled_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        root: {
-          id: '/',
-          text: '# Root',
-          title: 'Root',
-          summary: 'Summary',
-          level: 0,
-          children: [],
-          links: [
-            {
-              target_type: 'node',
-              node_id: '/other/node',
-              comment: 'Link to other node'
-            }
-          ]
-        }
-      };
-      const result = load_mindmap(json);
-      expect(result).not.toBeNull();
-      expect(result?.root.links[0].target_type).toBe('node');
-      expect(result?.root.links[0].node_id).toBe('/other/node');
-    });
-
-    it('should load file link', () => {
-      const json = {
-        dir: '/test/dir',
-        hash: 'abc123',
-        compiled_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        root: {
-          id: '/',
-          text: '# Root',
-          title: 'Root',
-          summary: 'Summary',
-          level: 0,
-          children: [],
-          links: [
-            {
-              target_type: 'file',
-              file_path: './src/index.ts',
-              comment: 'Source file'
-            }
-          ]
-        }
-      };
-      const result = load_mindmap(json);
-      expect(result).not.toBeNull();
-      expect(result?.root.links[0].target_type).toBe('file');
-      expect(result?.root.links[0].file_path).toBe('./src/index.ts');
-    });
-
-    it('should load url link', () => {
-      const json = {
-        dir: '/test/dir',
-        hash: 'abc123',
-        compiled_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        root: {
-          id: '/',
-          text: '# Root',
-          title: 'Root',
-          summary: 'Summary',
-          level: 0,
-          children: [],
-          links: [
-            {
-              target_type: 'url',
-              url: 'https://example.com',
-              comment: 'External URL'
-            }
-          ]
-        }
-      };
-      const result = load_mindmap(json);
-      expect(result).not.toBeNull();
-      expect(result?.root.links[0].target_type).toBe('url');
-      expect(result?.root.links[0].url).toBe('https://example.com');
-    });
-
-    it('should reject invalid link type', () => {
-      const json = {
-        dir: '/test/dir',
-        hash: 'abc123',
-        compiled_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        root: {
-          id: '/',
-          text: '# Root',
-          title: 'Root',
-          summary: 'Summary',
-          level: 0,
-          children: [],
-          links: [
-            {
-              target_type: 'invalid',
-              comment: 'Invalid type'
-            }
-          ]
-        }
-      };
-      const result = load_mindmap(json);
-      expect(result).toBeNull();
-    });
-
-    it('should reject node link without node_id', () => {
-      const json = {
-        dir: '/test/dir',
-        hash: 'abc123',
-        compiled_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        root: {
-          id: '/',
-          text: '# Root',
-          title: 'Root',
-          summary: 'Summary',
-          level: 0,
-          children: [],
-          links: [
-            {
-              target_type: 'node',
-              comment: 'Missing node_id'
-            }
-          ]
-        }
-      };
-      const result = load_mindmap(json);
-      expect(result).toBeNull();
-    });
+  it('loads a valid file from disk', () => {
+    fs.writeFileSync(jsonPath, JSON.stringify(validJson()));
+    const mm = load_mindmap(jsonPath);
+    expect(mm.dir).toBe('/test/dir');
+    expect(mm.root.is_mycc).toBe(true);
   });
 });
 
-// Helper function for file loading
-function loadMindmapFromFile(json: unknown): Mindmap | null {
-  return load_mindmap(json);
-}
+describe('try_load_mindmap returns null instead of throwing', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mindmap-load-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('returns null for a missing file', () => {
+    expect(try_load_mindmap(path.join(tempDir, 'nope.json'))).toBeNull();
+  });
+
+  it('returns null for an invalid file', () => {
+    const bad = path.join(tempDir, 'bad.json');
+    fs.writeFileSync(bad, '{ nope }');
+    expect(try_load_mindmap(bad)).toBeNull();
+  });
+
+  it('returns the mindmap for a valid file', () => {
+    const good = path.join(tempDir, 'good.json');
+    fs.writeFileSync(good, JSON.stringify(validJson()));
+    expect(try_load_mindmap(good)?.hash).toBe('abc123');
+  });
+});
+
+describe('default path helpers', () => {
+  it('get_default_mindmap_path joins <projectDir>/.mycc/mindmap.json', () => {
+    expect(get_default_mindmap_path('/proj')).toBe(path.join('/proj', '.mycc', 'mindmap.json'));
+  });
+
+  it('mindmap_exists reflects the filesystem', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mindmap-exists-'));
+    try {
+      expect(mindmap_exists(dir)).toBe(false);
+      fs.mkdirSync(path.join(dir, '.mycc'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.mycc', 'mindmap.json'), JSON.stringify(validJson()));
+      expect(mindmap_exists(dir)).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('parse_mindmap_json (real validate.ts)', () => {
+  it('returns null when the file is absent', () => {
+    expect(parse_mindmap_json('/nonexistent/mindmap.json')).toBeNull();
+  });
+
+  it('agrees with compute_hash on the same bytes', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mindmap-parse-'));
+    try {
+      const json = validJson();
+      const p = path.join(dir, 'mindmap.json');
+      fs.writeFileSync(p, JSON.stringify(json));
+      expect(parse_mindmap_json(p)?.hash).toBe(json.hash);
+      expect(compute_hash(JSON.stringify(json))).toHaveLength(64);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('serialize_mindmap is PURE — it must not mutate the live tree', () => {
+  it('keeps is_mycc/is_patch on the in-memory nodes after serializing', () => {
+    // Regression guard: strip_in_memory_flags used to be a shallow-ish rebuild
+    // that was fine to share… but if it mutated the source nodes, every later
+    // patch would be applied to a node that had lost its provenance flags.
+    const mm = load_mindmap_from_json(validJson());
+    expect(mm.root.is_mycc).toBe(true);
+    serialize_mindmap(mm);
+    expect(mm.root.is_mycc).toBe(true);
+    expect(mm.root.is_patch).toBe(false);
+  });
+
+  it('save_mindmap likewise leaves the in-memory flags intact', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mindmap-pure-'));
+    try {
+      const mm = load_mindmap_from_json(validJson());
+      save_mindmap(mm, path.join(dir, 'm.json'));
+      expect(mm.root.is_mycc).toBe(true);
+      expect(mm.root.is_patch).toBe(false);
+      expect(fs.readFileSync(path.join(dir, 'm.json'), 'utf-8')).not.toContain('is_mycc');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

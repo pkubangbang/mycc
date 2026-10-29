@@ -1,483 +1,230 @@
 /**
- * validate.test.ts - Hash validation tests for mindmap
+ * validate.test.ts - Hash + structure validation tests for mindmap
+ *
+ * Binds to the REAL src/mindmap/validate.ts. The previous revision re-implemented
+ * `validate_mindmap` (returning `{valid, error}`) and `computeHash`, and never
+ * imported the module — so the production hash gate could be deleted with the
+ * suite still green.
+ *
+ * Production contracts exercised here (they differ from the old local copy):
+ *   - `validate_mindmap(json, mdPath) -> boolean`  (throwing internally == false)
+ *   - `validate_mindmap_structure(json)` also requires `source_file`
+ *   - link `target_type` includes `'term'`
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import {
+  compute_hash,
+  compute_file_hash,
+  validate_mindmap,
+  validate_mindmap_structure,
+  parse_mindmap_json,
+} from '../../mindmap/validate.js';
+import type { MindmapJSON } from '../../mindmap/types.js';
 
-// Types
-interface Link {
-  target_type: 'node' | 'file' | 'url';
-  node_id?: string;
-  file_path?: string;
-  url?: string;
-  comment: string;
+function jsonFixture(overrides: Partial<MindmapJSON> = {}): MindmapJSON {
+  return {
+    dir: '/test/dir',
+    source_file: 'MYCC.md',
+    hash: 'abc123',
+    compiled_at: '2024-01-15T10:00:00Z',
+    updated_at: '2024-01-15T10:00:00Z',
+    root: {
+      id: '/',
+      text: '# Root',
+      title: 'Root',
+      summary: 'Root summary',
+      level: 0,
+      children: [],
+      links: [],
+    },
+    ...overrides,
+  } as MindmapJSON;
 }
 
-interface Node {
-  id: string;
-  text: string;
-  title: string;
-  summary: string;
-  level: number;
-  children: Node[];
-  links: Link[];
-}
+describe('compute_hash / compute_file_hash', () => {
+  it('is a 64-char sha256 hex digest', () => {
+    expect(compute_hash('anything')).toHaveLength(64);
+    expect(compute_hash('anything')).toMatch(/^[0-9a-f]{64}$/);
+  });
 
-interface Mindmap {
-  dir: string;
-  hash: string;
-  compiled_at: Date;
-  updated_at: Date;
-  root: Node;
-}
+  it('is stable for identical content and differs otherwise', () => {
+    expect(compute_hash('x')).toBe(compute_hash('x'));
+    expect(compute_hash('x')).not.toBe(compute_hash('y'));
+  });
 
-// Helper to compute hash
-function computeHash(content: string): string {
-  return crypto.createHash('sha256').update(content).digest('hex');
-}
+  it('honours an explicit algorithm', () => {
+    expect(compute_hash('x', 'sha1')).toHaveLength(40);
+    expect(compute_hash('x', 'md5')).toHaveLength(32);
+  });
 
-// Implementation of validate_mindmap
-function validate_mindmap(json: unknown, mdPath: string): { valid: boolean; error?: string } {
-  // Check if json is an object
-  if (typeof json !== 'object' || json === null) {
-    return { valid: false, error: 'JSON must be an object' };
-  }
+  it('compute_file_hash equals compute_hash of the same bytes', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mindmap-hash-'));
+    try {
+      const p = path.join(dir, 'a.md');
+      fs.writeFileSync(p, '# A');
+      expect(compute_file_hash(p)).toBe(compute_hash('# A'));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
-  const m = json as Record<string, unknown>;
+describe('validate_mindmap_structure (real module)', () => {
+  it('accepts a structurally valid JSON', () => {
+    expect(validate_mindmap_structure(jsonFixture())).toBe(true);
+  });
 
-  // Check required fields
-  if (typeof m.dir !== 'string') {
-    return { valid: false, error: 'Missing or invalid dir field' };
-  }
-  if (typeof m.hash !== 'string') {
-    return { valid: false, error: 'Missing or invalid hash field' };
-  }
-  if (!m.root) {
-    return { valid: false, error: 'Missing root field' };
-  }
+  it('rejects non-objects (null, array, primitives)', () => {
+    expect(validate_mindmap_structure(null)).toBe(false);
+    expect(validate_mindmap_structure([])).toBe(false);
+    expect(validate_mindmap_structure('x')).toBe(false);
+    expect(validate_mindmap_structure(42)).toBe(false);
+    expect(validate_mindmap_structure(undefined)).toBe(false);
+  });
 
-  // Validate root node structure
-  if (!isValidNodeStructure(m.root)) {
-    return { valid: false, error: 'Invalid root node structure' };
-  }
+  it.each(['dir', 'hash', 'compiled_at', 'updated_at'] as const)(
+    'rejects a missing/ill-typed %s',
+    (field) => {
+      const j = jsonFixture() as Record<string, unknown>;
+      delete j[field];
+      expect(validate_mindmap_structure(j)).toBe(false);
+      expect(validate_mindmap_structure({ ...jsonFixture(), [field]: 42 })).toBe(false);
+    },
+  );
 
-  // Check if markdown file exists
-  if (!fs.existsSync(mdPath)) {
-    return { valid: false, error: 'Markdown file not found' };
-  }
+  it('rejects a missing source_file (the old local copy accepted it)', () => {
+    const j = jsonFixture() as Record<string, unknown>;
+    delete j.source_file;
+    expect(validate_mindmap_structure(j)).toBe(false);
+  });
 
-  // Read markdown content
-  const mdContent = fs.readFileSync(mdPath, 'utf-8');
-  const expectedHash = computeHash(mdContent);
+  it('rejects a root with missing node fields', () => {
+    expect(validate_mindmap_structure({ ...jsonFixture(), root: { id: '/' } })).toBe(false);
+    expect(validate_mindmap_structure({ ...jsonFixture(), root: undefined })).toBe(false);
+  });
 
-  // Compare hashes
-  if (m.hash !== expectedHash) {
-    return { valid: false, error: 'Hash mismatch - mindmap may be outdated' };
-  }
+  it('rejects a malformed child node', () => {
+    const j = jsonFixture();
+    (j.root.children as unknown[]).push({ id: '/c', level: 1, children: [], links: [] });
+    expect(validate_mindmap_structure(j)).toBe(false);
+  });
 
-  return { valid: true };
-}
+  it('accepts deep valid nesting', () => {
+    const j = jsonFixture();
+    j.root.children = [
+      {
+        id: '/a',
+        text: 'a',
+        title: 'A',
+        summary: '',
+        level: 1,
+        children: [
+          { id: '/a/b', text: 'b', title: 'AB', summary: '', level: 2, children: [], links: [] },
+        ],
+        links: [],
+      },
+    ];
+    expect(validate_mindmap_structure(j)).toBe(true);
+  });
 
-function isValidNodeStructure(node: unknown): boolean {
-  if (typeof node !== 'object' || node === null) return false;
-  const n = node as Record<string, unknown>;
+  it.each(['node', 'file', 'url', 'term'] as const)('accepts a %s link with its target field', (t) => {
+    const j = jsonFixture();
+    const link: Record<string, unknown> = { target_type: t, comment: 'c' };
+    if (t === 'node') link.node_id = '/x';
+    if (t === 'file') link.file_path = './a.ts';
+    if (t === 'url') link.url = 'https://e.x';
+    if (t === 'term') link.term_name = 'glossary';
+    j.root.links = [link as never];
+    expect(validate_mindmap_structure(j)).toBe(true);
+  });
 
-  if (typeof n.id !== 'string') return false;
-  if (typeof n.text !== 'string') return false;
-  if (typeof n.title !== 'string') return false;
-  if (typeof n.summary !== 'string') return false;
-  if (typeof n.level !== 'number') return false;
-  if (!Array.isArray(n.children)) return false;
-  if (!Array.isArray(n.links)) return false;
+  it('rejects an unknown target_type and a missing target field', () => {
+    const bad = jsonFixture();
+    bad.root.links = [{ target_type: 'nope', comment: 'c' } as never];
+    expect(validate_mindmap_structure(bad)).toBe(false);
 
-  for (const child of n.children) {
-    if (!isValidNodeStructure(child)) return false;
-  }
+    const noId = jsonFixture();
+    noId.root.links = [{ target_type: 'node', comment: 'c' } as never];
+    expect(validate_mindmap_structure(noId)).toBe(false);
+  });
+});
 
-  return true;
-}
-
-describe('validate_mindmap', () => {
+describe('validate_mindmap (hash gate)', () => {
   let tempDir: string;
-  let testMdPath: string;
+  let mdPath: string;
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mindmap-validate-'));
-    testMdPath = path.join(tempDir, 'test.md');
+    mdPath = path.join(tempDir, 'test.md');
   });
 
   afterEach(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  describe('Valid Mindmap', () => {
-    it('should validate a valid mindmap with matching hash', () => {
-      const mdContent = '# Test\n\nTest content';
-      fs.writeFileSync(testMdPath, mdContent);
+  const mm = (mdContent: string, hash = compute_hash(mdContent)): MindmapJSON =>
+    jsonFixture({ dir: tempDir, source_file: path.basename(mdPath), hash });
 
-      const mindmap: Mindmap = {
-        dir: tempDir,
-        hash: computeHash(mdContent),
-        compiled_at: new Date(),
-        updated_at: new Date(),
-        root: {
-          id: '/',
-          text: mdContent,
-          title: 'Test',
-          summary: 'Test summary',
-          level: 0,
-          children: [],
-          links: []
-        }
-      };
-
-      const result = validate_mindmap(mindmap, testMdPath);
-      expect(result.valid).toBe(true);
-    });
-
-    it('should validate mindmap with nested nodes', () => {
-      const mdContent = `# Root
-
-Root content
-
-## Section 1
-
-Section 1 content
-
-### Subsection
-
-Subsection content`;
-      fs.writeFileSync(testMdPath, mdContent);
-
-      const mindmap: Mindmap = {
-        dir: tempDir,
-        hash: computeHash(mdContent),
-        compiled_at: new Date(),
-        updated_at: new Date(),
-        root: {
-          id: '/',
-          text: mdContent,
-          title: 'Root',
-          summary: 'Root summary',
-          level: 0,
-          children: [
-            {
-              id: '/section-1',
-              text: '## Section 1\n\nSection 1 content',
-              title: 'Section 1',
-              summary: 'Section 1 summary',
-              level: 1,
-              children: [
-                {
-                  id: '/section-1/subsection',
-                  text: '### Subsection\n\nSubsection content',
-                  title: 'Subsection',
-                  summary: 'Subsection summary',
-                  level: 2,
-                  children: [],
-                  links: []
-                }
-              ],
-              links: []
-            }
-          ],
-          links: []
-        }
-      };
-
-      const result = validate_mindmap(mindmap, testMdPath);
-      expect(result.valid).toBe(true);
-    });
+  it('returns true when the stored hash matches the markdown', () => {
+    const md = '# Test\n\nTest content';
+    fs.writeFileSync(mdPath, md);
+    expect(validate_mindmap(mm(md), mdPath)).toBe(true);
   });
 
-  describe('Hash Mismatch', () => {
-    it('should fail when hash does not match', () => {
-      const mdContent = '# Test\n\nTest content';
-      fs.writeFileSync(testMdPath, mdContent);
-
-      const mindmap: Mindmap = {
-        dir: tempDir,
-        hash: 'wrong-hash-abc123',
-        compiled_at: new Date(),
-        updated_at: new Date(),
-        root: {
-          id: '/',
-          text: mdContent,
-          title: 'Test',
-          summary: 'Test summary',
-          level: 0,
-          children: [],
-          links: []
-        }
-      };
-
-      const result = validate_mindmap(mindmap, testMdPath);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('Hash mismatch');
-    });
-
-    it('should fail when markdown file changed after compilation', () => {
-      const oldContent = '# Original\n\nOriginal content';
-      const newContent = '# Modified\n\nModified content';
-      fs.writeFileSync(testMdPath, newContent);
-
-      const mindmap: Mindmap = {
-        dir: tempDir,
-        hash: computeHash(oldContent),
-        compiled_at: new Date(),
-        updated_at: new Date(),
-        root: {
-          id: '/',
-          text: oldContent,
-          title: 'Original',
-          summary: 'Original summary',
-          level: 0,
-          children: [],
-          links: []
-        }
-      };
-
-      const result = validate_mindmap(mindmap, testMdPath);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('Hash mismatch');
-    });
+  it('returns false when the markdown changed after compilation', () => {
+    fs.writeFileSync(mdPath, '# Test');
+    const stale = mm('# Test');          // hash of the OLD content
+    fs.writeFileSync(mdPath, '# Test CHANGED');
+    expect(validate_mindmap(stale, mdPath)).toBe(false);
   });
 
-  describe('Missing Fields', () => {
-    it('should fail when dir is missing', () => {
-      const mdContent = '# Test\n\nTest content';
-      fs.writeFileSync(testMdPath, mdContent);
-
-      const mindmap = {
-        hash: computeHash(mdContent),
-        compiled_at: new Date(),
-        updated_at: new Date(),
-        root: {
-          id: '/',
-          text: mdContent,
-          title: 'Test',
-          summary: 'Test summary',
-          level: 0,
-          children: [],
-          links: []
-        }
-      };
-
-      const result = validate_mindmap(mindmap, testMdPath);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('Missing or invalid dir');
-    });
-
-    it('should fail when hash is missing', () => {
-      const mdContent = '# Test\n\nTest content';
-      fs.writeFileSync(testMdPath, mdContent);
-
-      const mindmap = {
-        dir: tempDir,
-        compiled_at: new Date(),
-        updated_at: new Date(),
-        root: {
-          id: '/',
-          text: mdContent,
-          title: 'Test',
-          summary: 'Test summary',
-          level: 0,
-          children: [],
-          links: []
-        }
-      };
-
-      const result = validate_mindmap(mindmap, testMdPath);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('Missing or invalid hash');
-    });
-
-    it('should fail when root is missing', () => {
-      const mdContent = '# Test\n\nTest content';
-      fs.writeFileSync(testMdPath, mdContent);
-
-      const mindmap = {
-        dir: tempDir,
-        hash: computeHash(mdContent),
-        compiled_at: new Date(),
-        updated_at: new Date()
-      };
-
-      const result = validate_mindmap(mindmap, testMdPath);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('Missing root');
-    });
-
-    it('should fail when root node has missing fields', () => {
-      const mdContent = '# Test\n\nTest content';
-      fs.writeFileSync(testMdPath, mdContent);
-
-      const mindmap = {
-        dir: tempDir,
-        hash: computeHash(mdContent),
-        compiled_at: new Date(),
-        updated_at: new Date(),
-        root: {
-          id: '/',
-          // missing text, title, summary
-          level: 0,
-          children: [],
-          links: []
-        }
-      };
-
-      const result = validate_mindmap(mindmap, testMdPath);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('Invalid root node');
-    });
-
-    it('should fail when JSON is null', () => {
-      const mdContent = '# Test\n\nTest content';
-      fs.writeFileSync(testMdPath, mdContent);
-
-      const result = validate_mindmap(null, testMdPath);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('must be an object');
-    });
-
-    it('should fail when JSON is a primitive', () => {
-      const mdContent = '# Test\n\nTest content';
-      fs.writeFileSync(testMdPath, mdContent);
-
-      const result = validate_mindmap('not an object', testMdPath);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('must be an object');
-    });
+  it('returns false when the stored hash is wrong', () => {
+    const md = '# Test';
+    fs.writeFileSync(mdPath, md);
+    expect(validate_mindmap(mm(md, 'deadbeef'.repeat(8)), mdPath)).toBe(false);
   });
 
-  describe('Markdown File Issues', () => {
-    it('should fail when markdown file does not exist', () => {
-      const mindmap: Mindmap = {
-        dir: tempDir,
-        hash: 'some-hash',
-        compiled_at: new Date(),
-        updated_at: new Date(),
-        root: {
-          id: '/',
-          text: '# Test',
-          title: 'Test',
-          summary: 'Test',
-          level: 0,
-          children: [],
-          links: []
-        }
-      };
-
-      const result = validate_mindmap(mindmap, '/nonexistent/path/file.md');
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('not found');
-    });
+  it('returns false when the markdown file is missing', () => {
+    expect(validate_mindmap(jsonFixture({ dir: tempDir }), path.join(tempDir, 'nope.md'))).toBe(false);
   });
 
-  describe('Deep Node Validation', () => {
-    it('should validate deep node structure', () => {
-      const mdContent = '# Root\n\nContent';
-      fs.writeFileSync(testMdPath, mdContent);
-
-      const mindmap: Mindmap = {
-        dir: tempDir,
-        hash: computeHash(mdContent),
-        compiled_at: new Date(),
-        updated_at: new Date(),
-        root: {
-          id: '/',
-          text: mdContent,
-          title: 'Root',
-          summary: 'Root summary',
-          level: 0,
-          children: [
-            {
-              id: '/a',
-              text: '## A',
-              title: 'A',
-              summary: 'A summary',
-              level: 1,
-              children: [
-                {
-                  id: '/a/b',
-                  text: '### B',
-                  title: 'B',
-                  summary: 'B summary',
-                  level: 2,
-                  children: [],
-                  links: []
-                }
-              ],
-              links: []
-            }
-          ],
-          links: []
-        }
-      };
-
-      const result = validate_mindmap(mindmap, testMdPath);
-      expect(result.valid).toBe(true);
-    });
-
-    it('should fail when deep node has missing fields', () => {
-      const mdContent = '# Root\n\nContent';
-      fs.writeFileSync(testMdPath, mdContent);
-
-      const mindmap = {
-        dir: tempDir,
-        hash: computeHash(mdContent),
-        compiled_at: new Date(),
-        updated_at: new Date(),
-        root: {
-          id: '/',
-          text: mdContent,
-          title: 'Root',
-          summary: 'Root summary',
-          level: 0,
-          children: [
-            {
-              id: '/a',
-              text: '## A',
-              title: 'A',
-              // missing summary
-              level: 1,
-              children: [],
-              links: []
-            }
-          ],
-          links: []
-        }
-      };
-
-      const result = validate_mindmap(mindmap, testMdPath);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('Invalid root node');
-    });
+  it('resolves a relative mdPath against json.dir', () => {
+    const md = '# Rel';
+    fs.writeFileSync(mdPath, md);
+    const j = mm(md);
+    expect(validate_mindmap(j, path.basename(mdPath))).toBe(true);
   });
 
-  describe('Hash Computation', () => {
-    it('should compute consistent hash for same content', () => {
-      const content = '# Test\n\nTest content';
-      const hash1 = computeHash(content);
-      const hash2 = computeHash(content);
-      expect(hash1).toBe(hash2);
-    });
+  it('does not throw on a malformed json (returns false)', () => {
+    expect(validate_mindmap(null as never, mdPath)).toBe(false);
+    expect(validate_mindmap({} as never, mdPath)).toBe(false);
+  });
+});
 
-    it('should compute different hash for different content', () => {
-      const content1 = '# Test\n\nTest content';
-      const content2 = '# Test\n\nDifferent content';
-      const hash1 = computeHash(content1);
-      const hash2 = computeHash(content2);
-      expect(hash1).not.toBe(hash2);
-    });
+describe('parse_mindmap_json', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mindmap-parse-'));
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-    it('should produce SHA-256 hash of correct length', () => {
-      const hash = computeHash('test content');
-      expect(hash).toHaveLength(64); // SHA-256 produces 64 hex characters
-    });
+  it('returns the parsed JSON for a valid file', () => {
+    const p = path.join(dir, 'mindmap.json');
+    fs.writeFileSync(p, JSON.stringify(jsonFixture()));
+    expect(parse_mindmap_json(p)?.hash).toBe('abc123');
+  });
+
+  it('returns null for a missing file, bad JSON, or invalid structure', () => {
+    expect(parse_mindmap_json(path.join(dir, 'absent.json'))).toBeNull();
+    const bad = path.join(dir, 'bad.json');
+    fs.writeFileSync(bad, '{ nope }');
+    expect(parse_mindmap_json(bad)).toBeNull();
+    const invalid = path.join(dir, 'invalid.json');
+    fs.writeFileSync(invalid, JSON.stringify({ dir: '/' }));
+    expect(parse_mindmap_json(invalid)).toBeNull();
   });
 });

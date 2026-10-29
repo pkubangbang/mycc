@@ -17,6 +17,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { MindmapPatchAction, Node } from './types.js';
+import { fileLineSink, type LineSink } from '../loop/triologue/transcript.js';
 
 /**
  * Validate a patch action's structural integrity before it enters the jsonl.
@@ -100,7 +101,11 @@ export function getPatchPath(projectDir?: string): string {
  * @param patchPath - Path to the JSONL file
  * @returns true if appended, false if rejected by validation
  */
-export function appendPatch(action: MindmapPatchAction, patchPath: string): boolean {
+export function appendPatch(
+  action: MindmapPatchAction,
+  patchPath: string,
+  sink: LineSink = fileLineSink(patchPath),
+): boolean {
   if (!validatePatchAction(action)) {
     return false;
   }
@@ -108,7 +113,7 @@ export function appendPatch(action: MindmapPatchAction, patchPath: string): bool
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  fs.appendFileSync(patchPath, `${JSON.stringify(action)}\n`, 'utf-8');
+  sink.append(`${JSON.stringify(action)}\n`, 'utf-8');
   return true;
 }
 

@@ -1,167 +1,53 @@
 /**
- * get-node.test.ts - Tree traversal tests for mindmap
+ * recall.test.ts - Node path resolution for the mindmap (the `/recall` tool's lookup)
+ *
+ * Binds to the REAL src/mindmap/get-node.ts. The previous revision defined a
+ * local `get_node` that matched children by their literal `id`, which is NOT
+ * the production contract: get-node.ts resolves each segment through
+ * `safeNodeId(child.title)` so a path segment "code-cleanup" finds the node
+ * titled "Code Cleanup". Deleting the normalisation left the old suite green.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  get_node,
+  get_node_result,
+  get_ancestors,
+  get_descendants,
+  get_descendants_at_depth,
+} from '../../mindmap/get-node.js';
+import { safeNodeId } from '../../utils/sanitize.js';
+import type { Link, Mindmap, Node } from '../../mindmap/types.js';
 
-// Types
-interface Link {
-  target_type: 'node' | 'file' | 'url';
-  node_id?: string;
-  file_path?: string;
-  url?: string;
-  comment: string;
+function node(
+  id: string,
+  title: string,
+  level: number,
+  children: Node[] = [],
+  links: Link[] = [],
+): Node {
+  return { id, text: `${'#'.repeat(level + 1)} ${title}`, title, summary: `${title} summary`, level, children, links };
 }
 
-interface Node {
-  id: string;
-  text: string;
-  title: string;
-  summary: string;
-  level: number;
-  children: Node[];
-  links: Link[];
-}
-
-interface Mindmap {
-  dir: string;
-  hash: string;
-  compiled_at: Date;
-  updated_at: Date;
-  root: Node;
-}
-
-// Implementation of get_node function
-function get_node(mindmap: Mindmap, id: string): Node | null {
-  // Validate id format
-  if (typeof id !== 'string' || id.length === 0) {
-    return null;
-  }
-  
-  // Must start with /
-  if (!id.startsWith('/')) {
-    return null;
-  }
-  
-  // Must not have trailing slash (except for root)
-  if (id !== '/' && id.endsWith('/')) {
-    return null;
-  }
-  
-  // Must not have double slashes
-  if (id.includes('//')) {
-    return null;
-  }
-
-  // Root node
-  if (id === '/') {
-    return mindmap.root;
-  }
-
-  // Parse path segments
-  const segments = id.slice(1).split('/'); // Remove leading / and split
-  
-  // Traverse from root
-  let current: Node | null = mindmap.root;
-  
-  for (const segment of segments) {
-    if (!current) return null;
-    if (segment.length === 0) return null; // Empty segment (from double slash)
-    
-    // Build expected child id
-    const childId: string = current.id === '/' 
-      ? `/${segment}` 
-      : `${current.id}/${segment}`;
-    
-    current = current.children.find(c => c.id === childId) || null;
-  }
-  
-  return current;
-}
-
-// Test fixtures
 function createTestMindmap(): Mindmap {
   return {
     dir: '/test/dir',
+    source_file: 'MYCC.md',
     hash: 'test-hash',
     compiled_at: new Date(),
     updated_at: new Date(),
-    root: {
-      id: '/',
-      text: '# Root\n\nRoot content',
-      title: 'Root',
-      summary: 'Root summary',
-      level: 0,
-      children: [
-        {
-          id: '/architecture',
-          text: '## Architecture\n\nArchitecture content',
-          title: 'Architecture',
-          summary: 'Architecture summary',
-          level: 1,
-          children: [
-            {
-              id: '/architecture/core',
-              text: '### Core\n\nCore content',
-              title: 'Core',
-              summary: 'Core summary',
-              level: 2,
-              children: [],
-              links: []
-            },
-            {
-              id: '/architecture/utils',
-              text: '### Utils\n\nUtils content',
-              title: 'Utils',
-              summary: 'Utils summary',
-              level: 2,
-              children: [],
-              links: []
-            }
-          ],
-          links: []
-        },
-        {
-          id: '/development',
-          text: '## Development\n\nDevelopment content',
-          title: 'Development',
-          summary: 'Development summary',
-          level: 1,
-          children: [
-            {
-              id: '/development/testing',
-              text: '### Testing\n\nTesting content',
-              title: 'Testing',
-              summary: 'Testing summary',
-              level: 2,
-              children: [
-                {
-                  id: '/development/testing/unit',
-                  text: '#### Unit Tests\n\nUnit test content',
-                  title: 'Unit Tests',
-                  summary: 'Unit test summary',
-                  level: 3,
-                  children: [],
-                  links: []
-                },
-                {
-                  id: '/development/testing/integration',
-                  text: '#### Integration Tests\n\nIntegration test content',
-                  title: 'Integration Tests',
-                  summary: 'Integration test summary',
-                  level: 3,
-                  children: [],
-                  links: []
-                }
-              ],
-              links: []
-            }
-          ],
-          links: []
-        }
-      ],
-      links: []
-    }
+    root: node('/', 'Root', 0, [
+      node('/architecture', 'Architecture', 1, [
+        node('/architecture/core', 'Core', 2),
+        node('/architecture/utils', 'Utils', 2),
+      ]),
+      node('/development', 'Development', 1, [
+        node('/development/testing', 'Testing', 2, [
+          node('/development/testing/unit', 'Unit Tests', 3),
+          node('/development/testing/integration', 'Integration Tests', 3),
+        ]),
+      ]),
+    ]),
   };
 }
 
@@ -172,228 +58,137 @@ describe('get_node', () => {
     mindmap = createTestMindmap();
   });
 
-  describe('Root Node', () => {
-    it('should return root node for "/"', () => {
-      const node = get_node(mindmap, '/');
-      
-      expect(node).not.toBeNull();
-      expect(node?.id).toBe('/');
-      expect(node?.title).toBe('Root');
-      expect(node?.level).toBe(0);
-    });
-
-    it('should return root node with children', () => {
-      const node = get_node(mindmap, '/');
-      
-      expect(node).not.toBeNull();
-      expect(node?.children).toHaveLength(2);
-    });
+  it('returns the root for "/" and for the empty string', () => {
+    expect(get_node(mindmap, '/')).toBe(mindmap.root);
+    expect(get_node(mindmap, '')).toBe(mindmap.root);
   });
 
-  describe('First Level Nodes', () => {
-    it('should return architecture node', () => {
-      const node = get_node(mindmap, '/architecture');
-      
-      expect(node).not.toBeNull();
-      expect(node?.id).toBe('/architecture');
-      expect(node?.title).toBe('Architecture');
-      expect(node?.level).toBe(1);
-    });
-
-    it('should return development node', () => {
-      const node = get_node(mindmap, '/development');
-      
-      expect(node).not.toBeNull();
-      expect(node?.id).toBe('/development');
-      expect(node?.title).toBe('Development');
-      expect(node?.level).toBe(1);
-    });
+  it('resolves every existing path, level by level', () => {
+    expect(get_node(mindmap, '/architecture')?.title).toBe('Architecture');
+    expect(get_node(mindmap, '/development')?.title).toBe('Development');
+    expect(get_node(mindmap, '/architecture/core')?.title).toBe('Core');
+    expect(get_node(mindmap, '/architecture/utils')?.title).toBe('Utils');
+    expect(get_node(mindmap, '/development/testing')?.title).toBe('Testing');
+    // Depth-3 segments must be addressed by the NORMALISED TITLE (safeNodeId),
+    // never by the literal id — the ids in this fixture deliberately differ.
+    expect(get_node(mindmap, '/development/testing/unit-tests')?.title).toBe('Unit Tests');
+    expect(get_node(mindmap, '/development/testing/integration-tests')?.title).toBe('Integration Tests');
   });
 
-  describe('Second Level Nodes', () => {
-    it('should return core node', () => {
-      const node = get_node(mindmap, '/architecture/core');
-      
-      expect(node).not.toBeNull();
-      expect(node?.id).toBe('/architecture/core');
-      expect(node?.title).toBe('Core');
-      expect(node?.level).toBe(2);
-    });
-
-    it('should return utils node', () => {
-      const node = get_node(mindmap, '/architecture/utils');
-      
-      expect(node).not.toBeNull();
-      expect(node?.id).toBe('/architecture/utils');
-      expect(node?.title).toBe('Utils');
-      expect(node?.level).toBe(2);
-    });
-
-    it('should return testing node', () => {
-      const node = get_node(mindmap, '/development/testing');
-      
-      expect(node).not.toBeNull();
-      expect(node?.id).toBe('/development/testing');
-      expect(node?.title).toBe('Testing');
-      expect(node?.level).toBe(2);
-    });
+  it('returns null for missing paths without throwing', () => {
+    expect(get_node(mindmap, '/nope')).toBeNull();
+    expect(get_node(mindmap, '/architecture/nope')).toBeNull();
+    expect(get_node(mindmap, '/a/b/c/d/e')).toBeNull();
+    expect(get_node(mindmap, '/arch')).toBeNull();          // partial segment, not a prefix match
+    expect(get_node(mindmap, '/Architecture')).toBeNull();  // case-sensitive
   });
 
-  describe('Third Level Nodes', () => {
-    it('should return unit tests node', () => {
-      const node = get_node(mindmap, '/development/testing/unit');
-      
-      expect(node).not.toBeNull();
-      expect(node?.id).toBe('/development/testing/unit');
-      expect(node?.title).toBe('Unit Tests');
-      expect(node?.level).toBe(3);
-    });
-
-    it('should return integration tests node', () => {
-      const node = get_node(mindmap, '/development/testing/integration');
-      
-      expect(node).not.toBeNull();
-      expect(node?.id).toBe('/development/testing/integration');
-      expect(node?.title).toBe('Integration Tests');
-      expect(node?.level).toBe(3);
-    });
+  it('resolves a segment through safeNodeId(title), not the literal id', () => {
+    // The production addressing scheme normalises the TITLE. A compile that
+    // produced a differently-cased / spaced id must still be reachable.
+    const mm = createTestMindmap();
+    mm.root.children.push(node('/whatever-id', 'Code Cleanup', 1));
+    const segment = safeNodeId('Code Cleanup');
+    expect(segment).toBe('code-cleanup');
+    const found = get_node(mm, `/${segment}`);
+    expect(found).not.toBeNull();
+    expect(found?.title).toBe('Code Cleanup');
   });
 
-  describe('Path Not Found', () => {
-    it('should return null for non-existent top-level path', () => {
-      const node = get_node(mindmap, '/nonexistent');
-      expect(node).toBeNull();
-    });
+  it('is tolerant of repeated / trailing separators (production splits + filters)', () => {
+    // The old local copy REJECTED these; the real one normalises them. This is
+    // the behavioural difference that makes the old test suite misleading.
+    expect(get_node(mindmap, '//architecture')?.title).toBe('Architecture');
+    expect(get_node(mindmap, '/architecture/')?.title).toBe('Architecture');
+    // A missing leading separator is NOT special-cased: 'architecture' is still
+    // a valid first segment, so the real implementation resolves it.
+    expect(get_node(mindmap, 'architecture/core')?.title).toBe('Core');
+  });
+});
 
-    it('should return null for non-existent nested path', () => {
-      const node = get_node(mindmap, '/architecture/nonexistent');
-      expect(node).toBeNull();
-    });
-
-    it('should return null for deeply non-existent path', () => {
-      const node = get_node(mindmap, '/a/b/c/d/e/f');
-      expect(node).toBeNull();
-    });
-
-    it('should return null for partial match', () => {
-      const node = get_node(mindmap, '/architecture/core/deep');
-      expect(node).toBeNull();
-    });
-
-    it('should return null for wrong case', () => {
-      const node = get_node(mindmap, '/Architecture');
-      expect(node).toBeNull();
-    });
+describe('get_node_result', () => {
+  it('returns node + path for a hit', () => {
+    const r = get_node_result(createTestMindmap(), '/architecture/core');
+    expect(r.node?.title).toBe('Core');
+    expect(r.path).toEqual(['/', '/architecture', '/architecture/core']);
+    expect(r.error).toBeUndefined();
   });
 
-  describe('Edge Cases', () => {
-    it('should return null for empty string', () => {
-      const node = get_node(mindmap, '');
-      expect(node).toBeNull();
-    });
-
-    it('should return null for path without leading slash', () => {
-      const node = get_node(mindmap, 'architecture');
-      expect(node).toBeNull();
-    });
-
-    it('should return null for trailing slash', () => {
-      const node = get_node(mindmap, '/architecture/');
-      expect(node).toBeNull();
-    });
-
-    it('should return null for double slashes', () => {
-      const node = get_node(mindmap, '//architecture');
-      expect(node).toBeNull();
-    });
-
-    it('should return null for path with double slashes in middle', () => {
-      const node = get_node(mindmap, '/architecture//core');
-      expect(node).toBeNull();
-    });
+  it('returns the root for "/" with a single-element path', () => {
+    const r = get_node_result(createTestMindmap(), '/');
+    expect(r.node?.id).toBe('/');
+    expect(r.path).toEqual(['/']);
   });
 
-  describe('Deep Tree Traversal', () => {
-    it('should traverse through multiple levels', () => {
-      // Create a deep tree
-      const deepNode: Node = {
-        id: '/a/b/c/d/e/f',
-        text: '###### Deep',
-        title: 'Deep',
-        summary: 'Deep summary',
-        level: 6,
-        children: [],
-        links: []
-      };
+  it('names the missing segment on a miss', () => {
+    const r = get_node_result(createTestMindmap(), '/architecture/nope/deeper');
+    expect(r.node).toBeNull();
+    expect(r.error).toContain('missing: nope');
+  });
+});
 
-      let current = deepNode;
-      for (let i = 5; i >= 0; i--) {
-        const parentLevel = i;
-        const parentId = i === 0 ? '/' : `/a${'/b'.repeat(i)}`.replace(/\/+/g, '/');
-        const parent: Node = {
-          id: parentId,
-          text: `##${'#'.repeat(i)} Level ${i}`,
-          title: `Level ${i}`,
-          summary: `Level ${i} summary`,
-          level: parentLevel,
-          children: [current],
-          links: []
-        };
-        current = parent;
-      }
-
-      const deepMindmap: Mindmap = {
-        dir: '/test',
-        hash: 'deep',
-        compiled_at: new Date(),
-        updated_at: new Date(),
-        root: current
-      };
-
-      // Traverse from root to deep node
-      let testNode = deepMindmap.root;
-      expect(testNode).toBeDefined();
-      
-      // Recursively find the deepest node
-      function findDeepest(node: Node): Node {
-        return node.children.length > 0 ? findDeepest(node.children[0]) : node;
-      }
-      
-      const deepest = findDeepest(deepMindmap.root);
-      expect(deepest.level).toBe(6);
-    });
+describe('get_ancestors', () => {
+  it('returns [] for the root (no ancestors)', () => {
+    expect(get_ancestors(createTestMindmap(), '/')).toEqual([]);
+    expect(get_ancestors(createTestMindmap(), '')).toEqual([]);
   });
 
-  describe('Return Value Properties', () => {
-    it('should return node with all required properties (exact values)', () => {
-      const node = get_node(mindmap, '/architecture/core');
-      
-      // Assert exact values, not just property presence — a node with the
-      // right keys but wrong content would otherwise pass.
-      expect(node).toEqual({
-        id: '/architecture/core',
-        text: '### Core\n\nCore content',
-        title: 'Core',
-        summary: 'Core summary',
-        level: 2,
-        children: [],
-        links: [],
-      });
-    });
+  it('returns root→parent for a leaf, excluding the node itself', () => {
+    const ancestors = get_ancestors(createTestMindmap(), '/development/testing/unit');
+    expect(ancestors.map((n) => n.id)).toEqual(['/', '/development', '/development/testing']);
+  });
 
-    it('should return node with correct children array', () => {
-      const node = get_node(mindmap, '/architecture');
-      
-      expect(node?.children).toHaveLength(2);
-      // The two children are the known fixture nodes, in order.
-      expect(node?.children.map((c) => c.id)).toEqual(['/architecture/core', '/architecture/utils']);
-    });
+  it('returns [] for a missing path', () => {
+    expect(get_ancestors(createTestMindmap(), '/nope/deeper')).toEqual([]);
+  });
+});
 
-    it('should return leaf node with empty children array', () => {
-      const node = get_node(mindmap, '/architecture/core');
-      
-      expect(node?.children).toEqual([]);
-      expect(node?.links).toEqual([]);
+describe('get_descendants / get_descendants_at_depth', () => {
+  it('flattens the whole subtree in DFS order', () => {
+    const d = get_descendants(createTestMindmap().root.children[1]); // /development
+    expect(d.map((n) => n.id)).toEqual([
+      '/development/testing',
+      '/development/testing/unit',
+      '/development/testing/integration',
+    ]);
+  });
+
+  it('returns [] for a leaf', () => {
+    expect(get_descendants(createTestMindmap().root.children[0].children[1])).toEqual([]);
+  });
+
+  it('depth <= 0 returns the node itself; depth 1 returns direct children', () => {
+    const root = createTestMindmap().root;
+    expect(get_descendants_at_depth(root, 0)).toEqual([root]);
+    expect(get_descendants_at_depth(root, -1)).toEqual([root]);
+    expect(get_descendants_at_depth(root, 1).map((n) => n.id)).toEqual(['/architecture', '/development']);
+  });
+
+  it('depth 2 returns grandchildren across every branch', () => {
+    expect(get_descendants_at_depth(createTestMindmap().root, 2).map((n) => n.id)).toEqual([
+      '/architecture/core',
+      '/architecture/utils',
+      '/development/testing',
+    ]);
+  });
+
+  it('returns [] when the depth exceeds the tree height', () => {
+    expect(get_descendants_at_depth(createTestMindmap().root, 9)).toEqual([]);
+  });
+
+  it('nodes carry the full required property set', () => {
+    const n = get_node(createTestMindmap(), '/architecture/core')!;
+    expect(n).toEqual({
+      id: '/architecture/core',
+      text: '### Core',
+      title: 'Core',
+      summary: 'Core summary',
+      level: 2,
+      children: [],
+      links: [],
     });
+    // In-memory flags are set by load_mindmap(), NOT by traversal — get_node on
+    // a plain fixture must not invent them (that would hide a loader regression).
+    expect('is_mycc' in n).toBe(false);
   });
 });
