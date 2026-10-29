@@ -1019,16 +1019,15 @@ describe('Cluster D — judgeBash batch=i_know escape param', () => {
     // batch=i_know short-circuit).
     const askUser = vi.fn(async () => 'y');
     await judgeBash(batchCmd, batchIntentNoEscape, 'normal', false, askUser);
-    // If the LLM classifier returns SAFE, askUser is not called at all. If it
-    // throws/returns unexpected, it falls to UNCERTAIN → askUser with "detected"
-    // wording. Either way, the "acknowledged by agent" wording must NOT appear.
-    if (askUser.mock.calls.length > 0) {
-      expect(askUser).not.toHaveBeenCalledWith(
-        expect.stringContaining('acknowledged by agent'),
-        'bash-judge',
-        { onEsc: 'n' }
-      );
-    }
+    // UNCONDITIONAL (was wrapped in `if (askUser.mock.calls.length > 0)`, which
+    // made the assertion vacuous whenever the LLM classified the command SAFE).
+    // Whether or not the UNCERTAIN fallthrough consults the user, the batch
+    // short-circuit wording must NEVER be used on this path.
+    expect(askUser).not.toHaveBeenCalledWith(
+      expect.stringContaining('acknowledged by agent'),
+      'bash-judge',
+      { onEsc: 'n' }
+    );
   });
 
   it('D4: batch=i_know is a no-op on a non-batch DELETE (single-file rm)', async () => {

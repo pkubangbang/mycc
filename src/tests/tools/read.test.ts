@@ -41,10 +41,14 @@ describe('readTool', () => {
 
     const result = await readTool.handler(ctx, { path: 'test.txt', limit: 2 });
 
-    // Result now includes header
+    // The limit must actually truncate: lines beyond it are NOT returned.
+    expect(result).toContain('File: test.txt');
     expect(result).toContain('line1');
     expect(result).toContain('line2');
-    expect(result).toContain('File: test.txt');
+    expect(result).not.toContain('line3');
+    expect(result).not.toContain('line5');
+    // The header advertises the truncation so the LLM knows more remains.
+    expect(result).toContain('Lines: 2/5');
   });
 
   it('should handle limit larger than file', async () => {

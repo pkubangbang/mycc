@@ -88,12 +88,22 @@ export const readTool: ToolDefinition = {
         type: 'string',
         description: 'File path (forward slashes), relative to workspace root (e.g. "src/tools/bash.ts").',
       },
+      limit: {
+        type: 'number',
+        description: 'Optional maximum number of lines to return (default and hard cap: 1000). The header reports how many lines were shown and how many remain.',
+      },
     },
     required: ['path'],
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const filePath = args.path as string;
+    // Optional caller limit, clamped to the hard-coded cap. Non-positive /
+    // non-numeric values fall back to the default (LINE_LIMIT).
+    const requestedLimit = typeof args.limit === 'number' && Number.isFinite(args.limit)
+      ? Math.floor(args.limit)
+      : LINE_LIMIT;
+    const lineLimit = requestedLimit > 0 ? Math.min(requestedLimit, LINE_LIMIT) : LINE_LIMIT;
 
     try {
       const resolved = resolvePath(filePath, ctx.core.getWorkDir());
@@ -192,14 +202,14 @@ ${typeInfo.extension === '.png' || typeInfo.extension === '.jpg' || typeInfo.ext
 To de-minify, run in bash: npx prettier --write ${filePath}  (for JS/TS/JSON/CSS)`;
 
         result = `${header}\n${previewParts.join('\n')}${suggestions}`;
-      } else if (totalLines > LINE_LIMIT) {
-        // Apply hard-coded line limit
-        const limitedLines = lines.slice(0, LINE_LIMIT);
+      } else if (totalLines > lineLimit) {
+        // Apply the caller's limit (clamped to LINE_LIMIT above).
+        const limitedLines = lines.slice(0, lineLimit);
         const readChars = limitedLines.join('\n').length;
-        const remainingLines = totalLines - LINE_LIMIT;
+        const remainingLines = totalLines - lineLimit;
 
         // Build progress header
-        const header = `File: ${filePath} | Read: ${readChars.toLocaleString()}/${totalChars.toLocaleString()} chars (${((readChars / totalChars) * 100).toFixed(1)}%) | Lines: ${LINE_LIMIT}/${totalLines} (${remainingLines} more below)${encodingWarning}`;
+        const header = `File: ${filePath} | Read: ${readChars.toLocaleString()}/${totalChars.toLocaleString()} chars (${((readChars / totalChars) * 100).toFixed(1)}%) | Lines: ${lineLimit}/${totalLines} (${remainingLines} more below)${encodingWarning}`;
 
         // Build suggestions
         const suggestions = `
@@ -209,7 +219,7 @@ ${remainingLines} more lines not shown. To continue:
 
         result = `${header}\n${limitedLines.join('\n')}${suggestions}`;
       } else {
-        // File fits within line limit; apply char-limit safety net if needed
+        // File fits within the line limit; apply char-limit safety net if needed
         const charLimit = getCharLimit();
         if (totalChars > charLimit) {
           // Truncate by chars as safety net
