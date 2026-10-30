@@ -131,10 +131,13 @@ export async function handleTool(
       // Title-anchor archiving trigger: when a mycc_title result lands, enqueue
       // a fire-and-forget segment archive of everything up to the PREVIOUS
       // title anchor. The observed assistant index of THIS batch is found by
-      // scanning the raw store for the assistant message carrying this call id.
+      // scanning the true array for the assistant message carrying this call id.
       if (toolName === 'mycc_title') {
         const titleAssistantIndex = triologue.indexAssistantWithToolCall(toolCallId);
         if (titleAssistantIndex >= 0) {
+          // No AbortSignal to forward: the archive instead caps itself with
+          // its own watchdog (SegmentArchiver) so it cannot outlive the turn
+          // that will await the next compaction (peer review: R1).
           void triologue.compactSegment(titleAssistantIndex).catch((err) => {
             agentIO.brief('warn', 'tool', `compactSegment failed: ${err instanceof Error ? err.message : String(err)}`);
           });

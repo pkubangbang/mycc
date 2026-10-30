@@ -88,6 +88,15 @@ export class Triologue {
   private compactChain: Promise<void> = Promise.resolve();
 
   /**
+   * Bumped by EVERY full compact() that lands. An archive summarizes for
+   * seconds; if a full auto-compact ran meanwhile, the conversation the
+   * archive was summarizing no longer exists, so its summary must be
+   * DISCARDED — even when the compact left the array as long as before (the
+   * length/identity fingerprint cannot see that case).
+   */
+  private compactionEpoch = 0;
+
+  /**
    * Title-anchor segment archiving (see triologue/segment-archive.ts). Owns
    * its own one-at-a-time gate; deps are arrow closures over this facade's
    * private store/chain — resolved lazily at call time, like tpFix below.
@@ -95,13 +104,14 @@ export class Triologue {
   private segmentArchiver = new SegmentArchiver({
     getRawMessages: () => this.store.getRaw(),
     getFullMessages: () => this.store.getFullMessages(),
+    sliceMessages: (from, to) => this.store.sliceRange(from, to),
     lastUserQuery: () => this.store.lastUserQuery,
     messageAt: (index) => this.store.at(index),
     previousTitleAnchorEnd: (index) => this.store.previousTitleAnchorEnd(index),
     onCompact: (p) => this.options.onCompact(p),
     enqueueCompaction: (run) => this.enqueueCompaction(run),
+    compactionEpoch: () => this.compactionEpoch,
     installCompacted: (compacted, tailFrom) => this.installCompacted(compacted, tailFrom),
-    emitControl: (event) => this.emitControl(event),
   });
 
   /**
@@ -700,6 +710,9 @@ export class Triologue {
         tools,
       );
       this.installCompacted(compacted);
+      // Bump AFTER the swap: any archive that summarized across this point
+      // must discard its result (its conversation no longer exists).
+      this.compactionEpoch++;
     };
     await this.enqueueCompaction(run);
   }
@@ -708,12 +721,24 @@ export class Triologue {
    * The ONE serialization point for store-swapping compactions: run `task`
    * strictly after every queued compaction has settled. A rejected task
    * (StreamAbortedError etc.) still propagates to ITS caller, but the chain
-   * itself stays resolved so later enqueued compactions still execute.
+   * itself stays settled so later enqueued compactions still execute.
+   *
+   * `task` is invoked through async wrappers rather than passed as `.then`'s
+   * onRejected handler: a rejected predecessor must START the next task, not
+   * hand it the predecessor's error — the task owns its own failure.
    */
-  private enqueueCompaction(task: () => Promise<void>): Promise<void> {
-    const next = this.compactChain.then(task, task);
-    this.compactChain = next.catch(() => {});
-    return next;
+  private async enqueueCompaction<T>(task: () => Promise<T>): Promise<T> {
+    const previous = this.compactChain;
+    const run = async (): Promise<T> => {
+      await previous.catch(() => undefined);
+      return task();
+    };
+    // The chain only needs to know WHEN the slot is free, never whether the task
+    // succeeded — so its link is always settled, never rejected. The caller gets
+    // `run()` itself, so its own rejection reaches it untouched.
+    const result = run();
+    this.compactChain = result.then(() => undefined, () => undefined);
+    return result;
   }
 
   /**
@@ -726,12 +751,17 @@ export class Triologue {
    * @param signal - optional AbortSignal forwarded to the summarization call.
    * @param domains - wiki domains advertised in the summary prompt.
    */
+  /**
+   * @returns the summary triple when the swap was installed, `undefined` when
+   *   a full compact replaced the conversation during summarization (this
+   *   archive's result is stale and DISCARDED) or the install was refused.
+   */
   async compactSegment(
     currentTitleAssistantIndex: number,
     signal?: AbortSignal,
     domains: Array<{ domain_name: string; description?: string }> = [],
-  ): Promise<void> {
-    await this.segmentArchiver.run(currentTitleAssistantIndex, signal, domains);
+  ): Promise<Message[] | undefined> {
+    return this.segmentArchiver.run(currentTitleAssistantIndex, signal, domains);
   }
 
   /**
@@ -749,62 +779,80 @@ export class Triologue {
    *   Omitted = full replacement (existing autoCompact behaviour).
    * @returns true when the swap was installed, false when the parity pre-check
    *   failed — the store is left UNTOUCHED in that case (all-or-nothing).
+   *
+   * TWO MODES, because a segment splice does not invalidate the tail:
+   *   - full (`tailFrom === undefined`): the whole conversation is replaced, so
+   *     the array must end on `tool`, every pending call and deferred input is
+   *     dead, and any wrap-up turn is dead → drop + reset, exactly as before.
+   *   - segment (`tailFrom` set): only `[0 … tailFrom)` is replaced. Pending
+   *     calls, deferred input and an in-flight wrap-up all live against the
+   *     TAIL and stay valid → never clear the ledger, never drop deferred
+   *     input (flush instead, now that the summarization is done), never touch
+   *     the capsule; only shift the wrap-up mark by the head-length delta so it
+   *     keeps pointing at the same message.
    */
   installCompacted(compacted: Message[], tailFrom?: number): boolean {
-    const next = tailFrom === undefined ? compacted : [...compacted, ...this.store.sliceFrom(tailFrom)];
+    const isSegment = tailFrom !== undefined;
+    const tail = isSegment ? this.store.sliceFrom(tailFrom) : [];
+    const next = isSegment ? [...compacted, ...tail] : compacted;
     // Parity pre-check: build the candidate first, validate it, and only then
     // swap. A failed check is OBSERVABLE (warn log) and leaves the store as-is
-    // — never a half-swapped context. Full compact cannot fail this (the
-    // summary triple from runAutoCompact is well-formed by construction), so
-    // this guard is a no-op for the existing caller and only bites the
-    // segment path (e.g. a tail that begins with a dangling tool role).
-    const violations = MessageStore.parityViolations(next);
+    // — never a half-swapped context. The tail invariant (end on `tool`)
+    // applies to the FULL path only; on the splice path the tail is whatever
+    // the loop produced, and the guard instead pins the splice POINT: the tail
+    // must not begin with a tool row, whose announcing assistant row is in the
+    // summarized head.
+    const violations = MessageStore.parityViolations(next, { requireToolTail: !isSegment });
     if (violations.length > 0) {
       agentIO.brief('warn', 'triologue', `installCompacted refused: candidate array violates role parity (tailFrom=${tailFrom ?? 'none'}): ${violations.join('; ')}`);
       return false;
     }
+    if (isSegment && tail[0]?.role === 'tool') {
+      agentIO.brief('warn', 'triologue', `installCompacted refused: tail begins with a tool row (tailFrom=${tailFrom})`);
+      return false;
+    }
+    const wrapUpMarkBefore = this.wrapUp.value;
     this.store.replaceAll(next);
     this.store.recomputeTokenCount();
-    this.ledger.clear();
-    // A deferred submission was queued against a conversation that no longer
-    // exists after compaction — its referent (the pending tool call) is gone.
-    // Drop rather than replay: injecting it would strand a note with no
-    // context.
-    this.dropDeferredInputs('compact()');
+    if (!isSegment) {
+      this.ledger.clear();
+      // A deferred submission was queued against a conversation that no longer
+      // exists after compaction — its referent (the pending tool call) is gone.
+      // Drop rather than replay: injecting it would strand a note with no
+      // context.
+      this.dropDeferredInputs('compact()');
+    }
     // Journal the swap boundary + replay parity: a compact replaces the
     // entire conversation with the summary round-trip, so the livelog and
     // the transcript must BOTH change here. The control event is an
     // observable boundary marker (the collated full history is kept), and
     // the summary messages are emitted as 'new' pieces — without them the
     // transcript would silently miss the post-compact summary the livelog
-    // now holds (the livelog keeps ONLY the summary; the collated view is
-    // deliberately a superset — durable-full-history semantics — so this is
-    // journaling completeness, NOT snapshot parity with the livelog).
-    this.emitControl('compact');
+    // now holds.
+    this.emitControl(isSegment ? 'segment-archive' : 'compact');
     // NOTE: the summary messages are ALREADY in the store — replaceAll()
-    // installs `compacted` by reference, so pushing them again here would
-    // append into the very array this for-of is iterating (a push during
-    // iteration feeds the iterator a new element every round → the loop
-    // never terminates and the process OOMs). Emit-only: the transcript
-    // sees the post-compact summary as 'new' pieces, the livelog keeps 3.
+    // installs `compacted` by reference on the full path, so pushing them
+    // again here would append into the very array this for-of is iterating (a
+    // push during iteration feeds the iterator a new element every round → the
+    // loop never terminates and the process OOMs). Emit-only.
     for (const summaryMsg of compacted) {
       this.emit(summaryMsg, 'new', { userOrigin: false });
     }
-    // Compaction replaces the entire conversation with a 2-message summary,
-    // invalidating any active wrap-up turn: the context the wrap-up was part
-    // of no longer exists. Without this reset, a stale wrapUpMark (still
-    // pointing at the pre-compact length, e.g. 50) would let a later
-    // rollbackWrapUp() do `this.messages.length = 50` on the now-2-element
-    // array, stretching it with undefined sparse holes that crash the next
-    // raw reader (minifyMessages in runAutoCompact, )
-    // with "Cannot read properties of undefined (reading 'role')".
-    // The capsule has to be released too: compaction invalidates the in-flight
-    // wrap-up exactly like /clear does, and the capsule's promise is the only
-    // holder of the "wrap-up in flight" flag that ServeHub polls. Resetting the
-    // mark alone would leave the hub holding steering notes for a turn that can
-    // never finish, and the eventual .then would find a dead mark.
-    abortWrapUpCapsule('compact');
-    this.wrapUp.reset();
+    if (!isSegment) {
+      // Full replacement invalidates any active wrap-up turn: the context the
+      // wrap-up was part of no longer exists, and a stale mark would stretch
+      // the short array with sparse holes on rollback.
+      abortWrapUpCapsule('compact');
+      this.wrapUp.reset();
+    } else if (wrapUpMarkBefore >= 0) {
+      // Segment splice: the wrap-up turn started inside the tail, so its mark
+      // must shift by the delta and keep pointing at the same message — a
+      // stale mark would either truncate into the summary or mark nothing.
+      const delta = compacted.length - tailFrom;
+      const shifted = wrapUpMarkBefore + delta;
+      this.wrapUp.reset();
+      if (shifted >= compacted.length && shifted < next.length) this.wrapUp.begin(shifted);
+    }
     // Refresh dynamic project context (README, mindmap, hooks) at the compact
     // boundary — the conversation prefix already changed, so no extra cache
     // penalty. Populators re-read current state (e.g. newly-compiled hooks).

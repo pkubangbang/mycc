@@ -8,11 +8,11 @@ import { describe, it, expect } from 'vitest';
 import { MessageStore } from '../../loop/triologue/store.js';
 import type { Message, ToolCall } from '../../types.js';
 
-function titleAssistant(ids: string[]): Message {
+function titleAssistant(ids: string[], names: string[] = []): Message {
   return {
     role: 'assistant',
     content: '',
-    tool_calls: ids.map((id) => ({ id, type: 'function', function: { name: 'mycc_title', arguments: { title: 't' } } }) as ToolCall),
+    tool_calls: ids.map((id, i) => ({ id, type: 'function', function: { name: names[i] ?? 'mycc_title', arguments: { title: 't' } } }) as ToolCall),
   };
 }
 function otherAssistant(id: string): Message {
@@ -64,9 +64,30 @@ describe('titleAnchorEnds / previousTitleAnchorEnd', () => {
     expect(s.titleAnchorEnds()).toEqual([1, 4]);
   });
 
-  it('incomplete batch (results not landed) → end == assistant index', () => {
+  it('incomplete batch (results not landed) → contributes NO anchor', () => {
+    // Peer review (store #1 / archiver): publishing the assistant index as an
+    // "end" is indistinguishable from a real batch end and bounds a segment
+    // mid-batch. An incomplete batch cannot bound anything.
     const s = storeWith([userMsg('q'), titleAssistant(['t1'])]);
-    expect(s.titleAnchorEnds()).toEqual([1]);
+    expect(s.titleAnchorEnds()).toEqual([]);
+    // ...and it becomes an anchor the moment its results land.
+    s.push(toolResult('t1'));
+    expect(s.titleAnchorEnds()).toEqual([2]);
+  });
+
+  it('multi-call batch: the anchor end is the LAST call\'s result only (walk stops at call ids)', () => {
+    // assistant[mycc_title a, read_file b] → tool[a] → tool[b]: end = 3.
+    // A following batch's result (foreign call id) must NOT be swallowed.
+    const s = storeWith([
+      userMsg('q'),
+      titleAssistant(['a', 'b'], ['mycc_title', 'read_file']),
+      toolResult('a', 'mycc_title'),
+      toolResult('b', 'read_file'),
+      titleAssistant(['c'], ['mycc_title']),
+      toolResult('c', 'mycc_title'),
+      toolResult('z', 'read_file'), // foreign result
+    ]);
+    expect(s.titleAnchorEnds()).toEqual([3, 5]);
   });
 
   it('previousTitleAnchorEnd: current title is the first anchor → undefined', () => {

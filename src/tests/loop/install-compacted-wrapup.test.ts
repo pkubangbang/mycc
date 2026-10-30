@@ -65,7 +65,7 @@ describe('installCompacted + wrap-up mark lifecycle', () => {
     expect(() => minifyMessages(after)).not.toThrow();
   });
 
-  it('segment install with tailFrom: splices only when the candidate ends on tool', () => {
+  it('segment install with tailFrom: splices when the tail does not START with a tool row', () => {
     const build = () => {
       const t = new Triologue({ tokenThreshold: 50000, resultThreshold: 100000 });
       t.user('q1');
@@ -79,25 +79,52 @@ describe('installCompacted + wrap-up mark lifecycle', () => {
     expect(t1.installCompacted(triple, 4)).toBe(true);
     expect(t1.getMessages().length).toBe(3);
 
+    // The tail's LAST role is irrelevant on the splice path: a user query typed
+    // while the archive summarized is the normal case, and it must install
+    // (peer review: enforcing "ends on tool" here refused the archive exactly
+    // when the agent kept working).
     const t2 = build();
-    t2.user('q3'); // 5 messages; tail from 4 = [q3] ends on user → refused
-    expect(t2.installCompacted(triple, 4)).toBe(false);
-    expect(t2.getMessages().length).toBe(5); // store untouched
+    t2.user('q3'); // 5 messages; tail from 4 = [q3]
+    expect(t2.installCompacted(triple, 4)).toBe(true);
+    expect(t2.getMessages().length).toBe(4);
+    expect(t2.getMessages()[3]).toMatchObject({ role: 'user', content: 'q3' });
+
+    // A batch that FOLLOWS the splice point is fine: the splice point is not a
+    // tool row, and the tail (assistant → tool) is self-contained.
+    const t3 = build();
+    t3.agent('', [{ id: 'x', type: 'function', function: { name: 'brief', arguments: {} } } as ToolCall]);
+    t3.tool('brief', 'OK', 'x');
+    expect(t3.installCompacted(triple, 4)).toBe(true);
+
+    // A tail whose FIRST row is a tool result is refused: its announcing
+    // assistant row lives in the summarized head, so the result would dangle.
+    // (The fixture needs a real assistant→tool batch: agent() alone does not
+    // create one, since no tool_calls are announced.)
+    const t4 = build();
+    t4.agent('', [
+      { id: 'y1', type: 'function', function: { name: 'brief', arguments: {} } } as ToolCall,
+      { id: 'y2', type: 'function', function: { name: 'read_file', arguments: { path: 'p' } } } as ToolCall,
+    ]);
+    t4.tool('brief', 'OK', 'y1');
+    t4.tool('read_file', 'X', 'y2');
+    // tail from 5 = [tool(y1), tool(y2)] → the splice point IS a tool row.
+    expect(t4.installCompacted(triple, 5)).toBe(false);
+    expect(t4.getMessages().length).toBe(7); // store untouched
   });
 
-  it('segment install while a wrap-up turn is live: refused, store + mark untouched', () => {
-    // beginWrapUp appends a WRAP_UP user message at the end, so any tail splice
-    // that keeps the store end includes that user role → candidate ends on
-    // `user` → parity pre-check refuses (all-or-nothing: store untouched,
-    // wrap-up mark stays active).
+  it('segment install while a wrap-up turn is live: installs, wrap-up survives', () => {
+    // A segment splice rewrites only the head; the wrap-up turn (its WRAP_UP
+    // user message and its mark) lives against the tail and stays valid. Before
+    // the review fix this ran the FULL-compact invariant set and killed the
+    // wrap-up + dropped deferred input (peer review: facade BUG #1).
     const triologue = buildSixMsgTriologue();
     triologue.beginWrapUp();
     expect(triologue.hasActiveWrapUp()).toBe(true);
 
     const ok = triologue.installCompacted(triple, 4);
-    expect(ok).toBe(false);
-    expect(triologue.hasActiveWrapUp()).toBe(true);
-    expect(triologue.getMessages().length).toBe(7); // unchanged
+    expect(ok).toBe(true);
+    expect(triologue.hasActiveWrapUp()).toBe(true); // wrap-up NOT killed
+    expect(triologue.getMessages().length).toBe(3 + (7 - 4)); // head replaced, tail kept
 
     // A full install (no tailFrom) still ends on the triple's tool role and
     // clears the mark.

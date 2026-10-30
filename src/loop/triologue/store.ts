@@ -81,6 +81,23 @@ export class MessageStore {
     return result;
   }
 
+  /**
+   * Copy of `[from, to)` in TRUE-array index space, holes filtered — the
+   * slice counterpart for a consumer that derived `from`/`to` from at()/length
+   * and must NOT re-index through getRaw() (which shifts left by the hole
+   * count). Both bounds are clamped; an inverted range yields [].
+   */
+  sliceRange(from: number, to: number): Message[] {
+    const start = Math.max(0, from);
+    const end = Math.min(to, this.messages.length);
+    const result: Message[] = [];
+    for (let i = start; i < end; i++) {
+      const m = this.messages[i];
+      if (m && typeof m === 'object' && m.role) result.push(m);
+    }
+    return result;
+  }
+
   /** Last element or undefined (defensive: skips sparse holes) */
   last(): Message | undefined {
     return this.messages[this.messages.length - 1];
@@ -157,19 +174,31 @@ export class MessageStore {
    *
    * A batch is 1 assistant message with N tool_calls (one named mycc_title)
    * followed by its N tool results; the anchor is the LAST tool result's index.
-   * If the tool results have not landed yet, the anchor is the assistant
-   * index itself (the batch is incomplete; the caller decides whether that
-   * is usable).
+   * A batch whose results have NOT all landed is INCOMPLETE and contributes no
+   * anchor — an incomplete batch cannot bound a segment, and publishing its
+   * assistant index as an "end" is indistinguishable from a real end (the
+   * defect peer review flagged).
    */
   titleAnchorEnds(): number[] {
     const result: number[] = [];
     for (let i = 0; i < this.messages.length; i++) {
       const m = this.messages[i];
       if (!m || m.role !== 'assistant' || !Array.isArray(m.tool_calls)) continue;
-      if (!(m.tool_calls as Array<{ function?: { name?: string } }>).some((tc) => tc.function?.name === 'mycc_title')) continue;
+      const calls = m.tool_calls as ToolCall[];
+      if (!calls.some((tc) => tc.function?.name === 'mycc_title')) continue;
+      const announced = new Set(calls.map((tc) => tc.id).filter(Boolean));
+      const answered = new Set<string>();
       let end = i;
-      for (let j = i + 1; j < this.messages.length && this.messages[j] && this.messages[j].role === 'tool'; j++) end = j;
-      result.push(end);
+      // Walk the batch's OWN results: a following batch's results may be
+      // adjacent (role 'tool' too), so membership by call id — not role — is
+      // what stops the walk.
+      for (let j = i + 1; j < this.messages.length; j++) {
+        const r = this.messages[j];
+        if (!r || r.role !== 'tool' || !r.tool_call_id || !announced.has(r.tool_call_id)) break;
+        answered.add(r.tool_call_id);
+        end = j;
+      }
+      if (announced.size > 0 && answered.size === announced.size) result.push(end);
     }
     return result;
   }
@@ -182,35 +211,57 @@ export class MessageStore {
    *  - an entry that is not a message;
    *  - a `tool` result whose call id no assistant announced (dangling result);
    *  - an assistant call id with no result (a batch cut mid-flight);
-   *  - an array not ending on `tool` (the resume invariant: the next real turn
-   *    must be a natural tool → assistant transition).
+   *  - optionally, an array not ending on `tool` (the resume invariant: the
+   *    next real turn must be a natural tool → assistant transition).
    *
-   * Used as the pre-swap guard in installCompacted so a bad candidate never
-   * touches the live array.
+   * The tail invariant is opt-in because it belongs to the FULL-replacement
+   * path only: a segment splice keeps the live tail, so the array's tail is
+   * whatever the running loop already produced (an assistant answer, a user
+   * query typed during summarization) — perfectly legal there. Enforcing it on
+   * the splice refused the archive exactly when the agent kept working.
+   *
+   * Answers are consumed POSITIONALLY per assistant row via a per-row pending
+   * set, not one flat id set: a restored/replayed session carries call ids that
+   * repeat across turns, so a flat set would let a mid-batch tail pass.
    */
-  static parityViolations(messages: Message[]): string[] {
+  static parityViolations(messages: Message[], opts: { requireToolTail?: boolean } = {}): string[] {
     const reasons: string[] = [];
-    const callIds = new Set<string>();
-    const answeredIds = new Set<string>();
+    let pending: Set<string> | undefined;
     for (const m of messages) {
       if (!m || typeof m !== 'object' || typeof m.role !== 'string') {
         reasons.push('entry is not a message');
         continue;
       }
-      if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
-        for (const tc of m.tool_calls as ToolCall[]) {
-          if (tc.id) callIds.add(tc.id);
+      if (m.role === 'assistant') {
+        // New assistant row: the previous row's calls are final.
+        if (pending !== undefined && pending.size > 0) {
+          for (const id of pending) reasons.push(`unanswered tool call ${id}`);
         }
-      } else if (m.role === 'tool' && m.tool_call_id) {
-        if (!callIds.has(m.tool_call_id)) reasons.push(`dangling tool result ${m.tool_call_id}`);
-        answeredIds.add(m.tool_call_id);
+        pending = new Set<string>();
+        if (Array.isArray(m.tool_calls)) {
+          for (const tc of m.tool_calls as ToolCall[]) {
+            if (tc.id) pending.add(tc.id);
+          }
+        }
+      } else if (m.role === 'tool') {
+        const id = m.tool_call_id;
+        if (!id || pending === undefined || !pending.has(id)) {
+          reasons.push(`dangling tool result ${id ?? '(no id)'}`);
+        } else {
+          pending.delete(id);
+        }
+      } else if (pending !== undefined && pending.size > 0) {
+        // A user/system row interposed inside a batch: same violation as above.
+        for (const row of pending) reasons.push(`unanswered tool call ${row}`);
+        pending = undefined;
       }
     }
-    for (const id of callIds) {
-      if (!answeredIds.has(id)) reasons.push(`unanswered tool call ${id}`);
+    if (pending !== undefined && pending.size > 0) {
+      for (const id of pending) reasons.push(`unanswered tool call ${id}`);
     }
+    if (messages.length === 0) reasons.push('empty candidate');
     const last = messages[messages.length - 1];
-    if (messages.length > 0 && last?.role !== 'tool') {
+    if (opts.requireToolTail && messages.length > 0 && last?.role !== 'tool') {
       reasons.push(`last role is '${last?.role}', expected 'tool'`);
     }
     return reasons;

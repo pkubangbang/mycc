@@ -191,15 +191,51 @@ describe('title trigger wiring (peer case 3)', () => {
   });
 });
 
-describe('compact() rejection propagation (peer case 4)', () => {
+describe('concurrency invariants (lead steering)', () => {
   beforeEach(() => autoCompactMock.mockReset());
 
-  it('propagates a runAutoCompact rejection and keeps the chain usable', async () => {
-    autoCompactMock.mockRejectedValueOnce(new Error('boom'));
+  it('INV1: an archive that spans a full compact discards its result', async () => {
     const t = mkTriologue();
-    await expect(t.compact()).rejects.toThrow('boom');
+    const { titleAssistantIdx } = seedTitleBatch(t);
+    const epochOf = () => (t as unknown as { compactionEpoch: number }).compactionEpoch;
+    autoCompactMock.mockImplementation(async () => {
+      // A full compact lands while the archive is summarizing. Simulated on the
+      // epoch itself: compact() enqueues on the SAME chain, so calling it from
+      // inside the archive body would deadlock by construction (no re-entrancy).
+      (t as unknown as { compactionEpoch: number }).compactionEpoch++;
+      return summaryTriple();
+    });
+    // The epoch moved → the archive's summary is stale and must NOT be spliced.
+    await expect(t.compactSegment(titleAssistantIdx)).resolves.toBeUndefined();
+    expect(epochOf()).toBe(1);
+  });
 
-    autoCompactMock.mockResolvedValueOnce(summaryTriple());
-    await expect(t.compact()).resolves.toBeUndefined();
+  it('INV2: an in-flight batch in the tail is refused (known, deliberate) and nothing changes', () => {
+    // Peer review RISK (store #2 / facade #5): a tail whose batch still has an
+    // unanswered call cannot be spliced — the guard cannot prove the head does
+    // not hold the matching result. The install must REFUSE all-or-nothing, so
+    // neither the ledger nor the deferred input is touched (a full compact's
+    // invariant set would have cleared BOTH). The tail's later settle flushes the
+    // deferred input normally.
+    const t = mkTriologue();
+    t.user('q1');
+    t.agent('a1');
+    t.agent('a0');
+    t.agent('', [
+      titleAssistant('t1').tool_calls![0] as ToolCall,
+      { id: 't2', type: 'function', function: { name: 'read_file', arguments: {} } } as ToolCall,
+    ]);
+    t.tool('mycc_title', 'OK', 't1'); // ledger: t2 still pending
+    t.user('typed while archiving'); // DEFERRED
+    const before = t.getMessagesRaw().length;
+
+    expect(t.installCompacted(summaryTriple(), 2)).toBe(false);
+    expect(t.getMessagesRaw().length).toBe(before); // store untouched
+    expect(t.getMessagesRaw().some((m) => m.content === 'typed while archiving')).toBe(false);
+
+    // Once t2's result lands the ledger empties and the deferred input replays.
+    t.tool('read_file', 'R', 't2');
+    expect(t.getMessagesRaw().some((m) => m.content === 'typed while archiving')).toBe(true);
   });
 });
+
