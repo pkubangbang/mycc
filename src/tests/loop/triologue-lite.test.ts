@@ -56,7 +56,8 @@ vi.mock('../../config.js', async () => {
     shouldRunSetup: () => false,
     isDebuggingEval: () => false,
     isDebuggingTp: () => false,
-    getApiProvider: () => 'ollama',
+    // hoisted: the mock factory runs before module-level `let`s initialize.
+    getApiProvider: () => (globalThis as { __mockProvider?: 'ollama' | 'deepseek' }).__mockProvider ?? 'ollama',
     getMyccDir: () => tmpBase,
     getLongtextDir: () => path.join(tmpBase, 'longtext'),
     ensureDirs: () => {},
@@ -98,6 +99,11 @@ vi.mock('../../engine/ollama.js', () => ({
 
 import { TriologueLite } from '../../loop/triologue-lite.js';
 
+/** Live api-provider switch for `getApiProvider()` (both are TP-tool→user-permissive). */
+function setProvider(p: 'ollama' | 'deepseek'): void {
+  (globalThis as { __mockProvider?: 'ollama' | 'deepseek' }).__mockProvider = p;
+}
+
 describe('TriologueLite', () => {
   let t: TriologueLite;
   let onMessage: ReturnType<typeof vi.fn<(msg: Message, getTriologue: () => Message[]) => void>>;
@@ -117,12 +123,23 @@ describe('TriologueLite', () => {
       expect(onMessage).toHaveBeenCalledTimes(1);
     });
 
-    it('user() combines into the last user message when lastRole is user', () => {
+    it('user() NEVER combines: a second query is its own message and its own piece', () => {
+      // The double write this pins: the old combine branch grew the previous
+      // user host in memory AND journaled the fragment, so one input landed
+      // twice and lastUserQuery could go stale. One call = one message = one
+      // piece (lead-facade parity).
       t.user('first');
       t.user('second');
       const raw = t.getMessagesRaw();
-      expect(raw).toHaveLength(1);
-      expect(raw[0].content).toBe('first\nsecond');
+      expect(raw).toHaveLength(2);
+      expect(raw[0].content).toBe('first');
+      expect(raw[1].content).toBe('second');
+      expect(t.getLastUserQuery()).toBe('second');
+      // Exactly two appends — the first user message never re-emits.
+      const kinds = onMessage.mock.calls.map((args: unknown[]) => (args[0] as Message & { kind?: string }).kind);
+      expect(kinds).toEqual(['new', 'new']);
+      const contents = onMessage.mock.calls.map((args: unknown[]) => (args[0] as Message).content);
+      expect(contents).toEqual(['first', 'second']);
     });
 
     it('note() prepends the [CATEGORY] prefix', () => {
@@ -132,12 +149,18 @@ describe('TriologueLite', () => {
       expect(raw[0].content).toBe('[SYSTEM] plan mode active');
     });
 
-    it('note() combines with last user message (no hookName)', () => {
+    it('note() NEVER merges: it is its own message with its own [CATEGORY] prefix', () => {
       t.user('task');
       t.note('REMINDER', 'update todos');
       const raw = t.getMessagesRaw();
-      expect(raw).toHaveLength(1);
-      expect(raw[0].content).toBe('task\n[REMINDER] update todos');
+      expect(raw).toHaveLength(2);
+      expect(raw[0].content).toBe('task');
+      expect(raw[1].content).toBe('[REMINDER] update todos');
+      // lastUserQuery stays the genuine query — the note never pollutes it.
+      expect(t.getLastUserQuery()).toBe('task');
+      // Two appends, zero 'merge' pieces.
+      const kinds = onMessage.mock.calls.map((args: unknown[]) => (args[0] as Message & { kind?: string }).kind);
+      expect(kinds).toEqual(['new', 'new']);
     });
 
     it('note() keeps hook-originated notes as separate messages', () => {
@@ -200,6 +223,90 @@ describe('TriologueLite', () => {
       const bridge = raw[1];
       expect(bridge.tool_calls).toBeDefined();
       expect(bridge.tool_calls!.length).toBe(1);
+    });
+  });
+
+  describe('double write / api-provider parity', () => {
+    // The lite facade must emit the SAME journal as the lead facade for the
+    // same producer sequence, on BOTH supported providers: every producer call
+    // contributes exactly ONE piece, a computed on the live store equals the
+    // count on the journal, and no fragment is journaled while also being
+    // folded into a host.
+    const parityScenarios: Array<[string, (x: TriologueLite) => void, string[]]> = [
+      [
+        'two consecutive queries + a note (the old combine hotspots)',
+        (x) => {
+          x.user('A');
+          x.user('B');
+          x.note('REMINDER', 'nudge');
+        },
+        ['new', 'new', 'new'],
+      ],
+      [
+        'tool call round-trip with a note between results',
+        (x) => {
+          const tcs: ToolCall[] = [
+            { id: 'k1', function: { name: 'bash', arguments: {} } },
+            { id: 'k2', function: { name: 'read_file', arguments: {} } },
+          ] as unknown as ToolCall[];
+          x.user('go');
+          x.agent('', tcs);
+          x.tool('bash', 'out1', 'k1');
+          x.note('MAIL', 'from lead');
+          x.tool('read_file', 'out2', 'k2');
+        },
+        // user, assistant, tool, tool, + the note REPLAYED after the ledger
+        // drained (it was deferred, not merged and not lost)
+        ['new', 'new', 'new', 'new', 'new'],
+      ],
+    ];
+
+    for (const provider of ['ollama', 'deepseek'] as const) {
+      for (const [label, drive, expectedKinds] of parityScenarios) {
+        it(`[${provider}] ${label}: one piece per producer call, journal == livelog`, () => {
+          setProvider(provider);
+          try {
+            const probe = new TriologueLite({ tokenThreshold: 1000, onMessage });
+            drive(probe);
+            const kinds = onMessage.mock.calls.map((args: unknown[]) => (args[0] as Message & { kind?: string }).kind);
+            expect(kinds).toEqual(expectedKinds);
+            expect(kinds).not.toContain('merge');
+            // Journal/livelog parity: the pieces are exactly the livelog.
+            const pieces = onMessage.mock.calls.map((args: unknown[]) => (args[0] as Message).content);
+            expect(pieces).toEqual(probe.getMessagesRaw().map((m) => m.content));
+          } finally {
+            setProvider('ollama');
+          }
+        });
+      }
+    }
+
+    it('a note arriving while tool_calls are outstanding is deferred, not merged or lost', () => {
+      const tcs: ToolCall[] = [
+        { id: 'z1', function: { name: 'bash', arguments: {} } },
+      ] as unknown as ToolCall[];
+      t.user('go');
+      t.agent('', tcs);
+      t.note('MAIL', 'mid batch');
+      // Nothing appended between the tool_calls and their answer.
+      expect(t.getMessagesRaw().map((m) => m.role)).toEqual(['user', 'assistant']);
+      t.tool('bash', 'out', 'z1');
+      const raw = t.getMessagesRaw();
+      expect(raw.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'user']);
+      expect(raw[3].content).toBe('[MAIL] mid batch');
+    });
+
+    it('compact() drops a still-deferred submission (no orphan note in the new context)', async () => {
+      const tcs: ToolCall[] = [
+        { id: 'd1', function: { name: 'bash', arguments: {} } },
+      ] as unknown as ToolCall[];
+      t.user('go');
+      t.agent('', tcs);
+      t.note('MAIL', 'stale');
+      await t.compact();
+      t.agent('after compact');
+      const contents = t.getMessagesRaw().map((m) => m.content);
+      expect(contents.some((c) => c.includes('[MAIL] stale'))).toBe(false);
     });
   });
 
