@@ -55,8 +55,36 @@ Read the template file to understand the structure for the chosen type.
 5. **Add quality content** — be specific, show examples, document pitfalls. See [Writing Quality Content](./writing-quality-content.md) for detailed guidance.
 6. **Create the file** — in `.mycc/skills/`. See [File Organization](./skill-file-organization.md) for single-file vs folder structure.
 7. **Verify** — check against the checklist below.
-8. **Present to user** — show the skill, ask for feedback.
-9. **Iterate** — refine based on feedback.
+8. **Reload mycc** — see [Reloading the new skill](#reloading-the-new-skill). A user-level skill does not take effect until mycc is restarted; say so explicitly in your final report instead of implying it is live.
+9. **Present to user** — show the skill, ask for feedback.
+10. **Iterate** — refine based on feedback.
+
+## Reloading the new skill
+
+A skill file is read from disk by the loader, but **the running process does not
+always pick it up**. State the truth about the location you chose:
+
+| Where the skill was created | Visible to the current session? | How it becomes available |
+|---|---|---|
+| Project `.mycc/skills/` (single file or `<name>/SKILL.md`) | Yes — the loader watches this directory recursively | Saved file is loaded by the watcher; `skill_load(name="...")` then works |
+| User `~/.mycc-store/skills/` (single file or `<name>/SKILL.md`) | **No** — user skills are loaded once at startup and are *not* watched | **Restart mycc** (start a new instance); the skill appears in the new session's `skill_search`/`skill_load` |
+| Built-in `skills/` (ships with the package) | No | New process, or ship it with the package |
+
+Rules:
+
+- **Never claim a user-level skill is loaded.** After writing one, verify the
+  frontmatter parses (e.g. run gray-matter on the file) and tell the user
+  plainly: "written to `~/.mycc-store/skills/<name>/SKILL.md`; it becomes
+  available after restarting mycc."
+- A failed `skill_load` / empty `skill_search` for a file you just wrote under
+  `~/.mycc-store/skills/` is **expected**, not a format bug — check the
+  location and startup rule before touching the file.
+- `/skills build` reloads skills from disk inside a running session (project
+  and user roots); recommend it when the user wants the skill available
+  without a restart.
+- Hookish skills additionally need their `when` condition compiled in the
+  process that loads them (`skill_compile`); a restart re-compiles, so a
+  restart is also the clean way to re-arm a changed trigger.
 
 ## Frontmatter (Required)
 
@@ -118,6 +146,8 @@ structure details, see [File Organization](./skill-file-organization.md).
 ## Verification Checklist
 
 - [ ] Created in `.mycc/skills/` (or `~/.mycc-store/skills/` for user-level)
+- [ ] **Reload stated**: project-level → visible now; user-level → told the
+      user it needs a mycc restart (or `/skills build`) before it is loaded
 - [ ] Clear frontmatter: name, description (< 800 tokens), keywords
 - [ ] **Description leads with FUNCTION (what it does / when to reach for it),
       not mechanics** — trigger guards, counters, and hook actions are demoted

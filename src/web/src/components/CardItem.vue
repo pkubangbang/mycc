@@ -40,6 +40,20 @@ function isNegativeOption(value: string, label: string): boolean {
   return /^(n|no)$/i.test(value.trim()) || /^no$/i.test(label.trim());
 }
 
+/**
+ * Whether a card offers the split "No ▾" refusal textarea.
+ *
+ * ONLY `git_commit` carries free-text feedback that the tool hands back to the
+ * model ("User did not confirm … User's response: '…'"). Every other y/N prompt
+ * (plan_off, grants, /load confirmations) reads the answer as a bare token or
+ * discards the text, so a reason box there would collect text nobody reads —
+ * and for plan_off it falsely implies you can attach a path or condition to a
+ * refusal. Those prompts keep the plain buttons.
+ */
+function allowsReason(): boolean {
+  return /^Commit with message:|^Amend commit with message:/.test(props.card.query);
+}
+
 function toggleReason(): void {
   if (responded.value) return;
   reasonOpen.value = !reasonOpen.value;
@@ -118,14 +132,14 @@ function onReasonKeydown(event: KeyboardEvent): void {
            free text falls through to a default/deny and is silently
            discarded, so offering a textarea here is misleading. The user
            must pick one of the buttons.
-           EXCEPTION: a NEGATIVE option is a SPLIT button — its caret reveals a
-           reason textarea, because "No, because …" is meaningful feedback the
-           tool can act on (see submitReason). -->
+           EXCEPTION: for the git_commit prompt a NEGATIVE option is a SPLIT
+           button — its caret reveals a reason textarea, because "No, because …"
+           is meaningful feedback the tool acts on (see allowsReason). -->
       <template v-else-if="card.kind === 'choice'">
         <div class="card-options">
           <template v-for="opt in card.options" :key="opt.value">
             <div
-              v-if="isNegativeOption(opt.value, opt.label)"
+              v-if="allowsReason() && isNegativeOption(opt.value, opt.label)"
               class="card-split"
             >
               <button
@@ -167,12 +181,13 @@ function onReasonKeydown(event: KeyboardEvent): void {
            confirm cards have no [?/?] bracket — they use Continue/Cancel
            buttons but the free-text textarea is retained so the user can
            type a custom response (e.g. git_commit feedback, a custom file
-           path for plan_on) instead of clicking a button. -->
+           path for plan_on) instead of clicking a button.
+           Only git_commit turns a plain No into the split "No ▾" (allowsReason). -->
       <template v-else>
         <div class="card-options">
           <template v-for="opt in card.options" :key="opt.value">
             <div
-              v-if="isNegativeOption(opt.value, opt.label)"
+              v-if="allowsReason() && isNegativeOption(opt.value, opt.label)"
               class="card-split"
             >
               <button
