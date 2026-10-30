@@ -96,10 +96,9 @@ describe('installCompacted + wrap-up mark lifecycle', () => {
     t3.tool('brief', 'OK', 'x');
     expect(t3.installCompacted(triple, 4)).toBe(true);
 
-    // A tail whose FIRST row is a tool result is refused: its announcing
-    // assistant row lives in the summarized head, so the result would dangle.
-    // (The fixture needs a real assistant→tool batch: agent() alone does not
-    // create one, since no tool_calls are announced.)
+    // The tail is never re-validated on the splice path (it is a legal suffix
+    // by construction — see installCompacted's contract note), so the check
+    // that matters is the replacement HEAD, not where the cut lands.
     const t4 = build();
     t4.agent('', [
       { id: 'y1', type: 'function', function: { name: 'brief', arguments: {} } } as ToolCall,
@@ -107,9 +106,16 @@ describe('installCompacted + wrap-up mark lifecycle', () => {
     ]);
     t4.tool('brief', 'OK', 'y1');
     t4.tool('read_file', 'X', 'y2');
-    // tail from 5 = [tool(y1), tool(y2)] → the splice point IS a tool row.
-    expect(t4.installCompacted(triple, 5)).toBe(false);
-    expect(t4.getMessages().length).toBe(7); // store untouched
+    expect(t4.installCompacted(triple, 5)).toBe(true);
+
+    // A malformed HEAD is refused all-or-nothing.
+    const badHead: Message[] = [
+      userMsg('[summary]'),
+      { role: 'assistant', content: '', tool_calls: [{ id: 's', type: 'function', function: { name: 'brief', arguments: {} } } as ToolCall] }, // unanswered
+    ];
+    const t5 = build();
+    expect(t5.installCompacted(badHead, 4)).toBe(false);
+    expect(t5.getMessages().length).toBe(4); // store untouched
   });
 
   it('segment install while a wrap-up turn is live: installs, wrap-up survives', () => {

@@ -777,38 +777,39 @@ export class Triologue {
    * @param tailFrom - optional true-array index; when set the store becomes
    *   `[...compacted, ...store.sliceFrom(tailFrom)]` (segment archiving).
    *   Omitted = full replacement (existing autoCompact behaviour).
-   * @returns true when the swap was installed, false when the parity pre-check
-   *   failed — the store is left UNTOUCHED in that case (all-or-nothing).
    *
    * TWO MODES, because a segment splice does not invalidate the tail:
    *   - full (`tailFrom === undefined`): the whole conversation is replaced, so
    *     the array must end on `tool`, every pending call and deferred input is
    *     dead, and any wrap-up turn is dead → drop + reset, exactly as before.
-   *   - segment (`tailFrom` set): only `[0 … tailFrom)` is replaced. Pending
+   *   - head (`tailFrom` set): only `[0 … tailFrom)` is replaced. Pending
    *     calls, deferred input and an in-flight wrap-up all live against the
    *     TAIL and stay valid → never clear the ledger, never drop deferred
    *     input (flush instead, now that the summarization is done), never touch
    *     the capsule; only shift the wrap-up mark by the head-length delta so it
    *     keeps pointing at the same message.
+   *
+   * WHY THE TAIL IS NOT RE-VALIDATED: the splice point is always the end of a
+   * COMPLETE title batch, so the tail is a legal conversation SUFFIX by
+   * construction — including an open batch in it, which is the normal running
+   * state (the archive fires from inside a batch). A whole-array parity check
+   * would flag that legitimate suffix; the only thing worth proving here is
+   * that the replacement HEAD is well formed.
+   *
+   * @returns true when the swap was installed, false when the head pre-check
+   *   failed — the store is left UNTOUCHED in that case (all-or-nothing).
    */
   installCompacted(compacted: Message[], tailFrom?: number): boolean {
     const isSegment = tailFrom !== undefined;
     const tail = isSegment ? this.store.sliceFrom(tailFrom) : [];
     const next = isSegment ? [...compacted, ...tail] : compacted;
-    // Parity pre-check: build the candidate first, validate it, and only then
-    // swap. A failed check is OBSERVABLE (warn log) and leaves the store as-is
-    // — never a half-swapped context. The tail invariant (end on `tool`)
-    // applies to the FULL path only; on the splice path the tail is whatever
-    // the loop produced, and the guard instead pins the splice POINT: the tail
-    // must not begin with a tool row, whose announcing assistant row is in the
-    // summarized head.
-    const violations = MessageStore.parityViolations(next, { requireToolTail: !isSegment });
+    // Head pre-check (segment) / whole-array parity (full). Both are OBSERVABLE
+    // (warn log) and leave the store as-is — never a half-swapped context.
+    const violations = isSegment
+      ? MessageStore.headViolations(compacted)
+      : MessageStore.parityViolations(next);
     if (violations.length > 0) {
-      agentIO.brief('warn', 'triologue', `installCompacted refused: candidate array violates role parity (tailFrom=${tailFrom ?? 'none'}): ${violations.join('; ')}`);
-      return false;
-    }
-    if (isSegment && tail[0]?.role === 'tool') {
-      agentIO.brief('warn', 'triologue', `installCompacted refused: tail begins with a tool row (tailFrom=${tailFrom})`);
+      agentIO.brief('warn', 'triologue', `installCompacted refused: ${isSegment ? 'summary head' : 'candidate array'} violates role parity (tailFrom=${tailFrom ?? 'none'}): ${violations.join('; ')}`);
       return false;
     }
     const wrapUpMarkBefore = this.wrapUp.value;

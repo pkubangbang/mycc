@@ -210,13 +210,12 @@ describe('concurrency invariants (lead steering)', () => {
     expect(epochOf()).toBe(1);
   });
 
-  it('INV2: an in-flight batch in the tail is refused (known, deliberate) and nothing changes', () => {
-    // Peer review RISK (store #2 / facade #5): a tail whose batch still has an
-    // unanswered call cannot be spliced — the guard cannot prove the head does
-    // not hold the matching result. The install must REFUSE all-or-nothing, so
-    // neither the ledger nor the deferred input is touched (a full compact's
-    // invariant set would have cleared BOTH). The tail's later settle flushes the
-    // deferred input normally.
+  it('INV2: an OPEN batch in the tail is prependable — the splice installs', () => {
+    // A legal anchor ends a COMPLETE batch, so the tail is a legal conversation
+    // SUFFIX by construction and an open batch inside it is the normal running
+    // state (the archive fires from inside a batch). The guard therefore
+    // validates the replacement HEAD only; re-validating the whole array
+    // refused the archive exactly when the agent kept working.
     const t = mkTriologue();
     t.user('q1');
     t.agent('a1');
@@ -227,13 +226,15 @@ describe('concurrency invariants (lead steering)', () => {
     ]);
     t.tool('mycc_title', 'OK', 't1'); // ledger: t2 still pending
     t.user('typed while archiving'); // DEFERRED
-    const before = t.getMessagesRaw().length;
 
-    expect(t.installCompacted(summaryTriple(), 2)).toBe(false);
-    expect(t.getMessagesRaw().length).toBe(before); // store untouched
+    expect(t.installCompacted(summaryTriple(), 2)).toBe(true);
+
+    // Tail kept verbatim behind the summary head — open batch and all.
+    expect(t.getMessagesRaw().slice(3).map((m) => m.role)).toEqual(['assistant', 'assistant', 'tool']);
+    // The deferred input was NOT dropped (segment mode keeps the ledger).
     expect(t.getMessagesRaw().some((m) => m.content === 'typed while archiving')).toBe(false);
 
-    // Once t2's result lands the ledger empties and the deferred input replays.
+    // When t2 settles the ledger empties and the typed query replays normally.
     t.tool('read_file', 'R', 't2');
     expect(t.getMessagesRaw().some((m) => m.content === 'typed while archiving')).toBe(true);
   });

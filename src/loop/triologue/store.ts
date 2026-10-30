@@ -204,27 +204,30 @@ export class MessageStore {
   }
 
   /**
-   * Role-parity violations of a candidate message array, as human-readable
+   * Role-parity violations of a WHOLE conversation array, as human-readable
    * reasons (empty = parity holds). Static because the array being checked is
-   * a CANDIDATE for replacement, not this store's contents:
+   * not necessarily this store's contents:
    *
    *  - an entry that is not a message;
    *  - a `tool` result whose call id no assistant announced (dangling result);
    *  - an assistant call id with no result (a batch cut mid-flight);
-   *  - optionally, an array not ending on `tool` (the resume invariant: the
-   *    next real turn must be a natural tool → assistant transition).
+   *  - an array not ending on `tool` (the resume invariant: the next real turn
+   *    must be a natural tool → assistant transition);
+   *  - an empty array.
    *
-   * The tail invariant is opt-in because it belongs to the FULL-replacement
-   * path only: a segment splice keeps the live tail, so the array's tail is
-   * whatever the running loop already produced (an assistant answer, a user
-   * query typed during summarization) — perfectly legal there. Enforcing it on
-   * the splice refused the archive exactly when the agent kept working.
+   * Used for the FULL-replacement path (the summary triple installed alone) —
+   * that array must satisfy the provider's batch contract end to end.
+   *
+   * A SEGMENT splice is NOT checked with this predicate: its tail is a legal
+   * conversation SUFFIX by construction (the splice point is the end of a
+   * complete batch), and a suffix may legitimately carry an OPEN batch, which
+   * this array-level rule reports as "unanswered". See headViolations().
    *
    * Answers are consumed POSITIONALLY per assistant row via a per-row pending
    * set, not one flat id set: a restored/replayed session carries call ids that
    * repeat across turns, so a flat set would let a mid-batch tail pass.
    */
-  static parityViolations(messages: Message[], opts: { requireToolTail?: boolean } = {}): string[] {
+  static parityViolations(messages: Message[]): string[] {
     const reasons: string[] = [];
     let pending: Set<string> | undefined;
     for (const m of messages) {
@@ -261,10 +264,24 @@ export class MessageStore {
     }
     if (messages.length === 0) reasons.push('empty candidate');
     const last = messages[messages.length - 1];
-    if (opts.requireToolTail && messages.length > 0 && last?.role !== 'tool') {
+    if (messages.length > 0 && last?.role !== 'tool') {
       reasons.push(`last role is '${last?.role}', expected 'tool'`);
     }
     return reasons;
+  }
+
+  /**
+   * Role-parity violations of a REPLACEMENT HEAD — the summary triple that will
+   * be prepended to the live tail by a segment splice.
+   *
+   * The head stands alone: it must be a complete round-trip ending on `tool`
+   * (so the next real turn is a natural tool → anything transition), with every
+   * announced call answered INSIDE the head and no answer to a call announced
+   * outside it. The tail is deliberately NOT inspected — it is a legal suffix
+   * by construction, and it may carry an open batch by design.
+   */
+  static headViolations(head: Message[]): string[] {
+    return MessageStore.parityViolations(head);
   }
 
   /**
