@@ -8,11 +8,11 @@
  *   • the send→running latch (15 s expiry for the `submitted` phase)
  *   • the drag-and-drop bindings — the WHOLE composer is the drop target, so
  *     they cannot move into a child
+ *   • the manual top-edge height handle: it owns `composerHeight` (px) and
+ *     hands it to <ComposerBox> as the `height` prop; ComposerBox clamps it once
+ *     and binds it inline as `--band-h`. There is no inline custom property and
+ *     no CSS clamp any more — one number, one place.
  *   • the hidden <input type=file> behind the 附加文件 button
- *   • the manual top-edge height handle: it writes ONE inherited custom
- *     property (`--composer-raw-h`) on its root element, which carries the
- *     `.composer-box` grid; that grid reconciles everything inside to the
- *     resulting height (ComposerBox's root is `display: contents`)
  *
  * Everything visual lives in `components/chat-input/`:
  *   ComposerBox (textarea + floating strip + 发送), AttachmentBar (one line),
@@ -35,6 +35,10 @@ const props = defineProps<{ state: ChatState }>();
 
 const text = ref(props.state.inputText);
 const fileInput = ref<HTMLInputElement | null>(null);
+/** Composer band height in px — the single owned value, handed to
+ *  <ComposerBox> as `height`. ComposerBox clamps it once; the drag handle below
+ *  is the only writer. */
+const composerHeight = ref(58);
 const dragOver = ref(false);
 let dragCounter = 0;
 /** Whether the attachment-manager popup is open. */
@@ -238,21 +242,16 @@ function removeAllFiles(): void {
 
 // ── Manual input-box height (top-edge drag handle) ──
 //
-// The root element is the height authority: it carries the `.composer-box`
-// grid and its height is ONE unclamped custom property, `--composer-raw-h`,
-// written inline here. CSS owns the clamp (min-height / max-height) and the
-// grid row makes the inner structure reconcile — so this handler never
-// computes a final height, never clamps, and never touches the textarea.
+// ChatInput OWNS the height: `composerHeight` is a reactive px value handed to
+// <ComposerBox> as the `height` prop. ComposerBox clamps it once (58–320) and
+// binds it inline as `--band-h`, so this handler never touches styles, never
+// measures a rect for the anchor, and never clamps — it just moves a number.
 //
-// The handle is the root's first child, so the box is
-// `handle.parentElement`. (A template `ref` on <ComposerBox> would yield the
-// child's component instance, on which `.style` does not exist — the reason
-// the handle reached nothing after the split.)
-//
-// The anchor is taken from the BOX's own rect at drag start (one snapshot),
-// not from a nested element: measuring the textarea (as an earlier version
-// did) mixed container chrome into the value and made the box jump on the
-// first pointermove.
+// The anchor is the CURRENT VALUE of `composerHeight`, not a DOM rect: the
+// `.composer-box` rect also contains the stage strip / notice / attachment
+// rows, so anchoring on it added an ~8px offset, made the box jump on the
+// first pointermove, and let a downward drag overshoot the two-line floor
+// (most visible on a phone).
 let inputDragging = false;
 let dragMoved = false;
 let dragStartY = 0;
@@ -261,28 +260,18 @@ let dragStartHeight = 0;
  *  handle must not resize the box). */
 const DRAG_THRESHOLD = 3;
 
-/** The .composer-box root that owns the height contract. */
-function boxOf(el: Element | null): HTMLElement | null {
-  return el?.closest<HTMLElement>('.composer-box') ?? null;
-}
-
 function onInputHandleDown(e: PointerEvent): void {
-  const box = boxOf(e.currentTarget as Element);
-  if (!box) return;
   inputDragging = true;
   dragMoved = false;
   (e.target as HTMLElement).setPointerCapture(e.pointerId);
   e.preventDefault();
   dragStartY = e.clientY;
-  // Anchor on the box's CURRENT height. It is a snapshot taken once, so the
-  // handle's own offset (and any layout settle on the first move) can never be
-  // folded into the delta — the cause of the old first-move jump.
-  dragStartHeight = box.getBoundingClientRect().height;
+  // Snapshot the band height (the prop's value), not a rect: it is the same
+  // number the box is laid out from, so there is no offset to fold in.
+  dragStartHeight = composerHeight.value;
 }
 function onInputHandleMove(e: PointerEvent): void {
   if (!inputDragging) return;
-  const box = boxOf(e.currentTarget as Element);
-  if (!box) return;
   const dy = dragStartY - e.clientY;
   // Swallow the first couple of pixels: without this, pressing the handle and
   // twitching the pointer resizes the box by a jump of one or two rows.
@@ -291,12 +280,8 @@ function onInputHandleMove(e: PointerEvent): void {
     dragMoved = true;
   }
   // The handle is at the TOP edge: dragging up (clientY shrinks) grows the
-  // box. Write the UNCLAMPED target; CSS min/max-height does the rest, so the
-  // drag stays anchored even when it overshoots a bound.
-  box.style.setProperty(
-    '--composer-raw-h',
-    `${dragStartHeight + dy}px`,
-  );
+  // box. ComposerBox clamps the value, so an overshoot still anchors the drag.
+  composerHeight.value = dragStartHeight + dy;
 }
 function onInputHandleUp(e: PointerEvent): void {
   inputDragging = false;
@@ -414,9 +399,11 @@ function fmtTime(at: number): string {
     <ComposerBox
       :text="text"
       :placeholder="placeholder"
+      :height="composerHeight"
       :can-send="canSend"
       :can-compact="canCompact"
       :is-auto-mode="state.isAutoMode"
+      :plan-mode="state.isPlanMode"
       :connected="state.connectionStatus === 'connected'"
       @update:text="(v: string) => (text = v)"
       @send="send"
@@ -480,8 +467,9 @@ function fmtTime(at: number): string {
      width) — each visual child owns its own x-margin via --composer-gutter.
      The BOTTOM inset belongs to the shell alone: whatever the last child is
      (textarea, notice, or attachment bar) it sets no bottom margin, so the
-     visual bottom margin stays exactly ~5px and never stacks. */
-  padding: 0 0 5px;
+     visual bottom margin stays exactly ~8px and never stacks. (8px = the
+     original 5px + 3px of extra breathing room.) */
+  padding: 0 0 8px;
   background: var(--bg-input);
   border-top: 1px solid var(--border-color);
   flex-shrink: 0;
@@ -491,15 +479,13 @@ function fmtTime(at: number): string {
 .chat-input.drag-over {
   background: color-mix(in srgb, var(--accent) 8%, var(--bg-input));
 }
-/* ── The height contract variables ──
-   They live on this root and INHERIT into ComposerBox, whose `.composer-box`
-   root is the grid + clamp owner. --composer-raw-h is written INLINE by the
-   drag handle and must never be declared in any rule: a local declaration wins
-   over the inline value and turns every drag into a no-op. */
+/* ── Layout variables ──
+   The composer's HEIGHT is not a CSS variable any more: ChatInput owns it as
+   `composerHeight` and passes it to <ComposerBox> as the `height` prop, which
+   clamps it once in TypeScript and binds it inline as `--band-h` on the row.
+   Only the static insets live here. */
 .chat-input {
   --composer-gutter: 8px;
-  --composer-min-h: 40px;
-  --composer-max-h: 320px;
   --toolbar-w: 98px;
   --toolbar-inset: 2px;
 }

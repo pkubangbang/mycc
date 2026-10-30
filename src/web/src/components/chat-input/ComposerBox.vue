@@ -25,6 +25,7 @@
  *
  * Capability props only — this component never sees `ChatState`.
  */
+import { computed } from 'vue';
 import type { FileInfo } from '../../types';
 
 const props = defineProps<{
@@ -32,12 +33,19 @@ const props = defineProps<{
   text: string;
   /** Placeholder, resolved by the shell from the phase. */
   placeholder: string;
+  /** Composer band height in px — the ONE number this component lays itself
+   *  out from. The shell owns it (it also drives the drag handle), so nothing
+   *  in here has to measure the DOM or re-clamp in CSS: the component clamps
+   *  the value once and binds it inline as `--band-h`. */
+  height: number;
   /** Send button gate — mirrors the shell's send() guard exactly. */
   canSend: boolean;
   /** 压缩上下文 button gate. */
   canCompact: boolean;
   /** Lightning bolt is "on" (orthogonal to phase). */
   isAutoMode: boolean;
+  /** Lead is in PLAN mode (backend `mode` broadcast) — drives the mode text. */
+  planMode: boolean;
   /** WS connection state; controls the auto/attach enabled flags. */
   connected: boolean;
 }>();
@@ -65,6 +73,42 @@ function onKeydown(event: KeyboardEvent): void {
 function onPaste(event: ClipboardEvent): void {
   emit('paste-files', event);
 }
+
+// ── Band height (the one layout input) ──
+//
+// `props.height` arrives from the shell (the same number its drag handle
+// writes). It is clamped ONCE here and then bound inline as `--band-h` on the
+// row, which replaces the old CSS `clamp()` over a registered custom property:
+// the arithmetic lives in one TypeScript expression instead of a
+// `@property` + `clamp(min, raw, max)` triple spread across the stylesheet.
+const COMPOSER_MIN_H = 60;
+const COMPOSER_MAX_H = 320;
+const bandHeight = computed(() => {
+  const h = Number.isFinite(props.height) ? props.height : COMPOSER_MIN_H;
+  return Math.min(Math.max(h, COMPOSER_MIN_H), COMPOSER_MAX_H);
+});
+
+// ── Mode-label visibility (NORMAL / PLAN under 发送) ──
+//
+// The label sits under the button inside the send column, which stretches to
+// the composer band. The band height now arrives as the `height` PROP (the
+// shell owns it), so visibility is a pure computed over `bandHeight` — no
+// ResizeObserver, no container query, no DOM measurement at all.
+//
+// WHY NOT A CONTAINER QUERY: `container-type: size` on the send column implies
+// `contain: size`, so the column's own size would ignore its contents; combined
+// with `justify-self: end` it collapsed to width 0, pushing 发送 out of the band
+// and hiding both the button and the label.
+//
+// THE THRESHOLD (X): the label's stack needs 40px button + 4px gap + 12px
+// line = 56px of content box, plus the row's 8px top padding and ~3px of slack
+// so the descenders never touch the wrapper's border ⇒ 67px of BAND height.
+// Below that the label would spill past the column's bottom edge, so it hides
+// (`display: none`, reserving no space).
+const MODE_LABEL_MIN_BAND_PX = 67;
+
+/** Show the label only when the band can hold button + gap + line. */
+const hasRoomForMode = computed(() => bandHeight.value >= MODE_LABEL_MIN_BAND_PX);
 </script>
 
 <template>
@@ -73,8 +117,8 @@ function onPaste(event: ClipboardEvent): void {
          inside .composer-box, so its pointer handlers can resolve the box with
          `closest('.composer-box')`. -->
     <slot name="handle" />
-    <div class="composer-row">
-      <div class="input-band">
+    <div class="composer-row" :style="{ '--band-h': `${bandHeight}px` }">
+      <div class="input-band" ref="bandEl">
         <textarea
         :value="props.text"
         class="composer-box__textarea"
@@ -125,27 +169,29 @@ function onPaste(event: ClipboardEvent): void {
           </svg>
         </button>
       </div>
-        <button
-          class="send-btn"
-          :disabled="!props.canSend"
-          @click="emit('send')"
-        >发送</button>
+        <div class="send-wrap">
+          <button
+            class="send-btn"
+            :disabled="!props.canSend"
+            @click="emit('send')"
+          >发送</button>
+          <!-- Mode text: DIRECTLY below 发送, inside the send column. Plain
+               text (no capsule/pill), uppercase, muted, so it reads as state
+               rather than an action. Hidden when the composer height is below
+               MODE_LABEL_MIN_BAND_PX (see the computed above). -->
+          <span
+            v-show="hasRoomForMode"
+            class="mode-text"
+            :class="{ 'mode-text--plan': props.planMode }"
+            :title="props.planMode ? '计划模式：只读探索，不修改代码' : '普通模式'"
+          >{{ props.planMode ? 'PLAN' : 'NORMAL' }}</span>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* ── Registered height driver ──
-   syntax '<length>' gives the property a typed initial value, so clamp() over
-   it is always valid even before the first drag; the handle's inline value
-   overrides the initial one (inline beats a rule, and both are <length>). */
-@property --composer-raw-h {
-  syntax: '<length>';
-  inherits: true;
-  initial-value: 40px;
-}
-
 /* ── The composer box: placement grid (NOT the height box) ──
  *
  * The height contract lives on `.composer-row` (below): that row is the
@@ -156,14 +202,12 @@ function onPaste(event: ClipboardEvent): void {
  *   columns: [ text | 发送 ]
  *   rows   : [ stage strip? ] [ COMPOSER BAND ] [ notices ] [ attachments ]
  *
- * The middle band is what `--composer-raw-h` sizes. Because it is a real grid
+ * The middle band is sized by `--band-h`. Because it is a real grid
  * row of a real box, the textarea (`height:100%`) and the floating strip
  * (`align-self:end`) fill it automatically — no px math anywhere.
  *
- * --composer-raw-h is NOT declared here: the shell writes it INLINE on
- * `.composer-box` (root of this component) from the drag handle. A local
- * declaration would win over the inherited inline value and turn every drag
- * into a no-op; the `auto` fallback supplies the default.
+ * `--band-h` is bound INLINE on `.composer-row` from the `height` prop, so this
+ * stylesheet holds no clamp and no second source of truth for the height.
  *
  * The stage strip is `v-if`-ed, so placement is keyed off its presence with
  * `:has()`; the middle band is always row 2 when it shows and row 1 when it
@@ -225,27 +269,16 @@ function onPaste(event: ClipboardEvent): void {
   margin: 0 var(--composer-gutter, 8px);
   padding: 8px 0 0;
   min-width: 0;
-  min-height: var(--composer-min-h, 40px);
-  max-height: var(--composer-max-h, 320px);
+  /* ── SINGLE HEIGHT AUTHORITY ──
+     `--band-h` is bound INLINE from the `height` prop (already clamped in TS by
+     `bandHeight`), so there is no CSS `clamp()` and no registered property to
+     keep in sync: the row takes the px value and `.input-band` fills it with
+     `height: 100%`. Two independent clamps on nested boxes used to drift by the
+     row's 8px top padding — the band would end 8px below the row's clip edge
+     and the bottom-anchored icon strip would sink into the shell's bottom
+     padding at maximum drag. */
+  height: var(--band-h, 58px);
   overflow: hidden;
-  /* ── Where the height contract is CLAMPED (the one place, CSS-only) ──
-     The band height is whatever the handle wrote; the floor and ceiling are
-     enforced right here so the inner grid always has a sane box to fill.
-     min = 40px (≈ one textarea line + border + padding) — the handle simply
-     cannot drag the band below that, so an overlapped/inverted layout is
-     impossible by construction. */
-  /* The band height: whatever the handle wrote, clamped to [floor, ceiling].
-     `--composer-raw-h` is a REGISTERED <length> property (see the @property
-     block at the bottom of this file) with initial-value 40px, so the clamp()
-     below always receives a concrete length. (A plain unregistered custom
-     property would make `clamp(40px, auto, 320px)` INVALID CSS when the
-     handle had not written yet, and the whole height declaration would be
-     dropped.) The handle's inline px value still wins over the registration. */
-  --band-h: clamp(
-    var(--composer-min-h, 40px),
-    var(--composer-raw-h),
-    var(--composer-max-h, 320px)
-  );
 }
 
 /* ── The composer band: textarea (col 1) + floating strip (col 1) + 发送
@@ -253,10 +286,17 @@ function onPaste(event: ClipboardEvent): void {
    squeezed below the band's natural size this band scrolls the textarea
    internally because the textarea has `min-height:0; overflow:auto`. ── */
 .input-band {
-  height: var(--band-h);
-  /* Belt and braces: even if --band-h were somehow overridden, the band can
-     never be shorter than the floor. */
-  min-height: var(--composer-min-h, 40px);
+  /* Fills the row's content box. It must NOT re-clamp: `height: var(--band-h)`
+     would resolve to the row's max-height while the content box is smaller by
+     the row's padding, so the band (and the icons at its bottom edge) would
+     cross the clip boundary. */
+  height: 100%;
+  /* HARD GUARD: nothing inside the band may paint outside it. On Android the
+     <textarea rows="2"> can keep its INTRINSIC height (~60px) while the band is
+     driven below it, which used to spill the textarea's bottom edge into the
+     shell's bottom padding. With the clip here, the worst case is a scrollable
+     textarea, never a box escaping the band. */
+  overflow: hidden;
   display: grid;
   grid-template-columns: 1fr auto;
   grid-template-rows: minmax(0, 1fr);
@@ -346,9 +386,51 @@ function onPaste(event: ClipboardEvent): void {
   }
 }
 
-.send-btn {
+/* ── Send column wrapper ──
+   The 发送 button's grid cell, promoted to a real element so it can be styled
+   and measured on its own. It OWNS the band's right column and stretches to
+   the row's full height (i.e. exactly the textarea's height, since the band's
+   single row is `minmax(0, 1fr)`). The button inside keeps its own 40px size,
+   top-aligned, so the wrapper's extra height never inflates the button: the
+   wrapper is the SEND COLUMN's box, not the button's box.
+
+   NO `container-type` here: size containment would make the wrapper ignore
+   its own contents and collapse to width 0 under `justify-self: end`,
+   pushing the button out of the band. */
+.send-wrap {
   grid-area: 1 / 2 / 2 / 3;
-  align-self: start;
+  align-self: stretch;
+  justify-self: end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+/* ── Mode text (NORMAL / PLAN), under 发送 ──
+   Plain text, no capsule: no background, no border, no border-radius — just a
+   small uppercase label centred under the button. It is state, not an
+   action, so it stays muted; PLAN earns the amber accent. `margin-top` keeps
+   it clear of the button's rounded corner. */
+.mode-text {
+  margin-top: 4px;
+  align-self: center;
+  font-size: 10px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-align: center;
+  white-space: nowrap;
+  color: var(--text-muted);
+  user-select: none;
+}
+.mode-text--plan {
+  color: #f59e0b;
+}
+
+.send-btn {
+  /* Placement belongs to `.send-wrap`; the button is a flex child of it. */
+  flex: 0 0 auto;
   background: var(--accent);
   color: var(--accent-text);
   border: none;

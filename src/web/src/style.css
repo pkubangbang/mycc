@@ -13,6 +13,18 @@ html, body, #app {
   height: 100%;
 }
 
+/* The document canvas and the page body are painted with the app background,
+   and page-level scrolling is off. The shell is exactly one VISIBLE-viewport
+   tall (--app-vh, see composables/useViewportHeight.ts), so nothing can
+   scroll: without this, the composer shell's own --bg-input padding band would
+   sit against an UNPAINTED (white) canvas and read as a stray white line at
+   the bottom of the page. */
+html,
+body {
+  background: var(--bg-app);
+  overflow: hidden;
+}
+
 /* ── Theme: Light (default) ── */
 :root {
   --bg-app: #ededed;

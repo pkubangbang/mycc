@@ -10,8 +10,16 @@ import TeammateDrawer from './components/TeammateDrawer.vue';
 import TodoCard from './components/TodoCard.vue';
 import DebugPanel from './components/DebugPanel.vue';
 import ImageViewer from './components/ImageViewer.vue';
+import { installViewportHeight } from './composables/useViewportHeight';
 
 defineProps<{ state: ChatState }>();
+
+// Size the shell from the VISIBLE viewport (window.visualViewport) instead of
+// `100vh`, so the composer stays above the Android soft keyboard and never
+// hides under the IME. Installed once at module scope (idempotent, see the
+// composable) rather than in onMounted: the property must be live even if this
+// component fails to mount, and there is nothing to tear down.
+installViewportHeight();
 
 // Teammate drawer state. The card floats over the chat area and hides when
 // the drawer is open. Clicking a teammate row opens the drawer with that
@@ -66,7 +74,19 @@ function closeDrawer(): void {
 .app-container {
   display: flex;
   flex-direction: column;
+  /* `--app-vh` is written by composables/useViewportHeight.ts from
+     window.visualViewport (falls back to innerHeight, then `100vh`). The
+     100dvh fallback is the pre-JS, mobile-toolbar-aware value. Using the
+     visible height — not the layout viewport — keeps the composer above the
+     Android soft keyboard. */
   height: 100vh;
+  height: 100dvh;
+  height: var(--app-vh, 100dvh);
+  /* Belt and braces against a WHITE strip at the bottom: the visible height
+     can be fractional, so never let the shell exceed it (the column is a flex
+     container, so shrinking only squeezes the chat log). */
+  max-height: var(--app-vh, 100dvh);
+  overflow: hidden;
   background: var(--bg-app);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   margin: 0;
