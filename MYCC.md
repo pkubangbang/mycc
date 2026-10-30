@@ -36,7 +36,7 @@ This section captures the terms specific to this project.
 
 **bang command:** `!<command>` opens an external tmux popup for interactive command execution (bypasses the LLM; prompt switches to magenta `run cmd ! `). Press Enter to capture output and kill session, or 'k' to keep it (persistent sessions like `npm run dev`, `ssh` can be reattached). See `docs/tools/bang-command-design.md`.
 
-**brief:** a one-way status update AND the conversation checkpoint — every brief result carries a `[<hash>] OK` line and is the durable record of the stretch that follows it. It must be the sole tool call of its turn (`validateBriefIsolation`).
+**brief:** a one-way status update AND the conversation checkpoint — every brief result carries a `[<hash>] OK` line and is the durable record of the stretch that follows it. It may be batched with other tool calls in the same turn (the former sole-call requirement was removed).
 
 ## Architecture & Core Concepts
 

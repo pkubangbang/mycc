@@ -14,13 +14,13 @@ import { BRIEF_OK } from '../loop/triologue/recap-note.js';
  * its description is visible to teammates too. Lead-only teaching belongs to
  * the lead's system prompt (buildLeadAgentMemorySection), never here.
  *
- * `Must be called alone` STAYS: validateBriefIsolation rejects the whole turn
- * for every caller, so a teammate batching brief with another tool must know
- * the rule even though it is the lead who rewinds to these anchors.
+ * Batching is allowed: a brief may share its turn with other tool calls. The
+ * description no longer asks for a lone call, and the former HOOK-side
+ * rejection (validateBriefIsolation) is gone.
  */
 export const briefTool: ToolDefinition = {
   name: 'brief',
-  description: 'Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence score (0-10) indicating your certainty about the current state. State the conclusion first, then the evidence. Must be called alone (no other tools in the same turn).',
+  description: 'Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence score (0-10) indicating your certainty about the current state. State the conclusion first, then the evidence.',
   input_schema: {
     type: 'object',
     properties: {

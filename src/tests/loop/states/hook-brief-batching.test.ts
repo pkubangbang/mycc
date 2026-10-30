@@ -1,22 +1,15 @@
 /**
- * hook-brief-isolation.test.ts — handleHook: brief must be called alone.
+ * hook-brief-batching.test.ts — handleHook: brief may share a turn with other
+ * tool calls.
  *
- * `brief` is the user-facing status checkpoint, so a brief-only assistant turn
- * stays an unambiguous, self-contained turn boundary. The guard is
- * HOOK validation step 2, BEFORE hook processing:
+ * `brief` used to be rejected wholesale when batched ("Brief must be called
+ * alone") by HOOK validation step 2 (validateBriefIsolation). That gate was
+ * removed: batching is now allowed and only the TOOL stage sees the calls.
  *
- *   const briefValidation = validateBriefIsolation(augmentedCalls);
- *   if (!briefValidation.valid) {
- *     triologue.agent(...);                       // register the turn
- *     for (const call of augmentedCalls)          // answer EVERY call
- *       triologue.tool(call.function.name, briefValidation.message!, call.id);
- *     agentIO.log(chalk.yellow(`[brief] blocked: …`));
- *     return AgentState.COLLECT;                  // nothing executed
- *   }
- *
- * Strategy: drive handleHook with a mocked hookExecutor and assert (a) the
- * turn is rejected wholesale when brief is co-batched, (b) hook processing is
- * never reached, and (c) a lone brief proceeds to TOOL as usual.
+ * Strategy: drive handleHook with a mocked hookExecutor and assert (a) a turn
+ * that co-batches brief with another tool is processed normally and reaches
+ * TOOL, (b) hook processing DOES run, and (c) no `[brief] blocked:` line is
+ * ever logged.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -66,10 +59,7 @@ import {
   createMockHookResult,
 } from '../esc-test-helpers.js';
 
-const ISOLATION_MESSAGE =
-  'Brief must be called alone. Other tools cannot be used in the same turn.';
-
-describe('handleHook — brief isolation', () => {
+describe('handleHook — brief batching', () => {
   let triologue: Triologue;
 
   beforeEach(() => {
@@ -77,7 +67,7 @@ describe('handleHook — brief isolation', () => {
     triologue = new Triologue();
   });
 
-  it('rejects a turn that co-batches brief with another tool', async () => {
+  it('processes a turn that co-batches brief with another tool', async () => {
     const briefCall = createMockAugmentedToolCall('brief', { message: 'looking', confidence: 6 }, 'call_brief');
     const bashCall = createMockAugmentedToolCall('bash', { command: 'ls' }, 'call_bash');
     const env = createMockMachineEnv({ triologue });
@@ -91,17 +81,13 @@ describe('handleHook — brief isolation', () => {
 
     const result = await handleHook(env, createTurnVars(), chat);
 
-    expect(result).toBe(AgentState.COLLECT);
-    // The assistant turn is registered once...
-    expect(triologue.agent).toHaveBeenCalledTimes(1);
-    // ...and EVERY call is answered with the same rejection (no partial run).
-    expect(triologue.tool).toHaveBeenCalledTimes(2);
-    expect(triologue.tool).toHaveBeenCalledWith('brief', ISOLATION_MESSAGE, 'call_brief');
-    expect(triologue.tool).toHaveBeenCalledWith('bash', ISOLATION_MESSAGE, 'call_bash');
-    // Hook processing never runs on a rejected turn.
-    expect(env.hookExecutor.processToolCalls).not.toHaveBeenCalled();
-    // Observability: the yellow block line is logged.
-    expect(agentIO.log).toHaveBeenCalledWith(expect.stringContaining('[brief] blocked:'));
+    // The turn proceeds to TOOL — nothing is answered with a rejection.
+    expect(result).toBe(AgentState.TOOL);
+    expect(triologue.tool).not.toHaveBeenCalled();
+    // Hook processing runs exactly as for any other batch.
+    expect(env.hookExecutor.processToolCalls).toHaveBeenCalledTimes(1);
+    // No rejection line is ever logged for a batched brief.
+    expect(agentIO.log).not.toHaveBeenCalledWith(expect.stringContaining('[brief] blocked:'));
   });
 
   it('lets a lone brief through to TOOL', async () => {

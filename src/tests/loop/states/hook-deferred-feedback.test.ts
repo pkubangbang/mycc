@@ -1,22 +1,14 @@
 /**
- * hook-brief-isolation.test.ts — handleHook: brief must be called alone.
+ * hook-deferred-feedback.test.ts — handleHook: deferred hook messages.
  *
- * `brief` is the user-facing status checkpoint, so a brief-only assistant turn
- * stays an unambiguous, self-contained turn boundary. The guard is
- * HOOK validation step 2, BEFORE hook processing:
+ * Drives handleHook with a mocked hookExecutor and asserts that messages a
+ * hook defers are re-injected as REMINDER notes before the round is abandoned
+ * (crossroad branch, no-tool-calls branch), and that the pass-scoped
+ * `hookFeedbackDelivered` flag is set so the caller knows a COLLECT loop-back
+ * is owed.
  *
- *   const briefValidation = validateBriefIsolation(augmentedCalls);
- *   if (!briefValidation.valid) {
- *     triologue.agent(...);                       // register the turn
- *     for (const call of augmentedCalls)          // answer EVERY call
- *       triologue.tool(call.function.name, briefValidation.message!, call.id);
- *     agentIO.log(chalk.yellow(`[brief] blocked: …`));
- *     return AgentState.COLLECT;                  // nothing executed
- *   }
- *
- * Strategy: drive handleHook with a mocked hookExecutor and assert (a) the
- * turn is rejected wholesale when brief is co-batched, (b) hook processing is
- * never reached, and (c) a lone brief proceeds to TOOL as usual.
+ * (The header was copied verbatim from the old brief-isolation suite, whose
+ * guard has since been removed — batching a brief with other tools is allowed.)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 

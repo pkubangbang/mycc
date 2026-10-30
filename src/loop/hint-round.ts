@@ -744,7 +744,7 @@ interface RecentBriefLine {
  *
  * THREE is not arbitrary: it is MAX_BRIEFS in src/peer/identity.ts — the same
  * rolling window the heartbeat file keeps and the `peer_list` tool displays. A
- * brief is a rewind anchor (validateBriefIsolation), so the last three ARE the
+ * brief is a rewind anchor, so the last three ARE the
  * instance's working identity: the most recent one is its current focus, the
  * two before it show the direction it arrived from. Feeding them to the
  * analyzer lets it judge whether the agent has drifted from its own stated

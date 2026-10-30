@@ -210,7 +210,7 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence parameter (0-10). State the conclusion first, then the evidence. Must be called alone (no other tools in the same turn).
+**Description**: Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence parameter (0-10). State the conclusion first, then the evidence.
 
 > The description deliberately carries no lead-only teaching: `brief` is `['main', 'child']`, so the same description reaches teammates. The lead-only guidance lives in the lead's `## Briefs` system-prompt section (`buildBriefSection()` in `src/loop/prompts/common.ts`).
 
@@ -223,16 +223,9 @@ interface ToolDefinition {
 **Behavior**:
 - Displays message prominently in terminal
 - Used for progress reporting during long tasks
-- **Isolation**: `brief` must be called ALONE (`validateBriefIsolation` in
-  `src/loop/triologue/brief.ts`, enforced as HOOK step 2 before hook
-  processing). A turn that co-batches `brief` with any other tool is rejected
-  wholesale — every call in it is answered with
-  `Brief must be called alone. Other tools cannot be used in the same turn.`,
-  nothing executes, and the loop returns to COLLECT so the LLM re-emits the
-  work without the brief. A brief-only turn keeps the checkpoint unambiguous
-  unambiguous for the lead (a child's briefs are never rewound, but the rule
-  is enforced uniformly). Synthetic briefs (recovery, crossroad, compact floor, TP
-  recovery) are sole calls and bypass the guard.
+- **Batching**: `brief` may share its turn with other tool calls. The former
+  sole-call rule (`validateBriefIsolation`, HOOK step 2) was removed; a batched
+  brief now executes like any other call in the turn.
 - Also emits a `[brief] blocked: ...` yellow log line when rejected
 - Also recorded into the peer discovery heartbeat (lead only) so other instances can see progress
 

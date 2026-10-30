@@ -5,8 +5,9 @@
  * registers the agent response with triologue, and branches to
  * TOOL (has calls) or STOP (no calls).
  *
- * BRIEF ISOLATION: brief runs as a regular tool, but its isolation (brief
- * must be called alone) is enforced here, before hook processing.
+ * BRIEF: brief runs as a regular tool and may be batched with other calls in
+ * the same turn. The former "brief must be called alone" gate
+ * (validateBriefIsolation) was removed — batching no longer rejects the turn.
  *
  * CROSSROAD: When crossroadContinuation is set on chat, the continuation is
  * merged into finalAssistantContent before triologue.agent() is called, and a
@@ -25,7 +26,7 @@ import { loader } from '../../context/shared/loader.js';
 import { loopEvents } from '../loop-events.js';
 import { stripInternalMarkup } from '../../utils/letter-box.js';
 import { buildCrossroadCard, formatCrossroadCard, toCrossroadCardWire } from '../crossroad-card.js';
-import { briefToolCall, newBriefCallId, validateBriefIsolation } from '../triologue/brief.js';
+import { briefToolCall, newBriefCallId } from '../triologue/brief.js';
 import { briefResultLine } from '../triologue/recap-note.js';
 import { buildPlanScopeNote, formatPlanScopeForDisplay, withPlanScopeNote } from '../plan-scope.js';
 import { startSpinner, stopSpinner } from '../../engine/chat-helpers.js';
@@ -190,8 +191,7 @@ async function handlePlanScopeBrief(
   ctx.core.brief('info', 'plan-scope', formatPlanScopeForDisplay(note));
 
   // The turn is fully answered above (one assistant message, one result), so the
-  // loop continues to the next LLM round. `brief` must be called alone
-  // (validateBriefIsolation, step 2), so there is nothing else to dispatch.
+  // loop continues to the next LLM round: nothing else is left to dispatch.
   return AgentState.COLLECT;
 }
 
@@ -207,22 +207,7 @@ export async function handleHook(
     const augmentedCalls = augmentToolCalls(chat.rawToolCalls);
     chat.augmentedCalls = augmentedCalls;
 
-    // 2. Validate brief isolation (a brief must stand alone — the whole turn is
-    //    rejected, nothing partial runs).
-    const briefValidation = validateBriefIsolation(augmentedCalls);
-    if (!briefValidation.valid) {
-      triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
-        reasoningContent: chat.assistantReasoningContent,
-      });
-      for (const call of augmentedCalls) {
-        triologue.tool(call.function.name, briefValidation.message!, call.id);
-      }
-
-      agentIO.log(chalk.yellow(`[brief] blocked: ${briefValidation.message}`));
-      return AgentState.COLLECT;
-    }
-
-    // 3. Process hooks (block/replace/inject/message).
+    // 2. Process hooks (block/replace/inject/message).
     const hookResult = await hookExecutor.processToolCalls(
       augmentedCalls,
       ctx,
@@ -236,7 +221,7 @@ export async function handleHook(
       compactRequested: !!hookResult.compactRequested,
     });
 
-    // 3.5. Handle compact request (highest priority — short-circuits all processing)
+    // 3. Handle compact request (highest priority — short-circuits all processing)
     //    DEFERRED: the actual compact runs at the LLM stage (see llm.ts), where
     //    `loader.getToolsForScope(scope)` is in scope and triologue.getMessages()
     //    is the exact cache prefix the next LLM call will use — so the forkChat
@@ -260,7 +245,7 @@ export async function handleHook(
     }
 
     // 4b. PLAN-MODE SCOPE REFLECTION — a brief turn is a snapshot of the
-    // 4.  model's own thinking, so while PLANNING the loop answers it with one
+    // 4. model's own thinking, so while PLANNING the loop answers it with one
     //     extra paragraph:
     //       tool('brief', "OK. When thinking on the larger scope, …", callId)
     //
