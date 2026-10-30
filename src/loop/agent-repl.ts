@@ -10,7 +10,7 @@ import { classifyError } from '../engine/chat-helpers.js';
 import { ParentContext } from '../context/parent-context.js';
 import { getSessionId, markHeadlessSession } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
-import { getTokenThreshold, shouldServe, getServePort, getServeHost, shouldAuto, shouldDaemon, getAutoflyThresholdArg, getDiscoveryDir, isPlainOutput, getAllowAutoCommitBranches } from '../config.js';
+import { getTokenThreshold, shouldServe, getServePort, getServeHost, shouldAuto, shouldDaemon, getAutoflyThresholdArg, getDiscoveryDir, isPlainOutput, getAllowAutoCommitBranches, shouldSkipHealthCheck } from '../config.js';
 import { Triologue } from './triologue.js';
 import { JsonlTranscriptWriter, asAppendablePiece } from './triologue/transcript.js';
 import { agentIO } from './agent-io.js';
@@ -490,7 +490,27 @@ export async function main(): Promise<void> {
 
   // ── Serve mode (--serve CLI flag): start web UI before the REPL loop ──
   // The /serve slash command path activates serve mid-session instead.
-  if (shouldServe()) {
+  //
+  // GATED ON THE HEALTH CHECK. The check above has already completed (and
+  // exited the process if the user declined to retry), so serve is only
+  // created for a provider connection that tested WORKING. This ordering is
+  // deliberate and load-bearing:
+  //
+  //   - Creating the hub earlier makes ask() take the serve-card branch, and
+  //     only a WebUI click can resolve that card. Every prompt raised before
+  //     the WS server accepts clients would then be unanswerable — while the
+  //     Coordinator's serve-mode stdin filter (index.ts) drops all non-ESC
+  //     keys. That combination is the "Retry health check? [Y/n] >" hang.
+  //   - With the hub created only after a successful check, a failing
+  //     provider never gets a hub: the retry prompt is the ordinary terminal
+  //     LineEditor path, and --serve behaves exactly like a plain boot until
+  //     the connection is proven.
+  //
+  // `null` from runHealthCheck means the check was SKIPPED (test mode,
+  // --skip-healthcheck, MYCC_SKIP_HEALTHCHECK) — that is an explicit operator
+  // decision to trust the environment, so it must not block serve.
+  const healthCheckPassed = modelInfo !== null || shouldSkipHealthCheck();
+  if (shouldServe() && healthCheckPassed) {
     try {
       await activateServe(getServePort(), getServeHost());
     } catch (err) {

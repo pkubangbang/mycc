@@ -19,7 +19,7 @@
 import { ChildProcess } from 'child_process';
 import { resolve } from 'path';
 import chalk from 'chalk';
-import { isVerbose, validateEnv, ensureToolTypeImports, shouldRunSetup, loadEnv, shouldServe, shouldDaemon } from './config.js';
+import { isVerbose, validateEnv, ensureToolTypeImports, shouldRunSetup, loadEnv, shouldDaemon } from './config.js';
 import { agentIO } from './loop/agent-io.js';
 import { parseKeys, isCtrlC, isEscape } from './utils/key-parser.js';
 import { getProjectRoot, spawnTsx } from './utils/tsx-run.js';
@@ -190,9 +190,17 @@ function runCoordinator(): void {
   let isRestarting = false;
 
   // Serve mode: when active, Coordinator filters stdin (only ESC and Ctrl+C
-  // are forwarded). Set via IPC from Lead (/serve command) or directly from
-  // the --serve CLI flag at startup.
-  let serveMode = shouldServe();
+  // are forwarded). Driven ONLY by the Lead's `serve_mode` IPC — never seeded
+  // from the --serve CLI flag.
+  //
+  // Rationale: the flag says what the Lead was ASKED to do, not what it
+  // actually did. The Lead only calls activateServe() after its provider
+  // health check passes (agent-repl.ts), and activateServe() is the single
+  // place that reports `serve_mode: active`. Seeding this from the flag made
+  // the Coordinator drop every non-ESC key during a startup retry prompt even
+  // though no WebUI existed to answer it — the terminal was locked out for a
+  // serve that never started.
+  let serveMode = false;
 
   // Graceful serve-shutdown state (Ctrl+C while serve is active).
   // The Coordinator sends a 'serve_shutdown' IPC and waits up to 3 s for
