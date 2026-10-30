@@ -1,23 +1,60 @@
 <script setup lang="ts">
+/**
+ * ChatInput.vue — the composer SHELL.
+ *
+ * Owns only what spans several regions or talks to the backend:
+ *   • the text ↔ state.inputText mirror (two watchers, no emit loop)
+ *   • the send gate (canSend / warning text) and send() routing (query vs steer)
+ *   • the send→running latch (15 s expiry for the `submitted` phase)
+ *   • the drag-and-drop bindings — the WHOLE composer is the drop target, so
+ *     they cannot move into a child
+ *   • the hidden <input type=file> behind the 附加文件 button
+ *   • the manual top-edge height handle: it writes ONE inherited custom
+ *     property (`--composer-raw-h`) on its root element, which carries the
+ *     `.composer-box` grid; that grid reconciles everything inside to the
+ *     resulting height (ComposerBox's root is `display: contents`)
+ *
+ * Everything visual lives in `components/chat-input/`:
+ *   ComposerBox (textarea + floating strip + 发送), AttachmentBar (one line),
+ *   AttachmentManager (the popup), InputNoticeBar (warning / upload error).
+ * Upload mechanics live in `composables/useAttachmentQueue.ts`.
+ *
+ * Capability-props invariant: no child receives `state: ChatState`; each takes
+ * only the derived values it renders.
+ */
 import { ref, watch, computed } from 'vue';
-import type { ChatState, FileInfo } from '../types';
+import type { ChatState } from '../types';
 import { chatApi } from '../main';
+import { useAttachmentQueue } from '../composables/useAttachmentQueue';
+import ComposerBox from './chat-input/ComposerBox.vue';
+import AttachmentBar from './chat-input/AttachmentBar.vue';
+import AttachmentManager from './chat-input/AttachmentManager.vue';
+import InputNoticeBar from './chat-input/InputNoticeBar.vue';
 
 const props = defineProps<{ state: ChatState }>();
 
 const text = ref(props.state.inputText);
 const fileInput = ref<HTMLInputElement | null>(null);
-const localFiles = ref<FileInfo[]>([]);
 const dragOver = ref(false);
 let dragCounter = 0;
+/** Whether the attachment-manager popup is open. */
+const managerOpen = ref(false);
 
-// Per-file upload size cap (MB), read from the store (state.maxUploadMb).
-// The store is populated app-level by fetchConfig() in main.ts (driven by
-// --max-upload-mb / MYCC_MAX_UPLOAD_MB, default 50). This component no longer
-// fetches /config itself — it reads the shared store value so there's one
-// source of truth. The store defaults to 50 when /config is unreachable.
-const uploadError = ref('');
+// ── Attachment queue (+ per-file upload size cap) ──
+//
+// All upload concerns live in one composable: read → size guard → base64 →
+// pendingFiles, plus the two error banners (超限 / 文件夹拒绝). `files` is the
+// single local mirror of `state.pendingFiles`, so send()/canSend can read it
+// synchronously. The cap (state.maxUploadMb) is passed as a live getter.
+const { files, uploadError, addFiles, onPaste, removeFile, clearFiles } =
+  useAttachmentQueue({
+    getMaxMb: () => props.state.maxUploadMb,
+    getPending: () => props.state.pendingFiles,
+    setPending: (next) => { props.state.pendingFiles = next; },
+  });
 
+// Mirror state.inputText ↔ the textarea (two watchers, so an external reset
+// of state.inputText reaches the DOM and typing flows the other way).
 watch(
   () => props.state.inputText,
   (val) => {
@@ -29,89 +66,7 @@ watch(text, (val) => {
   props.state.inputText = val;
 });
 
-watch(
-  () => props.state.pendingFiles,
-  (val) => {
-    localFiles.value = val;
-  },
-);
-
-function openFilePicker(): void {
-  fileInput.value?.click();
-}
-
-// Format a byte count as a human-readable size string (e.g. "1.2 MB").
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-// Process a single file: size guard + FileReader → base64 → pendingFiles.
-// Shared by drag/drop, file picker, and clipboard paste so the validation
-// and reading logic stays DRY.
-function processFile(file: File): void {
-  const maxBytes = props.state.maxUploadMb * 1024 * 1024;
-  // Size guard (client-side; the server re-checks for defense in depth).
-  if (file.size > maxBytes) {
-    uploadError.value = `「${file.name}」(${formatBytes(file.size)})超过 ${props.state.maxUploadMb}MB 上传限制，已跳过`;
-    // Auto-clear the error after 4s
-    setTimeout(() => {
-      if (uploadError.value.startsWith(`「${file.name}」`)) uploadError.value = '';
-    }, 4000);
-    return;
-  }
-  const reader = new FileReader();
-  reader.onload = () => {
-    const dataUrl = reader.result as string;
-    const base64 = dataUrl.split(',')[1] || '';
-    const info: FileInfo = {
-      filename: file.name,
-      data: base64,
-      mimeType: file.type || 'application/octet-stream',
-    };
-    localFiles.value = [...localFiles.value, info];
-    props.state.pendingFiles = localFiles.value;
-  };
-  reader.readAsDataURL(file);
-}
-
-function readFiles(rawFiles: FileList): void {
-  for (let i = 0; i < rawFiles.length; i++) {
-    const file = rawFiles[i];
-    // Reject folders. When a folder is dropped, the browser exposes it as a
-    // File whose .type is '' and .size is 0; reading it yields nothing useful.
-    // webkitGetAsEntry (when available) gives a definitive answer — a dropped
-    // directory is a FileSystemDirectoryEntry, not a File-backed entry.
-    type FileWithEntry = File & { webkitGetAsEntry?: () => unknown };
-    const item = (rawFiles as FileList & { item?(i: number): FileWithEntry }).item?.(i) as FileWithEntry | undefined;
-    const entry = item?.webkitGetAsEntry?.();
-    if ((entry && typeof entry === 'object' && (entry as { isDirectory?: boolean }).isDirectory)
-        || (file.type === '' && file.size === 0)) {
-      // Note: the size===0 && type==='' fallback may also match a genuine
-      // 0-byte file, but that only triggers when webkitGetAsEntry is unavailable
-      // (rare in modern browsers); a 0-byte upload is useless anyway, so the
-      // misclassification is acceptable.
-      uploadError.value = '不支持文件夹上传，请添加文件';
-      setTimeout(() => { uploadError.value = ''; }, 4000);
-      continue;
-    }
-    processFile(file);
-  }
-}
-
-function onFilesSelected(event: Event): void {
-  const input = event.target as HTMLInputElement;
-  const rawFiles = input.files;
-  if (!rawFiles || rawFiles.length === 0) return;
-  readFiles(rawFiles);
-  input.value = '';
-}
-
-function removeFile(index: number): void {
-  localFiles.value.splice(index, 1);
-  props.state.pendingFiles = localFiles.value;
-}
+// ── Toolbar actions ──
 
 // Lightning-bolt "enter auto mode" button. One-way: clicking enters auto
 // mode; if already in auto mode, surface a transient "已经是自动模式了"
@@ -128,18 +83,11 @@ function onAutoClick(): void {
   chatApi.sendAuto();
 }
 
-// "压缩上下文" (compact context) button — sits to the LEFT of the
-// lightning-bolt button. Clicking sends the "/compact" slash command via
-// the normal input path (chatApi.sendInput), so it reuses the entire
-// existing slash-command pipeline (no new WS type, no backend changes).
-//
-// The button is only enabled when ALL of these hold:
-//   - not in auto mode (state.isAutoMode === false) — the lightning bolt
-//     being on disables compact, per the user's requirement;
-//   - at the PROMPT stage (state.isWaiting === true) — a fresh prompt is
-//     pending and the loop is idle, so the slash command can run;
-//   - no interactive card is pending (state.hasPendingCard === false);
-//   - connected to the server (connectionStatus === 'connected').
+// "压缩上下文" (compact context) — sends the "/compact" slash command through
+// the normal input path (chatApi.sendInput), reusing the whole existing
+// slash-command pipeline (no new WS type, no backend change). Enabled only
+// when ALL hold: not in auto mode; at PROMPT (isWaiting); no pending card;
+// connected.
 const canCompact = computed(() =>
   !props.state.isAutoMode &&
   props.state.isWaiting &&
@@ -147,41 +95,34 @@ const canCompact = computed(() =>
   props.state.connectionStatus === 'connected',
 );
 
+function onCompactClick(): void {
+  if (!canCompact.value) return;
+  chatApi.sendInput('/compact');
+}
+
 // ── Send gate + warning banner (single source of truth) ──
 //
-// The chatInput textarea is NEVER disabled — not on disconnect, not on a
-// pending card, not on the steering-review card. Instead, a warning banner
-// tells the user when the typed text will not be submitted, and the send
-// button's :disabled mirrors the actual send behavior: the button is
-// disabled exactly when sending is impossible, so if the button is enabled,
-// send() will submit; if disabled, send() is a no-op. This removes the need
-// for any redundant guards inside send().
+// The textarea is NEVER disabled — not on disconnect, not on a pending card,
+// not on the steering-review card. Instead a warning banner tells the user
+// when the typed text will not be submitted, and the 发送 button's :disabled
+// mirrors the actual send behaviour exactly: enabled ⇒ send() submits,
+// disabled ⇒ send() is a no-op. So send() needs no redundant guards.
 //
 // showSteeringReview: a transient "继续…" card (rendered in ChatLog) is
-// pending user action at PROMPT. While it is showing, sending from the chat
-// box is blocked — the user must first deal with the card (send the notes as
-// a query or discard them). This is treated as a "card interruption", the
-// same category as hasPendingCard.
+// pending user action at PROMPT. While it shows, sending is blocked — the
+// user must first send those notes as a query or discard them. Treated as a
+// card interruption, the same category as hasPendingCard.
 const showSteeringReview = computed(() =>
   props.state.isWaiting && props.state.pendingSteeringReview.length > 0,
 );
 
-// canSend: the three disable conditions the send button mirrors —
-// (1) no pending card (interactive ask() card OR the steering-review card),
-// (2) non-empty content (text or files),
-// (3) connected to the server.
 const canSend = computed(() =>
   !props.state.hasPendingCard &&
   !showSteeringReview.value &&
-  (text.value.trim() !== '' || localFiles.value.length > 0) &&
+  (text.value.trim() !== '' || files.value.length > 0) &&
   props.state.connectionStatus === 'connected',
 );
 
-// Warning banner shown when the textarea is enabled (always) but the typed
-// text will NOT be submitted. Covers: a pending ask() card, a pending
-// steering-review card, and network disconnection. The banner replaces the
-// old behavior of disabling the textarea — the box stays focusable so it
-// never loses focus, and the banner explains why the text won't go through.
 const showInputWarning = computed(() =>
   props.state.hasPendingCard ||
   showSteeringReview.value ||
@@ -195,90 +136,64 @@ const inputWarningText = computed(() => {
   return '';
 });
 
-function onCompactClick(): void {
-  if (!canCompact.value) return;
-  chatApi.sendInput('/compact');
-}
+/** Placeholder, resolved from the four states the composer can be in. */
+const placeholder = computed(() => {
+  if (props.state.hasPendingCard) return '请在卡片上回复…';
+  if (props.state.isWaiting) return '输入消息…';
+  if (props.state.isAutoMode) return '给自动模式发指引…';
+  return '等待回复中…';
+});
 
 function send(): void {
-  // canSend is the single source of truth: the send button's :disabled
-  // mirrors it, so if we reach here, sending is genuinely possible. No
-  // redundant empty/card/disconnect guards are needed — the button being
-  // enabled guarantees they all pass. The Enter key path calls send() too,
-  // so the same guard protects it.
+  // canSend is the single source of truth — the button mirrors it, and the
+  // Enter key path calls this same function.
   if (!canSend.value) return;
   const value = text.value;
-  const files = localFiles.value.length > 0 ? [...localFiles.value] : undefined;
-  // Tag the content with the actual loop stage: a PROMPT wait is pending
-  // (isWaiting) → send as a fresh query (type:'input'); every other state
-  // (agent working, auto mode, the transient send→running gap) → send as a
-  // mid-task steering note (type:'steer'), buffered in the backend and
-  // consumed at the next COLLECT (REMINDER) or surfaced for review at the
+  const payload = files.value.length > 0 ? [...files.value] : undefined;
+  // Tag the content with the actual loop stage: a PROMPT wait (isWaiting) →
+  // a fresh query (type:'input'); every other state (working, auto, the
+  // transient send→running gap) → a steering note (type:'steer'), buffered in
+  // the backend and drained at the next COLLECT or surfaced for review at the
   // next PROMPT.
   if (props.state.isWaiting) {
-    chatApi.sendInput(value, files);
-    // Arm the send→running latch: the backend is now inside the PROMPT
-    // handler doing post-input work (keyword extraction / steering synthesis
-    // — both LLM calls) before it transitions COLLECT and broadcasts
-    // 'running on'. Without the latch, this window reads as the vacuum
-    // stage — a false positive (the user-observed "parsing 时处于空窗期").
+    chatApi.sendInput(value, payload);
+    // Arm the send→running latch (see latchSubmitted below).
     latchSubmitted();
   } else {
-    chatApi.sendSteer(value, files);
+    chatApi.sendSteer(value, payload);
   }
   text.value = '';
-  localFiles.value = [];
-  props.state.pendingFiles = [];
+  clearFiles();
 }
 
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Enter' && !event.shiftKey) {
-    event.preventDefault();
-    send();
-  }
+// ── ComposerBox events ──
+
+/** 附加文件: open the hidden picker (the input element lives in this shell). */
+function openFilePicker(): void {
+  fileInput.value?.click();
 }
 
-// Handle clipboard paste (Ctrl/Cmd+V) into the textarea. Scans the clipboard
-// for file/image items (e.g. a screenshot copied to clipboard, or a file
-// copied in the OS file manager) and routes each through processFile so they
-// join the pendingFiles queue just like a drag/drop or picker selection.
-// Text pastes are left to the textarea's native behavior (no preventDefault)
-// so the user can still paste text normally. Only file-typed items are taken;
-// image blobs are given a synthesized filename (image-<ts>.<ext>) since the
-// clipboard carries no original name for them.
-function onPaste(event: ClipboardEvent): void {
-  const items = event.clipboardData?.items;
-  if (!items) return;
-  let hasFile = false;
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    // kind:'file' covers both copied image blobs (image/png etc.) and files
-    // copied in the OS file manager (which expose their real name). kind:
-    // 'string'/'text' is plain text — let the textarea handle it natively.
-    if (item.kind !== 'file') continue;
-    const file = item.getAsFile();
-    if (!file) continue;
-    hasFile = true;
-    // Synthesize a filename for image blobs from the clipboard (screenshots
-    // etc.) since they carry no original name. Use the MIME subtype as the
-    // extension when available; fall back to 'bin'.
-    let name = file.name;
-    if (!name || name.startsWith('image.') || /^[0-9a-f]{8}-/i.test(name)) {
-      const sub = file.type.split('/')[1] || 'bin';
-      name = `image-${Date.now()}.${sub}`;
-    }
-    // Wrap in a new File to attach the synthesized name (the original File
-    // from getAsFile may carry a browser-generated placeholder name).
-    const named = new File([file], name, { type: file.type });
-    processFile(named);
-  }
-  // Only prevent default when we actually consumed file items — otherwise
-  // a plain text paste would be swallowed.
-  if (hasFile) {
-    event.preventDefault();
-  }
+/** Hidden <input type=file> change handler: queue the picked files, then
+ *  reset the input so re-picking the same file fires change again. */
+function onFilesPicked(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  const rawFiles = input.files;
+  if (rawFiles && rawFiles.length > 0) addFiles(rawFiles);
+  input.value = '';
 }
 
+// Clipboard paste: hand FILE items to the attachment queue (text pastes stay
+// native — no preventDefault). The queue synthesises a filename for clipboard
+// image blobs, which carry no original name.
+function onPasteFiles(event: ClipboardEvent): void {
+  if (onPaste(event)) event.preventDefault();
+}
+
+// ── Drag-and-drop on the whole composer ──
+//
+// The root is the drop target, so these bindings stay in the shell. A drop's
+// default action would otherwise navigate the page to the file. Any file type
+// is accepted; size and folder rejections happen inside the queue.
 function onDragEnter(event: DragEvent): void {
   event.preventDefault();
   dragCounter++;
@@ -300,113 +215,115 @@ function onDragLeave(event: DragEvent): void {
   }
 }
 
-// Handle a drop onto the input area. Previously this handler was missing
-// (the template bound @drop="onDrop" but no function existed), so drops did
-// nothing useful and the browser's default "open file" behaviour could even
-// navigate the page away. Now we read the dropped files into the upload
-// queue — any file type is accepted (the old accept="image/*" only constrained
-// the file picker, not the dataTransfer). Size is checked per-file in
-// readFiles against maxUploadMb.
 function onDrop(event: DragEvent): void {
   event.preventDefault();
   dragCounter = 0;
   dragOver.value = false;
   const rawFiles = event.dataTransfer?.files;
   if (!rawFiles || rawFiles.length === 0) return;
-  readFiles(rawFiles);
+  addFiles(rawFiles);
 }
 
-// ── Draggable input-box height ──
-//
-// A horizontal resize handle above the input box lets the user drag upward
-// to grow the textarea (and downward to shrink it). Height is tracked in px,
-// clamped to [MIN_HEIGHT, MAX_HEIGHT]. Pointer events drive the drag; the
-// textarea itself stays `resize:none` so the native browser gripper doesn't
-// conflict. The handle uses row-resize cursor.
-const MIN_INPUT_HEIGHT = 40;   // px — roughly the 2-row default
-const MAX_INPUT_HEIGHT = 320;  // px — keep the chat log usable
-const inputHeight = ref(0);    // 0 = unset → textarea uses its default rows
+// ── Pending-file manager popup ──
+function openManager(): void {
+  managerOpen.value = true;
+}
+function closeManager(): void {
+  managerOpen.value = false;
+}
+function removeAllFiles(): void {
+  clearFiles();
+  managerOpen.value = false;
+}
 
+// ── Manual input-box height (top-edge drag handle) ──
+//
+// The root element is the height authority: it carries the `.composer-box`
+// grid and its height is ONE unclamped custom property, `--composer-raw-h`,
+// written inline here. CSS owns the clamp (min-height / max-height) and the
+// grid row makes the inner structure reconcile — so this handler never
+// computes a final height, never clamps, and never touches the textarea.
+//
+// The handle is the root's first child, so the box is
+// `handle.parentElement`. (A template `ref` on <ComposerBox> would yield the
+// child's component instance, on which `.style` does not exist — the reason
+// the handle reached nothing after the split.)
+//
+// The anchor is taken from the BOX's own rect at drag start (one snapshot),
+// not from a nested element: measuring the textarea (as an earlier version
+// did) mixed container chrome into the value and made the box jump on the
+// first pointermove.
 let inputDragging = false;
-// Anchor captured on pointerdown: the pointer's starting Y and the box's
-// starting height. The new height on each move is startHeight + (startY -
-// clientY) — dragging UP (clientY decreases) grows the box. Anchoring to a
-// snapshot taken once at drag start keeps the math stable: it does not
-// depend on a rect that itself changes as the box resizes, which is what
-// caused the "jump" on the first move (the parent rect measured the whole
-// .chat-input container, not the textarea, so the first computed height
-// differed from the textarea's real height by ~the container chrome).
+let dragMoved = false;
 let dragStartY = 0;
 let dragStartHeight = 0;
+/** Pixels of vertical travel before the drag engages (a plain click on the
+ *  handle must not resize the box). */
+const DRAG_THRESHOLD = 3;
+
+/** The .composer-box root that owns the height contract. */
+function boxOf(el: Element | null): HTMLElement | null {
+  return el?.closest<HTMLElement>('.composer-box') ?? null;
+}
+
 function onInputHandleDown(e: PointerEvent): void {
+  const box = boxOf(e.currentTarget as Element);
+  if (!box) return;
   inputDragging = true;
+  dragMoved = false;
   (e.target as HTMLElement).setPointerCapture(e.pointerId);
   e.preventDefault();
   dragStartY = e.clientY;
-  // Snapshot the textarea's current rendered height. If inputHeight is
-  // unset (0), measure the actual element so the first drag continues from
-  // the visible size instead of jumping.
-  const ta = (e.currentTarget as HTMLElement)
-    .parentElement?.querySelector<HTMLTextAreaElement>('.input-area');
-  dragStartHeight = inputHeight.value > 0
-    ? inputHeight.value
-    : (ta ? ta.getBoundingClientRect().height : MIN_INPUT_HEIGHT);
+  // Anchor on the box's CURRENT height. It is a snapshot taken once, so the
+  // handle's own offset (and any layout settle on the first move) can never be
+  // folded into the delta — the cause of the old first-move jump.
+  dragStartHeight = box.getBoundingClientRect().height;
 }
 function onInputHandleMove(e: PointerEvent): void {
   if (!inputDragging) return;
-  // The handle sits at the TOP of the input box. Dragging the pointer up
-  // (clientY shrinks) increases the box height; dragging down decreases it.
-  // Using the pointer-down anchor avoids re-measuring a rect that shifts as
-  // the box resizes.
-  const h = dragStartHeight + (dragStartY - e.clientY);
-  inputHeight.value = Math.max(MIN_INPUT_HEIGHT, Math.min(h, MAX_INPUT_HEIGHT));
+  const box = boxOf(e.currentTarget as Element);
+  if (!box) return;
+  const dy = dragStartY - e.clientY;
+  // Swallow the first couple of pixels: without this, pressing the handle and
+  // twitching the pointer resizes the box by a jump of one or two rows.
+  if (!dragMoved) {
+    if (Math.abs(dy) < DRAG_THRESHOLD) return;
+    dragMoved = true;
+  }
+  // The handle is at the TOP edge: dragging up (clientY shrinks) grows the
+  // box. Write the UNCLAMPED target; CSS min/max-height does the rest, so the
+  // drag stays anchored even when it overshoots a bound.
+  box.style.setProperty(
+    '--composer-raw-h',
+    `${dragStartHeight + dy}px`,
+  );
 }
 function onInputHandleUp(e: PointerEvent): void {
   inputDragging = false;
+  dragMoved = false;
   try {
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
   } catch {
     /* already released */
   }
 }
-const inputAreaStyle = computed(() =>
-  inputHeight.value > 0 ? { height: `${inputHeight.value}px` } : {},
-);
 
 // ── State-machine stage tag row (diagnostic) ──
-//
-// A full-width row of chips, rendered as the FIRST element inside
-// .chat-input (below the top border/divider, above the input row), visible
-// ONLY when 详细日志 (state.verboseLogs) is on. It surfaces the frontend-
-// owned phase used by send()'s routing decision, so the user can see at a
-// glance WHY a submitted message will be routed as type:'input' (query) vs
-// type:'steer' (buffered) — and catch desync (e.g. backend blocked at PROMPT
-// while the frontend believes otherwise) in flows like 停止-button → submit.
-//
-// Labels use the unified uppercase vocabulary requested by the user
-// (PROMPT / RUNNING / AWAIT / PARSING / QCARD / IDLE / OFFLINE). Each maps
-// 1:1 onto a distinct phase, so routing semantics are unchanged:
-//   1. OFFLINE     — connection not established; nothing is sent anyway.
-//   2. QCARD       — card phase; routing is blocked by the card gate.
-//   3. PROMPT      — isWaiting true with no pending card → sendInput (query).
-//   4. RUNNING     — isRunning (working) → sendSteer (COLLECT drains as
-//                    REMINDER).
-//   5. AWAIT       — auto mode idle (steady AWAIT broadcasts neither prompt
-//                    nor running; ALSO the post-turn resting state in auto:
-//                    running:off routes working→await when isAutoMode, since
-//                    the backend returns to AWAIT with no 'prompt' to follow)
-//                    → sendSteer (await.ts polls the queue).
-//   6. PARSING     — the send→running gap (submitted): a query was JUST
-//                    submitted (sendInput) and the backend is still inside
-//                    the PROMPT handler doing post-input processing (keyword
-//                    extraction / steering synthesis — LLM calls!) before
-//                    transitioning to COLLECT. Messages sent during this
-//                    window go to the steer buffer AND ARE consumed at the
-//                    imminent COLLECT.
-//   7. IDLE        — none of the above (the phase-enum `idle` vacuum):
-//                    send() would route to sendSteer while the state machine
-//                    has no consumer scheduled for the buffer (the 停止-button
-//                    vacuum). Amber warning.
+
+// Labels use the unified uppercase vocabulary PROMPT / RUNNING / AWAIT /
+// PARSING / QCARD / IDLE / OFFLINE. Each maps 1:1 onto a phase, so routing
+// semantics are unchanged:
+//   1. OFFLINE  — no connection; nothing is sent anyway.
+//   2. QCARD    — card phase; routing is blocked by the card gate.
+//   3. PROMPT   — isWaiting, no card → sendInput (query).
+//   4. RUNNING  — working → sendSteer (COLLECT drains as REMINDER).
+//   5. AWAIT    — auto-mode idle → sendSteer (await.ts polls the queue).
+//   6. PARSING  — the send→running gap (`submitted`): a query was just
+//                 submitted and the backend is still inside the PROMPT
+//                 handler doing post-input LLM work; messages sent here go to
+//                 the steer buffer and ARE consumed at the imminent COLLECT.
+//   7. IDLE     — the phase-enum vacuum: send() would route to sendSteer with
+//                 no consumer scheduled (the 停止-button vacuum). Amber.
 const stage = computed(() => {
   if (props.state.connectionStatus !== 'connected') return 'OFFLINE';
   const phase = props.state.phase;
@@ -420,29 +337,22 @@ const stage = computed(() => {
 // The IDLE vacuum is the smoking-gun state — flag it so it renders amber.
 const isVacuumStage = computed(() => stage.value === 'IDLE');
 
-// Send→running latch: the `submitted` phase is now set by chatApi.sendInput
-// (store.setPhase('submitted')). This latch is the 15s expiry safety net: if
-// the backend is genuinely desynced (e.g. the input was silently dropped by a
-// stale-client race in submitInput), the `submitted` phase MUST expire back to
-// `idle` so the genuine vacuum stage re-surfaces instead of being masked
-// forever. The latch watches the phase: as long as it stays `submitted`, the
-// timer is armed; the moment any server message transitions the phase away
-// (running:on → working, prompt → prompt, card → card, disconnect → idle),
-// the timer is cleared.
+// ── Send→running latch ──
+//
+// The `submitted` phase is set optimistically by chatApi.sendInput. This latch
+// is its 15 s expiry safety net: if the backend is genuinely desynced (e.g.
+// the input was silently dropped by a stale-client race), `submitted` MUST
+// expire back to `idle` so the genuine vacuum stage re-surfaces. The watcher
+// clears the timer the moment any server message moves the phase away.
 const justSubmitted = ref(false);
 let submitLatchTimer: ReturnType<typeof setTimeout> | null = null;
-/** Arm the 15s expiry for the `submitted` phase. Called by send() right after
- *  chatApi.sendInput optimistically sets phase='submitted'. If no server
- *  message transitions the phase within 15s, fall back to `idle`. */
 function latchSubmitted(): void {
   justSubmitted.value = true;
   if (submitLatchTimer) clearTimeout(submitLatchTimer);
   submitLatchTimer = setTimeout(() => {
     justSubmitted.value = false;
-    // Only fall back if we're STILL in the submitted phase — a server message
-    // may have already transitioned us (the watcher below clears the timer,
-    // but this guards against a race where the timer fired first). Route
-    // through chatApi to keep the store-action mutation surface single.
+    // Only fall back if we're STILL in `submitted` — a server message may have
+    // already transitioned us (the watcher normally clears the timer first).
     if (props.state.phase === 'submitted') {
       chatApi.expireSubmitted();
     }
@@ -455,16 +365,13 @@ function clearSubmitLatch(): void {
 watch(
   () => [props.state.phase, props.state.connectionStatus] as const,
   ([newPhase, conn]) => {
-    // Clear the latch the moment the phase leaves `submitted` (via any server
-    // message) OR the connection drops. The `submitted` phase is the only one
-    // this latch tracks; all other phases mean the backend caught up.
     if (justSubmitted.value && (newPhase !== 'submitted' || conn !== 'connected')) {
       clearSubmitLatch();
     }
   },
 );
 
-// Format the lastServerMsg timestamp as HH:MM:SS (local time) for the tag row.
+// ── Last-server-message timestamp (tag row) ──
 function fmtTime(at: number): string {
   const d = new Date(at);
   const p = (n: number): string => String(n).padStart(2, '0');
@@ -474,31 +381,14 @@ function fmtTime(at: number): string {
 
 <template>
   <div
-    class="chat-input"
-    :class="{ 'drag-over': dragOver }"
+    :class="['chat-input', { 'drag-over': dragOver }]"
     @dragenter="onDragEnter"
     @dragover="onDragOver"
     @dragleave="onDragLeave"
     @drop="onDrop"
   >
-    <!-- Horizontal resize handle at the top of the input box. Drag up to
-         grow the textarea, down to shrink it. -->
-    <div
-      class="input-resize-handle"
-      @pointerdown="onInputHandleDown"
-      @pointermove="onInputHandleMove"
-      @pointerup="onInputHandleUp"
-      @pointercancel="onInputHandleUp"
-      title="拖拽调整输入框高度"
-    ></div>
     <!-- State-machine stage tag row (diagnostic) — visible ONLY in
-         detailed-logs (详细日志) mode. Sits inside .chat-input, below the top
-         divider, above the input row, as a full-width strip. Since the phase
-         enum became the single source of truth, the row shows the derived
-         stage label (unified uppercase vocabulary; isWaiting ⟺ stage is
-         QCARD/PROMPT, isRunning ⟺ RUNNING/PARSING) plus only the state the
-         phase cannot express: the two queue sizes and the last server
-         message. -->
+         detailed-logs (详细日志) mode. -->
     <div
       v-if="state.verboseLogs"
       class="stage-row"
@@ -515,130 +405,83 @@ function fmtTime(at: number): string {
         class="stage-chip stage-chip--msg"
       >最后消息: {{ state.lastServerMsg.type }} @{{ fmtTime(state.lastServerMsg.at) }}</span>
     </div>
-    <div class="input-row">
-      <div class="input-area-wrapper">
-        <!-- The textarea is NEVER disabled — not on disconnect, not on a
-             pending card, not on the steering-review card. Keeping it
-             always enabled means it never loses focus during the
-             send→running gap, while a card is pending, or while
-             disconnected: the browser only moves focus off a focused
-             element when it becomes disabled. Instead of disabling, a
-             warning banner (input-warning below) tells the user when the
-             typed text will not be submitted, and the 发送 button's own
-             :disabled binding (canSend) is the single gatekeeper for
-             whether sending actually happens. -->
-        <textarea
-          v-model="text"
-          class="input-area"
-          :style="inputAreaStyle"
-          :placeholder="state.hasPendingCard ? '请在卡片上回复…' : (state.isWaiting ? '输入消息…' : (state.isAutoMode ? '给自动模式发指引…' : '等待回复中…'))"
-          rows="2"
-          @keydown="onKeydown"
-          @paste="onPaste"
-        ></textarea>
-        <!-- Toolbar with the three action buttons (compact, auto, attach),
-             rendered as a single shrink-to-fit horizontal row overlaid at
-             the bottom-right INSIDE the textarea (absolute-positioned
-             relative to .input-area-wrapper). The container is only as wide
-             as the three buttons and is pointer-events:none, so it NEVER
-             covers the last line of a multi-line textarea (which made that
-             line unselectable); each .tool-btn re-enables pointer events.
-             The textarea reserves clear space via padding-right (see
-             .input-area).
-             Order left→right: compact, auto, attach (attach rightmost). -->
-        <div class="input-toolbar">
-          <!-- "压缩上下文" button — sends the "/compact" slash command via
-               the normal input path. Only enabled in normal mode at the
-               PROMPT stage; disabled when auto mode is on or the loop is
-               busy. -->
-          <button
-            class="tool-btn compact-btn"
-            :disabled="!canCompact"
-            title="压缩上下文"
-            @click="onCompactClick"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 5 Q6 12 3 19" />
-              <path d="M21 5 Q18 12 21 19" />
-              <path d="M9 3 L14 3 L16 5 L15 21 L8 21 Z" />
-            </svg>
-          </button>
-          <!-- Lightning bolt: one-way "enter auto mode" button. If already
-               in auto mode, surface a transient "已经是自动模式了" toast
-               locally (no round-trip); otherwise send the 'auto' WS message
-               to enter auto mode. -->
-          <button
-            class="tool-btn auto-btn"
-            :class="{ 'auto-btn--on': state.isAutoMode }"
-            :disabled="state.connectionStatus !== 'connected'"
-            :title="state.isAutoMode ? '已经是自动模式了' : '进入自动模式'"
-            @click="onAutoClick"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-            </svg>
-          </button>
-          <button
-            class="tool-btn attach-btn"
-            :disabled="state.connectionStatus !== 'connected'"
-            title="附加文件"
-            @click="openFilePicker"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-          </button>
-        </div>
-        <transition name="auto-toast">
-          <div v-if="autoToast" class="auto-toast">{{ autoToast }}</div>
-        </transition>
-      </div>
-      <input
-        ref="fileInput"
-        type="file"
-        multiple
-        class="file-input-hidden"
-        @change="onFilesSelected"
-      />
-      <button
-        class="send-btn"
-        :disabled="!canSend"
-        @click="send"
-      >发送</button>
-    </div>
-    <!-- Warning banner: shown when the textarea is enabled (always) but the
-         typed text will NOT be submitted — a pending ask() card, a pending
-         steering-review card, or network disconnection. Replaces the old
-         behavior of disabling the textarea; the box stays focusable. -->
-    <div v-if="showInputWarning" class="input-warning">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="10" />
-        <line x1="12" y1="8" x2="12" y2="12" />
-        <line x1="12" y1="16" x2="12.01" y2="16" />
-      </svg>
-      <span>{{ inputWarningText }}</span>
-    </div>
-    <div v-if="uploadError" class="upload-error">{{ uploadError }}</div>
-    <div v-if="localFiles.length > 0" class="file-chips">
-      <span
-        v-for="(f, i) in localFiles"
-        :key="i"
-        class="file-chip"
-      >
-        <span class="file-chip-name">{{ f.filename }}</span>
-        <button class="file-chip-remove" @click="removeFile(i)">&times;</button>
-      </span>
-    </div>
+
+    <!-- textarea + floating action strip + 发送. ComposerBox owns the grid and
+         the height clamp; the drag handle is passed into its root via the
+         `handle` slot, so the handler reaches the box with
+         `currentTarget.closest('.composer-box')` — no template `ref` (on a
+         child component that yields the component instance, not an Element). -->
+    <ComposerBox
+      :text="text"
+      :placeholder="placeholder"
+      :can-send="canSend"
+      :can-compact="canCompact"
+      :is-auto-mode="state.isAutoMode"
+      :connected="state.connectionStatus === 'connected'"
+      @update:text="(v: string) => (text = v)"
+      @send="send"
+      @compact="onCompactClick"
+      @auto="onAutoClick"
+      @attach="openFilePicker"
+      @paste-files="onPasteFiles"
+    >
+      <template #handle>
+        <div
+          class="input-resize-handle"
+          @pointerdown="onInputHandleDown"
+          @pointermove="onInputHandleMove"
+          @pointerup="onInputHandleUp"
+          @pointercancel="onInputHandleUp"
+          title="拖拽调整输入框高度"
+        ></div>
+      </template>
+    </ComposerBox>
+    <!-- Transient "already in auto mode" toast, floating just above the box. -->
+    <transition name="auto-toast">
+      <div v-if="autoToast" class="auto-toast">{{ autoToast }}</div>
+    </transition>
+
+    <!-- Hidden picker for 附加文件 (the shell owns it; the button emits). -->
+    <input
+      ref="fileInput"
+      type="file"
+      multiple
+      class="file-input-hidden"
+      @change="onFilesPicked"
+    />
+
+    <InputNoticeBar
+      :warning="showInputWarning ? inputWarningText : null"
+      :error="uploadError || null"
+    />
+    <AttachmentBar
+      :files="files"
+      @manage="openManager"
+      @remove="removeFile"
+    />
+    <!-- Teleported to <body> by ModalShell; sits here only for prop wiring. -->
+    <AttachmentManager
+      :open="managerOpen"
+      :files="files"
+      @close="closeManager"
+      @remove="removeFile"
+      @remove-all="removeAllFiles"
+    />
   </div>
 </template>
 
 <style scoped>
+/* The shell root IS the composer box: it carries the drag target, the drop
+   target, and the height contract. */
 .chat-input {
   display: flex;
   flex-direction: column;
-  padding: 8px 16px 16px;
+  /* NO horizontal padding (full-bleed, so the drag handle spans the whole
+     width) — each visual child owns its own x-margin via --composer-gutter.
+     The BOTTOM inset belongs to the shell alone: whatever the last child is
+     (textarea, notice, or attachment bar) it sets no bottom margin, so the
+     visual bottom margin stays exactly ~5px and never stacks. */
+  padding: 0 0 5px;
   background: var(--bg-input);
   border-top: 1px solid var(--border-color);
   flex-shrink: 0;
@@ -648,9 +491,22 @@ function fmtTime(at: number): string {
 .chat-input.drag-over {
   background: color-mix(in srgb, var(--accent) 8%, var(--bg-input));
 }
+/* ── The height contract variables ──
+   They live on this root and INHERIT into ComposerBox, whose `.composer-box`
+   root is the grid + clamp owner. --composer-raw-h is written INLINE by the
+   drag handle and must never be declared in any rule: a local declaration wins
+   over the inline value and turns every drag into a no-op. */
+.chat-input {
+  --composer-gutter: 8px;
+  --composer-min-h: 40px;
+  --composer-max-h: 320px;
+  --toolbar-w: 98px;
+  --toolbar-inset: 2px;
+}
+
 /* ── State-machine stage tag row (diagnostic, detailed-logs only) ──
-   A full-width chip strip above the input row. Amber accent when the
-   stage is the IDLE vacuum state (the smoke-gun for the isWaiting desync). */
+   A full-width chip strip above the composer. Amber accent when the stage is
+   the IDLE vacuum state (the smoking-gun for the isWaiting desync). */
 .stage-row {
   display: flex;
   flex-wrap: wrap;
@@ -680,7 +536,7 @@ function fmtTime(at: number): string {
 /* Fixed-width value chips: anti-jitter. min-width (NOT width) + a ch budget
    that INCLUDES the 18px border-box chrome (2×8px padding + 2×1px border):
    the widest realistic value (steerBuffer=99=14ch, review=99=9ch) fills the
-   box exactly; narrower values stay centered.
+   pill exactly; narrower values stay centered.
    min-width over width: an underestimated budget makes the chip grow ~1ch
    (harmless reflow) instead of spilling glyphs past the pill. Keep the 18px
    in sync with .stage-chip's horizontal padding (2×8px) + border (2×1px). */
@@ -694,11 +550,9 @@ function fmtTime(at: number): string {
 }
 /* The FIRST (stage/phase) chip carries the unified uppercase vocabulary
    PROMPT / RUNNING / AWAIT / PARSING / QCARD / IDLE / OFFLINE — the widest
-   label is 7ch (PARSING / OFFLINE / RUNNING). Same recipe as the value
-   chips above: min-width = 7ch content budget + 18px border-box chrome, so
-   the pill's width is CONSTANT across label flips (no reflow as the phase
-   changes) while always containing its text (min-width grows rather than
-   clips if a future label ever exceeds 7ch). */
+   label is 7ch. Same recipe as above: min-width = 7ch content budget + 18px
+   border-box chrome, so the pill's width is CONSTANT across label flips (no
+   reflow as the phase changes) while always containing its text. */
 .stage-chip--phase {
   min-width: calc(7ch + 18px);
   justify-content: center;
@@ -713,22 +567,23 @@ function fmtTime(at: number): string {
   color: var(--text-primary);
   border-style: dashed;
 }
-/* Horizontal resize handle at the top edge of the input box. A thin bar
-   with a wider transparent hit area; row-resize cursor. Highlights on
-   hover/active to signal it's draggable.
+/* Horizontal resize handle at the top edge of the composer. A thin bar with a
+   wider transparent hit area; row-resize cursor. Highlights on hover/active.
 
    touch-action:none is REQUIRED for stable touch dragging: without it the
-   browser interprets the first pointermove as a pan/scroll gesture and
-   fires pointercancel (or lets the page scroll), which severs
-   setPointerCapture mid-drag — the "can't drag reliably on touchscreen"
-   bug. touch-action:none tells the browser this element owns the gesture,
-   so pointermove/up fire uninterrupted. */
+   browser interprets the first pointermove as a pan/scroll gesture and fires
+   pointercancel (or lets the page scroll), which severs setPointerCapture
+   mid-drag — the "can't drag reliably on touchscreen" bug. */
 .input-resize-handle {
-  position: absolute;
-  top: -4px;
-  left: 0;
-  right: 0;
+  /* Sits ON the container's top edge, spanning the FULL width of the composer
+     box (it is a grid item of .composer-box, which has no padding). The 4px of
+     transparent padding straddles the top border so the grip is reachable from
+     just outside; 3px of visible bar marks the edge. */
+  position: relative;
+  grid-column: 1 / 3;
+  grid-row: 1;
   height: 3px;
+  margin: -4px 0 1px;
   padding: 4px 0;
   cursor: row-resize;
   background: var(--border-color);
@@ -742,123 +597,8 @@ function fmtTime(at: number): string {
 .input-resize-handle:active {
   background: var(--accent);
 }
-.input-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  width: 100%;
-}
-.input-area-wrapper {
-  position: relative;
-  flex: 1;
-  display: flex;
-}
-.input-area {
-  flex: 1;
-  resize: none;
-  border: 1px solid var(--border-input);
-  border-radius: 6px;
-  /* Default (wide, >600px): right padding clears the toolbar strip
-     (three 28px buttons + 2×4px gaps + 2px margin ≈ 98px) anchored at the
-     bottom-right of the textarea. The narrow-screen layout switches this
-     to a bottom padding via the @media query below. */
-  padding: 8px 98px 8px 12px;
-  font-size: 14px;
-  font-family: inherit;
-  line-height: 1.5;
-  /* No max-height: the draggable handle controls height via inline style.
-     The textarea's own scrolling kicks in once content exceeds the set
-     height (overflow-y is auto by default for textarea). */
-  outline: none;
-  background: var(--bg-input-field);
-  color: var(--text-primary);
-}
-.input-area:focus {
-  border-color: var(--accent);
-}
-.input-area:disabled {
-  background: var(--bg-input-field-disabled);
-  color: var(--text-input-disabled);
-}
-/* Toolbar: a single horizontal row of three icon buttons, overlaid INSIDE
-   the textarea (absolute, relative to .input-area-wrapper) at the
-   bottom-right corner on ALL widths. The container is shrink-to-fit — its
-   width is exactly the three buttons + their gaps (no `left`/`right`
-   stretch), and it is `pointer-events: none` so the wrapper-sized hit area
-   never exists; each .tool-btn re-enables pointer events for itself. The
-   textarea's right padding (see .input-area) keeps typed text out from
-   under the buttons. The buttons share a common .tool-btn base; each adds
-   its own hover color. */
-.input-toolbar {
-  position: absolute;
-  right: 2px;
-  bottom: 2px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  z-index: 2;
-  pointer-events: none;
-}
-/* Shared icon-button base for the three toolbar buttons. */
-.tool-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-input-field);
-  color: var(--text-muted);
-  border: none;
-  border-radius: 4px;
-  padding: 4px;
-  width: 28px;
-  height: 28px;
-  cursor: pointer;
-  transition: color 0.15s, background 0.15s;
-  /* Re-enable hit-testing on the button itself: the toolbar container is
-     pointer-events:none so it never swallows clicks/selection, but the
-     buttons must still be clickable. */
-  pointer-events: auto;
-}
-.tool-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-.attach-btn:hover:not(:disabled),
-.compact-btn:hover:not(:disabled) {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-input-field));
-}
-.auto-btn:hover:not(:disabled) {
-  color: #f59e0b;
-  background: color-mix(in srgb, #f59e0b 12%, var(--bg-input-field));
-}
-.auto-btn--on {
-  color: #f59e0b;
-}
-/* Narrow screens (≤600px): keep the toolbar shrink-to-fit at the
-   bottom-right (no full-width stretch — a stretched container would put a
-   transparent hit band over the last line of a multi-line textarea and make
-   it unselectable). Only nudge it slightly inward from the border. */
-@media (max-width: 600px) {
-  .input-toolbar {
-    right: 4px;
-    bottom: 4px;
-    justify-content: flex-end;
-  }
-  /* Narrow screens cannot afford the 98px right gutter the wide layout
-     reserves for the toolbar: it left ~330-390px of empty space to the
-     right of wrapped text. The toolbar is bottom-anchored, so reserve
-     bottom padding instead and let text use the full width.
-     48px (not 44px): the toolbar occupies 28px + bottom:4px = 32px above
-     the textarea's padding edge, plus 2px of border = 34px. A 14px/1.5 line
-     box is only 21px tall, so 44px still left the LAST line's baseline ~10px
-     inside the button strip; 48px (34 + one full 21px line, rounded) clears
-     it. */
-  .input-area {
-    padding: 8px 12px 48px;
-  }
-}
 /* Transient toast shown when the user clicks the lightning bolt while
-   already in auto mode. Floats above the input box, auto-clears in 2.5s. */
+   already in auto mode. Floats above the composer, auto-clears in 2.5s. */
 .auto-toast {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -885,92 +625,5 @@ function fmtTime(at: number): string {
 }
 .file-input-hidden {
   display: none;
-}
-.send-btn {
-  background: var(--accent);
-  color: var(--accent-text);
-  border: none;
-  padding: 8px 20px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 14px;
-  height: 40px;
-  font-weight: 500;
-  /* CJK line-breaking allows a break between ANY two glyphs, and .send-btn
-     is a shrinkable flex child of .input-row: without nowrap the label
-     "发送" wraps to 发/送 and the button collapses to ~1 glyph wide.
-     nowrap keeps the label on one line; flex-shrink:0 stops the button
-     from being squeezed by the textarea sibling. */
-  white-space: nowrap;
-  flex-shrink: 0;
-  transition: opacity 0.15s;
-}
-.send-btn:not(:disabled):hover {
-  opacity: 0.85;
-}
-.send-btn:disabled {
-  background: var(--accent-disabled);
-  cursor: not-allowed;
-}
-.upload-error {
-  margin-top: 8px;
-  padding: 4px 10px;
-  border-radius: 4px;
-  font-size: 12px;
-  background: color-mix(in srgb, #ef4444 12%, var(--bg-input));
-  color: #ef4444;
-  border: 1px solid color-mix(in srgb, #ef4444 30%, transparent);
-}
-/* Warning banner shown when the textarea is enabled (always) but the typed
-   text will NOT be submitted — a pending ask() card, a pending
-   steering-review card, or network disconnection. Amber accent signals a
-   warning (distinct from the old accent-blue card-pending hint). */
-.input-warning {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  padding: 4px 10px;
-  border-radius: 4px;
-  font-size: 12px;
-  background: color-mix(in srgb, #f59e0b 12%, var(--bg-input));
-  color: #b45309;
-  border: 1px solid color-mix(in srgb, #f59e0b 30%, transparent);
-}
-.file-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-.file-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: var(--accent);
-  color: var(--accent-text);
-  border-radius: 4px;
-  padding: 2px 8px;
-  font-size: 12px;
-  max-width: 200px;
-}
-.file-chip-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.file-chip-remove {
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  padding: 0;
-  margin-left: 2px;
-  opacity: 0.8;
-}
-.file-chip-remove:hover {
-  opacity: 1;
 }
 </style>

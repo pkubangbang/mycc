@@ -264,10 +264,13 @@ The SPA is a single full-viewport flex column (`App.vue`):
 │            └──────────────┘                          │
 │                                                     │
 ├─────────────────────────────────────────────────────┤
-│ ChatInput  (#f7f7f7, top border)                    │  ← flex-shrink:0
+│ ChatInput shell  (#f7f7f7, top border)              │  ← flex-shrink:0
+│   [verbose] stage chips                             │
 │ ┌────────────────────────────┐ ┌────────┐           │
 │ │ textarea (输入消息…)        │ │ 发送    │          │
+│ │            [⎙][⚡][⬆] bottom-right               │
 │ └────────────────────────────┘ └────────┘           │
+│ [file 1] [file 2] [+3 个附件]   ← always one line   │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -279,7 +282,18 @@ The SPA is a single full-viewport flex column (`App.vue`):
 | `StatusBar.vue` | `src/web/src/components/StatusBar.vue` | Connection status dot/text, "mycc chat" title, Retry + 退出 buttons. |
 | `ChatLog.vue` | `src/web/src/components/ChatLog.vue` | Scrollable message list. Auto-scrolls if user is at bottom; shows ↓ button otherwise. Renders the 停止 (interrupt) button while `isRunning`. |
 | `MessageItem.vue` | `src/web/src/components/MessageItem.vue` | Single bubble. Renders markdown for `user`/`result`; plain monospace for `log`/`warn`/`error`. |
-| `ChatInput.vue` | `src/web/src/components/ChatInput.vue` | Textarea + 发送 button. Enter sends, Shift+Enter newline. |
+| `ChatInput.vue` | `src/web/src/components/ChatInput.vue` | Composer **shell**: text↔state mirror, send gate + `send()` routing (query vs steer), send→running latch, drag-and-drop bindings, hidden file picker, manual height handle, verbose-only stage chips. |
+| `chat-input/ComposerBox.vue` | `src/web/src/components/chat-input/ComposerBox.vue` | Textarea + floating icon strip (compact / auto / attach) + 发送. Height = inherited `--composer-raw-h`, CSS-clamped, grid-reconciled. |
+| `chat-input/InputNoticeBar.vue` | `src/web/src/components/chat-input/InputNoticeBar.vue` | Amber "input won't be submitted" warning + red upload error. |
+| `chat-input/AttachmentBar.vue` | `src/web/src/components/chat-input/AttachmentBar.vue` | Pending-attachment strip — always one line; first 2 chips + a `+N 个附件` pill. |
+| `chat-input/AttachmentManager.vue` | `src/web/src/components/chat-input/AttachmentManager.vue` | Popup to inspect / remove / clear the whole pending queue. |
+| `common/ModalShell.vue` | `src/web/src/components/common/ModalShell.vue` | Hand-written modal: Teleport + `inert` on `#app` + body scroll lock + ESC. Not `<dialog>`. |
+| `composables/useAttachmentQueue.ts` | `src/web/src/composables/useAttachmentQueue.ts` | The one upload path: read → size guard → base64 → `pendingFiles`, plus folder rejection. |
+| `format-bytes.ts` | `src/web/src/format-bytes.ts` | Human-readable byte size. |
+
+> The composer's two invariants (capability props only; the `--composer-raw-h`
+> height contract) and the one-line attachment bar are documented in
+> [`src/web/docs/composer-components.md`](docs/composer-components.md).
 
 ### State (`src/web/src/types.ts`)
 
@@ -373,7 +387,10 @@ shows a Retry button (and the prompt bubble detects `/retry/i` to toggle
 | `components/StatusBar.vue` | Status bar. |
 | `components/ChatLog.vue` | Scrollable message list + interrupt/scroll buttons. |
 | `components/MessageItem.vue` | Bubble rendering (markdown vs plain) + bubble styles. |
-| `components/ChatInput.vue` | Input textarea + send button. |
+| `components/ChatInput.vue` | Composer shell (see the row above for the split). |
+| `components/chat-input/*.vue` | `ComposerBox`, `InputNoticeBar`, `AttachmentBar`, `AttachmentManager`. |
+| `components/common/ModalShell.vue` | Hand-written modal primitive. |
+| `composables/useAttachmentQueue.ts` | Upload queue: size guard, base64, folder rejection. |
 
 ### Backend hooks (outside src/serve/)
 | File | Hook |
