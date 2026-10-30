@@ -10,7 +10,7 @@
  * Behavior is byte-identical: the facade delegates to this class.
  */
 
-import type { Message, ToolCall } from '../../types.js';
+import type { Message } from '../../types.js';
 import type { Role } from './types.js';
 import { estimateTokens, estimateTokensForMessages } from '../../utils/token.js';
 import { agentIO } from '../agent-io.js';
@@ -25,9 +25,8 @@ import { agentIO } from '../agent-io.js';
  * so a reader must never treat one as the model's own checkpoint.
  *
  * HOW THE DISTINCTION IS MADE: a property of the MESSAGE. See
- * `Message.synthetic` (types.ts); the rule itself is applied in
- * `briefIndices()` below (which lists the candidates) and completed by
- * Triologue.currentAnchorIndex (which requires activity after the brief).
+ * `Message.synthetic` (types.ts). It is stripped on egress (getFullMessages)
+ * so it never reaches a provider or comes back as model output.
  */
 export class MessageStore {
   private messages: Message[] = [];
@@ -65,7 +64,7 @@ export class MessageStore {
 
   /**
    * Copy of the messages from `from` to the end, for a consumer that holds a
-   * TRUE-array index (briefIndices, at(), length) and must slice there —
+   * TRUE-array index (at(), length) and must slice there —
    * getRaw() would shift the index left by the number of sparse holes.
    *
    * Returns a COPY and filters holes, so the store never hands out its mutable
@@ -114,29 +113,6 @@ export class MessageStore {
     const result: Message[] = [];
     for (const m of this.messages) {
       if (m && typeof m === 'object' && m.role) result.push(m);
-    }
-    return result;
-  }
-
-  /**
-   * TRUE-array indices of every NON-SYNTHETIC assistant message that called
-   * `brief`, in message order — the complete candidate set for anchor
-   * selection.
-   *
-   * This is only the FIRST half of the anchor rule: the second half (at least
-   * one message after the brief's round-trip) needs the tool result, so it is
-   * applied by Triologue.currentAnchorIndex, the sole consumer.
-   */
-  briefIndices(): number[] {
-    const result: number[] = [];
-    for (let i = 0; i < this.messages.length; i++) {
-      const m = this.messages[i];
-      if (!m || m.role !== 'assistant' || !m.tool_calls) continue;
-      // Provenance is a property of the MESSAGE (types.ts Message.synthetic),
-      // never a flag in `arguments` and never a call-id convention.
-      if (m.synthetic) continue;
-      if (!(m.tool_calls as ToolCall[]).some((tc) => tc.function?.name === 'brief')) continue;
-      result.push(i);
     }
     return result;
   }
@@ -305,8 +281,7 @@ export class MessageStore {
    * ONLY the provider-visible fields (PROVIDER_MESSAGE_KEYS) and drops
    * everything else — including the in-memory-only `synthetic` marker
    * (types.ts). Filtering on egress rather than on ingress keeps the mark
-   * readable at its consumers (briefIndices / currentAnchorIndex, which read the true
-   * array) while guaranteeing it never reaches a provider — and so can never
+   * readable while guaranteeing it never reaches a provider — and so can never
    * be echoed back as model output. It is an ALLOW-list, not a deny-list: a
    * future internal field is excluded by default instead of having to be
    * remembered here.

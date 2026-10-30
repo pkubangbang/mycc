@@ -262,8 +262,8 @@ export const COMPACT_RESUME_BRIEF_MESSAGE =
  * shape production no longer produces (exactly the P1 this extraction exists
  * to prevent recurring).
  *
- * THE RULE: `MessageStore.briefIndices` / `Triologue.currentAnchorIndex` skip assistant messages marked
- * `synthetic: true` (types.ts Message.synthetic). Those are the INCIDENTAL
+ * THE RULE: a reader skips assistant messages marked `synthetic: true`
+ * (types.ts Message.synthetic). Those are the INCIDENTAL
  * briefs — llm.ts empty-output recovery and hook.ts crossroad — whose text is
  * boilerplate the model should not be rewound to. This floor brief is
  * deliberately left UNMARKED: no marker means "anchors", which is exactly what

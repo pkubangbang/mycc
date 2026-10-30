@@ -351,8 +351,9 @@ export async function handleLlm(
         // rather than a passive [REMINDER] note. Confidence 7 means
         // slightly uncertain, nudging confusion index toward hint threshold.
         // `synthetic: true` marks the MESSAGE as infrastructure-injected (see
-        // types.ts / store.ts briefIndices) so a reader never treats
-        // this boilerplate brief. It is stripped from the provider payload.
+        // types.ts Message.synthetic) so a reader never mistakes
+        // this boilerplate brief for the model's own. It is stripped from the
+        // provider payload.
         const recoveryBrief = briefToolCall('Let me see what to do next.', 7, newBriefCallId('brief_recover'));
         triologue.agent('', [recoveryBrief], { synthetic: true });
         triologue.tool('brief', briefResultLine(recoveryBrief.id), recoveryBrief.id);
