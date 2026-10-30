@@ -67,29 +67,59 @@ function dangerousSocraticHint(reason: string): string {
 }
 
 /**
- * Command-shape guard for plan mode.
+ * HARD block for plan mode: the dangerous-command list, and nothing else.
  *
- * Plan mode restricts MUTATIONS, so the check must look at the command, not
- * only at the verb the model declared — `rm -rf src/` declared `READ SOURCE`
- * would otherwise run unprompted. The verb still gates RUN (needs the LLM) and
- * the mutation verbs; this guard catches a mutating command hidden under a
- * read-only verb.
+ * These are the operations plan mode never runs, whatever the LLM would say:
+ * a misclassification here is unrecoverable (formatted filesystems, disk
+ * images, `rm -rf /`). Every other command-shape question is a JUDGEMENT, not
+ * a fact about the command — see isComplexCommandShape() — and is escalated to
+ * the LLM judge instead of being decided by a regex.
  *
- * @returns a block reason when the command mutates state or is batch-shaped.
+ * @returns a block reason when the command is on the dangerous-command list.
  */
-function planModeCommandViolation(command: string): string | null {
-  if (findDangerousCommand(command)) {
-    return 'This command is on the dangerous-command list; plan mode never runs it.';
+function planModeHardBlock(command: string): string | null {
+  const match = findDangerousCommand(command);
+  if (match) {
+    return `This command is on the dangerous-command list (${match.reason}); plan mode never runs it.`;
   }
-  if (isBatchDelete(command)) {
-    return 'Batch deletion is not allowed in plan mode — it modifies state.';
-  }
-  // Whole-segment write verbs: redirects, rm/mv/cp/tee/touch/mkdir/rmdir/
-  // truncate, in-place editors, and git commands that write (commit/push/
-  // checkout/reset/clean/stash).
-  const mutating =
-    /(^|[^\d\s])>{1,2}\s*[^\s&|]/ // > file, >> file (not 2>&1)
-      .test(command) ||
+  return null;
+}
+
+/**
+ * Is this command's SHAPE too complex to classify with a local rule?
+ *
+ * DESIGN (the "classify as complex, let the LLM judge" rule). This predicate
+ * used to be the mutating-state GUARD for plan mode: a match blocked the
+ * command with "The command modifies state". That was wrong in principle, not
+ * merely in tuning. The rules below substring-match the WHOLE command line, so
+ * they cannot tell a real mutation from a mention of one:
+ *
+ *   grep -rn "triologue\.\([a-zA-Z_]*\)" src --include=*.ts   → glob in a quoted pattern
+ *   cat a.ts && echo "=== truncate" && cat b.ts             → verb word in a quoted label
+ *   node -e '... console.log("rm -rf dist/") ...'           → a string literal
+ *
+ * Each is read-only, and each was blocked. Tightening the regexes (quote
+ * tracking, clause parsing, command-word resolution) buys accuracy at the cost
+ * of a hand-written shell parser whose misses are silent. The honest reading of
+ * a match is therefore "I cannot tell from the text" — so a match now ESCALATES
+ * to the existing LLM judge (the one the RUN verb already uses), which sees the
+ * command and its purpose and can classify it; the human is the final gate, and
+ * an LLM failure or ESC denies.
+ *
+ * The rules stay as a CHEAP TEST rather than being deleted: they keep trivial
+ * read-only commands (`cat file.ts`, `ls`, `git diff`) out of the escalator, so
+ * the common case costs no LLM call. Their false positives now cost one LLM
+ * round-trip instead of a wrong block, and their false negatives (a mutation
+ * with no shape hit) are covered because the declared verb still gates RUN and
+ * the mutation verbs, and the dangerous list is checked separately.
+ */
+function isComplexCommandShape(command: string): boolean {
+  return (
+    isBatchDelete(command) ||
+    // Whole-segment write verbs: redirects, rm/mv/cp/tee/touch/mkdir/rmdir/
+    // truncate, in-place editors, and git commands that write (commit/push/
+    // checkout/reset/clean/stash).
+    /(^|[^\d\s])>{1,2}\s*[^\s&|]/.test(command) || // > file, >> file (not 2>&1)
     /(^|[\s;&|])(rm|rmdir|mv|cp|tee|touch|mkdir|truncate|chmod|chown|ln|dd|sed\s+-i|perl\s+-[a-z]*i)\b/.test(
       command
     ) ||
@@ -98,11 +128,8 @@ function planModeCommandViolation(command: string): string | null {
     ) ||
     /\bnpm\s+(publish|install|i|uninstall|update)\b/.test(command) ||
     /\bnpx?\s+(prettier\s+--write)\b/.test(command) ||
-    /\bfind\b.*-delete\b/.test(command);
-  if (mutating) {
-    return 'The command modifies state (write/copy/delete/git-write), which plan mode forbids. Switch to normal mode first or use a read-only command.';
-  }
-  return null;
+    /\bfind\b.*-delete\b/.test(command)
+  );
 }
 
 /**
@@ -317,9 +344,18 @@ export async function judgeBash(
   // Plan mode: the command itself must be read-only. The declared verb is
   // agent-authored, so it cannot be the only gate.
   if (isReadOnlyVerb(parsed!.verb)) {
-    const violation = planModeCommandViolation(command);
-    if (violation) {
-      return { decision: 'block', reason: violation };
+    const hard = planModeHardBlock(command);
+    if (hard) {
+      return { decision: 'block', reason: hard };
+    }
+    if (isComplexCommandShape(command)) {
+      // The command's SHAPE defeats local classification (a glob or a write
+      // verb inside a quoted pattern/label looks identical to the real thing).
+      // Read-only verbs are the overwhelming majority in plan mode, and most
+      // survey commands are one-command reads that this predicate ignores — so
+      // escalation here is rare. See isComplexCommandShape() for why a match
+      // means "unknown", not "mutating".
+      return judgeComplexInPlanMode(command, parsed!, 'read-only', isChildProcess, askUser, escAware);
     }
     // READ, TEST are allowed in plan mode
     return { decision: 'allow' };
@@ -333,72 +369,112 @@ export async function judgeBash(
     };
   }
 
-  // Step 5: RUN verb - need LLM analysis (parent only)
+  // Step 5: RUN verb - need LLM analysis (parent only). Every read-only verb
+  // was already decided above (hard block, escalate, or allow), so this is the
+  // RUN fall-through alone.
   if (parsed!.verb === 'RUN') {
-    // Child processes cannot use LLM judging - must be explicit
-    if (isChildProcess) {
-      return {
-        decision: 'block',
-        reason:
-          'Ambiguous intent. Use a specific verb instead of RUN. Examples: [READ] SOURCE, [BUILD] ARTIFACT, [TEST] SOURCE',
-      };
-    }
-
-    // Parent process: use LLM to analyze (with ESC awareness)
-    const llmResult = await analyzeWithLLM(command, parsed!, escAware);
-
-    if (llmResult.decision === 'allow') {
-      return { decision: 'allow' };
-    }
-
-    if (llmResult.decision === 'block') {
-      return {
-        decision: 'block',
-        reason: llmResult.reason || 'Command appears to modify state',
-      };
-    }
-
-    // Step 6: Uncertain - ask user (parent only)
-    if (!askUser) {
-      // No askUser function provided (shouldn't happen in parent).
-      // Name the CAUSE: in a child the parent agent reads this reason, and
-      // "the checker failed" must not look like "the command is suspicious".
-      return {
-        decision: 'block',
-        reason: llmResult.cause === 'llm-error'
-          ? 'The safety checker could not analyse this command (LLM error); retry when the provider is available'
-          : 'Unable to determine command safety',
-      };
-    }
-
-    // Ask user via core.question (ESC-aware). The wording names the CAUSE — a
-    // provider outage or the user's own ESC is not "ambiguous intent", which
-    // would be a claim about their command (row lead-017).
-    const headline = llmResult.cause === 'llm-error'
-      ? 'The safety checker could not be reached, so this command was NOT analysed.'
-      : llmResult.cause === 'esc'
-        ? 'Analysis was interrupted (ESC), so this command was not fully analysed.'
-        : 'The command has ambiguous intent.';
-    const userResponse = await askUser(
-      `${headline}\n\nCommand: ${command}\nPurpose: ${parsed!.purpose}\n\nAllow this command in plan mode? [y/N]`,
-      'bash-judge',
-      { onEsc: 'n' }
-    );
-
-    // If user presses ESC, askUser returns empty string -> treat as "no"
-    const approved =
-      userResponse.toLowerCase().trim() === 'y' || userResponse.toLowerCase().trim() === 'yes';
-
-    return {
-      decision: approved ? 'allow' : 'block',
-      reason: approved ? undefined : 'User denied the command',
-    };
+    return judgeComplexInPlanMode(command, parsed!, 'run', isChildProcess, askUser, escAware);
   }
 
   // Unknown verb (shouldn't reach here due to validation)
   return {
     decision: 'block',
     reason: `Unknown verb: ${parsed!.verb}`,
+  };
+}
+
+/**
+ * Judge a command whose SHAPE beats local classification, in plan mode.
+ *
+ * ONE helper for the two paths that reach the LLM judge:
+ *  - 'run'       the declared verb is RUN (the historical path), and
+ *  - 'read-only' the verb is READ/FIND/TEST but isComplexCommandShape() matched,
+ *                so the text mentions a glob or a write verb and no local rule
+ *                can tell a mention from the real thing.
+ *
+ * Plan mode only ever ALLOWS a command the judge positively classifies as
+ * read-only. An LLM error, an ESC, or the judge saying it cannot tell all fall
+ * through to the human, and an unanswered prompt denies — fail closed, exactly
+ * as for RUN.
+ *
+ * The two paths must not share one message: a child process hitting the
+ * read-only path was TOLD to "use a specific verb instead of RUN", although its
+ * verb WAS specific. That advice is worse than silence — it sends the agent to
+ * rewrite a correct intent. Each `origin` therefore names its own cause.
+ */
+async function judgeComplexInPlanMode(
+  command: string,
+  parsed: ParsedIntent,
+  origin: 'run' | 'read-only',
+  isChildProcess: boolean,
+  askUser?: (query: string, asker: string, options?: { onEsc?: string }) => Promise<string>,
+  escAware?: <T>(
+    operation: (abortController: AbortController) => Promise<T>,
+    onCleanUp: () => T | Promise<T>
+  ) => Promise<T>
+): Promise<BashJudgeResult> {
+  // Child processes cannot use LLM judging - must be explicit
+  if (isChildProcess) {
+    return {
+      decision: 'block',
+      reason: origin === 'run'
+        ? 'Ambiguous intent. Use a specific verb instead of RUN. Examples: [READ] SOURCE, [BUILD] ARTIFACT, [TEST] SOURCE'
+        : 'This command\'s text contains a glob or a write-verb word, so it cannot be classified safely by a local rule. In a child process it cannot be escalated to the safety checker — ask the lead agent to run it, or simplify it to one plain command (no globs, no quoted verbs).',
+    };
+  }
+
+  // Parent process: use LLM to analyze (with ESC awareness)
+  const llmResult = await analyzeWithLLM(command, parsed, escAware);
+
+  if (llmResult.decision === 'allow') {
+    return { decision: 'allow' };
+  }
+
+  if (llmResult.decision === 'block') {
+    return {
+      decision: 'block',
+      reason: llmResult.reason || 'Command appears to modify state',
+    };
+  }
+
+  // Uncertain - ask user (parent only)
+  if (!askUser) {
+    // No askUser function provided (shouldn't happen in parent).
+    // Name the CAUSE: in a child the parent agent reads this reason, and
+    // "the checker failed" must not look like "the command is suspicious".
+    return {
+      decision: 'block',
+      reason: llmResult.cause === 'llm-error'
+        ? 'The safety checker could not analyse this command (LLM error); retry when the provider is available'
+        : 'Unable to determine command safety',
+    };
+  }
+
+  // Ask user via core.question (ESC-aware). The wording names the CAUSE — a
+  // provider outage or the user's own ESC is not "ambiguous intent", which
+  // would be a claim about their command (row lead-017). The read-only origin
+  // says WHY it got here (a shape match), so the user is not asked to accept a
+  // blanket "ambiguous" verdict on a command that may be plain evidence.
+  const headline = llmResult.cause === 'llm-error'
+    ? 'The safety checker could not be reached, so this command was NOT analysed.'
+    : llmResult.cause === 'esc'
+      ? 'Analysis was interrupted (ESC), so this command was not fully analysed.'
+      : origin === 'run'
+        ? 'The command has ambiguous intent.'
+        : 'This command is declared read-only but its text contains a glob or a write-verb word, so it was escalated for a safety check that was inconclusive.';
+  const userResponse = await askUser(
+    `${headline}\n\nCommand: ${command}\nPurpose: ${parsed.purpose}\n\nAllow this command in plan mode? [y/N]`,
+    'bash-judge',
+    { onEsc: 'n' }
+  );
+
+  // If user presses ESC, askUser returns empty string -> treat as "no"
+  const approved =
+    userResponse.toLowerCase().trim() === 'y' || userResponse.toLowerCase().trim() === 'yes';
+
+  return {
+    decision: approved ? 'allow' : 'block',
+    reason: approved ? undefined : 'User denied the command',
   };
 }
 
