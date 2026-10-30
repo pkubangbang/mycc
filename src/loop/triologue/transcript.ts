@@ -117,10 +117,10 @@ export function isUserJournalKind(kind: unknown): kind is UserJournalKind {
 }
 
 /** Journaled live-log truncation/boundary events (carried directly on `kind`). */
-export type ControlEvent = 'clear' | 'compact' | 'rollback';
+export type ControlEvent = 'clear' | 'compact' | 'rollback' | 'segment-archive';
 
 /** The subset of PieceKind values that are journaled boundary events. */
-export const CONTROL_KINDS: readonly ControlEvent[] = ['clear', 'compact', 'rollback'];
+export const CONTROL_KINDS: readonly ControlEvent[] = ['clear', 'compact', 'rollback', 'segment-archive'];
 
 /** Narrow a raw PieceKind: is the record a journaled boundary marker? */
 export function isControlKind(kind: unknown): kind is ControlEvent {

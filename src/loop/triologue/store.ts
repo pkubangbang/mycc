@@ -10,7 +10,7 @@
  * Behavior is byte-identical: the facade delegates to this class.
  */
 
-import type { Message } from '../../types.js';
+import type { Message, ToolCall } from '../../types.js';
 import type { Role } from './types.js';
 import { estimateTokens, estimateTokensForMessages } from '../../utils/token.js';
 import { agentIO } from '../agent-io.js';
@@ -147,6 +147,87 @@ export class MessageStore {
       if (m && typeof m === 'object' && m.role) return i;
     }
     return this.messages.length;
+  }
+
+  /**
+   * TRUE-array end indices of every COMPLETE batched round-trip containing a
+   * `mycc_title` call, in message order — the title anchors used by segment
+   * archiving. Pure live-store derivation: never cached, so it stays correct
+   * across any number of swaps/replacements (the no-index-drift rule).
+   *
+   * A batch is 1 assistant message with N tool_calls (one named mycc_title)
+   * followed by its N tool results; the anchor is the LAST tool result's index.
+   * If the tool results have not landed yet, the anchor is the assistant
+   * index itself (the batch is incomplete; the caller decides whether that
+   * is usable).
+   */
+  titleAnchorEnds(): number[] {
+    const result: number[] = [];
+    for (let i = 0; i < this.messages.length; i++) {
+      const m = this.messages[i];
+      if (!m || m.role !== 'assistant' || !Array.isArray(m.tool_calls)) continue;
+      if (!(m.tool_calls as Array<{ function?: { name?: string } }>).some((tc) => tc.function?.name === 'mycc_title')) continue;
+      let end = i;
+      for (let j = i + 1; j < this.messages.length && this.messages[j] && this.messages[j].role === 'tool'; j++) end = j;
+      result.push(end);
+    }
+    return result;
+  }
+
+  /**
+   * Role-parity violations of a candidate message array, as human-readable
+   * reasons (empty = parity holds). Static because the array being checked is
+   * a CANDIDATE for replacement, not this store's contents:
+   *
+   *  - an entry that is not a message;
+   *  - a `tool` result whose call id no assistant announced (dangling result);
+   *  - an assistant call id with no result (a batch cut mid-flight);
+   *  - an array not ending on `tool` (the resume invariant: the next real turn
+   *    must be a natural tool → assistant transition).
+   *
+   * Used as the pre-swap guard in installCompacted so a bad candidate never
+   * touches the live array.
+   */
+  static parityViolations(messages: Message[]): string[] {
+    const reasons: string[] = [];
+    const callIds = new Set<string>();
+    const answeredIds = new Set<string>();
+    for (const m of messages) {
+      if (!m || typeof m !== 'object' || typeof m.role !== 'string') {
+        reasons.push('entry is not a message');
+        continue;
+      }
+      if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
+        for (const tc of m.tool_calls as ToolCall[]) {
+          if (tc.id) callIds.add(tc.id);
+        }
+      } else if (m.role === 'tool' && m.tool_call_id) {
+        if (!callIds.has(m.tool_call_id)) reasons.push(`dangling tool result ${m.tool_call_id}`);
+        answeredIds.add(m.tool_call_id);
+      }
+    }
+    for (const id of callIds) {
+      if (!answeredIds.has(id)) reasons.push(`unanswered tool call ${id}`);
+    }
+    const last = messages[messages.length - 1];
+    if (messages.length > 0 && last?.role !== 'tool') {
+      reasons.push(`last role is '${last?.role}', expected 'tool'`);
+    }
+    return reasons;
+  }
+
+  /**
+   * The anchor to archive up to for a title call whose assistant message sits
+   * at `currentTitleAssistantIndex`: the last COMPLETE title batch that ends
+   * strictly before that index. A skip is never permanent — the next trigger
+   * still finds the previous anchor, not the newest title.
+   */
+  previousTitleAnchorEnd(currentTitleAssistantIndex: number): number | undefined {
+    const ends = this.titleAnchorEnds();
+    for (let k = ends.length - 1; k >= 0; k--) {
+      if (ends[k] < currentTitleAssistantIndex) return ends[k];
+    }
+    return undefined;
   }
 
   /**

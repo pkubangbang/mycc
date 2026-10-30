@@ -26,6 +26,7 @@ import { estimateTokensForMessages, estimateToolSchemaTokens } from '../utils/to
 import { PendingToolLedger } from './triologue/pending-tools.js';
 import { runAutoCompact as doRunAutoCompact } from './triologue/compact.js';
 import { WrapUpManager } from './triologue/wrap-up.js';
+import { SegmentArchiver } from './triologue/segment-archive.js';
 import { abortWrapUpCapsule } from './wrap-up-state.js';
 
 /**
@@ -77,6 +78,31 @@ export class Triologue {
    * message-side operations (append WRAP_UP message, truncate store).
    */
   private wrapUp: WrapUpManager = new WrapUpManager();
+
+  /**
+   * Serialization mutex for ALL store-swapping compactions (full compact()
+   * and segment archiving). Every replaceAll must be strictly one-at-a-time;
+   * enqueuing on this chain guarantees that even if a full auto-compact and a
+   * title-anchor archive fire concurrently.
+   */
+  private compactChain: Promise<void> = Promise.resolve();
+
+  /**
+   * Title-anchor segment archiving (see triologue/segment-archive.ts). Owns
+   * its own one-at-a-time gate; deps are arrow closures over this facade's
+   * private store/chain — resolved lazily at call time, like tpFix below.
+   */
+  private segmentArchiver = new SegmentArchiver({
+    getRawMessages: () => this.store.getRaw(),
+    getFullMessages: () => this.store.getFullMessages(),
+    lastUserQuery: () => this.store.lastUserQuery,
+    messageAt: (index) => this.store.at(index),
+    previousTitleAnchorEnd: (index) => this.store.previousTitleAnchorEnd(index),
+    onCompact: (p) => this.options.onCompact(p),
+    enqueueCompaction: (run) => this.enqueueCompaction(run),
+    installCompacted: (compacted, tailFrom) => this.installCompacted(compacted, tailFrom),
+    emitControl: (event) => this.emitControl(event),
+  });
 
   /**
    * TP-recovery delegate (see triologue/tp-fix.ts). Owns both the recovery
@@ -138,7 +164,7 @@ export class Triologue {
    * preserved across restoration), 'compact', 'rollback' (boundary markers;
    * the durable collated history stays intact).
    */
-  private emitControl(event: 'clear' | 'compact' | 'rollback'): void {
+  private emitControl(event: 'clear' | 'compact' | 'rollback' | 'segment-archive'): void {
     this.options.onMessage(
       { kind: event } as unknown as Message,
       () => this.store.getRaw(),
@@ -656,21 +682,88 @@ export class Triologue {
    *   Omitted/empty → the instruction section is dropped.
    */
   async compact(focus?: string, signal?: AbortSignal, tools?: Tool[], domains: Array<{ domain_name: string; description?: string }> = []): Promise<void> {
-    // Inline delegation to the compaction layer (triologue/compact.ts) via a
-    // CompactDeps adapter over the facade's own state (single caller).
-    const compacted = await doRunAutoCompact(
-      {
-        getRawMessages: () => this.store.getRaw(),
-        getFullMessages: () => this.store.getFullMessages(),
-        lastUserQuery: () => this.store.lastUserQuery,
-        onCompact: (p) => this.options.onCompact(p),
-        domains,
-      },
-      focus,
-      signal,
-      tools,
-    );
-    this.store.replaceAll(compacted);
+    // Enqueue on the compaction chain so a concurrent segment archive can never
+    // interleave its replaceAll with this full swap.
+    const run = async (): Promise<void> => {
+      // Inline delegation to the compaction layer (triologue/compact.ts) via a
+      // CompactDeps adapter over the facade's own state (single caller).
+      const compacted = await doRunAutoCompact(
+        {
+          getRawMessages: () => this.store.getRaw(),
+          getFullMessages: () => this.store.getFullMessages(),
+          lastUserQuery: () => this.store.lastUserQuery,
+          onCompact: (p) => this.options.onCompact(p),
+          domains,
+        },
+        focus,
+        signal,
+        tools,
+      );
+      this.installCompacted(compacted);
+    };
+    await this.enqueueCompaction(run);
+  }
+
+  /**
+   * The ONE serialization point for store-swapping compactions: run `task`
+   * strictly after every queued compaction has settled. A rejected task
+   * (StreamAbortedError etc.) still propagates to ITS caller, but the chain
+   * itself stays resolved so later enqueued compactions still execute.
+   */
+  private enqueueCompaction(task: () => Promise<void>): Promise<void> {
+    const next = this.compactChain.then(task, task);
+    this.compactChain = next.catch(() => {});
+    return next;
+  }
+
+  /**
+   * Title-anchor segment archiving: summarize the segment `[0 … anchorEnd]`
+   * (inclusive) of the PREVIOUS title batch into the standard summary triple
+   * and splice it in front of the untouched tail. Fire-and-forget safe.
+   *
+   * @param currentTitleAssistantIndex - observed TRUE-array index of the
+   *   mycc_title assistant message that triggered this.
+   * @param signal - optional AbortSignal forwarded to the summarization call.
+   * @param domains - wiki domains advertised in the summary prompt.
+   */
+  async compactSegment(
+    currentTitleAssistantIndex: number,
+    signal?: AbortSignal,
+    domains: Array<{ domain_name: string; description?: string }> = [],
+  ): Promise<void> {
+    await this.segmentArchiver.run(currentTitleAssistantIndex, signal, domains);
+  }
+
+  /**
+   * Install a compaction result, owning the FULL post-swap invariant set so
+   * every compaction path (full autoCompact today, segment archiving later)
+   * differs only in WHAT is summarized, never in what the swap must do.
+   * Extracted verbatim from compact()'s body — order preserved:
+   * swap → recomputeTokenCount → ledger.clear → dropDeferredInputs →
+   * emitControl → re-emit summary pieces → abortWrapUpCapsule → wrapUp.reset
+   * → rebuildProjectContext.
+   *
+   * @param compacted - the summary round-trip to install
+   * @param tailFrom - optional true-array index; when set the store becomes
+   *   `[...compacted, ...store.sliceFrom(tailFrom)]` (segment archiving).
+   *   Omitted = full replacement (existing autoCompact behaviour).
+   * @returns true when the swap was installed, false when the parity pre-check
+   *   failed — the store is left UNTOUCHED in that case (all-or-nothing).
+   */
+  installCompacted(compacted: Message[], tailFrom?: number): boolean {
+    const next = tailFrom === undefined ? compacted : [...compacted, ...this.store.sliceFrom(tailFrom)];
+    // Parity pre-check: build the candidate first, validate it, and only then
+    // swap. A failed check is OBSERVABLE (warn log) and leaves the store as-is
+    // — never a half-swapped context. Full compact cannot fail this (the
+    // summary triple from runAutoCompact is well-formed by construction), so
+    // this guard is a no-op for the existing caller and only bites the
+    // segment path (e.g. a tail that begins with a dangling tool role).
+    const violations = MessageStore.parityViolations(next);
+    if (violations.length > 0) {
+      agentIO.brief('warn', 'triologue', `installCompacted refused: candidate array violates role parity (tailFrom=${tailFrom ?? 'none'}): ${violations.join('; ')}`);
+      return false;
+    }
+    this.store.replaceAll(next);
     this.store.recomputeTokenCount();
     this.ledger.clear();
     // A deferred submission was queued against a conversation that no longer
@@ -716,6 +809,7 @@ export class Triologue {
     // boundary — the conversation prefix already changed, so no extra cache
     // penalty. Populators re-read current state (e.g. newly-compiled hooks).
     this.rebuildProjectContext();
+    return true;
   }
 
   // === Wrap-Up Management (ESC interrupt) ===
@@ -863,6 +957,22 @@ export class Triologue {
    */
   getMessagesRaw(): Message[] {
     return this.store.getRaw();
+  }
+
+  /**
+   * TRUE-array index of the assistant message carrying tool call `callId`, or
+   * -1. Scanned backwards (the answer is virtually always the most recent
+   * assistant message) against store.at()/length, NOT getRaw()/getMessages():
+   * those are hole-filtered copies whose indices shift left when sparse holes
+   * exist, which would desync an index handed to an archiving consumer.
+   */
+  indexAssistantWithToolCall(callId: string): number {
+    for (let i = this.store.length - 1; i >= 0; i--) {
+      const m = this.store.at(i);
+      if (m?.role !== 'assistant' || !Array.isArray(m.tool_calls)) continue;
+      if ((m.tool_calls as ToolCall[]).some((tc) => tc.id === callId)) return i;
+    }
+    return -1;
   }
 
 
