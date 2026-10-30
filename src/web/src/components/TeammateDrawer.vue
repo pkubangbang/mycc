@@ -21,6 +21,7 @@ import { ref, computed, watch, nextTick } from 'vue';
 import type { ComponentPublicInstance } from 'vue';
 import MarkdownIt from 'markdown-it';
 import type { ChatMessage } from '../types';
+import { backslashPolicy } from '../backslash-policy';
 
 const props = defineProps<{
   teammateMessages: ChatMessage[];
@@ -133,6 +134,11 @@ function toggle(name: string): void {
 // ── Message rendering helpers ──
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
+// Path-bearing tool messages render with backslashes verbatim (see
+// backslash-policy.ts); prose keeps markdown escapes. Disabling the inline
+// `escape` rule is markdown-it's native switch — there is no option for it.
+const mdVerbatim = new MarkdownIt({ html: false, linkify: true, breaks: true });
+mdVerbatim.inline.ruler.disable('escape');
 
 /**
  * Whether a message's content should render as markdown vs plain text.
@@ -153,7 +159,11 @@ function isBashCommand(m: ChatMessage): boolean {
 }
 
 function rendered(m: ChatMessage): string {
-  return renderMarkdown(m) ? md.render(m.content) : '';
+  if (!renderMarkdown(m)) return '';
+  // Same per-message policy as MessageItem.vue: tool messages quoting paths
+  // render with backslashes verbatim; prose keeps markdown escapes.
+  const renderer = backslashPolicy(m) === 'verbatim' ? mdVerbatim : md;
+  return renderer.render(m.content);
 }
 
 function isMonospace(m: ChatMessage): boolean {

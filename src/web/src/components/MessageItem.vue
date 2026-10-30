@@ -3,6 +3,7 @@ import { computed, ref, onMounted, onBeforeUnmount } from 'vue';
 import MarkdownIt from 'markdown-it';
 import type { ChatMessage } from '../types';
 import { highlightCode, highlightBash } from '../highlight';
+import { backslashPolicy } from '../backslash-policy';
 import { PLAN_SCOPE_LOG_LABEL } from '../plan-scope';
 import PlanScopeCard from './PlanScopeCard.vue';
 
@@ -98,6 +99,25 @@ const md = new MarkdownIt({
   },
 });
 
+// Second instance for PATH-BEARING tool messages only (see backslash-policy.ts).
+// markdown-it has no `escape` option; the native switch is the inline ruler.
+// Disabling the `escape` rule makes a backslash literal, so a quoted Windows
+// path survives (C:\x\.mycc no longer collapses to C:\x.mycc). Prose bubbles
+// keep `md` above, so authored markdown escapes are unaffected. Code fences
+// and spans are untouched in both instances.
+const mdVerbatim = new MarkdownIt({
+  html: false,
+  linkify: true,
+  breaks: true,
+  highlight(code, lang): string {
+    return highlightCode(code, lang);
+  },
+});
+mdVerbatim.inline.ruler.disable('escape');
+
+
+
+
 // Custom image rule: render markdown images as clickable thumbnails that
 // open the dedicated ImageViewer popup (mounted in App.vue) instead of
 // flowing at natural size (which overflows the chat bubble for large
@@ -138,9 +158,13 @@ md.renderer.rules.table_open = (tokens, idx, opts, env, self): string =>
 md.renderer.rules.table_close = (tokens, idx, opts, env, self): string =>
   `${defaultTableClose(tokens, idx, opts, env, self)}\n</div>`;
 
-const rendered = computed(() =>
-  renderMarkdown.value ? md.render(props.message.content) : '',
-);
+const rendered = computed(() => {
+  if (!renderMarkdown.value) return '';
+  // Per-message policy (backslash-policy.ts): tool messages that quote paths
+  // render with backslashes verbatim; agent prose keeps markdown escapes.
+  const renderer = backslashPolicy(props.message) === 'verbatim' ? mdVerbatim : md;
+  return renderer.render(props.message.content);
+});
 
 // Ref to the markdown-body element so the delegated click handler can bind
 // to it. Event delegation (one listener on the container, check the target's
