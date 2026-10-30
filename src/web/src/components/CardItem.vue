@@ -26,10 +26,48 @@ function selectOption(value: string): void {
   responded.value = true;
 }
 
+// ── Refusal with a reason (split "No" button) ──
+//
+// The CLI accepts free text at a confirm prompt: anything that is not
+// y/yes/n/no is treated as FEEDBACK ("User did not confirm … User's response:
+// '…'") and handed back to the model, so the user can decline AND say why in
+// one gesture. A bare button token cannot express that, so the negative option
+// becomes a split button whose dropdown reveals a textarea.
+const reasonOpen = ref(false);
+
+/** The negative option: the last one, or whichever matches n/no/[N]. */
+function isNegativeOption(value: string, label: string): boolean {
+  return /^(n|no)$/i.test(value.trim()) || /^no$/i.test(label.trim());
+}
+
+function toggleReason(): void {
+  if (responded.value) return;
+  reasonOpen.value = !reasonOpen.value;
+}
+
+/** Submit the refusal text as the card's response (the tool reads it as
+ *  feedback, exactly like the CLI's "n: <reason>" style free text). */
+function submitReason(): void {
+  if (responded.value) return;
+  const reason = inputValue.value.trim();
+  if (!reason) return;
+  chatApi.sendCardResponse(props.card.cardId, reason);
+  responded.value = true;
+  reasonOpen.value = false;
+}
+
 function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
     submitInput();
+  }
+}
+
+/** Same rule for the refusal reason: Enter submits, Shift+Enter adds a line. */
+function onReasonKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    submitReason();
   }
 }
 </script>
@@ -79,17 +117,49 @@ function onKeydown(event: KeyboardEvent): void {
            yes/no prompts). The backend only parses the bracket tokens — any
            free text falls through to a default/deny and is silently
            discarded, so offering a textarea here is misleading. The user
-           must pick one of the buttons. -->
+           must pick one of the buttons.
+           EXCEPTION: a NEGATIVE option is a SPLIT button — its caret reveals a
+           reason textarea, because "No, because …" is meaningful feedback the
+           tool can act on (see submitReason). -->
       <template v-else-if="card.kind === 'choice'">
         <div class="card-options">
-          <button
-            v-for="opt in card.options"
-            :key="opt.value"
-            class="card-option-btn"
-            :class="{ 'card-option-default': opt.isDefault }"
-            :disabled="responded"
-            @click="selectOption(opt.value)"
-          >{{ opt.label }}</button>
+          <template v-for="opt in card.options" :key="opt.value">
+            <div
+              v-if="isNegativeOption(opt.value, opt.label)"
+              class="card-split"
+            >
+              <button
+                class="card-option-btn card-split-main"
+                :class="{ 'card-option-default': opt.isDefault }"
+                :disabled="responded"
+                @click="selectOption(opt.value)"
+              >{{ opt.label }}</button>
+              <button
+                class="card-option-btn card-split-caret"
+                :class="{ 'card-option-default': opt.isDefault }"
+                :disabled="responded"
+                :aria-expanded="reasonOpen"
+                :title="reasonOpen ? '收起理由' : '输入拒绝理由'"
+                @click="toggleReason"
+              >▾</button>
+            </div>
+            <button
+              v-else
+              class="card-option-btn"
+              :class="{ 'card-option-default': opt.isDefault }"
+              :disabled="responded"
+              @click="selectOption(opt.value)"
+            >{{ opt.label }}</button>
+          </template>
+        </div>
+        <div v-if="reasonOpen && !responded" class="card-reason">
+          <textarea
+            v-model="inputValue"
+            class="card-input card-input-below"
+            placeholder="写下拒绝的理由，Enter 提交，Shift+Enter 换行…"
+            rows="2"
+            @keydown="onReasonKeydown"
+          ></textarea>
         </div>
       </template>
 
@@ -100,28 +170,61 @@ function onKeydown(event: KeyboardEvent): void {
            path for plan_on) instead of clicking a button. -->
       <template v-else>
         <div class="card-options">
-          <button
-            v-for="opt in card.options"
-            :key="opt.value"
-            class="card-option-btn"
-            :class="{ 'card-option-default': opt.isDefault }"
-            :disabled="responded"
-            @click="selectOption(opt.value)"
-          >{{ opt.label }}</button>
+          <template v-for="opt in card.options" :key="opt.value">
+            <div
+              v-if="isNegativeOption(opt.value, opt.label)"
+              class="card-split"
+            >
+              <button
+                class="card-option-btn card-split-main"
+                :class="{ 'card-option-default': opt.isDefault }"
+                :disabled="responded"
+                @click="selectOption(opt.value)"
+              >{{ opt.label }}</button>
+              <button
+                class="card-option-btn card-split-caret"
+                :class="{ 'card-option-default': opt.isDefault }"
+                :disabled="responded"
+                :aria-expanded="reasonOpen"
+                :title="reasonOpen ? '收起理由' : '输入拒绝理由'"
+                @click="toggleReason"
+              >▾</button>
+            </div>
+            <button
+              v-else
+              class="card-option-btn"
+              :class="{ 'card-option-default': opt.isDefault }"
+              :disabled="responded"
+              @click="selectOption(opt.value)"
+            >{{ opt.label }}</button>
+          </template>
         </div>
-        <textarea
-          v-model="inputValue"
-          class="card-input card-input-below"
-          :placeholder="card.placeholder ?? '或输入自定义内容…'"
-          :disabled="responded"
-          rows="2"
-          @keydown="onKeydown"
-        ></textarea>
-        <button
-          class="card-submit"
-          :disabled="responded || !inputValue.trim()"
-          @click="submitInput"
-        >提交</button>
+        <!-- The refusal reason takes over the free-text box: once the user asks
+             for a reason, the textarea belongs to the "No, because …" path. -->
+        <div v-if="reasonOpen && !responded" class="card-reason">
+          <textarea
+            v-model="inputValue"
+            class="card-input card-input-below"
+            placeholder="写下拒绝的理由，Enter 提交，Shift+Enter 换行…"
+            rows="2"
+            @keydown="onReasonKeydown"
+          ></textarea>
+        </div>
+        <template v-else>
+          <textarea
+            v-model="inputValue"
+            class="card-input card-input-below"
+            :placeholder="card.placeholder ?? '或输入自定义内容…'"
+            :disabled="responded"
+            rows="2"
+            @keydown="onKeydown"
+          ></textarea>
+          <button
+            class="card-submit"
+            :disabled="responded || !inputValue.trim()"
+            @click="submitInput"
+          >提交</button>
+        </template>
       </template>
     </div>
   </div>
@@ -227,5 +330,43 @@ function onKeydown(event: KeyboardEvent): void {
 .card-input.card-input-below {
   margin-top: 10px;
   font-size: 13px;
+}
+/* ── Split button (the negative option) ──
+   Main half = the plain "No"; caret half reveals the reason textarea. The two
+   halves share one rounded outline: the main button keeps the left corners,
+   the caret the right ones, and the seam is a 1px divider instead of a gap. */
+.card-split {
+  display: inline-flex;
+  align-items: stretch;
+}
+.card-split-main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.card-split-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  padding: 6px 8px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  /* Overlap the main button's right border by 1px so the seam is one line. */
+  margin-left: -1px;
+  font-size: 11px;
+  line-height: 1;
+}
+/* Reason box under the split button. Visually tied to the option row it
+   belongs to (accent left rule) so it reads as "the reason for No". */
+.card-reason {
+  margin-top: 10px;
+  padding-left: 10px;
+  border-left: 2px solid var(--accent);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.card-reason .card-submit {
+  margin-top: 8px;
 }
 </style>

@@ -57,6 +57,12 @@ export const PATH_TOOL_LABELS: ReadonlySet<string> = new Set([
   'read',
   'read_read',
   'read_picture',
+  // The image tools' companions also emit the resolved absolute path
+  // ("cache miss: D:\dev\mycc\.mycc\shot.png", "Reading image file: …").
+  // Without these, only `\.` is eaten by the escape rule and the bubble shows
+  // `mycc.mycc` — a plausible-looking WRONG path.
+  'read_picture_cached',
+  'img_describe',
   'write',
   'edit',
   'grep',

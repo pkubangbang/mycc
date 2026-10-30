@@ -42,6 +42,26 @@ describe('backslashPolicy', () => {
     }
   });
 
+  it('goes verbatim for the image tools and their companions', () => {
+    // `read_picture_cached` / `img_describe` emit the resolved absolute path
+    // ("cache miss: D:\dev\mycc\.mycc\shot.png"). They used to fall through to
+    // stock markdown, where `\.` renders as `.` and the bubble showed the
+    // plausible-but-wrong path `D:\dev\mycc.mycc\shot.png`.
+    for (const label of ['read_picture', 'read_picture_cached', 'img_describe']) {
+      expect(PATH_TOOL_LABELS.has(label)).toBe(true);
+      for (const type of ['log', 'warn', 'error']) {
+        expect(backslashPolicy({ type, label })).toBe('verbatim');
+      }
+    }
+  });
+
+  it('renders a Windows path with a dot-directory intact', () => {
+    const content = 'cache miss: D:\\dev\\mycc\\.mycc\\shot.png';
+    expect(md.renderInline(content)).toContain('mycc.mycc');   // the bug
+    expect(mdVerbatim.renderInline(content)).toContain('mycc\\.mycc');
+    expect(mdVerbatim.renderInline(content)).not.toContain('mycc.mycc');
+  });
+
   it('keeps markdown for labeled logs from non-path tools', () => {
     for (const label of ['wiki_put', 'recall', 'todo_create', 'skill_load', 'issue_create']) {
       expect(backslashPolicy({ type: 'log', label })).toBe('markdown');
