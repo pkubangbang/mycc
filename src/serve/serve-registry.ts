@@ -87,6 +87,8 @@ export interface ServeHubLike {
   /** Mirror plan/normal mode to the WebUI (row obs-002). */
   broadcastMode(mode: 'plan' | 'normal', allowedFile?: string): void;
   getMode(): 'plan' | 'normal';
+  /** Install the plan/normal mode provider (mirror of setAutoStateProvider). */
+  setModeStateProvider(provider: (() => 'plan' | 'normal') | null): void;
   setAgentRunning(value: boolean): void;
   setAutoStateProvider(provider: (() => boolean) | null): void;
   setEnterAutoProvider(provider: (() => boolean) | null): void;

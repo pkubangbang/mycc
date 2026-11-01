@@ -54,6 +54,13 @@ export function wireServeCallbacks(ctx: AgentContext): void {
   };
   onServeHubReady((hub) => {
     hub.setAutoStateProvider(() => autoState.getAuto());
+    // Plan/normal mode: same mirroring pattern as auto — the hub pulls the
+    // lead's CURRENT mode at display time. Fixes the stale-NORMAL bug: a
+    // mode flip BEFORE the hub existed (plan_on → /serve) used to be
+    // swallowed as a no-hub broadcast, and the hub then replayed its own
+    // cached 'normal' to every WS client. core.getMode() already exists on
+    // the same ctx.core instance the reporter closure captured.
+    hub.setModeStateProvider(() => (ctx.core as { getMode?: () => 'plan' | 'normal' }).getMode?.() ?? 'normal');
   });
 
   // ── plan-mode changes: one reporter, installed once, at boot ──

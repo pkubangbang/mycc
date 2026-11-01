@@ -132,7 +132,15 @@ export class ServeHub implements HubHandler, ServeHubLike {
 
   // ── Auto-mode providers (callbacks to avoid a module-load cycle with agent-io) ──
   private autoStateProvider: (() => boolean) | null = null;
-  /** Last plan/normal mode broadcast — replayed to every new WS client. */
+  /**
+   * Plan/normal mode provider — mirrors the lead's CURRENT mode at display
+   * time instead of caching the last broadcast. The push-only cache was
+   * stale whenever the mode flipped before this hub existed (e.g. plan_on →
+   * /serve): the broadcast was silently dropped (no hub yet), and the replay
+   * then served the hub's own 'normal'. "The hub mirrors, never owns."
+   */
+  private modeStateProvider: (() => 'plan' | 'normal') | null = null;
+  /** Fallback when no provider is installed (hub without an agent context). */
   private modeState: 'plan' | 'normal' = 'normal';
   private enterAutoProvider: (() => boolean) | null = null;
 
@@ -490,7 +498,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
             sessionId: wireHooks?.getSessionId() ?? null,
             // Plan/normal mode (row obs-002): the browser must be able to see
             // that edits are refused because the lead is in plan mode.
-            mode: this.modeState,
+            mode: this.getMode(),
           }),
         );
       });
@@ -892,8 +900,17 @@ export class ServeHub implements HubHandler, ServeHubLike {
     this.clients.forEachOpen((ws) => ws.send(payload));
   }
 
-  /** Current plan/normal mode as last broadcast (replayed on WS connect). */
-  getMode(): 'plan' | 'normal' { return this.modeState; }
+  /** Current plan/normal mode — provider-first (live), cache as fallback. */
+  getMode(): 'plan' | 'normal' {
+    try {
+      return this.modeStateProvider ? this.modeStateProvider() : this.modeState;
+    } catch {
+      return this.modeState;
+    }
+  }
+
+  /** Install the plan/normal mode provider (mirror of setAutoStateProvider). */
+  setModeStateProvider(provider: (() => 'plan' | 'normal') | null): void { this.modeStateProvider = provider; }
 
   /** Broadcast agent running state (idle PROMPT/AWAIT → off; processing → on). */
   setAgentRunning(value: boolean): void {
@@ -947,7 +964,9 @@ export class ServeHub implements HubHandler, ServeHubLike {
     try { ws.send(JSON.stringify({ type: 'running', content: this.agentRunning ? 'on' : 'off' })); } catch { /* ignore */ }
     // Same for plan/normal mode: a browser joining mid-plan must be told that
     // edits are prohibited instead of guessing why a request was refused.
-    try { ws.send(JSON.stringify({ type: 'mode', content: this.modeState, detail: null })); } catch { /* ignore */ }
+    // getMode() is provider-first, so a mode flip that happened BEFORE the
+    // hub existed (plan_on → /serve) is still reported correctly here.
+    try { ws.send(JSON.stringify({ type: 'mode', content: this.getMode(), detail: null })); } catch { /* ignore */ }
     ws.on('message', (data) => handleWsMessage(this, ws, data.toString()));
     ws.on('close', () => this.onWsClose(ws));
     ws.on('error', (err) => this.onWsError(ws, err));
