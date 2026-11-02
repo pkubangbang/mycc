@@ -791,6 +791,19 @@ export function recordPeerShares(sid: string, tags: string[] | undefined): void 
   peerShareConfirmed.delete(sid);
 }
 
+/** Peer sids that ANNOUNCED at least one share and still hold a live socket.
+ *  This is the reconciliation set for a LATE bind: a share bound after the
+ *  wires are up (`/share <id>`) has no announce of its own to answer, so the
+ *  binder must re-challenge the peers already connected. Claims only — a peer
+ *  in this list is not a partner until it proves possession. */
+export function announcedSharePeers(): string[] {
+  const out: string[] = [];
+  for (const [sid, tags] of peerShares) {
+    if (tags.size && findSocketBySid(sid)) out.push(sid);
+  }
+  return out;
+}
+
 /**
  * Ask a peer to prove it holds the shares whose nonces it announced. Only our
  * OWN bound share ids are ever put in the challenge — a peer cannot make us

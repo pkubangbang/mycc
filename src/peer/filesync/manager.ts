@@ -19,6 +19,7 @@ import {
   type SyncControlFrame, type SyncDataFrame,
 } from './frames.js';
 import { controlToMessage, dataToMessage, type SyncDispatchTarget } from './wire-codec.js';
+import { announcedSharePeers, challengePeerShares } from '../wire-registry.js';
 
 export interface ManagerHooks extends EngineHooks {
   debugFilesync(): boolean;
@@ -100,6 +101,19 @@ export class FilesyncManager {
     e.start();
     this.hooks.verbose('filesync', `bound share ${share} at ${e.root}`);
     try { this.hooks.pinShareTodo?.(share, e.root); } catch { /* best-effort */ }
+    // LATE BIND (`/share <id>` after the wires are already up): membership is
+    // discovered from a peer's ANNOUNCE, and an announce happened long ago —
+    // so nothing would ever challenge for this new share and the engines would
+    // idle forever until a reconnect. Re-challenge every peer that announced
+    // shares: each answers with a proof for whatever it holds, and the ones
+    // that hold THIS id become partners (`onPartnerShares` → gossip).
+    try {
+      let challenged = 0;
+      for (const peer of announcedSharePeers()) {
+        if (challengePeerShares(peer, this.localShares())) challenged++;
+      }
+      this.hooks.verbose('filesync', `late bind ${share}: re-challenged ${challenged} announced peer(s)`);
+    } catch (err) { this.hooks.verbose('filesync', `late bind ${share}: reconciliation failed: ${String(err)}`); }
     return e;
   }
 
@@ -178,6 +192,10 @@ export class FilesyncManager {
     // Handshake outcome is the first thing a live convergence failure has to
     // settle: a proof that never confirmed means no partner, so no manifest
     // ever goes out and the frames log shows inbound traffic only.
+    // A RE-prove (a share bound after the wires came up) also lands here: only
+    // report peers this call newly confirmed, or every late bind would claim
+    // a new partner it already had. `confirmShareChallenges` returns the
+    // proven set for THIS challenge, so that is exactly the new evidence.
     this.hooks.verbose('filesync', `peer ${peer} proved shares: ${shares.join(', ') || '(none)'}`);
     for (const share of shares) {
       const e = this.engines.get(share);
