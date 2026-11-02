@@ -11,7 +11,10 @@ import { BackgroundTasks } from './shared/bg.js';
 import { TeamManager } from './parent/team.js';
 import { WikiManager } from './parent/wiki.js';
 import { PeerManager } from '../peer/peer.js';
-import { setWireHooks, type WireHooks } from '../peer/wire-registry.js';
+import { setWireHooks, partnersForShare, type WireHooks } from '../peer/wire-registry.js';
+import { getFilesyncManager, FilesyncManager, setFilesyncManager } from '../peer/filesync/manager.js';
+import { encodeDataFrame, sendSyncControl, sendSyncData } from '../peer/filesync/wire-codec.js';
+import { getFilesyncShareIds, isDebugFilesync } from '../config.js';
 import { tryGetServeHub } from '../serve/serve-registry.js';
 import { detectLanIpv4 } from '../serve/serve-utils.js';
 import { agentIO } from '../loop/agent-io.js';
@@ -79,6 +82,22 @@ export class ParentContext implements AgentContext {
       getWorkDir: () => peerWorkDir,
       getDaemon: () => shouldDaemon(),
       getRole: () => getDaemonSkill(),
+      // Bound filesync shares for announce.shares membership gossip. The
+      // manager is the source of truth (setFilesyncManager at boot); falls
+      // back to the configured share ids when the manager is not yet up.
+      getShares: () => {
+        try {
+          return getFilesyncManager()?.shares() ?? getFilesyncShareIds();
+        } catch { return []; }
+      },
+      // filesync dispatch target (R5, architect review): the wire-codec
+      // dispatch helpers (trySyncDispatch/trySyncDataDispatch/handlePeerShares)
+      // call into the engine through this. Lazy closure — resolves the
+      // manager at call time (the getShares precedent), so boot order never
+      // matters and the wire site never names manager methods.
+      getSyncDispatchTarget: () => {
+        try { return getFilesyncManager(); } catch { return null; }
+      },
       // Our serving endpoint for the announce frame: the webui's bound
       // host (LAN IP when bound to all interfaces) + port; null when the
       // serve stack is down (a NAT'd/non-serving instance announces no
@@ -165,6 +184,26 @@ export class ParentContext implements AgentContext {
       },
     };
     setWireHooks(wireHooks);
+
+    // filesync boot registration (filesync.md §1): create the share manager
+    // and bind every configured share (--share flags / MYCC_SHARES). The
+    // PeerPort routes through the wire registry — pairwise, no relay. The
+    // manager is a module singleton the wire-plane dispatch (wire-client /
+    // peer-wire) reaches via getFilesyncManager().
+    const filesyncPort = {
+      sendControl: (peer: string, frame: unknown) => sendSyncControl(peer, frame as Record<string, unknown>),
+      sendData: (peer: string, share: string, hash: string, buf: Buffer) => sendSyncData(peer, encodeDataFrame(share, hash, buf)),
+      partners: (share: string) => partnersForShare(share),
+    };
+    const filesyncMgr = new FilesyncManager({
+      appendLocalMail: (from, title, content) => { try { this.mailModule.appendMail(from, title, content); } catch { /* best-effort */ } },
+      verbose: (tool, message) => { try { agentIO.verbose(tool, message); } catch { /* ignore */ } },
+      getSelfSid: () => peerSessionId,
+      getWorkDir: () => peerWorkDir,
+      debugFilesync: () => isDebugFilesync(),
+    }, filesyncPort);
+    setFilesyncManager(filesyncMgr);
+    for (const share of getFilesyncShareIds()) filesyncMgr.bind(share);
   }
 
   // Getters for each module

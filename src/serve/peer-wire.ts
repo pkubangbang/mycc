@@ -74,7 +74,8 @@ import {
 import { isWireDebugLocal } from '../config.js';
 // The 401 handshake code is shared with the dialer so a refused upgrade and
 // the message the operator sees agree on the number (row peer-004).
-import { WIRE_CLOSE_UNAUTHORIZED } from '../peer/wire-registry.js';
+import { WIRE_CLOSE_UNAUTHORIZED, peerSidForSocket } from '../peer/wire-registry.js';
+import { trySyncDispatch, trySyncDataDispatch, handlePeerShares } from '../peer/filesync/wire-codec.js';
 
 /** Dedicated maxPayload for peer mail frames — decoupled from the webui
  *  upload limit (getMaxUploadMb, default 50MB). Peer mail is agent-to-agent
@@ -220,7 +221,10 @@ export class PeerWireAcceptor {
    *  not on bare connect. */
   private onConnection(ws: WebSocket): void {
     this.liveness.set(ws, { misses: 0 });
-    ws.on('message', (data) => this.onMessage(ws, data.toString()));
+    ws.on('message', (data, isBinary) => {
+      if (isBinary) { this.onBinary(ws, data as Buffer); return; }
+      this.onMessage(ws, data.toString());
+    });
     ws.on('close', (code) => this.onClose(ws, code));
     ws.on('pong', () => {
       const state = this.liveness.get(ws);
@@ -247,7 +251,17 @@ export class PeerWireAcceptor {
       this.onMail(ws, frame);
       return;
     }
+    const target = hooks?.getSyncDispatchTarget?.() ?? null;
+    const peer = peerSidForSocket(ws);
+    if (trySyncDispatch(target, peer, frame)) return;
     hooks?.verbose('wire', `dropping unknown wire frame type: ${(frame as { type?: string }).type}`);
+  }
+
+  /** filesync binary data frame (raw piece bytes) — handled outside
+   *  JSON.parse (ws gives us `isBinary`). */
+  private onBinary(ws: WebSocket, buf: Buffer): void {
+    const target = getWireHooks()?.getSyncDispatchTarget?.() ?? null;
+    trySyncDataDispatch(target, peerSidForSocket(ws), buf);
   }
 
   /**
@@ -282,9 +296,13 @@ export class PeerWireAcceptor {
       initiatorSid: frame.sessionId,
       meta: { workDir: frame.workDir, role: frame.role, daemon: frame.daemon },
     });
+    // filesync membership gossip (filesync.md §3): record the peer's shares
+    // and kick an index exchange for any we also bind.
+    handlePeerShares(hooks?.getSyncDispatchTarget?.() ?? null, frame.sessionId, frame.shares);
 
     // Reply with OUR announce (the acceptor's side of the identity
     // exchange, plan §2 step 3) — the dialer learns our sid from it.
+    // `shares` carries our bound filesync shares (membership gossip).
     const reply: AnnounceFrame = {
       type: 'announce',
       sessionId: selfSid,
@@ -292,6 +310,7 @@ export class PeerWireAcceptor {
       ...(hooks.getRole() ? { role: hooks.getRole() } : {}),
       ...(hooks.getDaemon() ? { daemon: true } : {}),
       endpoint: hooks.getServingEndpoint() ?? undefined,
+      ...(hooks.getShares ? { shares: hooks.getShares() } : {}),
     };
     sendFrame(ws, reply);
 

@@ -22,7 +22,15 @@
 import chalk from 'chalk';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { formatLocalDateTime } from '../utils/time.js';
-import { listRemotePeers, liveSocketOf } from '../peer/wire-registry.js';
+import { listRemotePeers, liveSocketOf, peerSharesOf } from '../peer/wire-registry.js';
+
+/** filesync membership tag for a remote peer (filesync.md §4): which bound
+ *  shares this peer announced — the folders that overlap with ours. */
+function sharesTag(sid: string | undefined): string {
+  if (!sid) return '';
+  const shares = peerSharesOf(sid);
+  return shares.length ? `\n    shares: ${shares.join(', ')}` : '';
+}
 
 /**
  * Hard cutoff for the peers listing: a peer whose latest heartbeat is older
@@ -86,7 +94,7 @@ export const peersTool: ToolDefinition = {
       const dialTag = pair.dialed ? 'dialed' : 'accepted';
       const remoteNote = pair.sockets[0]?.meta.daemon ? '\n    daemon: true' : '';
       remoteRows.push(
-        `- session=${chalk.bold(pair.sid || '(pending)')} [remote wire]\n    endpoint: ${pair.endpoint}\n    status: ${state}\n    direction: ${dialTag}${remoteNote}`,
+        `- session=${chalk.bold(pair.sid || '(pending)')} [remote wire]\n    endpoint: ${pair.endpoint}\n    status: ${state}\n    direction: ${dialTag}${remoteNote}${sharesTag(pair.sid)}`,
       );
     }
     const remoteSection = remoteRows.length > 0

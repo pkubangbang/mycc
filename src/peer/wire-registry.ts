@@ -91,6 +91,17 @@ export interface WireHooks {
   getDaemon(): boolean;
   /** Optional role label for our announce frame. */
   getRole(): string | undefined;
+  /** Bound filesync share ids (announce.shares membership gossip). */
+  getShares?(): string[];
+  /**
+   * filesync dispatch target (R5, architect review): the narrow behavior the
+   * wire-codec dispatch helpers (trySyncDispatch/trySyncDataDispatch/
+   * handlePeerShares) call into the engine through. Lazy closure — resolves
+   * the manager at call time (the getShares precedent), so boot order never
+   * matters and the wire site never names manager methods. Optional so test
+   * hooks / minimal embedders skip filesync entirely.
+   */
+  getSyncDispatchTarget?(): import('./filesync/wire-codec.js').SyncDispatchTarget | null;
   /** OUR serving endpoint "host:port" when the webui is running, else null
    *  (a NAT'd/non-serving instance announces no endpoint). */
   getServingEndpoint(): string | null;
@@ -133,6 +144,8 @@ const sidIndex = new Map<string, string>();
  * of a dual-duplex, wherever it was keyed.
  */
 const socketsBySid = new Map<string, WireSocketInfo[]>();
+/** Peer sid → announced filesync share set (membership gossip, filesync.md). */
+const peerShares = new Map<string, Set<string>>();
 /** Per-pair epoch counters — survive entry prune so a LATE dial completion
  *  checks against the LATEST epoch and aborts (no resurrection). */
 const epochByEndpoint = new Map<string, number>();
@@ -638,6 +651,8 @@ export interface AnnounceFrame {
   daemon?: boolean;
   /** Announcer's serving endpoint "host:port" when it runs a webui. */
   endpoint?: string;
+  /** Bound filesync share ids (membership gossip, filesync.md §3). */
+  shares?: string[];
 }
 
 /** Agent-to-agent mail (either direction; receiver dedupes by id). */
@@ -650,7 +665,17 @@ export interface MailFrame {
   timestamp: number;
 }
 
-export type WireFrame = AnnounceFrame | MailFrame;
+/** filesync sync control frames (text/JSON) — see filesync/frames.ts for the
+ *  detailed payloads. Declared structurally here so the wire dispatch can
+ *  forward them without importing the engine (G3: src/serve must not import
+ *  ctx; src/peer stays self-contained). */
+export interface SyncControlFrameShape {
+  type: 'sync-index' | 'sync-req' | 'sync-pieces' | 'sync-del' | 'sync-err';
+  share: string;
+  [k: string]: unknown;
+}
+
+export type WireFrame = AnnounceFrame | MailFrame | SyncControlFrameShape;
 
 /** Wire frame sender helper (JSON + closed-socket guard). */
 export function sendFrame(ws: WebSocket, frame: WireFrame): boolean {
@@ -661,6 +686,59 @@ export function sendFrame(ws: WebSocket, frame: WireFrame): boolean {
   } catch {
     return false;
   }
+}
+
+// ── filesync wire plane (filesync.md §3) ───────────────────────────────────
+
+/** Send a filesync control frame to a peer sid (text/JSON). False when the
+ *  peer's wire is not open. Byte-aware guard (sendWireMail pattern) rejects
+ *  an oversize frame BEFORE sending (1009 storm avoidance). */
+/** All live peer sids whose announce carried `share` (filesync membership).
+ *  Pairwise only — this is the partner set for one share's swarm. */
+export function partnersForShare(share: string): string[] {
+  const out: string[] = [];
+  for (const [sid, shares] of peerShares) {
+    if (shares.has(share) && findSocketBySid(sid)) out.push(sid);
+  }
+  return out;
+}
+
+/** Record a peer's announced share set (membership gossip). */
+export function recordPeerShares(sid: string, shares: string[] | undefined): void {
+  if (!shares?.length) { peerShares.delete(sid); return; }
+  peerShares.set(sid, new Set(shares));
+}
+
+/** The share set a peer announced (for `peer_list` display). */
+export function peerSharesOf(sid: string): string[] {
+  return [...(peerShares.get(sid) ?? [])];
+}
+
+/** Drop a peer's membership on teardown. Does NOT fire the gossip hook —
+ *  dropping membership is not a gossip event (filesync wire-codec R3). */
+export function clearPeerShares(sid: string): void {
+  peerShares.delete(sid);
+}
+
+/** The live open socket for a sid (any direction). Exported for the
+ *  filesync wire-codec senders (wire-registry owns sockets; the codec owns
+ *  the format). */
+export function findSocketBySid(sid: string): WebSocket | null {
+  const info = socketsBySid.get(sid);
+  if (!info?.length) return null;
+  for (const s of info) {
+    if (s.socket.readyState === s.socket.OPEN) return s.socket;
+  }
+  return null;
+}
+
+/** Reverse lookup: the peer sid a socket belongs to (for filesync dispatch
+ *  where the wire plane holds only the raw socket). */
+export function peerSidForSocket(socket: WebSocket): string | null {
+  for (const [sid, info] of socketsBySid) {
+    if (info.some((s) => s.socket === socket)) return sid;
+  }
+  return null;
 }
 
 /**

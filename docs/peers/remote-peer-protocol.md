@@ -433,6 +433,9 @@ produce a confused state.
 
 ## 6. Out of scope (v1, extension points noted in doc)
 
+- ~~Cross-machine **file sharing**~~ — **SHIPPED as its own design**:
+  [`filesync.md`](filesync.md) (share folders `.mycc/filesync/<id>/` synced
+  across wire peers — an enhancement over this protocol, not part of it).
 - Cross-machine **channels** (a `/peer/channel` handshake materializing the
   sibling channel file on the remote instance).
 - Remote briefs in the `peer_list` listing (v1.1 piggyback on ping frames).

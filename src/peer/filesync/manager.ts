@@ -1,0 +1,116 @@
+/**
+ * manager.ts — the filesync share registry: bound shares + frame dispatch.
+ *
+ * The single entry point the wire plane calls (both acceptor
+ * `serve/peer-wire.ts` and dialer `wire-client.ts` dispatch here), and the
+ * surface `/share` and config bind through. One engine per bound share.
+ *
+ * Pairwise only — there is no relay and no routing (filesync.md §3): every
+ * frame is sent to ONE partner over that partner's own wire. Multi-hop
+ * delivery is emergent store-and-forward (a partner stores pieces as its
+ * own folder content and serves them later).
+ */
+
+import {
+  FilesEngine, type EngineHooks, type PeerPort,
+} from './engine.js';
+import {
+  type SyncControlFrame, type SyncDataFrame,
+} from './frames.js';
+import type { SyncDispatchTarget } from './wire-codec.js';
+
+export interface ManagerHooks extends EngineHooks {
+  debugFilesync(): boolean;
+}
+
+let manager: FilesyncManager | null = null;
+
+export function setFilesyncManager(m: FilesyncManager | null): void { manager = m; }
+export function getFilesyncManager(): FilesyncManager | null { return manager; }
+
+export class FilesyncManager {
+  private readonly engines = new Map<string, FilesEngine>();
+  private readonly hooks: ManagerHooks;
+  private readonly port: PeerPort;
+
+  constructor(hooks: ManagerHooks, port: PeerPort) {
+    this.hooks = hooks;
+    this.port = port;
+  }
+
+  /** Bound share ids (for announce.shares membership gossip). */
+  shares(): string[] { return [...this.engines.keys()]; }
+
+  has(share: string): boolean { return this.engines.has(share); }
+
+  /** Bind a share: create `.mycc/filesync/<id>/`, start its engine. */
+  bind(share: string): FilesEngine {
+    let e = this.engines.get(share);
+    if (e) return e;
+    e = new FilesEngine({
+      share,
+      hooks: this.hooks,
+      port: this.port,
+      debugFilesync: this.hooks.debugFilesync(),
+    });
+    this.engines.set(share, e);
+    e.start();
+    this.hooks.verbose('filesync', `bound share ${share} at ${e.root}`);
+    return e;
+  }
+
+  unbind(share: string): boolean {
+    const e = this.engines.get(share);
+    if (!e) return false;
+    e.close();
+    this.engines.delete(share);
+    return true;
+  }
+
+  get(share: string): FilesEngine | undefined { return this.engines.get(share); }
+
+  closeAll(): void {
+    for (const e of this.engines.values()) e.close();
+    this.engines.clear();
+  }
+
+  // ── Frame dispatch (called by the wire plane on inbound frames) ─────────
+
+  onControlFrame(peer: string, frame: SyncControlFrame): void {
+    if (typeof frame.share !== 'string' || frame.share.length === 0) return;
+    const share: string = frame.share;
+    const e = this.engines.get(share);
+    if (!e) return; // not our share — drop (membership = possession)
+    // R1 (architect review): the engine's switch owns ALL 5 verbs, so every
+    // handler — including onPieceList — runs behind this one crash-guard.
+    // (A pre-branch here used to reach onPieceList OUTSIDE the guard: a
+    // hostile sync-pieces frame could throw and kill the process.)
+    try { e.onControlFrame(peer, frame); }
+    catch (err) { this.hooks.verbose('filesync', `dropped frame from ${peer}: ${String(err)}`); }
+  }
+
+  onDataFrame(peer: string, frame: SyncDataFrame): void {
+    const e = this.engines.get(frame.share);
+    if (!e) return;
+    try { e.onDataFrame(peer, frame); }
+    catch (err) { this.hooks.verbose('filesync', `dropped data from ${peer}: ${String(err)}`); }
+  }
+
+  /** A partner announced `shares` — membership gossip drives an immediate
+   *  index exchange (join latency) with every partner carrying a bound
+   *  share. */
+  onPartnerShares(_peer: string, shares: string[]): void {
+    for (const share of shares) {
+      const e = this.engines.get(share);
+      if (e) e.gossip();
+    }
+  }
+}
+
+/**
+ * R5 (architect review): the manager IS the SyncDispatchTarget the wire-codec
+ * dispatch helpers call into. The wire sites never touch manager method names
+ * — they go through the injected WireHooks closures + wire-codec's
+ * trySyncDispatch/trySyncDataDispatch/handlePeerShares.
+ */
+export type { SyncDispatchTarget };
