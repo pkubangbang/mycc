@@ -433,6 +433,8 @@ produce a confused state.
 
 ## 6. Out of scope (v1, extension points noted in doc)
 
+- Announce carries filesync **membership tags** (hashed share ids, never the
+  capabilities themselves) — see `filesync.md` §5.
 - ~~Cross-machine **file sharing**~~ — **SHIPPED as its own design**:
   [`filesync.md`](filesync.md) (share folders `.mycc/filesync/<id>/` synced
   across wire peers — an enhancement over this protocol, not part of it).

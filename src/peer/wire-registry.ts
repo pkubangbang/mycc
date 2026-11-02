@@ -28,6 +28,7 @@
  */
 
 import type { WebSocket } from 'ws';
+import { createHash } from 'crypto';
 
 /** Wire-level close codes (plan §5 close-code registry).
  *  4000/4001 are TERMINAL for the reconnect loop — no re-dial. 401 is not a
@@ -91,7 +92,8 @@ export interface WireHooks {
   getDaemon(): boolean;
   /** Optional role label for our announce frame. */
   getRole(): string | undefined;
-  /** Bound filesync share ids (announce.shares membership gossip). */
+  /** Bound filesync share ids — the announce carries HASHED TAGS of these,
+   *  never the ids (see shareTag). */
   getShares?(): string[];
   /**
    * filesync dispatch target (R5, architect review): the narrow behavior the
@@ -651,7 +653,8 @@ export interface AnnounceFrame {
   daemon?: boolean;
   /** Announcer's serving endpoint "host:port" when it runs a webui. */
   endpoint?: string;
-  /** Bound filesync share ids (membership gossip, filesync.md §3). */
+  /** Membership TAGS (sha256 of a share id, see shareTag) — deliberately not
+   *  the capability ids, which must not travel in a general announce. */
   shares?: string[];
 }
 
@@ -693,25 +696,56 @@ export function sendFrame(ws: WebSocket, frame: WireFrame): boolean {
 /** Send a filesync control frame to a peer sid (text/JSON). False when the
  *  peer's wire is not open. Byte-aware guard (sendWireMail pattern) rejects
  *  an oversize frame BEFORE sending (1009 storm avoidance). */
-/** All live peer sids whose announce carried `share` (filesync membership).
- *  Pairwise only — this is the partner set for one share's swarm. */
+/**
+ * The membership TAG a peer announces for a share — sha256("<share>:<pepper>")
+ * truncated. The share id is a capability secret (possession = read-write
+ * membership), so it must never travel in a general announce: any connected
+ * peer would learn it and could claim membership of a share it was never
+ * given. The tag proves "I was given this id" only to a peer that was given
+ * the same id, and reveals nothing else — a peer cannot enumerate our shares,
+ * and the tag is useless without the id.
+ *
+ * The pepper is NOT a security boundary; it only domain-separates the tag.
+ */
+export function shareTag(share: string): string {
+  return createHash('sha256').update(`filesync-share:${share}`).digest('hex').slice(0, 16);
+}
+
+/** Announce tags for a set of share ids. */
+export function shareTags(shares: string[]): string[] {
+  return shares.map(shareTag);
+}
+
+/** All live peer sids whose announce carried the tag for `share` (filesync
+ *  membership). Pairwise only — the partner set for one share's swarm. */
 export function partnersForShare(share: string): string[] {
+  const tag = shareTag(share);
   const out: string[] = [];
-  for (const [sid, shares] of peerShares) {
-    if (shares.has(share) && findSocketBySid(sid)) out.push(sid);
+  for (const [sid, tags] of peerShares) {
+    if (tags.has(tag) && findSocketBySid(sid)) out.push(sid);
   }
   return out;
 }
 
-/** Record a peer's announced share set (membership gossip). */
-export function recordPeerShares(sid: string, shares: string[] | undefined): void {
-  if (!shares?.length) { peerShares.delete(sid); return; }
-  peerShares.set(sid, new Set(shares));
+/** Record a peer's announced share TAG set (membership gossip — tags, never
+ *  the capability ids themselves). */
+export function recordPeerShares(sid: string, tags: string[] | undefined): void {
+  if (!tags?.length) { peerShares.delete(sid); return; }
+  peerShares.set(sid, new Set(tags));
 }
 
-/** The share set a peer announced (for `peer_list` display). */
+/** The membership TAGS a peer announced (for `peer_list` display). Tags are
+ *  opaque: they show THAT a peer carries shares, never which capabilities. */
 export function peerSharesOf(sid: string): string[] {
   return [...(peerShares.get(sid) ?? [])];
+}
+
+/** How many of OUR bound shares a peer's announced tags match — the useful
+ *  thing to display (the tags themselves are meaningless to a reader). */
+export function overlappingShares(peerSid: string, ourShares: string[]): string[] {
+  const tags = peerShares.get(peerSid);
+  if (!tags?.size) return [];
+  return ourShares.filter((s) => tags.has(shareTag(s)));
 }
 
 /** Drop a peer's membership on teardown. Does NOT fire the gossip hook —

@@ -163,7 +163,7 @@ describe('engine sync + security', () => {
     void good;
   });
 
-  it('pending is pruned for a peer that left the partner set', () => {
+  it('pending is pruned for a peer that left the partner set', async () => {
     const port = new FakePort();
     port.peers.add('BBBB2222');
     const e = new FilesEngine({ share: 'sh1', ...dirs('sh1'), hooks: hooks(), port });
@@ -173,7 +173,16 @@ describe('engine sync + security', () => {
       tombstones: [],
     });
     expect(e.pendingCount).toBe(1);
-    port.peers.delete('BBBB2222'); // wire dropped
+    // The partner snapshot is refreshed asynchronously (tick()/gossip()); warm
+    // it the way the engine does before pruning.
+    expect(() => e.gossip()).not.toThrow();
+    await new Promise((r) => setTimeout(r, 0));
+    // Wire dropped: the peer leaves an otherwise NON-EMPTY snapshot (an empty
+    // snapshot is deliberately not authoritative — see the test below).
+    port.peers.delete('BBBB2222');
+    port.peers.add('CCCC3333');
+    e.gossip();
+    await new Promise((r) => setTimeout(r, 0));
     e.prunePending();
     expect(e.pendingCount).toBe(0);
   });
@@ -262,7 +271,12 @@ describe('engine sync + security', () => {
     e.scan();
     fs.unlinkSync(abs);
     e.scan();
-    fs.writeFileSync(abs, 'v2-newer'); // fresh mtime
+    // A GENUINELY newer edit: its mtime must beat the delete generation, which
+    // is anchored at the deletion instant (Date.now()) — a same-millisecond
+    // re-create legitimately ties and is shadowed, so step the clock forward.
+    fs.writeFileSync(abs, 'v2-newer');
+    const newer = new Date(Date.now() + 5);
+    fs.utimesSync(abs, newer, newer);
     e.scan();
     expect(e.index.get('edit.txt')).toBeDefined(); // resurrection allowed
     expect(e.index.tombstones.get('edit.txt')).toBeUndefined();
@@ -330,5 +344,53 @@ describe('engine sync + security', () => {
     expect(() => e.gossip()).not.toThrow();          // fire-and-forget
     await new Promise((r) => setTimeout(r, 0));       // the rejection is swallowed
     expect(port.peers.size).toBe(1);
+  });
+
+  // ── reviewer round 2 ────────────────────────────────────────────────────
+
+  it('a user directory named .sync is ordinary content (no hidden skip)', () => {
+    const port = new FakePort();
+    const e = new FilesEngine({ share: 'sh1', ...dirs('sh1'), hooks: hooks(), port });
+    fs.mkdirSync(path.join(e.root, '.sync'), { recursive: true });
+    fs.writeFileSync(path.join(e.root, '.sync', 'note.txt'), 'not host state');
+    e.scan();
+    expect(e.index.get('.sync/note.txt')).toBeDefined();
+  });
+
+  it('a child directory whose NAME starts with ".." still counts as inside', () => {
+    const port = new FakePort();
+    const rootDir = path.join(tmp, 'r3');
+    // stateDir is <rootDir>/..weird — inside rootDir, despite the leading dots.
+    expect(() => new FilesEngine({ share: 'sh', rootDir, stateDir: path.join(rootDir, '..weird'), hooks: hooks(), port }))
+      .toThrow(/stateDir must be outside rootDir/);
+  });
+
+  it.runIf(process.platform !== 'win32')('a symlinked stateDir into the root is refused', () => {
+    const port = new FakePort();
+    const rootDir = path.join(tmp, 'r4');
+    fs.mkdirSync(rootDir, { recursive: true });
+    const alias = path.join(tmp, 'alias');
+    fs.symlinkSync(rootDir, alias);              // alias → the root
+    // stateDir spells as <tmp>/alias/state but RESOLVES to <root>/state.
+    expect(() => new FilesEngine({ share: 'sh', rootDir, stateDir: path.join(alias, 'state'), hooks: hooks(), port }))
+      .toThrow(/stateDir must be outside rootDir/);
+    // and the honest case still works
+    expect(() => new FilesEngine({ share: 'sh', rootDir, stateDir: path.join(tmp, 'real-state'), hooks: hooks(), port }))
+      .not.toThrow();
+  });
+
+  it('an empty partner snapshot does not prune every in-flight fetch', () => {
+    const port = new FakePort();
+    port.peers.add('BBBB2222');
+    const e = new FilesEngine({ share: 'sh1', ...dirs('sh1'), hooks: hooks(), port });
+    e.onMessage('BBBB2222', {
+      kind: 'manifest', share: 'sh1',
+      files: [{ relPath: 'p.bin', gen: { mtimeMs: Date.now(), sid: 'BBBB2222' }, size: 1, pieceListHash: 'x' }],
+      tombstones: [],
+    });
+    expect(e.pendingCount).toBe(1);
+    port.peers.clear();          // successful but EMPTY snapshot
+    e.prunePending();
+    expect(e.pendingCount).toBe(1); // kept (TTL/cap are the backstop)
   });
 });

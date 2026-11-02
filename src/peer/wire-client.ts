@@ -46,6 +46,7 @@ import {
   seenMailIdRegister,
   getWireHooks,
   peerSidForSocket,
+  shareTags,
   sendFrame,
   WIRE_CLOSE_SUPERSEDED,
   WIRE_CLOSE_BYE,
@@ -131,7 +132,7 @@ function ourAnnounce(): AnnounceFrame {
     ...(hooks.getRole() ? { role: hooks.getRole() } : {}),
     ...(hooks.getDaemon() ? { daemon: true } : {}),
     ...(hooks.getServingEndpoint() ? { endpoint: hooks.getServingEndpoint()! } : {}),
-    ...(hooks.getShares ? { shares: hooks.getShares() } : {}),
+    ...(hooks.getShares ? { shares: shareTags(hooks.getShares()) } : {}),
   };
 }
 

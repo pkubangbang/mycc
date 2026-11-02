@@ -180,6 +180,40 @@ function assertConfined(root: string, relPath: string, opts: { parentExists: boo
   return abs;
 }
 
+/** True when `child` is `parent` or nested under it (lexical, exact). */
+function isInside(parent: string, child: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
+/**
+ * Real-path containment test for two paths that may not exist yet.
+ *
+ * `fs.realpathSync(p)` resolves every path ELEMENT, but only those that exist;
+ * the first missing element (and everything after it) is passed through
+ * verbatim. That is exactly right here: `realpathSync(/tmp/alias/state)` on a
+ * not-yet-created `state` still resolves the `alias` symlink to the root, so
+ * an alias into the root is detected. Both sides go through the same
+ * resolution, so two ordinary not-yet-created siblings stay distinct.
+ *
+ * Returns true when `b` resolves inside (or equal to) `a`.
+ */
+function intersects(a: string, b: string): boolean {
+  const real = (p: string): string => {
+    try { return fs.realpathSync(p); } catch {
+      // Deepest existing ancestor + the literal remainder.
+      let probe = p;
+      for (;;) {
+        try { return path.join(fs.realpathSync(probe), path.relative(probe, p)); } catch {
+          const next = path.dirname(probe);
+          if (next === probe) return p;
+          probe = next;
+        }
+      }
+    }
+  };
+  return isInside(real(a), real(b));
+}
 export class FilesEngine {
   readonly share: string;
   readonly root: string;
@@ -203,8 +237,12 @@ export class FilesEngine {
     }
     const rootDir = path.resolve(opts.rootDir);
     const stateDir = path.resolve(opts.stateDir);
-    const relState = path.relative(rootDir, stateDir);
-    if (relState === '' || (!relState.startsWith('..') && !path.isAbsolute(relState))) {
+    // Lexical check first (a child named `..weird` must still count as a
+    // child), then resolve the deepest EXISTING ancestor COMMON to both paths
+    // and re-compare the tails — so a symlinked or case-aliased alias into the
+    // root cannot smuggle state inside it. (Resolving each side independently
+    // is wrong: two not-yet-created siblings collapse to the same ancestor.)
+    if (isInside(rootDir, stateDir) || intersects(rootDir, stateDir)) {
       throw new Error('filesync: stateDir must be outside rootDir');
     }
     this.share = opts.share;
@@ -278,9 +316,12 @@ export class FilesEngine {
     if (!this.pending.size) return;
     const now = Date.now();
     const live = new Set(this.partnersCache);
+    // A SUCCESSFUL but empty snapshot (e.g. mid socket replacement) must not
+    // read as "everyone left" — the TTL and the cap remain the backstop.
+    const authoritative = live.size > 0;
     for (const [key, p] of [...this.pending]) {
       const peer = key.slice(0, key.indexOf('\u0000'));
-      const drop = !live.has(peer) || now - p.at > PENDING_TTL_MS;
+      const drop = (authoritative && !live.has(peer)) || now - p.at > PENDING_TTL_MS;
       if (drop) this.pending.delete(key);
     }
     if (this.pending.size <= MAX_PENDING_FILES) return;
@@ -340,7 +381,8 @@ export class FilesEngine {
     let names: string[];
     try { names = fs.readdirSync(dir); } catch { return out; }
     for (const name of names) {
-      if (name === '.sync') continue;
+      // No excluded names: state lives OUTSIDE rootDir by construction, so a
+      // user directory named `.sync` is ordinary content, not host layout.
       const abs = path.join(dir, name);
       const relPath = prefix ? `${prefix}/${name}` : name;
       let st: fs.Stats;
@@ -434,16 +476,25 @@ export class FilesEngine {
     if (frame.kind !== 'manifest') {
       this.audit.log('tx', peer, frame.kind, this.share, frame as unknown as Record<string, unknown>);
     }
-    void this.port.sendMessage(peer, frame).catch((err) => {
-      this.hooks.verbose('filesync', `send to ${peer} failed: ${String(err)}`);
-    });
+    try {
+      void this.port.sendMessage(peer, frame).catch((err) => {
+        this.hooks.verbose('filesync', `send to ${peer} failed: ${String(err)}`);
+      });
+    } catch (err) {
+      // A transport that throws synchronously never reaches .catch().
+      this.hooks.verbose('filesync', `send to ${peer} threw: ${String(err)}`);
+    }
   }
 
   private sendData(peer: string, pieceHash: string, data: Buffer): void {
     this.audit.log('tx', peer, 'piece', this.share, { piece: pieceHash, bytes: data.length });
-    void this.port.sendData(peer, { kind: 'piece', share: this.share, pieceHash, data }).catch((err) => {
-      this.hooks.verbose('filesync', `send piece to ${peer} failed: ${String(err)}`);
-    });
+    try {
+      void this.port.sendData(peer, { kind: 'piece', share: this.share, pieceHash, data }).catch((err) => {
+        this.hooks.verbose('filesync', `send piece to ${peer} failed: ${String(err)}`);
+      });
+    } catch (err) {
+      this.hooks.verbose('filesync', `send piece to ${peer} threw: ${String(err)}`);
+    }
   }
 
   // ── Inbound (host dispatch) ──────────────────────────────────────────────
@@ -519,11 +570,19 @@ export class FilesEngine {
     for (const t of frame.tombstones) {
       const gen = this.sanitizeGen(t.gen, peer);
       if (!gen) continue;
+      // A deletion is knowledge, not an edit of a local file: merge it even
+      // when we never held the path (an offline replica that missed both the
+      // file and the direct `deletion` frame). Compare against the entry OR an
+      // existing tombstone so only the winning generation is recorded.
       const mine = this.index.get(t.relPath);
-      if (!mine) continue;
-      if (compareGen(gen, mine.gen) <= 0) { needGossip = true; continue; }
-      this.index.tombstone({ relPath: t.relPath, gen, by: peer });
-      try { fs.unlinkSync(assertConfined(this.root, t.relPath, { parentExists: true })); } catch { /* absent */ }
+      const tomb = this.index.tombstones.get(t.relPath);
+      const current = mine?.gen ?? tomb?.gen;
+      if (current && compareGen(gen, current) <= 0) { needGossip = true; continue; }
+      this.index.tombstone({ relPath: t.relPath, gen, by: mine ? peer : t.by || peer });
+      if (mine) {
+        // We DO hold it: apply the delete to disk.
+        try { fs.unlinkSync(assertConfined(this.root, t.relPath, { parentExists: true })); } catch { /* absent */ }
+      }
     }
     if (needGossip) this.gossip();
   }
@@ -532,9 +591,15 @@ export class FilesEngine {
     const gen = this.sanitizeGen(genIn, peer);
     if (!gen) return;
     const mine = this.index.get(relPath);
-    if (mine && compareGen(gen, mine.gen) <= 0) { this.gossip(); return; }
+    const tomb = this.index.tombstones.get(relPath);
+    const current = mine?.gen ?? tomb?.gen;
+    // Record the deletion even when we never had the file — it is knowledge
+    // that must survive to block a later stale advertisement.
+    if (current && compareGen(gen, current) <= 0) { this.gossip(); return; }
     this.index.tombstone({ relPath, gen, by: peer });
-    try { fs.unlinkSync(assertConfined(this.root, relPath, { parentExists: true })); } catch { /* absent */ }
+    if (mine) {
+      try { fs.unlinkSync(assertConfined(this.root, relPath, { parentExists: true })); } catch { /* absent */ }
+    }
   }
 
   private onWantList(peer: string, relPath: string): void {

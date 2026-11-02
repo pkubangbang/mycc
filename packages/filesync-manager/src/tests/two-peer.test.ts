@@ -119,4 +119,50 @@ describe('two-engine convergence', () => {
     expect(fs.existsSync(path.join(a.engine.root, 'x.txt'))).toBe(false);
     expect(fs.existsSync(path.join(b.engine.root, 'x.txt'))).toBe(false);
   });
+
+  // ── three-replica / offline-replica topology (architecture review §4.2) ──
+
+  it('a replica that never held the file still learns its deletion (A–B–C)', async () => {
+    const dirC = fs.mkdtempSync(path.join(os.tmpdir(), 'fs2-c-'));
+    const C_SID = 'CCCC3333';
+    // Topology A ── B ── C (A and C are never connected).
+    const a = makeNode(dirA, A_SID, () => [B_SID]);
+    const b = makeNode(dirB, B_SID, () => [A_SID, C_SID]);
+    const c = makeNode(dirC, C_SID, () => [B_SID]);
+
+    // A creates the file; it reaches B.
+    fs.writeFileSync(path.join(a.engine.root, 'report.md'), 'v1');
+    a.engine.scan();
+    await settle();
+    a.engine.gossip();
+    await settle();
+    pump(a, b, A_SID, B_SID);
+    expect(fs.existsSync(path.join(b.engine.root, 'report.md'))).toBe(true);
+    // C is offline and never sees the file.
+
+    // A deletes it; B applies the delete.
+    fs.unlinkSync(path.join(a.engine.root, 'report.md'));
+    a.engine.scan();
+    await settle();
+    a.engine.gossip();
+    await settle();
+    pump(a, b, A_SID, B_SID);
+    expect(b.engine.index.tombstones.get('report.md')).toBeDefined();
+
+    // B reconnects to C: C must LEARN the deletion even though it never had the file.
+    b.engine.gossip();
+    await settle();
+    pump(c, b, C_SID, B_SID);
+    expect(c.engine.index.tombstones.get('report.md')).toBeDefined();
+
+    // A stale advertisement of the file must not resurrect it on C.
+    const staleGen = { mtimeMs: Date.now() - 60_000, sid: 'DDDD4444' };
+    c.engine.onMessage('DDDD4444', {
+      kind: 'manifest', share: 'sh',
+      files: [{ relPath: 'report.md', gen: staleGen, size: 2, pieceListHash: 'x' }],
+      tombstones: [],
+    });
+    expect(c.engine.index.get('report.md')).toBeUndefined();
+    fs.rmSync(dirC, { recursive: true, force: true });
+  });
 });

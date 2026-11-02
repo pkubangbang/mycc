@@ -144,10 +144,16 @@ export const wirePort: PeerPort = {
   // next manifest exchange is the retry. Exactly one fold happens here, in
   // sendSyncControl.
   async sendMessage(peer: string, msg: SyncMessage): Promise<void> {
-    sendSyncControl(peer, messageToControl(msg));
+    // Surface a failed send so the engine's rejection log is not dead code:
+    // the wire has no live socket for this peer right now.
+    if (!sendSyncControl(peer, messageToControl(msg))) {
+      throw new Error(`wire not open for ${peer}`);
+    }
   },
   async sendData(peer: string, msg: SyncDataMessage): Promise<void> {
-    sendSyncData(peer, encodeDataFrame(msg.share, msg.pieceHash, msg.data));
+    if (!sendSyncData(peer, encodeDataFrame(msg.share, msg.pieceHash, msg.data))) {
+      throw new Error(`wire not open for ${peer}`);
+    }
   },
   async partners(share: string): Promise<string[]> {
     return partnersForShare(share);

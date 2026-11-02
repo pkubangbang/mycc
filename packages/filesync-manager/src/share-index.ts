@@ -12,8 +12,8 @@
  * and logged here; the conflict-log entry travels in `sync-index` so every
  * member learns of it (filesync.md §4).
  *
- * Durability: persisted as JSON at `.sync/<id>/index.json` (engine-written,
- * engine-read). Crash-resume needs no other state — the piece store holds
+ * Durability: persisted as JSON at `<stateDir>/index.json` (engine-written,
+ * engine-read) — `stateDir` is supplied by the caller. Crash-resume needs no other state — the piece store holds
  * bytes and gossip diff rebuilds the view.
  */
 

@@ -22,14 +22,18 @@
 import chalk from 'chalk';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { formatLocalDateTime } from '../utils/time.js';
-import { listRemotePeers, liveSocketOf, peerSharesOf } from '../peer/wire-registry.js';
+import { listRemotePeers, liveSocketOf, overlappingShares } from '../peer/wire-registry.js';
+import { getFilesyncManager } from '../peer/filesync/manager.js';
 
-/** filesync membership tag for a remote peer (filesync.md §4): which bound
- *  shares this peer announced — the folders that overlap with ours. */
+/** Which of OUR bound shares this peer also announced (filesync.md §4).
+ *  The announce carries hashed tags, so only the overlap can be named —
+ *  the peer's unshared capabilities stay opaque. */
 function sharesTag(sid: string | undefined): string {
   if (!sid) return '';
-  const shares = peerSharesOf(sid);
-  return shares.length ? `\n    shares: ${shares.join(', ')}` : '';
+  const ours = getFilesyncManager()?.shares() ?? [];
+  if (!ours.length) return '';
+  const shared = overlappingShares(sid, ours);
+  return shared.length ? `\n    shares: ${shared.join(', ')}` : '';
 }
 
 /**

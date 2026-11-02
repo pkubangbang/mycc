@@ -74,7 +74,7 @@ import {
 import { isWireDebugLocal } from '../config.js';
 // The 401 handshake code is shared with the dialer so a refused upgrade and
 // the message the operator sees agree on the number (row peer-004).
-import { WIRE_CLOSE_UNAUTHORIZED, peerSidForSocket } from '../peer/wire-registry.js';
+import { WIRE_CLOSE_UNAUTHORIZED, peerSidForSocket, shareTags } from '../peer/wire-registry.js';
 import { trySyncDispatch, trySyncDataDispatch, handlePeerShares } from '../peer/filesync/wire-codec.js';
 
 /** Dedicated maxPayload for peer mail frames — decoupled from the webui
@@ -310,7 +310,7 @@ export class PeerWireAcceptor {
       ...(hooks.getRole() ? { role: hooks.getRole() } : {}),
       ...(hooks.getDaemon() ? { daemon: true } : {}),
       endpoint: hooks.getServingEndpoint() ?? undefined,
-      ...(hooks.getShares ? { shares: hooks.getShares() } : {}),
+      ...(hooks.getShares ? { shares: shareTags(hooks.getShares()) } : {}),
     };
     sendFrame(ws, reply);
 

@@ -91,7 +91,7 @@ Two frame classes on the same socket, demuxed by WS frame type:
 
 | Frame | WS | Payload | Purpose |
 |---|---|---|---|
-| `announce` | text | `+ shares: string[]` | membership gossip at connect |
+| `announce` | text | `+ shares: string[]` — **membership TAGS**, not ids | membership gossip at connect |
 | `sync-index` | text | `{t:"index", share, entries[], tombstones[], conflicts[]}` (paged; `conflicts` is always empty now — see §4) | join / change / periodic reconcile |
 | `sync-req` | text | `{t:"req", share, pieceHashes[]}` or `{t:"req", share, file, want:"pieces"}` | fetch missing pieces / lazy piece list **from this partner** |
 | `sync-data` | **binary** | `[0x04][32B sha256][2B shareLen][share][raw piece]` | piece payload (raw bytes; no base64) |
@@ -188,9 +188,25 @@ differs: "yours kept / theirs preserved" vs "theirs kept / yours preserved").
   keeps no state keyed by a peer beyond the bounded `pending` map.
 - **Incoming size cap**: a manifest entry larger than `maxFileBytes` is not
   fetched (the local scan applies the same cap).
+- **Tombstones are knowledge, not edits.** A deletion is merged into the
+  index even when the replica never held the file (an offline replica that
+  missed both the file and the direct `deletion` frame), and it is compared
+  against any existing entry *and* any existing tombstone. A replica can
+  therefore learn a deletion through an intermediary and later refuse a stale
+  advertisement of that path. Tombstones are retained indefinitely in v1 —
+  removing one safely would require replica epochs or a retention horizon.
 
 ## 6. Security & confinement
 
+- **The share id never travels in an announce.** It is a read-write
+  capability, so a general announcement carrying it would hand every
+  connected peer the ability to claim a share it was never given. The
+  `announce` frame carries `sha256("filesync-share:<id>")` truncated to 16
+  hex chars instead (wire-registry `shareTag`). A peer only learns that
+  another peer overlaps with shares *it also holds* — it cannot enumerate
+  ours, and a tag is useless without the id. Version skew: a peer running
+  pre-tag code compares a tag against bare ids, finds no overlap and simply
+  shows no shared folder — it stops participating, but the wire stays valid.
 - **Secret possession = read-write membership** (all members read-write).
   `MYCC_WIRE_TOKEN` gates the wire connection; the share id gates the folder.
   Both must pass; neither substitutes the other.
