@@ -96,6 +96,14 @@ export interface EngineHooks {
   appendLocalMail(from: string, title: string, content: string): void;
   verbose(tool: string, message: string): void;
   getSelfSid(): string;
+  /**
+   * A file changed in the share, observed by the engine. Populated so the HOST
+   * can tell its agent to look — the engine syncs a folder, but only the host
+   * knows how to rouse the LLM. Best-effort: a throwing hook never affects
+   * sync. `origin` says whose edit it was: 'local' (this process scanned it)
+   * or 'remote' (applied from a partner) — only 'remote' news is worth a note.
+   */
+  noteFileChange?(share: string, relPath: string, origin: 'local' | 'remote', change: 'added' | 'updated' | 'deleted'): void;
 }
 
 /** Share ids are used in paths and in the wire share field, so the PACKAGE
@@ -374,24 +382,38 @@ export class FilesEngine {
   private scheduleScan(): void {
     if (this.closed) return;
     if (this.watchTimer) clearTimeout(this.watchTimer);
-    this.watchTimer = setTimeout(() => { this.scan(); this.gossip(); }, WATCH_DEBOUNCE_MS);
+    this.watchTimer = setTimeout(() => { this.scan(); this.gossipNow(); }, WATCH_DEBOUNCE_MS);
   }
 
   /** One periodic pass: reap in-flight state, then announce our manifest. */
   private tick(): void {
     if (this.closed) return;
     // Partner discovery is a transport call — refresh it, then reap, then
-    // gossip, so pruning sees a current view.
+    // gossip, so pruning sees a current view. `gossip` re-uses the snapshot
+    // this tick just refreshed instead of asking again.
     void this.partners()
-      .then(() => { this.prunePending(); this.gossip(); })
+      .then((peers) => { this.prunePending(); this.gossipTo(peers); })
       .catch(() => { try { this.prunePending(); } catch { /* never break the tick */ } });
   }
 
-  /** Refresh the partner snapshot from the transport. */
+  /** Refresh the partner snapshot from the transport, logging the RESULT.
+   *
+   *  This is the single fact a live convergence failure turns on: "which
+   *  peers did the transport consider partners at the moment we tried to
+   *  send?" Without it a frames log holding only `rx` lines cannot tell a
+   *  transport that never confirmed a partner apart from an engine that had
+   *  partners but an empty manifest. Logged on every refresh (cheap: one
+   *  array), so the audit log carries the same answer as `verbose`. */
   private async partners(): Promise<string[]> {
     try {
       this.partnersCache = (await this.port.partners(this.share)) ?? [];
-    } catch { /* keep the last snapshot */ }
+    } catch (err) {
+      this.hooks.verbose('filesync', `partner lookup failed for ${this.share}: ${String(err)}`);
+    }
+    this.audit.log('tx', '*', 'partners', this.share, {
+      partners: [...this.partnersCache], count: this.partnersCache.length,
+      entries: this.index.entries.size,
+    });
     return this.partnersCache;
   }
 
@@ -539,13 +561,33 @@ export class FilesEngine {
   }
 
   gossip(): void {
+    // Public name kept for hosts/hooks (the watch path and `onPartnerShares`
+    // call it): always refresh through the transport.
+    this.gossipNow();
+  }
+
+  /** Announce our manifest to an ALREADY-resolved partner list. The tick and
+   *  the post-handshake path both use this, so neither waits on a second
+   *  `port.partners()` round-trip (a proof-confirmed partner must get its
+   *  index exchange NOW — join latency, filesync.md §3). */
+  private gossipTo(peers: string[]): void {
     const frame = this.manifest();
-    this.audit.log('tx', '*', 'manifest', this.share, {
-      entries: frame.files.length, tombstones: frame.tombstones.length,
-    });
-    void this.partners().then((peers) => {
-      for (const peer of peers) this.send(peer, frame);
-    });
+    // Per-PARTNER tx lines, written at the real send point (`send`). A single
+    // `peer:"*"` line here could not answer the audit questions filesync.md
+    // §8 exists for ("did the tombstone go out before the index?"), because
+    // it does not say WHICH peer received it or in what order relative to
+    // that peer's rx lines.
+    for (const peer of peers) this.send(peer, frame);
+  }
+
+  /** Announce our manifest to every peer, asking the transport who they are
+   *  FIRST. A watcher event is the one moment we know a file just changed, so
+   *  it must not wait on the periodic snapshot: that is 30 s of dead time (the
+   *  original "my file never shows up" bug). This is the only path in which a
+   *  stale `partnersCache` could gate a send; the tick and the post-handshake
+   *  path pass an already-resolved list instead. */
+  gossipNow(): void {
+    void this.partners().then((peers) => this.gossipTo(peers));
   }
 
   /** Send to every current partner. Uses the cache when it is warm; a cold
@@ -564,7 +606,14 @@ export class FilesEngine {
   /** Fire-and-forget: delivery is best-effort, correctness comes from the
    *  next manifest exchange. A rejected send is logged, never thrown. */
   private send(peer: string, frame: SyncMessage): void {
-    if (frame.kind !== 'manifest') {
+    // ONE tap for every outbound frame, manifests included: the audit log is
+    // per (peer, frame) so its sequence can be read alongside that peer's rx
+    // lines. Manifests are summarised (counts) to keep the line small.
+    if (frame.kind === 'manifest') {
+      this.audit.log('tx', peer, 'manifest', this.share, {
+        entries: frame.files.length, tombstones: frame.tombstones.length,
+      });
+    } else {
       this.audit.log('tx', peer, frame.kind, this.share, frame as unknown as Record<string, unknown>);
     }
     try {
@@ -673,9 +722,10 @@ export class FilesEngine {
       if (mine) {
         // We DO hold it: apply the delete to disk.
         try { fs.unlinkSync(assertConfined(this.root, t.relPath, { parentExists: true })); } catch { /* absent */ }
+        try { this.hooks.noteFileChange?.(this.share, t.relPath, 'remote', 'deleted'); } catch { /* best-effort */ }
       }
     }
-    if (needGossip) this.gossip();
+    if (needGossip) this.gossipNow();
   }
 
   private onDeletion(peer: string, relPath: string, genIn: FileGen): void {
@@ -686,7 +736,7 @@ export class FilesEngine {
     const current = mine?.gen ?? tomb?.gen;
     // Record the deletion even when we never had the file — it is knowledge
     // that must survive to block a later stale advertisement.
-    if (current && compareGen(gen, current) <= 0) { this.gossip(); return; }
+    if (current && compareGen(gen, current) <= 0) { this.gossipNow(); return; }
     this.index.tombstone({ relPath, gen, by: peer });
     if (mine) {
       try { fs.unlinkSync(assertConfined(this.root, relPath, { parentExists: true })); } catch { /* absent */ }
@@ -815,7 +865,10 @@ export class FilesEngine {
     try { fs.utimesSync(abs, new Date(entry.gen.mtimeMs), new Date(entry.gen.mtimeMs)); } catch { /* best effort */ }
     this.index.set({ ...entry });
     this.pending.delete(key);
-    this.gossip();
+    // Tell the host AFTER the file is on disk and indexed: a note that says
+    // "look in the folder" is useless until the folder holds the file.
+    try { this.hooks.noteFileChange?.(this.share, entry.relPath, 'remote', 'added'); } catch { /* best-effort */ }
+    this.gossipNow();
   }
 
   // ── Conflict handling (filesync.md §4) ───────────────────────────────────
