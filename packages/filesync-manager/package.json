@@ -33,5 +33,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "dependencies": {}
+  "dependencies": {
+    "chokidar": "^6.0.0"
+  }
 }

@@ -32,6 +32,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { watch, type FSWatcher } from 'chokidar';
 import { chunkBuffer, pieceListHash, type Piece } from './chunker.js';
 import { PieceStore } from './store.js';
 import {
@@ -45,6 +46,15 @@ import { FrameAuditLog } from './audit-log.js';
 
 export const GOSSIP_MS = 30_000;
 export const WATCH_DEBOUNCE_MS = 300;
+/** Chokidar's awaitWriteFinish stability window. A save is only reported once
+ *  the file has stopped growing for this long, which (a) collapses an editor's
+ *  stream of partial writes into ONE `change` and (b) keeps us from chunking a
+ *  half-written file. Chosen just above the write-debounce so an atomic
+ *  tmp+rename save settles once. */
+export const WRITE_STABILITY_MS = 200;
+/** Ceiling on waiting for the watcher's baseline (`whenReady`). A watcher
+ *  that never reports `ready` (platform quirk, huge tree) must not hang. */
+export const WATCH_READY_TIMEOUT_MS = 10_000;
 export const SKEW_DEADLINE_MS = 10_000;
 export const REQUEST_WINDOW = 8;
 /** In-flight fetch entries older than this are dropped on the gossip tick.
@@ -228,7 +238,8 @@ export class FilesEngine {
   private readonly pending = new Map<string, PendingFile>();
   private watchTimer: NodeJS.Timeout | null = null;
   private gossipTimer: NodeJS.Timeout | null = null;
-  private watcher: fs.FSWatcher | null = null;
+  private watcher: FSWatcher | null = null;
+  private watchReady = false;
   private closed = false;
 
   constructor(opts: EngineOptions) {
@@ -265,17 +276,97 @@ export class FilesEngine {
     this.gossipTimer = setInterval(() => this.tick(), GOSSIP_MS);
     this.gossipTimer.unref?.();
     try {
-      this.watcher = fs.watch(this.root, { recursive: true }, () => this.scheduleScan());
-    } catch {
-      this.hooks.verbose('filesync', `watch unavailable for ${this.share}; relying on gossip (${GOSSIP_MS}ms)`);
+      this.watcher = this.createWatcher();
+    } catch (err) {
+      this.hooks.verbose('filesync', `watch unavailable for ${this.share}; relying on gossip (${GOSSIP_MS}ms): ${String(err)}`);
     }
+  }
+
+  /**
+   * The fs watcher: LATENCY ONLY, never correctness (filesync.md §2).
+   *
+   * Chokidar rather than raw `fs.watch`, because the raw API loses exactly the
+   * events an editor produces: a truncate-and-rewrite of identical size emits
+   * NOTHING, and an atomic save (`.tmp` + rename) emits three or four
+   * indistinguishable `change`s with no write boundary. Chokidar normalizes
+   * both backends to semantic add/change/unlink events and — with
+   * `awaitWriteFinish` — reports a file only after it has stopped growing, so
+   * one save is one scan and we never chunk a half-written file.
+   *
+   * `ignoreInitial: false` is deliberate and NOT an optimisation choice.
+   * With `ignoreInitial: true`, chokidar seeds its baseline with a directory
+   * read and then reports only later deltas — but a file created in the gap
+   * between `start()`'s synchronous `scan()` and the watcher's baseline read
+   * is in NEITHER: not in our index (created after the scan) and not a delta
+   * (present at baseline). It stays invisible until the 30 s gossip tick
+   * re-scans. With `ignoreInitial: false` the baseline arrives as ordinary
+   * `add` events, so that gap closes and the file is ingested immediately;
+   * the cost is one `ingest` per existing file, which the mtime+size
+   * pre-filter turns into a stat-and-skip.
+   *
+   * Events are coalesced into ONE dirty flag → one `scan()` per
+   * WATCH_DEBOUNCE_MS burst. The scan stays whole-root on purpose: it is the
+   * reconciliation pass that also tombstones paths the watcher missed, so an
+   * incremental per-filename ingest would need a second delete-detection path.
+   */
+  private createWatcher(): FSWatcher {
+    const w = watch(this.root, {
+      ignoreInitial: false,
+      // Editor scratch files are not content: a `vim` save would otherwise
+      // ship a swap file, and a failed atomic save would ship its `.tmp`.
+      ignored: (p: string) => {
+        const base = path.basename(p);
+        return base.includes('.conflict-')      // our own preserved losers
+          || base.startsWith('.goutputstream-') // GVFS atomic save
+          || base.endsWith('.filesync-tmp')     // our apply temp
+          || base.endsWith('.swp') || base.endsWith('.swx')
+          || base.endsWith('~');
+      },
+      awaitWriteFinish: { stabilityThreshold: WRITE_STABILITY_MS, pollInterval: 50 },
+      // A deleted directory subtree arrives as unlinkDir + unlink per file;
+      // one debounced scan covers them all, so no special handling is needed.
+    });
+    // `addDir` is structural noise: `scan()` walks directories implicitly and
+    // an empty new directory syncs nothing (directories are implicit in file
+    // entries, filesync.md §2). Ignoring it avoids a scan per mkdir -p level.
+    w.on('add', (_p: string) => this.onWatchEvent('add'));
+    w.on('change', (_p: string) => this.onWatchEvent('change'));
+    w.on('unlink', (_p: string) => this.onWatchEvent('unlink'));
+    w.on('unlinkDir', (_p: string) => this.onWatchEvent('unlinkDir'));
+    w.on('error', (err: unknown) => {
+      this.hooks.verbose('filesync', `watch error for ${this.share}: ${String(err)}`);
+    });
+    return w;
+  }
+
+  private onWatchEvent(event: string): void {
+    if (this.closed) return;
+    this.hooks.verbose('filesync', `watch ${event}`);
+    this.scheduleScan();
+  }
+
+  /** Resolves once the watcher has reported its baseline (the initial tree
+   *  has been ingested). Tests await this instead of sleeping blindly; a
+   *  missing watcher (unsupported platform) resolves immediately. */
+  whenReady(): Promise<void> {
+    if (!this.watcher) return Promise.resolve();
+    if (this.watchReady) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const done = (): void => { this.watchReady = true; resolve(); };
+      this.watcher!.on('ready', done);
+      // Belt and braces: a watcher that never emits `ready` must not hang a
+      // caller forever — WATCH_READY_TIMEOUT_MS is the ceiling.
+      setTimeout(done, WATCH_READY_TIMEOUT_MS).unref?.();
+    });
   }
 
   close(): void {
     this.closed = true;
     if (this.gossipTimer) clearInterval(this.gossipTimer);
     if (this.watchTimer) clearTimeout(this.watchTimer);
-    try { this.watcher?.close(); } catch { /* closing */ }
+    // chokidar's close() is async; fire-and-forget is safe here because the
+    // `closed` flag already makes every queued event a no-op.
+    try { void this.watcher?.close(); } catch { /* closing */ }
     this.audit.close();
     this.index.persist();
   }

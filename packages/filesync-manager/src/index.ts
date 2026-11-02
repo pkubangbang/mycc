@@ -21,7 +21,7 @@ export {
 } from './protocol.js';
 export { FrameAuditLog, type FrameLogLine } from './audit-log.js';
 export {
-  FilesEngine, GOSSIP_MS, WATCH_DEBOUNCE_MS, SKEW_DEADLINE_MS, REQUEST_WINDOW,
-  PENDING_TTL_MS, MAX_PENDING_FILES,
+  FilesEngine, GOSSIP_MS, WATCH_DEBOUNCE_MS, WRITE_STABILITY_MS, WATCH_READY_TIMEOUT_MS,
+  SKEW_DEADLINE_MS, REQUEST_WINDOW, PENDING_TTL_MS, MAX_PENDING_FILES,
   type PeerPort, type EngineHooks, type EngineOptions,
 } from './engine.js';
