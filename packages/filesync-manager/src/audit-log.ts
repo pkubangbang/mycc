@@ -1,5 +1,5 @@
 /**
- * audit-log.ts — `--debug-filesync` frame transcript (filesync.md §7).
+ * audit-log.ts — `--debug-filesync` frame transcript (filesync.md §8).
  *
  * One JSONL line per sync frame in BOTH directions. Binary data frames are
  * logged as metadata + piece sha256 + byte count (never raw payload); the

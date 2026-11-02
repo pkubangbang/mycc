@@ -1,0 +1,37 @@
+{
+  "name": "@pkubangbang/filesync-manager",
+  "version": "0.1.0",
+  "description": "Transport-agnostic local file sync engine — content-defined chunking, content-addressed piece store, LWW manifests and tombstones. Bring your own transport (see docs/peers/filesync.md in mycc).",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src/",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "keywords": [
+    "filesync",
+    "fastcdc",
+    "content-defined-chunking",
+    "content-addressable",
+    "file-sync"
+  ],
+  "license": "MIT",
+  "author": "pkubangbang <pkubangbang@pku.edu.cn>",
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {}
+}

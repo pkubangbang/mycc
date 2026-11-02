@@ -13,11 +13,11 @@
 
 import {
   FilesEngine, type EngineHooks, type PeerPort,
-} from './engine.js';
+} from '@pkubangbang/filesync-manager';
 import {
   type SyncControlFrame, type SyncDataFrame,
 } from './frames.js';
-import type { SyncDispatchTarget } from './wire-codec.js';
+import { controlToMessage, dataToMessage, type SyncDispatchTarget } from './wire-codec.js';
 
 export interface ManagerHooks extends EngineHooks {
   debugFilesync(): boolean;
@@ -85,14 +85,18 @@ export class FilesyncManager {
     // handler — including onPieceList — runs behind this one crash-guard.
     // (A pre-branch here used to reach onPieceList OUTSIDE the guard: a
     // hostile sync-pieces frame could throw and kill the process.)
-    try { e.onControlFrame(peer, frame); }
-    catch (err) { this.hooks.verbose('filesync', `dropped frame from ${peer}: ${String(err)}`); }
+    // Host-side adapter: wire frame → transport-agnostic engine message.
+    // Every verb runs behind this one crash-guard.
+    try {
+      const msg = controlToMessage(frame);
+      if (msg) e.onMessage(peer, msg);
+    } catch (err) { this.hooks.verbose('filesync', `dropped frame from ${peer}: ${String(err)}`); }
   }
 
   onDataFrame(peer: string, frame: SyncDataFrame): void {
     const e = this.engines.get(frame.share);
     if (!e) return;
-    try { e.onDataFrame(peer, frame); }
+    try { e.onData(peer, dataToMessage(frame)); }
     catch (err) { this.hooks.verbose('filesync', `dropped data from ${peer}: ${String(err)}`); }
   }
 

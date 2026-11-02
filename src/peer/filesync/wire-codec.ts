@@ -29,9 +29,10 @@ import {
   type SyncControlFrame, type SyncDataFrame,
 } from './frames.js';
 import {
-  recordPeerShares, peerSidForSocket, findSocketBySid,
+  recordPeerShares, peerSidForSocket, findSocketBySid, partnersForShare,
   type SyncControlFrameShape,
 } from '../wire-registry.js';
+import type { SyncMessage, SyncDataMessage, PeerPort } from '@pkubangbang/filesync-manager';
 
 export { encodeDataFrame, decodeDataFrame };
 export type { SyncDataFrame };
@@ -73,6 +74,77 @@ export interface SyncDispatchTarget {
   onDataFrame(peer: string, frame: SyncDataFrame): void;
   onPartnerShares(peer: string, shares: string[]): void;
 }
+
+// ── Engine message ⇄ wire frame (the adapter owned by the HOST) ───────────
+
+/**
+ * Engine message → the wire frame the peer expects. The transport-agnostic
+ * engine (packages/filesync-manager) speaks `kind` messages; mycc's wire
+ * speaks `type:'sync-*'`. This is the ONLY place the two vocabularies meet,
+ * so the package stays free of wire verbs and the wire format stays stable.
+ */
+export function messageToControl(msg: SyncMessage): Record<string, unknown> & { type: string } {
+  switch (msg.kind) {
+    case 'manifest':
+      return { type: 'sync-index', share: msg.share, entries: msg.files, tombstones: msg.tombstones, conflicts: [] };
+    case 'want-list':
+      return { type: 'sync-req', share: msg.share, file: msg.relPath, want: 'pieces' };
+    case 'piece-list':
+      return { type: 'sync-pieces', share: msg.share, file: msg.relPath, pieceHashes: msg.pieceHashes };
+    case 'want-pieces':
+      return { type: 'sync-req', share: msg.share, pieceHashes: msg.pieceHashes };
+    case 'deletion':
+      return { type: 'sync-del', share: msg.share, relPath: msg.relPath, gen: msg.gen };
+    case 'error':
+      return { type: 'sync-err', share: msg.share, reason: msg.reason };
+  }
+}
+
+/** Wire frame → engine message (receive path). Unknown/absent verbs → null. */
+export function controlToMessage(frame: SyncControlFrame): SyncMessage | null {
+  switch (frame.t) {
+    case 'index':
+      return {
+        kind: 'manifest', share: frame.share,
+        files: frame.entries ?? [], tombstones: frame.tombstones ?? [],
+      };
+    case 'req':
+      if (frame.want === 'pieces' && typeof frame.file === 'string') {
+        return { kind: 'want-list', share: frame.share, relPath: frame.file };
+      }
+      return { kind: 'want-pieces', share: frame.share, pieceHashes: frame.pieceHashes ?? [] };
+    case 'pieces':
+      return { kind: 'piece-list', share: frame.share, relPath: frame.file, pieceHashes: frame.pieceHashes ?? [] };
+    case 'del':
+      return { kind: 'deletion', share: frame.share, relPath: frame.relPath, gen: frame.gen };
+    case 'err':
+      return { kind: 'error', share: frame.share, reason: frame.reason };
+    default:
+      return null;
+  }
+}
+
+/** Wire data frame → engine piece message. */
+export function dataToMessage(df: SyncDataFrame): SyncDataMessage {
+  return { kind: 'piece', share: df.share, pieceHash: df.pieceHash, data: df.data };
+}
+
+/**
+ * The host's implementation of the package's `PeerPort`: engine → wire,
+ * pairwise (no relay — every message goes to ONE partner over its own
+ * socket).
+ */
+export const wirePort: PeerPort = {
+  sendMessage(peer: string, msg: SyncMessage): boolean {
+    return sendSyncControl(peer, messageToControl(msg) as unknown as Record<string, unknown>);
+  },
+  sendData(peer: string, msg: SyncDataMessage): boolean {
+    return sendSyncData(peer, encodeDataFrame(msg.share, msg.pieceHash, msg.data));
+  },
+  partners(share: string): string[] {
+    return partnersForShare(share);
+  },
+};
 
 /** Dispatch a raw TEXT wire frame if it is filesync control. Returns true
  *  when handled (so the caller's unknown-type fall-through stays correct). */

@@ -1,18 +1,33 @@
 /**
- * engine.ts — the filesync engine: one per bound share (filesync.md).
+ * engine.ts — the sync engine for ONE shared folder.
  *
- * Responsibilities (all transport-independent — the wire layer calls in via
- * `onControlFrame`/`onDataFrame` and out via the injected `PeerPort`):
+ * Transport-agnostic by construction: the host application delivers peer
+ * messages via `onMessage`/`onData` and the engine emits new ones through the
+ * injected `PeerPort`. The engine never names a socket, a frame verb, or a
+ * wire tag — see `protocol.ts` for the message vocabulary and the host-side
+ * mapping (mycc: `src/peer/filesync/wire-codec.ts`).
+ *
+ * Responsibilities
  *   - scan: walk the share root, chunk changed files, update the index
- *   - gossip: emit/receive `sync-index` (join, change, every GOSSIP_MS)
+ *   - gossip: emit our manifest (join, change, every GOSSIP_MS)
  *   - fetch: request missing pieces (window K), apply complete files
  *   - watch: debounce local fs events into a scan (latency, not correctness)
- *   - conflict: LWW with loser preservation + conflict-log + lead mail
+ *   - conflict: LWW with loser preservation + conflict log + one mail notice
  *
- * Security hardening (joint red/blue review): R1 hash-shape validation (in
- * store.ts), G1 per-(peer,file) pending, G2 gen/sid forgery guards, R2 safe
- * date/filename handling, G3 input caps, R3 one-gossip-per-index, G4
- * conflict-mail rate limit, G5 resolve+O_NOFOLLOW at apply.
+ * Resource lifecycle (review round 2)
+ *   - `pending` is pruned on every gossip tick: entries for a peer that is no
+ *     longer in `port.partners()` (wire dropped) and entries older than
+ *     `PENDING_TTL_MS` (connected peer that never answered) are dropped, and
+ *     the map is capped at `MAX_PENDING_FILES`. A dropped wire therefore
+ *     aborts in-flight transfers; the next manifest exchange re-derives them
+ *     from the piece store (the resume cursor).
+ *   - There is no per-peer index cache and no remote conflict-notice
+ *     surface: conflicts are local knowledge, mailed by the side that
+ *     preserved the loser copy.
+ *
+ * Security hardening: R1 hash-shape validation (store.ts), G1 per-(peer,file)
+ * pending, G2 gen/sid forgery guards, R2 safe date/filename handling, G3 input
+ * caps, R3 one-gossip-per-manifest, G5 realpath+O_EXCL at apply.
  */
 
 import fs from 'fs';
@@ -20,34 +35,40 @@ import path from 'path';
 import { chunkBuffer, pieceListHash, type Piece } from './chunker.js';
 import { PieceStore } from './store.js';
 import {
-  ShareIndex, compareGen, conflictKey,
+  ShareIndex, compareGen,
   type ConflictEntry, type FileEntry, type FileGen,
-} from './index.js';
+} from './share-index.js';
 import {
-  type SyncControlFrame, type SyncDataFrame,
-} from './frames.js';
+  type ManifestMessage, type SyncMessage, type SyncDataMessage,
+} from './protocol.js';
 import { FrameAuditLog } from './audit-log.js';
 
 export const GOSSIP_MS = 30_000;
 export const WATCH_DEBOUNCE_MS = 300;
 export const SKEW_DEADLINE_MS = 10_000;
 export const REQUEST_WINDOW = 8;
+/** In-flight fetch entries older than this are dropped on the gossip tick.
+ *  Sized well above the wire's liveness window (mycc: 30 s ping × 3 misses
+ *  ≈ 90 s) so a slow-but-alive peer is never pruned mid-transfer. */
+export const PENDING_TTL_MS = 3 * GOSSIP_MS;
+/** Hard bound on in-flight fetches (each may hold a piece list). */
+export const MAX_PENDING_FILES = 256;
 
 const MAX_INDEX_ENTRIES = 10_000;   // G3
 const MAX_PIECE_LIST = 20_000;      // G3
 const MAX_REQ_BATCH = 32;           // G3 (2× REQUEST_WINDOW)
 const GEN_MAX_SKEW_MS = 24 * 60 * 60 * 1000; // G2
-const CONFLICT_MAIL_WINDOW_MS = 60_000;      // G4
 
-/** Wire-facing sink — implemented by the wire plane (registry socket
- *  lookup); fakeable in tests. `peer` is the partner's session id. */
+/** Outbound sink — implemented by the host (mycc: the wire registry);
+ *  fakeable in tests. `peer` is the partner's opaque id. */
 export interface PeerPort {
-  sendControl(peer: string, frame: SyncControlFrame): boolean;
-  sendData(peer: string, share: string, pieceHash: string, data: Buffer): boolean;
+  sendMessage(peer: string, message: SyncMessage): boolean;
+  sendData(peer: string, data: SyncDataMessage): boolean;
+  /** Ids of peers currently reachable (live transport) for this share. */
   partners(share: string): string[];
 }
 
-/** Engine → lead surface (conflict mail + pinned share todo). */
+/** Engine → host surface (conflict mail + diagnostics). */
 export interface EngineHooks {
   appendLocalMail(from: string, title: string, content: string): void;
   verbose(tool: string, message: string): void;
@@ -67,11 +88,13 @@ interface PendingFile {
   entry: FileEntry;
   missing: string[];
   requested: Map<string, number>;
-  awaitingPieceList?: boolean;
+  awaitingPieceList: boolean;
+  /** Creation time (TTL anchor). */
+  at: number;
 }
 
 /** G1 fix: pending is keyed per (peer, relPath) — one PendingFile PER FILE,
- *  so a multi-file index frame never overwrites/drops another file's fetch
+ *  so a multi-file manifest never overwrites/drops another file's fetch
  *  (which made the file vanish → scan() tombstone → swarm-wide del). */
 function pendingKey(peer: string, relPath: string): string {
   return `${peer}\u0000${relPath}`;
@@ -88,6 +111,49 @@ function safeSidTag(sid: string): string {
   return String(sid).replace(/[^A-Za-z0-9]/g, '').slice(0, 8) || 'x';
 }
 
+/**
+ * Containment check for a path that is about to be written (or read).
+ *
+ * `path.resolve` alone is lexical: a symlinked (or, on Windows, junctioned)
+ * directory inside the share would be followed. We therefore compare the
+ * REAL path of the target's parent directory against the REAL share root —
+ * one native call that also normalizes drive-letter case and 8.3 names on
+ * Windows, which a `startsWith` prefix test does not. POSIX additionally
+ * refuses the write through any non-directory parent (ENOTDIR).
+ *
+ * Returns the resolved path, or throws when it escapes the root.
+ */
+function assertConfined(root: string, relPath: string, opts: { parentExists: boolean }): string {
+  const abs = path.resolve(root, relPath);
+  const realRoot = fs.realpathSync(root);
+  if (abs === root || abs === path.resolve(root)) return abs;
+  const dir = path.dirname(abs);
+  let realDir: string;
+  try {
+    realDir = fs.realpathSync(dir);
+  } catch {
+    if (opts.parentExists) throw new Error(`filesync: cannot resolve parent of ${relPath}`);
+    // Parent does not exist yet: fall back to the nearest existing ancestor,
+    // which is where a symlink would have to live to redirect the write.
+    let probe = dir;
+    let realProbe: string | null = null;
+    while (realProbe === null) {
+      try { realProbe = fs.realpathSync(probe); } catch {
+        const next = path.dirname(probe);
+        if (next === probe) throw new Error(`filesync: cannot resolve ${relPath}`);
+        probe = next;
+      }
+    }
+    realDir = realProbe;
+  }
+  const rel = path.relative(realRoot, realDir);
+  if (rel === '') return abs;
+  if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+    throw new Error(`filesync: relPath escapes share root: ${relPath}`);
+  }
+  return abs;
+}
+
 export class FilesEngine {
   readonly share: string;
   readonly root: string;
@@ -98,9 +164,6 @@ export class FilesEngine {
   private readonly port: PeerPort;
   private readonly maxFileBytes: number;
   private readonly pending = new Map<string, PendingFile>();
-  private readonly partnerIndexes = new Map<string, Map<string, FileEntry>>();
-  private readonly seenConflicts = new Set<string>();
-  private readonly conflictMailAt = new Map<string, number>();
   private watchTimer: NodeJS.Timeout | null = null;
   private gossipTimer: NodeJS.Timeout | null = null;
   private watcher: fs.FSWatcher | null = null;
@@ -122,8 +185,8 @@ export class FilesEngine {
 
   start(): void {
     this.scan();
-    this.gossip();
-    this.gossipTimer = setInterval(() => this.gossip(), GOSSIP_MS);
+    this.tick();
+    this.gossipTimer = setInterval(() => this.tick(), GOSSIP_MS);
     this.gossipTimer.unref?.();
     try {
       this.watcher = fs.watch(this.root, { recursive: true }, () => this.scheduleScan());
@@ -147,6 +210,41 @@ export class FilesEngine {
     this.watchTimer = setTimeout(() => { this.scan(); this.gossip(); }, WATCH_DEBOUNCE_MS);
   }
 
+  /** One periodic pass: reap in-flight state, then announce our manifest. */
+  private tick(): void {
+    if (this.closed) return;
+    try { this.prunePending(); } catch { /* never break the tick */ }
+    this.gossip();
+  }
+
+  /**
+   * Bound the in-flight fetch map. Three rules, in order:
+   *   1. a peer no longer in `partners()` lost its wire → drop its entries
+   *      (in-flight transfers are aborted; the piece store keeps the bytes
+   *      already received and the next manifest re-derives the remainder);
+   *   2. an entry older than PENDING_TTL_MS → a peer that never answered;
+   *   3. over MAX_PENDING_FILES → drop the oldest entries.
+   */
+  prunePending(): void {
+    if (!this.pending.size) return;
+    const now = Date.now();
+    let live: Set<string> | null;
+    try { live = new Set(this.port.partners(this.share)); } catch { live = null; }
+    for (const [key, p] of [...this.pending]) {
+      const peer = key.slice(0, key.indexOf('\u0000'));
+      const drop = (live !== null && !live.has(peer)) || now - p.at > PENDING_TTL_MS;
+      if (drop) this.pending.delete(key);
+    }
+    if (this.pending.size <= MAX_PENDING_FILES) return;
+    const oldest = [...this.pending.entries()].sort((a, b) => a[1].at - b[1].at);
+    for (const [key] of oldest.slice(0, this.pending.size - MAX_PENDING_FILES)) {
+      this.pending.delete(key);
+    }
+  }
+
+  /** In-flight fetch count (diagnostics / tests). */
+  get pendingCount(): number { return this.pending.size; }
+
   // ── Scan: local truth → index ────────────────────────────────────────────
 
   scan(): void {
@@ -158,11 +256,21 @@ export class FilesEngine {
     for (const relPath of [...this.index.entries.keys()]) {
       if (seen.has(relPath)) continue;
       const entry = this.index.entries.get(relPath)!;
-      this.index.tombstone({ relPath, gen: { mtimeMs: Date.now(), sid: this.hooks.getSelfSid() }, by: this.hooks.getSelfSid() });
-      this.broadcast({ t: 'del', share: this.share, relPath, gen: { mtimeMs: entry.gen.mtimeMs + 1, sid: this.hooks.getSelfSid() } });
-      void entry;
+      // ONE generation for both the local tombstone and the peer notice, so
+      // every member compares the same delete against later edits.
+      const gen: FileGen = { mtimeMs: entry.gen.mtimeMs + 1, sid: this.hooks.getSelfSid() };
+      this.index.tombstone({ relPath, gen, by: this.hooks.getSelfSid() });
+      this.broadcast({ kind: 'deletion', share: this.share, relPath, gen });
     }
     this.index.expireResolved((c) => fs.existsSync(this.conflictPath(c)));
+    // A tombstone that was never unlinked locally (peer delete) is applied here.
+    for (const t of [...this.index.tombstones.values()]) {
+      if (t.by === this.hooks.getSelfSid()) continue;
+      if (!this.index.entries.has(t.relPath)) continue;
+      try { fs.unlinkSync(assertConfined(this.root, t.relPath, { parentExists: true })); } catch { /* absent */ }
+      this.index.entries.delete(t.relPath);
+      this.index.persist();
+    }
   }
 
   private walk(dir: string, prefix = ''): string[] {
@@ -185,7 +293,8 @@ export class FilesEngine {
   }
 
   private ingest(relPath: string): void {
-    const abs = this.resolve(relPath);
+    let abs: string;
+    try { abs = assertConfined(this.root, relPath, { parentExists: true }); } catch { return; }
     let st: fs.Stats;
     try { st = fs.statSync(abs); } catch { return; }
     if (st.size > this.maxFileBytes) {
@@ -212,53 +321,59 @@ export class FilesEngine {
 
   // ── Gossip ───────────────────────────────────────────────────────────────
 
-  gossip(): void {
-    const frame: SyncControlFrame = {
-      t: 'index',
+  /** Our whole-share manifest (host sends it to every partner). */
+  manifest(): ManifestMessage {
+    return {
+      kind: 'manifest',
       share: this.share,
-      entries: [...this.index.entries.values()].map((e) => ({
+      files: [...this.index.entries.values()].map((e) => ({
         relPath: e.relPath, gen: e.gen, size: e.size, pieceListHash: e.pieceListHash,
       })),
       tombstones: [...this.index.tombstones.values()],
-      conflicts: [...this.index.conflicts.values()],
     };
-    for (const peer of this.port.partners(this.share)) this.sendControl(peer, frame);
   }
 
-  private broadcast(frame: SyncControlFrame): void {
-    for (const peer of this.port.partners(this.share)) this.sendControl(peer, frame);
+  gossip(): void {
+    const frame = this.manifest();
+    this.audit.log('tx', '*', 'manifest', this.share, {
+      entries: frame.files.length, tombstones: frame.tombstones.length,
+    });
+    for (const peer of this.port.partners(this.share)) this.send(peer, frame);
   }
 
-  private sendControl(peer: string, frame: SyncControlFrame): void {
-    this.audit.log('tx', peer, `sync-${frame.t}`, this.share, frame.t === 'index'
-      ? { entries: frame.entries.length, tombstones: frame.tombstones.length, conflicts: frame.conflicts.length }
-      : frame as unknown as Record<string, unknown>);
-    this.port.sendControl(peer, frame);
+  private broadcast(frame: SyncMessage): void {
+    for (const peer of this.port.partners(this.share)) this.send(peer, frame);
   }
 
-  /** R2 (architect review): symmetric to sendControl — one audit layer for
-   *  both directions of tx (control + data) instead of an ad-hoc log at the
-   *  call site. */
-  private sendData(peer: string, pieceHash: string, data: Buffer): void {
-    this.audit.log('tx', peer, 'sync-data', this.share, { piece: pieceHash, bytes: data.length });
-    this.port.sendData(peer, this.share, pieceHash, data);
+  private send(peer: string, frame: SyncMessage): boolean {
+    if (frame.kind !== 'manifest') {
+      this.audit.log('tx', peer, frame.kind, this.share, frame as unknown as Record<string, unknown>);
+    }
+    return this.port.sendMessage(peer, frame);
   }
 
-  // ── Inbound (wire dispatch) ──────────────────────────────────────────────
+  private sendData(peer: string, pieceHash: string, data: Buffer): boolean {
+    this.audit.log('tx', peer, 'piece', this.share, { piece: pieceHash, bytes: data.length });
+    return this.port.sendData(peer, { kind: 'piece', share: this.share, pieceHash, data });
+  }
 
-  onControlFrame(peer: string, frame: SyncControlFrame): void {
-    this.audit.log('rx', peer, `sync-${frame.t}`, this.share, frame as unknown as Record<string, unknown>);
-    switch (frame.t) {
-      case 'index': return this.onIndex(peer, frame);
-      case 'req': return this.onReq(peer, frame);
-      case 'pieces': return this.onPieceList(peer, frame.file, frame.pieceHashes);
-      case 'del': return this.onDel(peer, frame);
-      case 'err': return this.hooks.verbose('filesync', `peer ${peer} error: ${frame.reason}`);
+  // ── Inbound (host dispatch) ──────────────────────────────────────────────
+
+  onMessage(peer: string, frame: SyncMessage): void {
+    this.audit.log('rx', peer, frame.kind, this.share, frame as unknown as Record<string, unknown>);
+    if ('share' in frame && frame.share !== this.share) return;
+    switch (frame.kind) {
+      case 'manifest': return this.onManifest(peer, frame);
+      case 'want-list': return this.onWantList(peer, frame.relPath);
+      case 'piece-list': return this.onPieceList(peer, frame.relPath, frame.pieceHashes);
+      case 'want-pieces': return this.onWantPieces(peer, frame.pieceHashes);
+      case 'deletion': return this.onDeletion(peer, frame.relPath, frame.gen);
+      case 'error': return this.hooks.verbose('filesync', `peer ${peer} error: ${frame.reason}`);
     }
   }
 
-  onDataFrame(peer: string, frame: SyncDataFrame): void {
-    this.audit.log('rx', peer, 'sync-data', this.share, { piece: frame.pieceHash, bytes: frame.data.length });
+  onData(peer: string, frame: SyncDataMessage): void {
+    this.audit.log('rx', peer, 'piece', this.share, { piece: frame.pieceHash, bytes: frame.data.length });
     if (frame.share !== this.share) return;
     if (!/^[0-9a-f]{64}$/.test(frame.pieceHash)) return; // R1
     // Unsolicited pieces are dropped (filesync.md §3) — request-set only.
@@ -285,28 +400,29 @@ export class FilesEngine {
     return { mtimeMs: gen.mtimeMs, sid: peer };
   }
 
-  private onIndex(peer: string, frame: Extract<SyncControlFrame, { t: 'index' }>): void {
+  private onManifest(peer: string, frame: ManifestMessage): void {
     if (frame.share !== this.share) return;
     const remote = new Map<string, FileEntry>();
     let count = 0;
-    for (const e of frame.entries) {
+    for (const e of frame.files) {
       if (count++ >= MAX_INDEX_ENTRIES) break; // G3
       const gen = this.sanitizeGen(e.gen, peer);
       if (!gen) continue;
+      if (e.size > this.maxFileBytes) continue; // incoming size cap
       remote.set(e.relPath, { relPath: e.relPath, gen, size: e.size, pieceListHash: e.pieceListHash, pieceHashes: [] });
     }
-    this.partnerIndexes.set(peer, remote);
 
-    for (const c of frame.conflicts) this.ingestConflictNotice(peer, c);
-
-    let needGossip = false; // R3: at most ONE gossip per index frame
+    let needGossip = false; // R3: at most ONE gossip per manifest
     for (const [relPath, re] of remote) {
       const mine = this.index.get(relPath);
       if (mine && mine.pieceListHash === re.pieceListHash) continue;
-      if (mine && compareGen(re.gen, mine.gen) <= 0) continue;
+      // A delete outranks the live entry: compare against whichever version
+      // we hold — entry or tombstone — so a re-advertised file cannot
+      // resurrect a path we (or a peer) already deleted.
+      const tomb = this.index.tombstones.get(relPath);
+      const current = mine?.gen ?? tomb?.gen;
+      if (current && compareGen(re.gen, current) <= 0) continue;
       // Storm guard (R3): skip files already being fetched from this peer.
-      // Without this, every echo'd index re-triggers requestFile → an
-      // unbounded want:"pieces" loop (the 60k-frame flood the smoke caught).
       if (this.pending.has(pendingKey(peer, relPath))) continue;
       if (mine) this.preserveLoser(relPath, mine, re.gen);
       this.requestFile(peer, relPath, re);
@@ -318,29 +434,30 @@ export class FilesEngine {
       if (!mine) continue;
       if (compareGen(gen, mine.gen) <= 0) { needGossip = true; continue; }
       this.index.tombstone({ relPath: t.relPath, gen, by: peer });
+      try { fs.unlinkSync(assertConfined(this.root, t.relPath, { parentExists: true })); } catch { /* absent */ }
     }
     if (needGossip) this.gossip();
   }
 
-  private onDel(peer: string, frame: Extract<SyncControlFrame, { t: 'del' }>): void {
-    if (frame.share !== this.share) return;
-    const gen = this.sanitizeGen(frame.gen, peer);
+  private onDeletion(peer: string, relPath: string, genIn: FileGen): void {
+    const gen = this.sanitizeGen(genIn, peer);
     if (!gen) return;
-    const mine = this.index.get(frame.relPath);
+    const mine = this.index.get(relPath);
     if (mine && compareGen(gen, mine.gen) <= 0) { this.gossip(); return; }
-    this.index.tombstone({ relPath: frame.relPath, gen, by: peer });
+    this.index.tombstone({ relPath, gen, by: peer });
+    try { fs.unlinkSync(assertConfined(this.root, relPath, { parentExists: true })); } catch { /* absent */ }
   }
 
-  private onReq(peer: string, frame: Extract<SyncControlFrame, { t: 'req' }>): void {
-    if (frame.share !== this.share) return;
-    if (frame.want === 'pieces' && frame.file) {
-      const mine = this.index.get(frame.file);
-      if (!mine) return;
-      this.sendControl(peer, { t: 'index', share: this.share, entries: [{ relPath: mine.relPath, gen: mine.gen, size: mine.size, pieceListHash: mine.pieceListHash }], tombstones: [], conflicts: [] });
-      this.sendControl(peer, { t: 'pieces', share: this.share, file: mine.relPath, pieceHashes: mine.pieceHashes });
-      return;
-    }
-    const hashes = (frame.pieceHashes ?? []).slice(0, MAX_REQ_BATCH); // G3
+  private onWantList(peer: string, relPath: string): void {
+    const mine = this.index.get(relPath);
+    if (!mine) return;
+    this.send(peer, {
+      kind: 'piece-list', share: this.share, relPath: mine.relPath, pieceHashes: mine.pieceHashes,
+    });
+  }
+
+  private onWantPieces(peer: string, pieceHashes: string[]): void {
+    const hashes = (pieceHashes ?? []).slice(0, MAX_REQ_BATCH); // G3
     for (const h of hashes) {
       if (!/^[0-9a-f]{64}$/.test(h)) continue; // R1
       const data = this.store.get(h);
@@ -354,10 +471,15 @@ export class FilesEngine {
   private requestFile(peer: string, relPath: string, re: FileEntry): void {
     const key = pendingKey(peer, relPath);
     let p = this.pending.get(key);
-    if (!p) { p = { entry: re, missing: [], requested: new Map() }; this.pending.set(key, p); }
+    if (!p) {
+      if (this.pending.size >= MAX_PENDING_FILES) this.prunePending();
+      p = { entry: re, missing: [], requested: new Map(), awaitingPieceList: true, at: Date.now() };
+      this.pending.set(key, p);
+    }
     p.entry = re;
     p.awaitingPieceList = true;
-    this.sendControl(peer, { t: 'req', share: this.share, file: relPath, want: 'pieces' });
+    p.at = Date.now();
+    this.send(peer, { kind: 'want-list', share: this.share, relPath });
   }
 
   onPieceList(peer: string, relPath: string, hashes: string[]): void {
@@ -395,7 +517,7 @@ export class FilesEngine {
     }
     if (!want.length) return;
     for (const h of want) p.requested.set(h, now + SKEW_DEADLINE_MS);
-    this.sendControl(peer, { t: 'req', share: this.share, pieceHashes: want });
+    this.send(peer, { kind: 'want-pieces', share: this.share, pieceHashes: want });
   }
 
   private maybeApply(peer: string, relPath: string, p: PendingFile): void {
@@ -415,10 +537,18 @@ export class FilesEngine {
       return;
     }
     let abs: string;
-    try { abs = this.resolve(entry.relPath); } catch { this.pending.delete(key); return; }
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    // G5: O_NOFOLLOW|O_EXCL tmp write — a pre-planted symlink at the tmp
-    // name can no longer clobber a file outside the root.
+    try {
+      // Parent must already exist for the realpath check to be meaningful;
+      // create it first, then re-check containment on the REAL path.
+      fs.mkdirSync(path.dirname(path.resolve(this.root, entry.relPath)), { recursive: true });
+      abs = assertConfined(this.root, entry.relPath, { parentExists: true });
+    } catch (err) {
+      this.hooks.verbose('filesync', `apply refused for ${entry.relPath}: ${String(err)}`);
+      this.pending.delete(key);
+      return;
+    }
+    // G5: O_EXCL (+ O_NOFOLLOW where the platform defines it) tmp write — a
+    // pre-planted symlink at the tmp name cannot clobber a file outside root.
     const tmp = `${abs}.filesync-tmp`;
     try {
       const fd = fs.openSync(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | (fs.constants.O_NOFOLLOW ?? 0), 0o600);
@@ -440,8 +570,6 @@ export class FilesEngine {
   // ── Conflict handling (filesync.md §4) ───────────────────────────────────
 
   private preserveLoser(relPath: string, mine: FileEntry, theirs: FileGen): void {
-    let abs: string;
-    try { abs = this.resolve(relPath); } catch { return; }
     const c: ConflictEntry = {
       relPath,
       keptGen: theirs,
@@ -449,8 +577,18 @@ export class FilesEngine {
       loserTs: mine.gen.mtimeMs,
     };
     const copy = this.conflictPath(c);
-    try { fs.renameSync(abs, copy); } catch { try { fs.copyFileSync(abs, copy); } catch { /* best effort */ } }
+    try {
+      const abs = assertConfined(this.root, relPath, { parentExists: true });
+      fs.renameSync(abs, copy);
+    } catch { /* best effort — the remote copy still lands */ }
     this.index.addConflict(c);
+    this.hooks.appendLocalMail(
+      'filesync',
+      `[sync-conflict] ${relPath} (share ${this.share})`,
+      `local version (${safeIso(c.loserTs)}) lost to a newer remote edit (${safeIso(c.keptGen.mtimeMs)}); ` +
+      `yours is preserved as ${c.relPath}.conflict-${safeSidTag(c.loserSid)}-${safeIso(c.loserTs).replace(/[:.]/g, '-')}.\n` +
+      `Resolve in chat: compare the two files, then rm the conflict copy (accept theirs) or edit/overwrite the kept file (merge/keep yours) — the resolution is a normal file change and syncs like any other.`,
+    );
   }
 
   private conflictPath(c: ConflictEntry): string {
@@ -458,38 +596,6 @@ export class FilesEngine {
     const base = path.basename(c.relPath);
     const ts = safeIso(c.loserTs).replace(/[:.]/g, '-'); // R2
     const name = `${base}.conflict-${safeSidTag(c.loserSid)}-${ts}`; // R2
-    return this.resolve(d === '.' ? name : `${d}/${name}`);
-  }
-
-  private ingestConflictNotice(_peer: string, c: ConflictEntry): void {
-    const key = conflictKey(c);
-    if (this.seenConflicts.has(key)) return;
-    this.seenConflicts.add(key);
-    // G4: rate-limit conflict mail per relPath (a varying loserTs can no
-    // longer flood the lead's mailbox).
-    const now = Date.now();
-    const last = this.conflictMailAt.get(c.relPath) ?? 0;
-    if (now - last < CONFLICT_MAIL_WINDOW_MS) return;
-    this.conflictMailAt.set(c.relPath, now);
-
-    if (!this.index.conflicts.has(key)) this.index.addConflict(c);
-    const mineSid = this.hooks.getSelfSid();
-    const yoursKept = c.loserSid !== mineSid;
-    const title = `[sync-conflict] ${c.relPath} (share ${this.share})`;
-    const content = yoursKept
-      ? `local (you, ${safeIso(c.loserTs)}) vs ${c.keptGen.sid}/lead (${safeIso(c.keptGen.mtimeMs)}) — theirs kept (LWW); your version preserved as ${this.conflictPath(c)}.\nResolve in chat: compare the two files, then rm the conflict copy (accept theirs) or edit/overwrite the kept file (merge/keep yours) — the resolution is a normal file change and syncs like any other.`
-      : `yours kept (LWW, ${safeIso(c.keptGen.mtimeMs)}); ${c.loserSid}/lead's version (${safeIso(c.loserTs)}) preserved on their side as a conflict copy.\nNo action needed unless you want to merge — their edit is not lost.`;
-    this.hooks.appendLocalMail('filesync', title, content);
-  }
-
-  // ── Paths (confinement: belt + suspenders, filesync.md §5) ───────────────
-
-  private resolve(relPath: string): string {
-    const abs = path.resolve(this.root, relPath);
-    const rootResolved = path.resolve(this.root);
-    if (abs !== rootResolved && !abs.startsWith(rootResolved + path.sep)) {
-      throw new Error(`filesync: relPath escapes share root: ${relPath}`);
-    }
-    return abs;
+    return assertConfined(this.root, d === '.' ? name : `${d}/${name}`, { parentExists: true });
   }
 }

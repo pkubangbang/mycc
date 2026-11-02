@@ -11,9 +11,9 @@ import { BackgroundTasks } from './shared/bg.js';
 import { TeamManager } from './parent/team.js';
 import { WikiManager } from './parent/wiki.js';
 import { PeerManager } from '../peer/peer.js';
-import { setWireHooks, partnersForShare, type WireHooks } from '../peer/wire-registry.js';
+import { setWireHooks, type WireHooks } from '../peer/wire-registry.js';
 import { getFilesyncManager, FilesyncManager, setFilesyncManager } from '../peer/filesync/manager.js';
-import { encodeDataFrame, sendSyncControl, sendSyncData } from '../peer/filesync/wire-codec.js';
+import { wirePort } from '../peer/filesync/wire-codec.js';
 import { getFilesyncShareIds, isDebugFilesync } from '../config.js';
 import { tryGetServeHub } from '../serve/serve-registry.js';
 import { detectLanIpv4 } from '../serve/serve-utils.js';
@@ -190,18 +190,14 @@ export class ParentContext implements AgentContext {
     // PeerPort routes through the wire registry — pairwise, no relay. The
     // manager is a module singleton the wire-plane dispatch (wire-client /
     // peer-wire) reaches via getFilesyncManager().
-    const filesyncPort = {
-      sendControl: (peer: string, frame: unknown) => sendSyncControl(peer, frame as Record<string, unknown>),
-      sendData: (peer: string, share: string, hash: string, buf: Buffer) => sendSyncData(peer, encodeDataFrame(share, hash, buf)),
-      partners: (share: string) => partnersForShare(share),
-    };
+    // The host's PeerPort (engine message → wire frame) lives in wire-codec.
     const filesyncMgr = new FilesyncManager({
       appendLocalMail: (from, title, content) => { try { this.mailModule.appendMail(from, title, content); } catch { /* best-effort */ } },
       verbose: (tool, message) => { try { agentIO.verbose(tool, message); } catch { /* ignore */ } },
       getSelfSid: () => peerSessionId,
       getWorkDir: () => peerWorkDir,
       debugFilesync: () => isDebugFilesync(),
-    }, filesyncPort);
+    }, wirePort);
     setFilesyncManager(filesyncMgr);
     for (const share of getFilesyncShareIds()) filesyncMgr.bind(share);
   }

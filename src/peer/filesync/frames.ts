@@ -17,8 +17,6 @@
  * gets no reply within the 10s skew deadline → "peer has no sync support".
  */
 
-import type { AnnounceFrame } from '../wire-registry.js';
-
 // ── Text control frames ────────────────────────────────────────────────────
 
 export interface SyncIndexFrame {
@@ -108,5 +106,12 @@ export function decodeDataFrame(buf: Buffer): SyncDataFrame | null {
 
 // ── Announce extension ─────────────────────────────────────────────────────
 
-/** AnnounceFrame + membership gossip (filesync.md §3). */
-export type AnnounceWithShares = AnnounceFrame & { shares?: string[] };
+/** The announce frame shape this feature extends with membership gossip
+ *  (filesync.md §3) — declared structurally so this module never imports the
+ *  wire registry. */
+export interface AnnounceWithShares {
+  type: 'announce';
+  sessionId: string;
+  [k: string]: unknown;
+  shares?: string[];
+}

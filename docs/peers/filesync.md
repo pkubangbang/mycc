@@ -26,7 +26,7 @@ from mail to **folders**. Two or more peers binding the same share id see
   `identity.json` args).
 - **Root (sealed):** `<workdir>/.mycc/filesync/<id>/` — created at bind. This
   is the ONLY filesystem surface filesync ever reads or writes (state lives
-  in the sibling `.sync/` area, §5).
+  in the sibling `.sync/` area, §6).
 - **Membership / auto-pairing:** a share's members are every wired peer whose
   `announce` frame carries the same id (§3). Pairing a *machine* is still
   `peer_connect` (one dialed WS per pair, the wire's firewall story is
@@ -67,12 +67,23 @@ may differ per share.
 
 ## 3. Transport — frames over the existing WS
 
+> **Package boundary.** The engine is a standalone, transport-agnostic
+> package — `@pkubangbang/filesync-manager` (`packages/filesync-manager/` in
+> this repo while it is pre-publish). It knows folders, chunks, the piece
+> store, manifests, tombstones and conflicts; it knows **nothing** about
+> sockets. It speaks plain messages (`src/protocol.ts`: `manifest`,
+> `want-list`, `piece-list`, `want-pieces`, `piece`, `deletion`, `error`) and
+> takes a `PeerPort` for egress. Everything below — verbs, binary framing,
+> announce membership — is the **host adapter** (`src/peer/filesync/`), with
+> `wire-codec.ts` as the one place the message vocabulary meets the wire
+> vocabulary. A different host can reuse the engine unchanged.
+
 Two frame classes on the same socket, demuxed by WS frame type:
 
 | Frame | WS | Payload | Purpose |
 |---|---|---|---|
 | `announce` | text | `+ shares: string[]` | membership gossip at connect |
-| `sync-index` | text | `{t:"index", share, entries[], tombstones[], conflicts[]}` (paged) | join / change / periodic reconcile |
+| `sync-index` | text | `{t:"index", share, entries[], tombstones[], conflicts[]}` (paged; `conflicts` is always empty now — see §4) | join / change / periodic reconcile |
 | `sync-req` | text | `{t:"req", share, pieceHashes[]}` or `{t:"req", share, file, want:"pieces"}` | fetch missing pieces / lazy piece list **from this partner** |
 | `sync-data` | **binary** | `[0x04][32B sha256][2B shareLen][share][raw piece]` | piece payload (raw bytes; no base64) |
 | `sync-del` | text | `{t:"del", share, relPath, gen}` | tombstone propagation |
@@ -120,9 +131,12 @@ every member learns of the conflict). Clock skew in `gen=(mtime,sid)`
 therefore produces conflict *noise*, never silent loss (documented
 limitation).
 
-**Surface to the chat — resolution is content.** On seeing a NEW conflict-log
-entry, each member's engine mails **its own lead mailbox** (single-writer
-`MailBox.appendMail`, seen-set dedupe by entry key):
+**Surface to the chat — resolution is content.** The member that preserved
+the loser copy mails **its own lead mailbox** (single-writer
+`MailBox.appendMail`) at the moment it preserves it. Conflicts are local
+knowledge: there is no remote conflict-notice frame (the removed `conflicts`
+field was an unbounded remote-input surface for no behavioural gain). The
+other side learns through the conflict copy appearing in the folder.
 
 ```
 [sync-conflict] docs/report.pdf (share abcdef01)
@@ -151,27 +165,45 @@ differs: "yours kept / theirs preserved" vs "theirs kept / yours preserved").
 3. **`/share --list`** on demand (partners, conflicts, in-flight).
 4. Sync generates **only** conflict mail — no per-file arrival spam.
 
-## 5. Security & confinement
+## 5. Resource lifecycle
+
+- **In-flight fetches are bounded.** `pending` (one entry per peer+file) is
+  capped at `MAX_PENDING_FILES` and pruned on every gossip tick: entries for
+  a peer no longer in `partners()` (wire dropped) and entries older than
+  `PENDING_TTL_MS` (connected but never answering) are dropped.
+- **Dropped wire = aborted transfer, not resumed state.** Nothing per-peer
+  survives the drop; the piece store keeps the bytes already received and the
+  next manifest exchange re-derives the remainder. Resume is emergent, so
+  there is no per-peer bookkeeping to leak.
+- **No per-peer index cache** and **no unbounded conflict set**: the engine
+  keeps no state keyed by a peer beyond the bounded `pending` map.
+- **Incoming size cap**: a manifest entry larger than `maxFileBytes` is not
+  fetched (the local scan applies the same cap).
+
+## 6. Security & confinement
 
 - **Secret possession = read-write membership** (all members read-write).
   `MYCC_WIRE_TOKEN` gates the wire connection; the share id gates the folder.
   Both must pass; neither substitutes the other.
-- **Sealed root:** the wire only ever carries `relPath`. `..`/absolute/
-  symlink relPaths are rejected at parse **and** re-checked after resolve
-  under the share root (belt + suspenders). Nothing outside
-  `.mycc/filesync/<id>/` is read or written. There is no per-op path
+- **Sealed root:** the wire only ever carries `relPath`. `..`/absolute
+  relPaths are rejected, and every read/write re-checks the target's **real**
+  parent (`realpathSync` + `path.relative`) against the real share root, so a
+  symlinked — or Windows-junctioned — parent directory cannot redirect a
+  write outside `.mycc/filesync/<id>/`. `O_EXCL` (+ `O_NOFOLLOW` where the
+  platform defines it) protects the temp file; the realpath check protects
+  the directory chain, which is what `O_NOFOLLOW` cannot do. There is no per-op path
   permission model and no absolute-path mounts — the sandbox is structural.
 - **State & exposure:** `.mycc/filesync/.sync/<id>/` holds `pieces/`,
-  optional derived dirty state, and `--debug-filesync` logs (§7). It is
+  optional derived dirty state, and `--debug-filesync` logs (§8). It is
   excluded from the share and **outside `.mycc/public/`** (the webui serves
   that statically) — received files are never web-exposed by placement.
 
-## 6. Phases & tests
+## 7. Phases & tests
 
 | Phase | Deliverable |
 |---|---|
 | 1 | this spec + `remote-peer-protocol.md` §6 update |
-| 2 | `src/peer/filesync/` — chunker + piece store, index/tombstones/conflict log, watcher + 30 s gossip, fetch engine; frame diffs (`wire-client.ts`, `wire-registry.ts`, `serve/peer-wire.ts`) |
+| 2 | `packages/filesync-manager/` — chunker + piece store, index/tombstones/conflict log, watcher + 30 s gossip, fetch engine (transport-agnostic); host adapter `src/peer/filesync/` (frames, codec, registry) + frame diffs (`wire-client.ts`, `wire-registry.ts`, `serve/peer-wire.ts`) |
 | 3 | config (`--share`/`MYCC_SHARES`/`--debug-filesync`: `config.ts`, `arg-canonical.ts`, `help.ts`, README), `announce.shares`, `/share` slash, conflict→mail + pinned share todo, `peer_list` shares display |
 | 4 | tests |
 
@@ -202,7 +234,7 @@ remote peer `dc827afe…` at 10.0.1.1:3173 — are unaware of filesync and must
 NOT be used for any filesync traffic or tests until the user confirms they
 are updated. All testing is local (`--debug-wire`).
 
-## 7. Observability — `--debug-filesync`
+## 8. Observability — `--debug-filesync`
 
 - **Flag/env:** `--debug-filesync` / `MYCC_DEBUG_FILESYNC=true` (family of
   `--debug-tp`, `--debug-ansi`; documented in the README debug-flags table).
@@ -219,7 +251,7 @@ are updated. All testing is local (`--debug-wire`).
 - **Use:** the log is a total-order transcript of the protocol per socket
   (TCP-ordered), so correctness questions become greps ("was the tombstone
   sent before the index?", "did we request a piece we already had?"). Tests
-  assert frame sequences from it (§6). One logging tap at the frame
+  assert frame sequences from it (§7). One logging tap at the frame
   dispatch chokepoint (tx/rx) shared by the audit log and test assertions.
 
 ## Fixed knobs (change-on-request)

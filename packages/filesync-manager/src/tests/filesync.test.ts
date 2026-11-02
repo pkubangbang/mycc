@@ -9,11 +9,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { chunkBuffer, pieceListHash, sha256Hex } from '../../peer/filesync/chunker.js';
-import { PieceStore } from '../../peer/filesync/store.js';
-import { ShareIndex, compareGen, conflictKey } from '../../peer/filesync/index.js';
-import { encodeDataFrame, decodeDataFrame } from '../../peer/filesync/frames.js';
-import { FilesEngine, type PeerPort, type EngineHooks } from '../../peer/filesync/engine.js';
+import { chunkBuffer, pieceListHash, sha256Hex } from '../chunker.js';
+import { PieceStore } from '../store.js';
+import { ShareIndex, compareGen, conflictKey } from '../share-index.js';
+import { FilesEngine, type PeerPort, type EngineHooks } from '../engine.js';
+import type { SyncMessage, SyncDataMessage } from '../protocol.js';
 
 let tmp: string;
 beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'filesync-')); });
@@ -31,9 +31,9 @@ function hooks(self = 'AAAA1111'): EngineHooks & { mail: Array<{ title: string }
 }
 
 class FakePort implements PeerPort {
-  sent: Array<{ peer: string; frame?: unknown; data?: string }> = [];
-  sendControl(peer: string, frame: unknown) { this.sent.push({ peer, frame }); return true; }
-  sendData(peer: string, _s: string, pieceHash: string) { this.sent.push({ peer, data: pieceHash }); return true; }
+  sent: Array<{ peer: string; message?: SyncMessage; data?: SyncDataMessage }> = [];
+  sendMessage(peer: string, message: SyncMessage) { this.sent.push({ peer, message }); return true; }
+  sendData(peer: string, data: SyncDataMessage) { this.sent.push({ peer, data }); return true; }
   peers = new Set<string>();
   partners(_share: string) { return [...this.peers]; }
 }
@@ -97,21 +97,6 @@ describe('ShareIndex LWW + conflict', () => {
   });
 });
 
-describe('frame codec', () => {
-  it('round-trips binary data frames', () => {
-    const data = Buffer.from('raw piece bytes');
-    const hash = sha256Hex(data);
-    const buf = encodeDataFrame('abcdef01', hash, data);
-    const dec = decodeDataFrame(buf);
-    expect(dec?.share).toBe('abcdef01');
-    expect(dec?.pieceHash).toBe(hash);
-    expect(dec?.data.equals(data)).toBe(true);
-  });
-  it('rejects malformed binary frames', () => {
-    expect(decodeDataFrame(Buffer.alloc(3))).toBeNull();
-  });
-});
-
 describe('engine sync + security', () => {
   it('G1: multi-file index converges both files (no dropped fetch)', async () => {
     const h = hooks();
@@ -119,17 +104,17 @@ describe('engine sync + security', () => {
     port.peers.add('BBBB2222');
     const e = new FilesEngine({ share: 'sh1', hooks: h, port });
     // Two files from partner, both newer than ours (we have none).
-    e.onControlFrame('BBBB2222', {
-      t: 'index', share: 'sh1',
-      entries: [
+    e.onMessage('BBBB2222', {
+      kind: 'manifest', share: 'sh1',
+      files: [
         { relPath: 'one.txt', gen: { mtimeMs: Date.now(), sid: 'BBBB2222' }, size: 3, pieceListHash: sha256Hex(Buffer.from('abc')) },
         { relPath: 'two.txt', gen: { mtimeMs: Date.now(), sid: 'BBBB2222' }, size: 3, pieceListHash: sha256Hex(Buffer.from('def')) },
       ],
-      tombstones: [], conflicts: [],
+      tombstones: [],
     });
     // Both files must be requested (pending per (peer,relPath) — G1).
-    const reqs = port.sent.filter((s) => (s.frame as { t?: string })?.t === 'req');
-    const files = reqs.map((s) => (s.frame as { file?: string }).file);
+    const reqs = port.sent.filter((s) => s.message?.kind === 'want-list');
+    const files = reqs.map((s) => (s.message as { relPath?: string }).relPath);
     expect(files).toContain('one.txt');
     expect(files).toContain('two.txt');
   });
@@ -139,7 +124,7 @@ describe('engine sync + security', () => {
     const port = new FakePort();
     port.peers.add('BBBB2222');
     const e = new FilesEngine({ share: 'sh1', hooks: h, port });
-    e.onControlFrame('BBBB2222', { t: 'req', share: 'sh1', pieceHashes: ['/etc/passwd', '../../secret'] });
+    e.onMessage('BBBB2222', { kind: 'want-pieces', share: 'sh1', pieceHashes: ['/etc/passwd', '../../secret'] });
     expect(port.sent.filter((s) => s.data)).toHaveLength(0);
   });
 
@@ -151,7 +136,7 @@ describe('engine sync + security', () => {
     const st = fs.statSync(e.root);
     void st;
     e.index.set({ relPath: 'keep.txt', gen: { mtimeMs: Date.now(), sid: 'AAAA1111' }, size: 1, pieceListHash: 'x', pieceHashes: ['h'] });
-    e.onControlFrame('BBBB2222', { t: 'del', share: 'sh1', relPath: 'keep.txt', gen: { mtimeMs: 8.6e15, sid: 'BBBB2222' } });
+    e.onMessage('BBBB2222', { kind: 'deletion', share: 'sh1', relPath: 'keep.txt', gen: { mtimeMs: 8.6e15, sid: 'BBBB2222' } });
     expect(e.index.get('keep.txt')).toBeDefined(); // not deleted
   });
 
@@ -161,16 +146,81 @@ describe('engine sync + security', () => {
     port.peers.add('BBBB2222');
     const e = new FilesEngine({ share: 'sh1', hooks: h, port });
     const good = sha256Hex(Buffer.from('payload'));
-    e.onControlFrame('BBBB2222', {
-      t: 'index', share: 'sh1',
-      entries: [{ relPath: 'f.bin', gen: { mtimeMs: Date.now(), sid: 'BBBB2222' }, size: 7, pieceListHash: sha256Hex(Buffer.from('payload')) }],
-      tombstones: [], conflicts: [],
+    e.onMessage('BBBB2222', {
+      kind: 'manifest', share: 'sh1',
+      files: [{ relPath: 'f.bin', gen: { mtimeMs: Date.now(), sid: 'BBBB2222' }, size: 7, pieceListHash: sha256Hex(Buffer.from('payload')) }],
+      tombstones: [],
     });
     // Junk piece list (hashes don't match expected pieceListHash) → dropped.
     e.onPieceList('BBBB2222', 'f.bin', ['0'.repeat(64)]);
-    const reqs = port.sent.filter((s) => (s.frame as { t?: string })?.t === 'req' && (s.frame as { pieceHashes?: string[] }).pieceHashes);
+    const reqs = port.sent.filter((s) => s.message?.kind === 'want-pieces' && (s.message as { pieceHashes?: string[] }).pieceHashes);
     // Should not request the junk hash.
-    expect(reqs.every((s) => !(s.frame as { pieceHashes: string[] }).pieceHashes.includes('0'.repeat(64)))).toBe(true);
+    expect(reqs.every((s) => !(s.message as { pieceHashes: string[] }).pieceHashes.includes('0'.repeat(64)))).toBe(true);
     void good;
+  });
+
+  it('pending is pruned for a peer that left the partner set', () => {
+    const port = new FakePort();
+    port.peers.add('BBBB2222');
+    const e = new FilesEngine({ share: 'sh1', hooks: hooks(), port });
+    e.onMessage('BBBB2222', {
+      kind: 'manifest', share: 'sh1',
+      files: [{ relPath: 'x.bin', gen: { mtimeMs: Date.now(), sid: 'BBBB2222' }, size: 1, pieceListHash: 'p' }],
+      tombstones: [],
+    });
+    expect(e.pendingCount).toBe(1);
+    port.peers.delete('BBBB2222'); // wire dropped
+    e.prunePending();
+    expect(e.pendingCount).toBe(0);
+  });
+
+  it('a manifest cannot resurrect a path we tombstoned', () => {
+    const port = new FakePort();
+    port.peers.add('BBBB2222');
+    const e = new FilesEngine({ share: 'sh1', hooks: hooks(), port });
+    const t = Date.now();
+    // We deleted the file: tombstone at t+1 (mirrors scan()).
+    e.index.tombstone({ relPath: 'gone.txt', gen: { mtimeMs: t, sid: 'AAAA1111' }, by: 'AAAA1111' });
+    // Peer advertises an older live version → must be ignored, no fetch.
+    e.onMessage('BBBB2222', {
+      kind: 'manifest', share: 'sh1',
+      files: [{ relPath: 'gone.txt', gen: { mtimeMs: t - 1000, sid: 'BBBB2222' }, size: 1, pieceListHash: 'p' }],
+      tombstones: [],
+    });
+    expect(port.sent.filter((s) => s.message?.kind === 'want-list')).toHaveLength(0);
+  });
+
+  it('a winning peer tombstone removes the local file', () => {
+    const port = new FakePort();
+    port.peers.add('BBBB2222');
+    const e = new FilesEngine({ share: 'sh1', hooks: hooks(), port });
+    fs.writeFileSync(path.join(e.root, 'victim.txt'), 'bye');
+    e.scan();
+    expect(e.index.get('victim.txt')).toBeDefined();
+    e.onMessage('BBBB2222', {
+      kind: 'manifest', share: 'sh1', files: [],
+      tombstones: [{ relPath: 'victim.txt', gen: { mtimeMs: Date.now() + 5, sid: 'BBBB2222' }, by: 'BBBB2222' }],
+    });
+    expect(fs.existsSync(path.join(e.root, 'victim.txt'))).toBe(false);
+    expect(e.index.get('victim.txt')).toBeUndefined();
+  });
+
+  it.runIf(process.platform !== 'win32')('a symlinked parent cannot redirect an apply outside the root', () => {
+    const port = new FakePort();
+    port.peers.add('BBBB2222');
+    const e = new FilesEngine({ share: 'sh1', hooks: hooks(), port });
+    const outside = path.join(tmp, 'outside');
+    fs.mkdirSync(outside, { recursive: true });
+    fs.symlinkSync(outside, path.join(e.root, 'escape'));
+    const data = Buffer.from('payload');
+    const hash = sha256Hex(data);
+    e.store.put(hash, data);
+    e.onMessage('BBBB2222', {
+      kind: 'manifest', share: 'sh1',
+      files: [{ relPath: 'escape/pwn.txt', gen: { mtimeMs: Date.now(), sid: 'BBBB2222' }, size: data.length, pieceListHash: 'x' }],
+      tombstones: [],
+    });
+    e.onPieceList('BBBB2222', 'escape/pwn.txt', [hash]);
+    expect(fs.existsSync(path.join(outside, 'pwn.txt'))).toBe(false);
   });
 });

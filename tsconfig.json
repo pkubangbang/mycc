@@ -9,11 +9,10 @@
     "noUnusedParameters": true,
     "skipLibCheck": true,
     "outDir": "dist",
-    "rootDir": "src",
-    "declaration": true,
+        "declaration": true,
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "src/tests/**/*", "src/web/**/*"]
+  "include": ["src/**/*", "packages/*/src/**/*"],
+  "exclude": ["node_modules", "src/tests/**/*", "src/web/**/*", "packages/*/src/tests/**/*"]
 }
