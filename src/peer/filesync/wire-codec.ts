@@ -30,6 +30,7 @@ import {
 } from './frames.js';
 import {
   recordPeerShares, peerSidForSocket, findSocketBySid, partnersForShare,
+  challengePeerShares, confirmShareChallenges, answerShareChallenge,
   type SyncControlFrameShape,
 } from '../wire-registry.js';
 import type { SyncMessage, SyncDataMessage, PeerPort } from '@pkubangbang/filesync-manager';
@@ -72,6 +73,11 @@ export function unfoldControl(frame: SyncControlFrameShape): SyncControlFrame {
 export interface SyncDispatchTarget {
   onControlFrame(peer: string, frame: SyncControlFrame): void;
   onDataFrame(peer: string, frame: SyncDataFrame): void;
+  /** Share ids (LOCAL ids, never wire nonces) this instance binds — the set
+   *  the membership challenge is computed from. */
+  localShares(): string[];
+  /** Partners PROVEN for these local share ids: kick one immediate index
+   *  exchange per share (join latency, not correctness). */
   onPartnerShares(peer: string, shares: string[]): void;
 }
 
@@ -180,14 +186,49 @@ export function trySyncDataDispatch(target: SyncDispatchTarget | null, peer: str
 }
 
 /**
- * Announce-shares handling (R3): record the peer's membership THEN kick the
- * gossip hook (immediate index exchange for shared shares). Done once here;
- * both wire sites call it. `clearPeerShares` (teardown) deliberately does
- * NOT fire this hook — dropping membership is not a gossip event.
+ * Announce-shares handling (R3): record the peer's CLAIM, then run the
+ * challenge handshake. Nothing gossips here — a nonce proves nothing, so
+ * there is no partner to exchange an index with yet. Both wire sites call
+ * this; `clearPeerShares` (teardown) deliberately does NOT fire a hook —
+ * dropping membership is not a gossip event.
+ *
+ * Returns true when a challenge was sent (the peer announced a nonce we
+ * recognise). Membership — and the immediate index exchange — follows only
+ * when {@link handleShareProof} confirms the answers.
  */
-export function handlePeerShares(target: SyncDispatchTarget | null, sid: string, shares: string[] | undefined): void {
+export function handlePeerShares(target: SyncDispatchTarget | null, sid: string, shares: string[] | undefined): boolean {
   recordPeerShares(sid, shares);
-  target?.onPartnerShares(sid, shares ?? []);
+  if (!target || !shares?.length) return false;
+  // Only OUR bound ids are offered for challenge, and the nonce→id mapping
+  // stays in-process: the peer is asked to answer for nonces it published.
+  return challengePeerShares(sid, target.localShares());
+}
+
+/**
+ * A peer answered our challenge. Confirm the proofs, then — and only then —
+ * translate to OUR OWN bound share ids (the manager and the engines are keyed
+ * by share id, NOT by nonce) and kick one immediate index exchange per proven
+ * share. This is the P2 fix: the old code handed the raw nonces to
+ * `onPartnerShares`, whose lookup could never hit, so join latency rode the
+ * 30 s gossip tick.
+ */
+export function handleShareProof(
+  target: SyncDispatchTarget | null,
+  sid: string,
+  challenge: string,
+  proofs: Array<{ tag: string; proof: string }> | undefined,
+): string[] {
+  const proven = confirmShareChallenges(sid, challenge, proofs);
+  if (!target || !proven.length) return proven;
+  target.onPartnerShares(sid, proven);
+  return proven;
+}
+
+/** A peer challenged US: answer with proofs for the nonces we recognise. */
+export function handleShareChallenge(target: SyncDispatchTarget | null, sid: string, challenge: string, shares: string[] | undefined): void {
+  // The target only guarantees filesync is wired; the answer is computed from
+  // the host's own bound shares (wire hooks), so no engine access is needed.
+  if (target) answerShareChallenge(sid, challenge, shares);
 }
 
 /** Convenience: resolve the peer sid for a socket (re-exported so the wire

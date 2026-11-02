@@ -28,7 +28,7 @@
  */
 
 import type { WebSocket } from 'ws';
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 
 /** Wire-level close codes (plan §5 close-code registry).
  *  4000/4001 are TERMINAL for the reconnect loop — no re-dial. 401 is not a
@@ -146,8 +146,14 @@ const sidIndex = new Map<string, string>();
  * of a dual-duplex, wherever it was keyed.
  */
 const socketsBySid = new Map<string, WireSocketInfo[]>();
-/** Peer sid → announced filesync share set (membership gossip, filesync.md). */
+/** Peer sid → the nonces it ANNOUNCED (a claim — replayable, authorizes
+ *  nothing). Drives the challenge, never the partner set. */
 const peerShares = new Map<string, Set<string>>();
+/** Peer sid → the share ids it PROVED by answering our challenge. This map —
+ *  and only this map — decides filesync membership. */
+const peerShareConfirmed = new Map<string, Set<string>>();
+/** Peer sid → the challenge we issued and are waiting on (single-use). */
+const pendingChallenges = new Map<string, { challenge: string; at: number }>();
 /** Per-pair epoch counters — survive entry prune so a LATE dial completion
  *  checks against the LATEST epoch and aborts (no resurrection). */
 const epochByEndpoint = new Map<string, number>();
@@ -653,9 +659,42 @@ export interface AnnounceFrame {
   daemon?: boolean;
   /** Announcer's serving endpoint "host:port" when it runs a webui. */
   endpoint?: string;
-  /** Membership TAGS (sha256 of a share id, see shareTag) — deliberately not
-   *  the capability ids, which must not travel in a general announce. */
+  /** Membership NONCES for the shares this peer binds (sha256 of a share id,
+   *  see shareTag). A nonce is a CLAIM, never a credential: the peer must
+   *  answer a `share-challenge` with `share-proof` before it becomes a
+   *  partner (a static hash in an announce can be replayed by anyone). */
   shares?: string[];
+}
+
+/**
+ * filesync share membership handshake (P1, PR #38 review). The share id is a
+ * capability secret; a hash of it announced to every wire peer is observable
+ * and replayable, so possession must be PROVEN, not asserted:
+ *
+ *   A → B  announce{shares:[nonce(s)]}     nonces of A's bound shares
+ *   B → A  share-challenge{challenge, shares:[nonce]}   single-use 16B nonce
+ *   A → B  share-proof{challenge, proofs:[{tag, proof}]}  proof = H(share, challenge)
+ *
+ * B grants membership only when the proof matches what only a holder of that
+ * share id can compute, and only for the challenge B just issued — so neither
+ * the announce nor a recorded exchange can be replayed. Until a proof lands,
+ * the peer is not in `partnersForShare()`, so it never receives a manifest
+ * (which carries the raw share id) and cannot ask for pieces.
+ *
+ * `shares` on the challenge is a FILTER (the nonces we care about), not a
+ * secret: those nonces are already public in the other side's announce.
+ */
+export interface ShareChallengeFrame {
+  type: 'share-challenge';
+  challenge: string;
+  shares: string[];
+}
+
+/** A holder's answers to one challenge: one proof per announced nonce. */
+export interface ShareProofFrame {
+  type: 'share-proof';
+  challenge: string;
+  proofs: Array<{ tag: string; proof: string }>;
 }
 
 /** Agent-to-agent mail (either direction; receiver dedupes by id). */
@@ -678,7 +717,7 @@ export interface SyncControlFrameShape {
   [k: string]: unknown;
 }
 
-export type WireFrame = AnnounceFrame | MailFrame | SyncControlFrameShape;
+export type WireFrame = AnnounceFrame | MailFrame | ShareChallengeFrame | ShareProofFrame | SyncControlFrameShape;
 
 /** Wire frame sender helper (JSON + closed-socket guard). */
 export function sendFrame(ws: WebSocket, frame: WireFrame): boolean {
@@ -697,61 +736,173 @@ export function sendFrame(ws: WebSocket, frame: WireFrame): boolean {
  *  peer's wire is not open. Byte-aware guard (sendWireMail pattern) rejects
  *  an oversize frame BEFORE sending (1009 storm avoidance). */
 /**
- * The membership TAG a peer announces for a share — sha256("<share>:<pepper>")
- * truncated. The share id is a capability secret (possession = read-write
- * membership), so it must never travel in a general announce: any connected
- * peer would learn it and could claim membership of a share it was never
- * given. The tag proves "I was given this id" only to a peer that was given
- * the same id, and reveals nothing else — a peer cannot enumerate our shares,
- * and the tag is useless without the id.
+ * The membership nonce a peer announces for a share — a salted hash of the
+ * share id, used ONLY to find which of our shares a peer might share. It is
+ * NOT a credential and it authorizes NOTHING.
  *
- * The pepper is NOT a security boundary; it only domain-separates the tag.
+ * A hash in an announcement cannot prove possession: any peer that sees the
+ * nonce can echo it into its own announce (replay). So membership is decided
+ * by {@link confirmShareChallenges} — a challenge/response that only a peer
+ * holding the real share id can answer. The nonce merely makes that challenge
+ * addressable without sending the capability id itself.
  */
 export function shareTag(share: string): string {
   return createHash('sha256').update(`filesync-share:${share}`).digest('hex').slice(0, 16);
 }
 
-/** Announce tags for a set of share ids. */
+/** Announce nonces for a set of share ids. */
 export function shareTags(shares: string[]): string[] {
   return shares.map(shareTag);
 }
 
-/** All live peer sids whose announce carried the tag for `share` (filesync
- *  membership). Pairwise only — the partner set for one share's swarm. */
+/**
+ * The proof a holder of `share` can compute over `challenge`. Binding the
+ * share id AND the nonce means the answer is only useful for the challenge it
+ * was issued for: an observer that never held the id cannot produce it, and a
+ * peer that knows the id has nothing to prove.
+ */
+export function shareProof(share: string, challenge: string): string {
+  return createHash('sha256').update(`filesync-share-proof:${challenge}:${share}`).digest('hex');
+}
+
+/** Constant-time compare of two hex proofs (both are hashes, so length is
+ *  fixed; a length mismatch still returns false without throwing). */
+export function proofMatches(a: string, b: string): boolean {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/**
+ * Record what a peer ANNOUNCED. This is a claim, not membership: a nonce is
+ * replayable, so nothing here grants access to a share. Membership is set
+ * only by {@link confirmShareChallenges} answering the challenge.
+ */
+export function recordPeerShares(sid: string, tags: string[] | undefined): void {
+  if (!tags?.length) {
+    peerShares.delete(sid);
+    peerShareConfirmed.delete(sid);
+    return;
+  }
+  peerShares.set(sid, new Set(tags));
+  // A fresh announce restarts verification for this peer: whatever we proved
+  // before was for a previous announce (possibly a previous socket).
+  peerShareConfirmed.delete(sid);
+}
+
+/**
+ * Ask a peer to prove it holds the shares whose nonces it announced. Only our
+ * OWN bound share ids are ever put in the challenge — a peer cannot make us
+ * challenge it for a share we do not hold — and the nonce→id mapping never
+ * leaves this process.
+ *
+ * Returns false when the peer announced nothing we recognise (no challenge
+ * is needed, and none is sent).
+ */
+export function challengePeerShares(sid: string, ourShares: string[]): boolean {
+  const tags = peerShares.get(sid);
+  if (!tags?.size || !ourShares.length) return false;
+  peerShareConfirmed.delete(sid);
+  const overlap = ourShares.map(shareTag).filter((t) => tags.has(t));
+  if (!overlap.length) { pendingChallenges.delete(sid); return false; }
+  const challenge = randomBytes(16).toString('hex');
+  pendingChallenges.set(sid, { challenge, at: Date.now() });
+  const socket = findSocketBySid(sid);
+  if (!socket) return false;
+  sendFrame(socket, { type: 'share-challenge', challenge, shares: overlap });
+  return true;
+}
+
+/**
+ * Answer a challenge from `peerSid`: for each nonce, prove possession of every
+ * LOCAL share that hashes to it. A peer can only challenge us for nonces WE
+ * announced, so the mapping is a lookup over our own bound ids — an
+ * unrecognised nonce is skipped (we hold nothing it could refer to).
+ */
+export function answerShareChallenge(peerSid: string, challenge: string, nonces: string[] | undefined): boolean {
+  const hooks = getWireHooks();
+  const socket = findSocketBySid(peerSid);
+  if (!socket || typeof challenge !== 'string' || !challenge) return false;
+  const ours = hooks?.getShares?.() ?? [];
+  const wanted = new Set(nonces ?? []);
+  const proofs: Array<{ tag: string; proof: string }> = [];
+  for (const share of ours) {
+    const tag = shareTag(share);
+    if (wanted.size && !wanted.has(tag)) continue;
+    proofs.push({ tag, proof: shareProof(share, challenge) });
+  }
+  if (!proofs.length) return false;
+  return sendFrame(socket, { type: 'share-proof', challenge, proofs });
+}
+
+/**
+ * Verify a peer's answers to OUR challenge. Membership is granted ONLY for
+ * shares whose proof matches the one only a holder of that id can compute —
+ * and only for the challenge we just issued (a stale or guessed challenge is
+ * rejected, so a recorded exchange cannot be replayed either).
+ *
+ * Returns the share ids the peer PROVED, in our own id space.
+ */
+export function confirmShareChallenges(
+  peerSid: string,
+  challenge: string,
+  proofs: Array<{ tag?: unknown; proof?: unknown }> | undefined,
+): string[] {
+  const pending = pendingChallenges.get(peerSid);
+  if (!pending || pending.challenge !== challenge) {
+    // Not our challenge (stale, replayed, or unsolicited) — grant nothing.
+    return [];
+  }
+  pendingChallenges.delete(peerSid);
+  const ours = getWireHooks()?.getShares?.() ?? [];
+  const confirmed = new Set<string>();
+  for (const p of proofs ?? []) {
+    if (typeof p?.tag !== 'string' || typeof p?.proof !== 'string') continue;
+    for (const share of ours) {
+      if (shareTag(share) !== p.tag) continue;
+      if (proofMatches(shareProof(share, challenge), p.proof)) confirmed.add(share);
+    }
+  }
+  const set = peerShareConfirmed.get(peerSid) ?? new Set<string>();
+  for (const s of confirmed) set.add(s);
+  peerShareConfirmed.set(peerSid, set);
+  return [...confirmed];
+}
+
+/** All live peer sids that PROVED membership of `share` (filesync partner
+ *  set). An announced nonce alone never puts a peer here. */
 export function partnersForShare(share: string): string[] {
-  const tag = shareTag(share);
   const out: string[] = [];
-  for (const [sid, tags] of peerShares) {
-    if (tags.has(tag) && findSocketBySid(sid)) out.push(sid);
+  for (const [sid, shares] of peerShareConfirmed) {
+    if (shares.has(share) && findSocketBySid(sid)) out.push(sid);
   }
   return out;
 }
 
-/** Record a peer's announced share TAG set (membership gossip — tags, never
- *  the capability ids themselves). */
-export function recordPeerShares(sid: string, tags: string[] | undefined): void {
-  if (!tags?.length) { peerShares.delete(sid); return; }
-  peerShares.set(sid, new Set(tags));
-}
-
-/** The membership TAGS a peer announced (for `peer_list` display). Tags are
- *  opaque: they show THAT a peer carries shares, never which capabilities. */
+/** The share ids a peer PROVED it holds (empty until a challenge is answered).
+ *  For `peer_list` display: ids we already hold, so naming them leaks
+ *  nothing. */
 export function peerSharesOf(sid: string): string[] {
-  return [...(peerShares.get(sid) ?? [])];
+  return [...(peerShareConfirmed.get(sid) ?? [])];
 }
 
-/** How many of OUR bound shares a peer's announced tags match — the useful
- *  thing to display (the tags themselves are meaningless to a reader). */
+/** Our bound shares that a peer PROVED it holds — the display-worthy overlap.
+ *  Unproven claims are excluded: showing them would imply a partnership that
+ *  does not exist. */
 export function overlappingShares(peerSid: string, ourShares: string[]): string[] {
-  const tags = peerShares.get(peerSid);
-  if (!tags?.size) return [];
-  return ourShares.filter((s) => tags.has(shareTag(s)));
+  const proven = peerShareConfirmed.get(peerSid);
+  if (!proven?.size) return [];
+  return ourShares.filter((s) => proven.has(s));
 }
 
-/** Drop a peer's membership on teardown. Does NOT fire the gossip hook —
- *  dropping membership is not a gossip event (filesync wire-codec R3). */
+/** Drop a peer's membership (and its unproven claims) on teardown. Does NOT
+ *  fire the gossip hook — dropping membership is not a gossip event
+ *  (filesync wire-codec R3). */
 export function clearPeerShares(sid: string): void {
   peerShares.delete(sid);
+  peerShareConfirmed.delete(sid);
+  pendingChallenges.delete(sid);
 }
 
 /** The live open socket for a sid (any direction). Exported for the

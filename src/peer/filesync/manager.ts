@@ -117,15 +117,20 @@ export class FilesyncManager {
     catch (err) { this.hooks.verbose('filesync', `dropped data from ${peer}: ${String(err)}`); }
   }
 
-  /** A partner announced `shares` — membership gossip drives an immediate
-   *  index exchange (join latency) with every partner carrying a bound
-   *  share. */
+  /** A partner PROVED membership of these share ids — membership gossip
+   *  drives an immediate index exchange (join latency) with every partner
+   *  carrying a bound share. Ids are LOCAL ids (the wire carries nonces, and
+   *  the codec translates them); an id we do not bind is ignored. */
   onPartnerShares(_peer: string, shares: string[]): void {
     for (const share of shares) {
       const e = this.engines.get(share);
       if (e) e.gossip();
     }
   }
+
+  /** Share ids this instance binds — the membership challenge is computed
+   *  from these, so nothing else can be claimed on our behalf. */
+  localShares(): string[] { return this.shares(); }
 }
 
 /**

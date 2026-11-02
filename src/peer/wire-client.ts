@@ -56,7 +56,7 @@ import {
   type WireFrame,
 } from './wire-registry.js';
 import { readIdentityMap } from './identity.js';
-import { trySyncDispatch, trySyncDataDispatch, handlePeerShares } from './filesync/wire-codec.js';
+import { trySyncDispatch, trySyncDataDispatch, handlePeerShares, handleShareChallenge, handleShareProof } from './filesync/wire-codec.js';
 import { isWireDebugLocal } from '../config.js';
 
 /** Ping cadence + missed-pong tolerance (mirror of the acceptor's).
@@ -374,6 +374,14 @@ function dialSocket(endpoint: string, dialBase: string, epoch0: number, cb: Dial
       return;
     }
     if (trySyncDispatch(target, peer, frame)) return;
+    if (frame.type === 'share-challenge') {
+      if (peer) handleShareChallenge(target, peer, frame.challenge, frame.shares);
+      return;
+    }
+    if (frame.type === 'share-proof') {
+      if (peer) handleShareProof(target, peer, frame.challenge, frame.proofs);
+      return;
+    }
     verbose(`dropping unknown wire frame type from ${endpoint}`);
   });
 

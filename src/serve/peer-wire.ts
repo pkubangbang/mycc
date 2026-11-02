@@ -75,7 +75,7 @@ import { isWireDebugLocal } from '../config.js';
 // The 401 handshake code is shared with the dialer so a refused upgrade and
 // the message the operator sees agree on the number (row peer-004).
 import { WIRE_CLOSE_UNAUTHORIZED, peerSidForSocket, shareTags } from '../peer/wire-registry.js';
-import { trySyncDispatch, trySyncDataDispatch, handlePeerShares } from '../peer/filesync/wire-codec.js';
+import { trySyncDispatch, trySyncDataDispatch, handlePeerShares, handleShareChallenge, handleShareProof } from '../peer/filesync/wire-codec.js';
 
 /** Dedicated maxPayload for peer mail frames — decoupled from the webui
  *  upload limit (getMaxUploadMb, default 50MB). Peer mail is agent-to-agent
@@ -254,6 +254,14 @@ export class PeerWireAcceptor {
     const target = hooks?.getSyncDispatchTarget?.() ?? null;
     const peer = peerSidForSocket(ws);
     if (trySyncDispatch(target, peer, frame)) return;
+    if (frame.type === 'share-challenge') {
+      handleShareChallenge(target, peer ?? peerSidForSocket(ws) ?? '', frame.challenge, frame.shares);
+      return;
+    }
+    if (frame.type === 'share-proof') {
+      handleShareProof(target, peer ?? peerSidForSocket(ws) ?? '', frame.challenge, frame.proofs);
+      return;
+    }
     hooks?.verbose('wire', `dropping unknown wire frame type: ${(frame as { type?: string }).type}`);
   }
 
