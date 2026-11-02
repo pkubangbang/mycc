@@ -37,10 +37,12 @@
     "test:slow": "cross-env RUN_SLOW=1 vitest run"
   },
   "dependencies": {
-    "@pkubangbang/crossroad-detector": "^0.1.3",
     "@lancedb/lancedb": "^0.27.2",
+    "@pkubangbang/crossroad-detector": "^0.1.3",
+    "@pkubangbang/filesync-manager": "file:packages/filesync-manager",
     "@vitejs/plugin-vue": "^6.0.9",
     "chalk": "^6.0.0",
+    "chokidar": "^6.0.0",
     "croner": "^10.0.1",
     "express": "^5.2.1",
     "gray-matter": "^4.0.3",

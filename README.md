@@ -90,6 +90,8 @@ mycc provides several `--debug-*` flags for investigating specific subsystems:
 | `--debug-ansi` | **Force Plain Output** — force the plain (no-TTY) output path even inside a real terminal: the spinner, progress bars and colour are suppressed, exactly as if stdout were piped or redirected. Use it to reproduce/verify the piped-output behaviour interactively. Equivalent to setting `MYCC_DEBUG_ANSI=true`. |
 | `--debug-autofly` | **Autofly Debug** — arms the autofly gate at the PROMPT stage so auto mode engages once the per-turn LLM-stage streak meets the threshold (`--autofly=N`, default 3), without requiring an active peer channel. Useful for testing auto-mode engagement in isolation. |
 | `--debug-wire` | **Wire Debug** — test-only escape hatch (`MYCC_WIRE_ALLOW_LOCAL`): allows `peer_connect` to a same-store / self peer (same-machine smoke test). Not for production. |
+| `--debug-filesync` | **Filesync Frame Audit** — log every `sync-*` frame (both directions) to `.mycc/filesync/.sync/<id>/frames-*.jsonl` for auditing shared-folder sync (data frames logged as hash+bytes, not raw payload). `MYCC_DEBUG_FILESYNC=true` equivalent. |
+| `--share <id>` | **Filesync Share** — bind a shared folder `.mycc/filesync/<id>/`, synced automatically with any wired peer announcing the same id (repeatable; `MYCC_SHARES` comma-list keeps the secret out of `ps`). All members read-write. See `docs/peers/filesync.md`. |
 
 Combine with `-v` (verbose) for maximum detail:
 ```bash

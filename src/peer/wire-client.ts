@@ -45,6 +45,8 @@ import {
   getEpoch,
   seenMailIdRegister,
   getWireHooks,
+  peerSidForSocket,
+  shareTags,
   sendFrame,
   WIRE_CLOSE_SUPERSEDED,
   WIRE_CLOSE_BYE,
@@ -54,6 +56,7 @@ import {
   type WireFrame,
 } from './wire-registry.js';
 import { readIdentityMap } from './identity.js';
+import { trySyncDispatch, trySyncDataDispatch, handlePeerShares, handleShareChallenge, handleShareProof } from './filesync/wire-codec.js';
 import { isWireDebugLocal } from '../config.js';
 
 /** Ping cadence + missed-pong tolerance (mirror of the acceptor's).
@@ -129,6 +132,7 @@ function ourAnnounce(): AnnounceFrame {
     ...(hooks.getRole() ? { role: hooks.getRole() } : {}),
     ...(hooks.getDaemon() ? { daemon: true } : {}),
     ...(hooks.getServingEndpoint() ? { endpoint: hooks.getServingEndpoint()! } : {}),
+    ...(hooks.getShares ? { shares: shareTags(hooks.getShares()) } : {}),
   };
 }
 
@@ -346,8 +350,14 @@ function dialSocket(endpoint: string, dialBase: string, epoch0: number, cb: Dial
     replyTimer.unref?.();
   });
 
-  ws.on('message', (data) => {
+  ws.on('message', (data, isBinary) => {
     if (ws.readyState !== ws.OPEN) return;
+    const peer = peerSidForSocket(ws);
+    const target = getWireHooks()?.getSyncDispatchTarget?.() ?? null;
+    if (isBinary) {
+      trySyncDataDispatch(target, peer, data as Buffer);
+      return;
+    }
     let frame: WireFrame;
     try {
       frame = JSON.parse(data.toString()) as WireFrame;
@@ -361,6 +371,15 @@ function dialSocket(endpoint: string, dialBase: string, epoch0: number, cb: Dial
     }
     if (frame.type === 'mail') {
       onInboundMail(frame);
+      return;
+    }
+    if (trySyncDispatch(target, peer, frame)) return;
+    if (frame.type === 'share-challenge') {
+      if (peer) handleShareChallenge(target, peer, frame.challenge, frame.shares);
+      return;
+    }
+    if (frame.type === 'share-proof') {
+      if (peer) handleShareProof(target, peer, frame.challenge, frame.proofs);
       return;
     }
     verbose(`dropping unknown wire frame type from ${endpoint}`);
@@ -535,6 +554,9 @@ function onAnnounceReply(
     initiatorSid: selfSid, // the dialer's sid — the convergence election input
     meta: { workDir: frame.workDir, role: frame.role, daemon: frame.daemon },
   });
+  // filesync membership gossip (filesync.md §3): record the peer's shares
+  // and kick an index exchange for any we also bind.
+  handlePeerShares(getWireHooks()?.getSyncDispatchTarget?.() ?? null, frame.sessionId, frame.shares);
 
   clearReplyTimer();
 

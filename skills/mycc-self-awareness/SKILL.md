@@ -40,6 +40,11 @@ keywords: [mycc, runtime, environment, tutor, glossary, letterbox, webui, serve,
 >   with cron-scheduled self-nudge mail. Read when the user says "design a
 >   service that...", "run on a schedule/cron", "run in the background /
 >   headless / as a daemon".
+> - `worked-example-simulation-test.md` — A concrete worked example: how
+>   peers + the peer wire (`--debug-wire`) + daemons + WebUI + push mail
+>   compose into a local two-instance simulation test. Read when the user
+>   asks "how do I test something that spans two mycc instances?" or wants to
+>   see the collaboration primitives used together in practice.
 
 This skill exists for one situation: **you are running mycc inside some
 other project** (not the mycc codebase), and the user starts asking about
@@ -93,6 +98,7 @@ plain-language summary; the sibling file has the full detail where noted.
 |---------|---------------------|--------|
 | **teammate / team** | A child-process agent spawned by the lead to work in parallel; shares the lead's session; cheap to coordinate. In-process. | `coordination` skill |
 | **peer / channel** | A *separate* mycc instance (own process/cwd), discovered via `peers`; a channel is a file-pair a mediator writes to wire instances together. Cross-instance. | `mediator` skill |
+| **two-peer simulation test** | A local integration test that boots **two real mycc daemons** (`--daemon --serve <port> --debug-wire`), wires them via `peer_connect`, and asserts on **real files** — how to validate a feature that spans two instances without a real remote. | `worked-example-simulation-test.md` |
 | **communication model** | Mail is push-based: `mail_to` appends one line to the recipient's mailbox; the recipient's next COLLECT drains it and injects it as a `[MAIL]` note. Fire-and-forget; never poll. | `mediator` skill |
 | **worktree** | A parallel checkout of the same git repo on a new branch. No dedicated tools — managed with plain `bash` git worktree commands; spawn a teammate directly inside one via `tm_create`'s `cwd` parameter (worktree dir name must equal the teammate name). | `worktree` skill |
 | **service / `--daemon`** | A skill that declares `service: true` in frontmatter and runs as a **long-lived headless background process** via `mycc --daemon <skill>` (auto mode on, no terminal). Cron-scheduled if it also declares `service_cron`. | `daemon-services.md` |

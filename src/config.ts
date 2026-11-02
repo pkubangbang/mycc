@@ -579,7 +579,33 @@ export function getMaxUploadMb(): number {
  */
 export function isWireDebugLocal(): boolean {
   const v = process.env.MYCC_WIRE_ALLOW_LOCAL;
-  return v === '1' || v === 'true';
+  return v === 'true' || v === '1';
+}
+
+/**
+ * Bound filesync share ids from config (filesync.md §1). Sources: repeated
+ * `--share <id>` flags and `MYCC_SHARES` (comma-separated) — the env form
+ * keeps the capability secret out of `ps`/identity.json args. `--share` wins
+ * when both are present (operator override).
+ */
+export function getFilesyncShareIds(): string[] {
+  const fromEnv = (process.env.MYCC_SHARES ?? '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  const args = process.argv;
+  const fromFlags: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--share' && args[i + 1]) fromFlags.push(args[i + 1]!.trim());
+    else if (args[i]?.startsWith('--share=')) fromFlags.push(args[i]!.slice('--share='.length).trim());
+  }
+  const all = [...fromFlags, ...fromEnv];
+  return [...new Set(all)].filter((id) => /^[A-Za-z0-9_-]{1,64}$/.test(id));
+}
+
+/** `--debug-filesync` / `MYCC_DEBUG_FILESYNC` — log every sync frame to
+ *  `.mycc/filesync/.sync/<id>/frames-*.jsonl` for audit (filesync.md §7). */
+export function isDebugFilesync(): boolean {
+  const v = process.env.MYCC_DEBUG_FILESYNC;
+  return v === 'true' || v === '1' || process.argv.includes('--debug-filesync');
 }
 
 /**

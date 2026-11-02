@@ -12,6 +12,9 @@ import { TeamManager } from './parent/team.js';
 import { WikiManager } from './parent/wiki.js';
 import { PeerManager } from '../peer/peer.js';
 import { setWireHooks, type WireHooks } from '../peer/wire-registry.js';
+import { getFilesyncManager, FilesyncManager, setFilesyncManager } from '../peer/filesync/manager.js';
+import { wirePort } from '../peer/filesync/wire-codec.js';
+import { getFilesyncShareIds, isDebugFilesync } from '../config.js';
 import { tryGetServeHub } from '../serve/serve-registry.js';
 import { detectLanIpv4 } from '../serve/serve-utils.js';
 import { agentIO } from '../loop/agent-io.js';
@@ -42,6 +45,8 @@ export class ParentContext implements AgentContext {
   /** Info-symmetry reminder todo refs, deduped by wire endpoint key
    *  (docs/peers/remote-peer-protocol.md §2 step 3): endpoint → {id, hash}. */
   private wireRemoteTodoIds: Map<string, { id: number; hash: string }>;
+  /** share id → pinned share todo (filesync populator). */
+  private filesyncTodoIds: Map<string, { id: number; hash: string }>;
 
   constructor(sessionFilePath: string) {
     this.coreModule = new Core(); // Uses process.cwd() by default
@@ -74,11 +79,28 @@ export class ParentContext implements AgentContext {
     // interface — src/serve never imports ctx, and src/peer stays
     // module-level (no context imports), which keeps the import graph acyclic.
     this.wireRemoteTodoIds = new Map();
+    this.filesyncTodoIds = new Map();
     const wireHooks: WireHooks = {
       getSessionId: () => peerSessionId,
       getWorkDir: () => peerWorkDir,
       getDaemon: () => shouldDaemon(),
       getRole: () => getDaemonSkill(),
+      // Bound filesync shares for announce.shares membership gossip. The
+      // manager is the source of truth (setFilesyncManager at boot); falls
+      // back to the configured share ids when the manager is not yet up.
+      getShares: () => {
+        try {
+          return getFilesyncManager()?.shares() ?? getFilesyncShareIds();
+        } catch { return []; }
+      },
+      // filesync dispatch target (R5, architect review): the wire-codec
+      // dispatch helpers (trySyncDispatch/trySyncDataDispatch/handlePeerShares)
+      // call into the engine through this. Lazy closure — resolves the
+      // manager at call time (the getShares precedent), so boot order never
+      // matters and the wire site never names manager methods.
+      getSyncDispatchTarget: () => {
+        try { return getFilesyncManager(); } catch { return null; }
+      },
       // Our serving endpoint for the announce frame: the webui's bound
       // host (LAN IP when bound to all interfaces) + port; null when the
       // serve stack is down (a NAT'd/non-serving instance announces no
@@ -165,6 +187,74 @@ export class ParentContext implements AgentContext {
       },
     };
     setWireHooks(wireHooks);
+
+    // filesync boot registration (filesync.md §1): create the share manager
+    // and bind every configured share (--share flags / MYCC_SHARES). The
+    // PeerPort routes through the wire registry — pairwise, no relay. The
+    // manager is a module singleton the wire-plane dispatch (wire-client /
+    // peer-wire) reaches via getFilesyncManager().
+    // The host's PeerPort (engine message → wire frame) lives in wire-codec.
+    const filesyncMgr = new FilesyncManager({
+      appendLocalMail: (from, title, content) => { try { this.mailModule.appendMail(from, title, content); } catch { /* best-effort */ } },
+      verbose: (tool, message) => { try { agentIO.verbose(tool, message); } catch { /* ignore */ } },
+      getSelfSid: () => peerSessionId,
+      getWorkDir: () => peerWorkDir,
+      debugFilesync: () => isDebugFilesync(),
+      // POPULATOR: a bound share must be VISIBLE to the LLM. Without this the
+      // engine syncs a folder the model has never been told about, so a file
+      // that lands there is never read. The pinned todo states the folder and
+      // how files arrive; it is never auto-cleared (pinned) so it survives
+      // auto-compact, and `--unbind` closes it.
+      pinShareTodo: (share, rootDir) => {
+        const existing = this.filesyncTodoIds.get(share);
+        if (existing) return;
+        const name =
+          `filesync share ${share} — syncs with wired peers. Root: ${rootDir}. ` +
+          'Files from partners land here; check it when told of a change.';
+        try {
+          const created = this.todoModule.createTodo(name, 'filesync — pinned share reminder');
+          const pinned = this.todoModule.pinTodo(created.id, created.hash, true);
+          const item = pinned ?? created;
+          this.filesyncTodoIds.set(share, { id: item.id, hash: item.hash });
+        } catch { /* best-effort */ }
+      },
+      unpinShareTodo: (share) => {
+        const existing = this.filesyncTodoIds.get(share);
+        if (!existing) return;
+        try { this.todoModule.updateTodo(existing.id, existing.hash, `filesync share ${share} — unbound`, true, 'unbind'); } catch { /* best-effort */ }
+        this.filesyncTodoIds.delete(share);
+      },
+      // The only sync traffic that reaches the chat: one note per burst, and
+      // it NAMES the changed files (a bare "something changed" forces the
+      // agent to list and diff the whole folder to find out what).
+      notifyShareChange: (share, rootDir, changes) => {
+        try {
+          this.mailModule.appendMail(
+            'filesync',
+            `[Note] you have new file(s) in filesync share "${share}" — check ${rootDir}`,
+            `${changes.length} change(s) synced in share "${share}":\n${changes.map((c) => `  ${c}`).join('\n')}` +
+            `\n\nRead them under ${rootDir}. Files you add there sync to peers; ` +
+            'deleting one deletes it for them too.',
+          );
+        } catch { /* best-effort */ }
+      },
+    }, wirePort);
+    setFilesyncManager(filesyncMgr);
+
+    // A share that fails to bind must SAY SO: the old code had no catch at all
+    // here, so a throw escaped the boot sequence (or, once swallowed, left the
+    // manager with no engines — `--share` looked accepted while nothing
+    // synced). Per-share catch + an always-visible summary line.
+    for (const share of getFilesyncShareIds()) {
+      try { filesyncMgr.bind(share); } catch (err) {
+        agentIO.verbose('filesync', `could not bind share ${share}: ${String(err)}`);
+      }
+    }
+    const configured = getFilesyncShareIds();
+    const unbound = configured.filter((s) => !filesyncMgr.shares().includes(s));
+    if (unbound.length) {
+      agentIO.verbose('filesync', `shares configured but NOT bound: ${unbound.join(', ')} — check the root/state paths`);
+    }
   }
 
   // Getters for each module
