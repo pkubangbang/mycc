@@ -48,9 +48,11 @@ export const WATCH_DEBOUNCE_MS = 300;
 export const SKEW_DEADLINE_MS = 10_000;
 export const REQUEST_WINDOW = 8;
 /** In-flight fetch entries older than this are dropped on the gossip tick.
- *  Sized well above the wire's liveness window (mycc: 30 s ping × 3 misses
- *  ≈ 90 s) so a slow-but-alive peer is never pruned mid-transfer. */
-export const PENDING_TTL_MS = 3 * GOSSIP_MS;
+ *  Strictly ABOVE the wire's liveness window (mycc: 30 s ping × 3 misses
+ *  ≈ 90 s) so a slow-but-alive peer is never pruned at the same instant its
+ *  socket is still considered alive; 4 × 30 s = 120 s leaves one tick of
+ *  margin. */
+export const PENDING_TTL_MS = 4 * GOSSIP_MS;
 /** Hard bound on in-flight fetches (each may hold a piece list). */
 export const MAX_PENDING_FILES = 256;
 
@@ -258,16 +260,30 @@ export class FilesEngine {
       const entry = this.index.entries.get(relPath)!;
       // ONE generation for both the local tombstone and the peer notice, so
       // every member compares the same delete against later edits.
-      const gen: FileGen = { mtimeMs: entry.gen.mtimeMs + 1, sid: this.hooks.getSelfSid() };
+      // Derive the delete gen from the moment of deletion as well as the
+      // entry gen: a timestamp-preserving restore (tar, `cp -p`, git
+      // checkout) carries an OLD mtime, so `entry.gen.mtimeMs + 1` alone
+      // would leave the restored file permanently behind its own tombstone.
+      const gen: FileGen = {
+        mtimeMs: Math.max(entry.gen.mtimeMs + 1, Date.now()),
+        sid: this.hooks.getSelfSid(),
+      };
       this.index.tombstone({ relPath, gen, by: this.hooks.getSelfSid() });
       this.broadcast({ kind: 'deletion', share: this.share, relPath, gen });
     }
     this.index.expireResolved((c) => fs.existsSync(this.conflictPath(c)));
-    // A tombstone that was never unlinked locally (peer delete) is applied here.
+    // A tombstone that was never unlinked locally (peer delete) is applied
+    // here — but only when the local file has not been edited since the
+    // delete arrived. A newer local edit wins (it will be gossiped as a
+    // resurrection attempt and re-checked by the receiver).
     for (const t of [...this.index.tombstones.values()]) {
       if (t.by === this.hooks.getSelfSid()) continue;
       if (!this.index.entries.has(t.relPath)) continue;
-      try { fs.unlinkSync(assertConfined(this.root, t.relPath, { parentExists: true })); } catch { /* absent */ }
+      try {
+        const abs = assertConfined(this.root, t.relPath, { parentExists: true });
+        if (fs.statSync(abs).mtimeMs > t.gen.mtimeMs) continue; // newer local edit — keep it
+        fs.unlinkSync(abs);
+      } catch { /* absent */ }
       this.index.entries.delete(t.relPath);
       this.index.persist();
     }
@@ -310,9 +326,19 @@ export class FilesEngine {
     for (const p of pieces) this.store.put(p.hash, p.data);
     const plh = pieceListHash(pieces);
     if (prev && prev.pieceListHash === plh) return;
+    // A tombstoned path may only come back with a gen that BEATS the delete
+    // (a genuinely newer edit). A restore that carries an older mtime is
+    // shadowed by the tombstone: we must not advertise it, or every peer
+    // holding the delete unlinks it again and the update is lost silently.
+    const tomb = this.index.tombstones.get(relPath);
+    const newGen: FileGen = { mtimeMs: st.mtimeMs, sid: this.hooks.getSelfSid() };
+    if (tomb && compareGen(newGen, tomb.gen) <= 0) {
+      this.hooks.verbose('filesync', `restore of ${relPath} is older than its delete; not advertised`);
+      return;
+    }
     this.index.set({
       relPath,
-      gen: { mtimeMs: st.mtimeMs, sid: this.hooks.getSelfSid() },
+      gen: newGen,
       size: st.size,
       pieceListHash: plh,
       pieceHashes: pieces.map((p) => p.hash),
@@ -538,9 +564,15 @@ export class FilesEngine {
     }
     let abs: string;
     try {
-      // Parent must already exist for the realpath check to be meaningful;
-      // create it first, then re-check containment on the REAL path.
-      fs.mkdirSync(path.dirname(path.resolve(this.root, entry.relPath)), { recursive: true });
+      // Containment FIRST, on the paths that already exist: the deepest
+      // existing ancestor must really live inside the root. Only then create
+      // the missing directories — otherwise `mkdir -p` would happily create
+      // empty directories outside the share through a symlinked parent
+      // before the check ever ran.
+      abs = assertConfined(this.root, entry.relPath, { parentExists: false });
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      // Re-check on the now-complete REAL path (the mkdir may have raced a
+      // symlink into place between the two calls).
       abs = assertConfined(this.root, entry.relPath, { parentExists: true });
     } catch (err) {
       this.hooks.verbose('filesync', `apply refused for ${entry.relPath}: ${String(err)}`);

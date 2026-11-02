@@ -83,20 +83,24 @@ export interface SyncDispatchTarget {
  * speaks `type:'sync-*'`. This is the ONLY place the two vocabularies meet,
  * so the package stays free of wire verbs and the wire format stays stable.
  */
-export function messageToControl(msg: SyncMessage): Record<string, unknown> & { type: string } {
+export function messageToControl(msg: SyncMessage): Record<string, unknown> {
+  // Returns the ENGINE-side payload (`t` + fields) — exactly ONE fold happens,
+  // in sendSyncControl. Returning an already-wire-shaped `type` object here
+  // would be folded a second time (t undefined → 'err'), which silently
+  // rewrote every manifest into `sync-err` while keeping the field payload.
   switch (msg.kind) {
     case 'manifest':
-      return { type: 'sync-index', share: msg.share, entries: msg.files, tombstones: msg.tombstones, conflicts: [] };
+      return { t: 'index', share: msg.share, entries: msg.files, tombstones: msg.tombstones, conflicts: [] };
     case 'want-list':
-      return { type: 'sync-req', share: msg.share, file: msg.relPath, want: 'pieces' };
+      return { t: 'req', share: msg.share, file: msg.relPath, want: 'pieces' };
     case 'piece-list':
-      return { type: 'sync-pieces', share: msg.share, file: msg.relPath, pieceHashes: msg.pieceHashes };
+      return { t: 'pieces', share: msg.share, file: msg.relPath, pieceHashes: msg.pieceHashes };
     case 'want-pieces':
-      return { type: 'sync-req', share: msg.share, pieceHashes: msg.pieceHashes };
+      return { t: 'req', share: msg.share, pieceHashes: msg.pieceHashes };
     case 'deletion':
-      return { type: 'sync-del', share: msg.share, relPath: msg.relPath, gen: msg.gen };
+      return { t: 'del', share: msg.share, relPath: msg.relPath, gen: msg.gen };
     case 'error':
-      return { type: 'sync-err', share: msg.share, reason: msg.reason };
+      return { t: 'err', share: msg.share, reason: msg.reason };
   }
 }
 
@@ -136,7 +140,10 @@ export function dataToMessage(df: SyncDataFrame): SyncDataMessage {
  */
 export const wirePort: PeerPort = {
   sendMessage(peer: string, msg: SyncMessage): boolean {
-    return sendSyncControl(peer, messageToControl(msg) as unknown as Record<string, unknown>);
+    // Exactly one fold, in sendSyncControl (P3 from review: the old double
+    // fold was only idempotent by accident of key order — and here it was
+    // not idempotent at all).
+    return sendSyncControl(peer, messageToControl(msg));
   },
   sendData(peer: string, msg: SyncDataMessage): boolean {
     return sendSyncData(peer, encodeDataFrame(msg.share, msg.pieceHash, msg.data));
@@ -188,9 +195,14 @@ export type { WebSocket };
  * sending (1009 storm avoidance).
  */
 export function sendSyncControl(targetSid: string, payload: Record<string, unknown>): boolean {
+  return sendFoldedControl(targetSid, foldControl(payload));
+}
+
+/** Send an ALREADY-folded wire frame (no second fold). */
+export function sendFoldedControl(targetSid: string, wireFrame: Record<string, unknown>): boolean {
   const socket = findLiveSocket(targetSid);
   if (!socket) return false;
-  const frame = JSON.stringify(foldControl(payload));
+  const frame = JSON.stringify(wireFrame);
   if (Buffer.byteLength(frame) > WIRE_MAX_PAYLOAD_BYTES) return false;
   try { socket.send(frame); return true; } catch { return false; }
 }

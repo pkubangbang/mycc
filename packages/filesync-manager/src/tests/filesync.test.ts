@@ -223,4 +223,70 @@ describe('engine sync + security', () => {
     e.onPieceList('BBBB2222', 'escape/pwn.txt', [hash]);
     expect(fs.existsSync(path.join(outside, 'pwn.txt'))).toBe(false);
   });
+
+  // Review finding P2-1 (gate 1): a timestamp-preserving restore must not be
+  // advertised behind its own tombstone — a peer holding the delete would
+  // unlink it again and the update would be lost silently.
+  it('a timestamp-preserving restore does not resurrect behind a newer delete', () => {
+    const port = new FakePort();
+    port.peers.add('BBBB2222');
+    const e = new FilesEngine({ share: 'sh1', hooks: hooks(), port });
+    const abs = path.join(e.root, 'restored.txt');
+    const old = new Date('2020-01-01T00:00:00Z');
+    fs.writeFileSync(abs, 'v1');
+    fs.utimesSync(abs, old, old);
+    e.scan();
+    expect(e.index.get('restored.txt')).toBeDefined();
+    // Local delete → tombstone gen is derived from NOW, not from the stale mtime.
+    fs.unlinkSync(abs);
+    e.scan();
+    expect(e.index.tombstones.get('restored.txt')).toBeDefined();
+    // A restore that preserves the ORIGINAL (old) mtime.
+    fs.writeFileSync(abs, 'v2');
+    fs.utimesSync(abs, old, old);
+    e.scan();
+    expect(e.index.get('restored.txt')).toBeUndefined(); // not re-advertised
+    expect(e.index.tombstones.get('restored.txt')).toBeDefined();
+  });
+
+  it('a genuinely newer edit still beats the tombstone', () => {
+    const port = new FakePort();
+    port.peers.add('BBBB2222');
+    const e = new FilesEngine({ share: 'sh1', hooks: hooks(), port });
+    const abs = path.join(e.root, 'edit.txt');
+    fs.writeFileSync(abs, 'v1');
+    e.scan();
+    fs.unlinkSync(abs);
+    e.scan();
+    fs.writeFileSync(abs, 'v2-newer'); // fresh mtime
+    e.scan();
+    expect(e.index.get('edit.txt')).toBeDefined(); // resurrection allowed
+    expect(e.index.tombstones.get('edit.txt')).toBeUndefined();
+  });
+
+  // Review finding (gate 1): containment must be decided BEFORE `mkdir -p`.
+  // With a symlinked parent and a not-yet-existing sub-directory, an apply
+  // used to create `sub/` and `sub/deep/` OUTSIDE the share before the
+  // realpath check refused the file.
+  it.runIf(process.platform !== 'win32')('a nested symlinked parent creates no directories outside the root', () => {
+    const port = new FakePort();
+    port.peers.add('BBBB2222');
+    const e = new FilesEngine({ share: 'sh1', hooks: hooks(), port });
+    const outside = path.join(tmp, 'outside2');
+    fs.mkdirSync(outside, { recursive: true });
+    fs.symlinkSync(outside, path.join(e.root, 'link'));
+    const data = Buffer.from('payload');
+    const hash = sha256Hex(data);
+    e.store.put(hash, data);
+    const relPath = 'link/sub/deep/pwn.txt';
+    e.onMessage('BBBB2222', {
+      kind: 'manifest', share: 'sh1',
+      files: [{ relPath, gen: { mtimeMs: Date.now(), sid: 'BBBB2222' }, size: data.length, pieceListHash: 'x' }],
+      tombstones: [],
+    });
+    e.onPieceList('BBBB2222', relPath, [hash]);
+    // Nothing may appear outside — not even an empty directory.
+    expect(fs.readdirSync(outside)).toEqual([]);
+    expect(fs.existsSync(path.join(outside, 'pwn.txt'))).toBe(false);
+  });
 });
