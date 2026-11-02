@@ -1,8 +1,8 @@
 /**
  * store.ts — the piece store: content-addressed chunk persistence.
  *
- * `<workdir>/.mycc/filesync/.sync/<id>/pieces/<sha256>` — one file per
- * piece. The store is simultaneously:
+ * `<stateDir>/pieces/<sha256>` — one file per piece, where `stateDir` is
+ * supplied by the caller (no host-layout assumptions). The store is simultaneously:
  *   - the RESUME CURSOR (only pieces absent are ever requested),
  *   - the DEDUPE cache (unchanged pieces of an edited file cost zero bytes),
  *   - persistent retry state (survives process death — "retry" is just
@@ -21,13 +21,13 @@ import { sha256Hex } from './chunker.js';
 export class PieceStore {
   readonly dir: string;
 
-  /** `.sync` root for a share: `<workdir>/.mycc/filesync/.sync/<id>/`. */
-  static syncRoot(workDir: string, share: string): string {
-    return path.join(workDir, '.mycc', 'filesync', '.sync', share);
-  }
-
-  constructor(workDir: string, share: string) {
-    this.dir = path.join(PieceStore.syncRoot(workDir, share), 'pieces');
+  /**
+   * @param stateDir caller-owned directory for this share's state (pieces,
+   *   index, audit). The package makes no assumptions about its location —
+   *   the host decides (mycc: `<workDir>/.mycc/filesync/.sync/<share>`).
+   */
+  constructor(stateDir: string) {
+    this.dir = path.join(stateDir, 'pieces');
     fs.mkdirSync(this.dir, { recursive: true });
   }
 

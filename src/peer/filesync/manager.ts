@@ -11,6 +11,7 @@
  * own folder content and serves them later).
  */
 
+import path from 'path';
 import {
   FilesEngine, type EngineHooks, type PeerPort,
 } from '@pkubangbang/filesync-manager';
@@ -21,6 +22,19 @@ import { controlToMessage, dataToMessage, type SyncDispatchTarget } from './wire
 
 export interface ManagerHooks extends EngineHooks {
   debugFilesync(): boolean;
+  /** The host's work directory — mycc maps it to the package's explicit
+   *  rootDir/stateDir (the package itself has no layout convention). */
+  getWorkDir(): string;
+}
+
+/** mycc layout for a share (the ONLY place that knows it):
+ *  contents  `<workDir>/.mycc/filesync/<share>/`
+ *  state     `<workDir>/.mycc/filesync/.sync/<share>/`  (never synced) */
+export function sharePaths(workDir: string, share: string): { rootDir: string; stateDir: string } {
+  return {
+    rootDir: path.join(workDir, '.mycc', 'filesync', share),
+    stateDir: path.join(workDir, '.mycc', 'filesync', '.sync', share),
+  };
 }
 
 let manager: FilesyncManager | null = null;
@@ -47,8 +61,11 @@ export class FilesyncManager {
   bind(share: string): FilesEngine {
     let e = this.engines.get(share);
     if (e) return e;
+    const { rootDir, stateDir } = sharePaths(this.hooks.getWorkDir(), share);
     e = new FilesEngine({
       share,
+      rootDir,
+      stateDir,
       hooks: this.hooks,
       port: this.port,
       debugFilesync: this.hooks.debugFilesync(),

@@ -40,10 +40,11 @@ const port: PeerPort = {
 };
 
 const engine = new FilesEngine({
-  share: 'photos',
-  port,
+  share: 'photos',                       // validated: [A-Za-z0-9_-]{1,64}
+  rootDir: '/srv/photos',                // the folder whose CONTENTS sync
+  stateDir: '/var/lib/myapp/photos-state', // pieces/index/audit; outside rootDir
+  port,                                  // async: sendMessage/sendData/partners
   hooks: {
-    getWorkDir: () => process.cwd(),
     getSelfSid: () => myPeerId,
     appendLocalMail: (from, title, content) => notify(title, content),
     verbose: (tool, msg) => console.debug(`[${tool}] ${msg}`),
@@ -55,8 +56,15 @@ engine.onMessage(peer, message);     // from your transport
 engine.onData(peer, pieceMessage);   // from your transport
 ```
 
-The folder lives at `<workDir>/.mycc/filesync/<share>/`; state (piece store,
-index) at `<workDir>/.mycc/filesync/.sync/<share>/`.
+The package imposes **no** filesystem layout: `rootDir` and `stateDir` are
+yours. `stateDir` must be outside `rootDir` or the state would sync itself —
+the constructor refuses it. (mycc maps them to
+`<workDir>/.mycc/filesync/<share>/` and `<workDir>/.mycc/filesync/.sync/<share>/`.)
+
+`PeerPort` is asynchronous — `sendMessage`/`sendData`/`partners` return
+promises. The engine never reads a send result: delivery is best-effort and the
+periodic manifest exchange is the retry, so a synchronous transport just
+resolves immediately.
 
 ## Message vocabulary
 

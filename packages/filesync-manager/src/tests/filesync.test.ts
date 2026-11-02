@@ -26,16 +26,20 @@ function hooks(self = 'AAAA1111'): EngineHooks & { mail: Array<{ title: string }
     appendLocalMail: (_f, title) => { mail.push({ title }); },
     verbose: () => {},
     getSelfSid: () => self,
-    getWorkDir: () => tmp,
   };
 }
 
 class FakePort implements PeerPort {
   sent: Array<{ peer: string; message?: SyncMessage; data?: SyncDataMessage }> = [];
-  sendMessage(peer: string, message: SyncMessage) { this.sent.push({ peer, message }); return true; }
-  sendData(peer: string, data: SyncDataMessage) { this.sent.push({ peer, data }); return true; }
+  async sendMessage(peer: string, message: SyncMessage) { this.sent.push({ peer, message }); }
+  async sendData(peer: string, data: SyncDataMessage) { this.sent.push({ peer, data }); }
   peers = new Set<string>();
-  partners(_share: string) { return [...this.peers]; }
+  async partners(_share: string) { return [...this.peers]; }
+}
+
+/** Explicit directories for a test share (the package has no layout). */
+function dirs(name: string): { rootDir: string; stateDir: string } {
+  return { rootDir: path.join(tmp, 'share', name), stateDir: path.join(tmp, 'state', name) };
 }
 
 describe('chunker', () => {
@@ -60,7 +64,7 @@ describe('chunker', () => {
 
 describe('PieceStore (R1 path traversal)', () => {
   it('rejects non-sha256 keys and traversal', () => {
-    const store = new PieceStore(tmp, 'sh1');
+    const store = new PieceStore(path.join(tmp, 'state', 'sh1'));
     expect(() => store.get('/etc/passwd')).not.toThrow(); // returns null, not read
     expect(store.get('/etc/passwd')).toBeNull();
     expect(store.get('../../../etc/passwd')).toBeNull();
@@ -68,7 +72,7 @@ describe('PieceStore (R1 path traversal)', () => {
     expect(store.missing(['/etc/passwd', '../x'])).toEqual([]); // invalid dropped
   });
   it('stores and verifies pieces by content hash', () => {
-    const store = new PieceStore(tmp, 'sh1');
+    const store = new PieceStore(path.join(tmp, 'state', 'sh1'));
     const data = Buffer.from('piece-data');
     const hash = sha256Hex(data);
     expect(store.put(hash, data)).toBe(true);
@@ -85,7 +89,7 @@ describe('ShareIndex LWW + conflict', () => {
     expect(compareGen({ mtimeMs: 1, sid: 'a' }, { mtimeMs: 1, sid: 'a' })).toBe(0);
   });
   it('persists entries/tombstones/conflicts and expires resolved conflicts', () => {
-    const idx = new ShareIndex(tmp, 'sh1');
+    const idx = new ShareIndex(path.join(tmp, 'state', 'sh1'));
     idx.set({ relPath: 'a.txt', gen: { mtimeMs: 1, sid: 'A' }, size: 1, pieceListHash: 'x', pieceHashes: ['h'] });
     idx.tombstone({ relPath: 'b.txt', gen: { mtimeMs: 2, sid: 'A' }, by: 'A' });
     const c = { relPath: 'a.txt', keptGen: { mtimeMs: 3, sid: 'B' }, loserSid: 'A', loserTs: 1 };
@@ -102,7 +106,7 @@ describe('engine sync + security', () => {
     const h = hooks();
     const port = new FakePort();
     port.peers.add('BBBB2222');
-    const e = new FilesEngine({ share: 'sh1', hooks: h, port });
+    const e = new FilesEngine({ share: 'sh1', ...dirs('sh1'), hooks: h, port });
     // Two files from partner, both newer than ours (we have none).
     e.onMessage('BBBB2222', {
       kind: 'manifest', share: 'sh1',
@@ -123,7 +127,7 @@ describe('engine sync + security', () => {
     const h = hooks();
     const port = new FakePort();
     port.peers.add('BBBB2222');
-    const e = new FilesEngine({ share: 'sh1', hooks: h, port });
+    const e = new FilesEngine({ share: 'sh1', ...dirs('sh1'), hooks: h, port });
     e.onMessage('BBBB2222', { kind: 'want-pieces', share: 'sh1', pieceHashes: ['/etc/passwd', '../../secret'] });
     expect(port.sent.filter((s) => s.data)).toHaveLength(0);
   });
@@ -132,7 +136,7 @@ describe('engine sync + security', () => {
     const h = hooks();
     const port = new FakePort();
     port.peers.add('BBBB2222');
-    const e = new FilesEngine({ share: 'sh1', hooks: h, port });
+    const e = new FilesEngine({ share: 'sh1', ...dirs('sh1'), hooks: h, port });
     const st = fs.statSync(e.root);
     void st;
     e.index.set({ relPath: 'keep.txt', gen: { mtimeMs: Date.now(), sid: 'AAAA1111' }, size: 1, pieceListHash: 'x', pieceHashes: ['h'] });
@@ -144,7 +148,7 @@ describe('engine sync + security', () => {
     const h = hooks();
     const port = new FakePort();
     port.peers.add('BBBB2222');
-    const e = new FilesEngine({ share: 'sh1', hooks: h, port });
+    const e = new FilesEngine({ share: 'sh1', ...dirs('sh1'), hooks: h, port });
     const good = sha256Hex(Buffer.from('payload'));
     e.onMessage('BBBB2222', {
       kind: 'manifest', share: 'sh1',
@@ -162,7 +166,7 @@ describe('engine sync + security', () => {
   it('pending is pruned for a peer that left the partner set', () => {
     const port = new FakePort();
     port.peers.add('BBBB2222');
-    const e = new FilesEngine({ share: 'sh1', hooks: hooks(), port });
+    const e = new FilesEngine({ share: 'sh1', ...dirs('sh1'), hooks: hooks(), port });
     e.onMessage('BBBB2222', {
       kind: 'manifest', share: 'sh1',
       files: [{ relPath: 'x.bin', gen: { mtimeMs: Date.now(), sid: 'BBBB2222' }, size: 1, pieceListHash: 'p' }],
@@ -177,7 +181,7 @@ describe('engine sync + security', () => {
   it('a manifest cannot resurrect a path we tombstoned', () => {
     const port = new FakePort();
     port.peers.add('BBBB2222');
-    const e = new FilesEngine({ share: 'sh1', hooks: hooks(), port });
+    const e = new FilesEngine({ share: 'sh1', ...dirs('sh1'), hooks: hooks(), port });
     const t = Date.now();
     // We deleted the file: tombstone at t+1 (mirrors scan()).
     e.index.tombstone({ relPath: 'gone.txt', gen: { mtimeMs: t, sid: 'AAAA1111' }, by: 'AAAA1111' });
@@ -193,7 +197,7 @@ describe('engine sync + security', () => {
   it('a winning peer tombstone removes the local file', () => {
     const port = new FakePort();
     port.peers.add('BBBB2222');
-    const e = new FilesEngine({ share: 'sh1', hooks: hooks(), port });
+    const e = new FilesEngine({ share: 'sh1', ...dirs('sh1'), hooks: hooks(), port });
     fs.writeFileSync(path.join(e.root, 'victim.txt'), 'bye');
     e.scan();
     expect(e.index.get('victim.txt')).toBeDefined();
@@ -208,7 +212,7 @@ describe('engine sync + security', () => {
   it.runIf(process.platform !== 'win32')('a symlinked parent cannot redirect an apply outside the root', () => {
     const port = new FakePort();
     port.peers.add('BBBB2222');
-    const e = new FilesEngine({ share: 'sh1', hooks: hooks(), port });
+    const e = new FilesEngine({ share: 'sh1', ...dirs('sh1'), hooks: hooks(), port });
     const outside = path.join(tmp, 'outside');
     fs.mkdirSync(outside, { recursive: true });
     fs.symlinkSync(outside, path.join(e.root, 'escape'));
@@ -230,7 +234,7 @@ describe('engine sync + security', () => {
   it('a timestamp-preserving restore does not resurrect behind a newer delete', () => {
     const port = new FakePort();
     port.peers.add('BBBB2222');
-    const e = new FilesEngine({ share: 'sh1', hooks: hooks(), port });
+    const e = new FilesEngine({ share: 'sh1', ...dirs('sh1'), hooks: hooks(), port });
     const abs = path.join(e.root, 'restored.txt');
     const old = new Date('2020-01-01T00:00:00Z');
     fs.writeFileSync(abs, 'v1');
@@ -252,7 +256,7 @@ describe('engine sync + security', () => {
   it('a genuinely newer edit still beats the tombstone', () => {
     const port = new FakePort();
     port.peers.add('BBBB2222');
-    const e = new FilesEngine({ share: 'sh1', hooks: hooks(), port });
+    const e = new FilesEngine({ share: 'sh1', ...dirs('sh1'), hooks: hooks(), port });
     const abs = path.join(e.root, 'edit.txt');
     fs.writeFileSync(abs, 'v1');
     e.scan();
@@ -271,7 +275,7 @@ describe('engine sync + security', () => {
   it.runIf(process.platform !== 'win32')('a nested symlinked parent creates no directories outside the root', () => {
     const port = new FakePort();
     port.peers.add('BBBB2222');
-    const e = new FilesEngine({ share: 'sh1', hooks: hooks(), port });
+    const e = new FilesEngine({ share: 'sh1', ...dirs('sh1'), hooks: hooks(), port });
     const outside = path.join(tmp, 'outside2');
     fs.mkdirSync(outside, { recursive: true });
     fs.symlinkSync(outside, path.join(e.root, 'link'));
@@ -288,5 +292,43 @@ describe('engine sync + security', () => {
     // Nothing may appear outside — not even an empty directory.
     expect(fs.readdirSync(outside)).toEqual([]);
     expect(fs.existsSync(path.join(outside, 'pwn.txt'))).toBe(false);
+  });
+
+  // ── package-level API contracts (architecture review) ──────────────────
+
+  it('rejects an invalid share id instead of building a path from it', () => {
+    const port = new FakePort();
+    for (const bad of ['../escape', 'a/b', '', 'x'.repeat(65), 'has space']) {
+      expect(() => new FilesEngine({ share: bad, rootDir: path.join(tmp, 'r'), stateDir: path.join(tmp, 's'), hooks: hooks(), port })).toThrow(/invalid share id/);
+    }
+    // and accepts the documented alphabet
+    expect(() => new FilesEngine({ share: 'ok-Share_1', rootDir: path.join(tmp, 'r'), stateDir: path.join(tmp, 's'), hooks: hooks(), port })).not.toThrow();
+  });
+
+  it('refuses a stateDir inside rootDir (state would sync itself)', () => {
+    const port = new FakePort();
+    const rootDir = path.join(tmp, 'r2');
+    expect(() => new FilesEngine({ share: 'sh', rootDir, stateDir: path.join(rootDir, '.state'), hooks: hooks(), port })).toThrow(/stateDir must be outside rootDir/);
+  });
+
+  it('uses exactly the directories the caller supplied (no host layout)', () => {
+    const port = new FakePort();
+    const rootDir = path.join(tmp, 'custom-root');
+    const stateDir = path.join(tmp, 'custom-state');
+    const e = new FilesEngine({ share: 'sh', rootDir, stateDir, hooks: hooks(), port });
+    expect(e.root).toBe(path.resolve(rootDir));
+    expect(fs.existsSync(path.join(stateDir, 'pieces'))).toBe(true);
+    expect(fs.existsSync(path.join(stateDir, 'index.json'))).toBe(false); // written on first persist
+    expect(fs.readdirSync(e.root)).toEqual([]);
+  });
+
+  it('a rejecting transport does not throw out of the engine', async () => {
+    const port = new FakePort();
+    port.peers.add('BBBB2222');
+    port.sendMessage = async () => { throw new Error('transport down'); };
+    const e = new FilesEngine({ share: 'sh1', ...dirs('sh1'), hooks: hooks(), port });
+    expect(() => e.gossip()).not.toThrow();          // fire-and-forget
+    await new Promise((r) => setTimeout(r, 0));       // the rejection is swallowed
+    expect(port.peers.size).toBe(1);
   });
 });

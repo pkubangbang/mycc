@@ -7,13 +7,12 @@
  * correctness questions become greps and tests can assert frame sequences.
  *
  * Default OFF — zero cost when disabled. Lives at
- * `.mycc/filesync/.sync/<id>/frames-<session-ts>.jsonl` (work memory;
- * outside the share and outside `.mycc/public/`).
+ * `<stateDir>/frames-<session-ts>.jsonl` (caller-owned; the host decides
+ * where state lives and keeps it outside the synced folder).
  */
 
 import fs from 'fs';
 import path from 'path';
-import { PieceStore } from './store.js';
 
 export interface FrameLogLine {
   ts: string;
@@ -28,9 +27,10 @@ export class FrameAuditLog {
   private stream: fs.WriteStream | null = null;
   private seq = 0;
 
-  constructor(workDir: string, share: string, enabled: boolean) {
+  /** @param stateDir caller-owned state directory (see PieceStore). */
+  constructor(stateDir: string, enabled: boolean) {
     if (!enabled) return;
-    const dir = PieceStore.syncRoot(workDir, share);
+    const dir = stateDir;
     fs.mkdirSync(dir, { recursive: true });
     const name = `frames-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`;
     this.stream = fs.createWriteStream(path.join(dir, name), { flags: 'a' });

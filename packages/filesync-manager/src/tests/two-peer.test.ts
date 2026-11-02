@@ -19,20 +19,22 @@ function makeNode(dir: string, sid: string, peers: () => string[]): Node {
   const inbox: Node['inbox'] = [];
   const node = {} as Node;
   const port: PeerPort = {
-    sendMessage: (peer, msg) => { inbox.push({ peer, msg }); return true; },
-    sendData: (peer: string, data: SyncDataMessage) => {
-      inbox.push({ peer, msg: data });
-      return true;
-    },
-    partners: () => peers(),
+    async sendMessage(peer, msg) { inbox.push({ peer, msg }); },
+    async sendData(peer, data) { inbox.push({ peer, msg: data }); },
+    async partners() { return peers(); },
   };
   const hooks: EngineHooks = {
-    appendLocalMail: () => {}, verbose: () => {}, getSelfSid: () => sid, getWorkDir: () => dir,
+    appendLocalMail: () => {}, verbose: () => {}, getSelfSid: () => sid,
   };
-  node.engine = new FilesEngine({ share: 'sh', hooks, port });
+  node.engine = new FilesEngine({
+    share: 'sh', rootDir: path.join(dir, 'share'), stateDir: path.join(dir, 'state'), hooks, port,
+  });
   node.inbox = inbox;
   return node;
 }
+
+/** Let the engine's async partner refresh + sends settle. */
+const settle = () => new Promise((r) => setTimeout(r, 0));
 
 /** Deliver every queued message to the other side until quiet. */
 function pump(a: Node, b: Node, aSid: string, bSid: string, rounds = 12): void {
@@ -64,44 +66,55 @@ const A_SID = 'AAAA1111';
 const B_SID = 'BBBB2222';
 
 describe('two-engine convergence', () => {
-  it('a file created on A reaches B through manifest → fetch → apply', () => {
+  it('a file created on A reaches B through manifest → fetch → apply', async () => {
     const a = makeNode(dirA, A_SID, () => [B_SID]);
     const b = makeNode(dirB, B_SID, () => [A_SID]);
     a.engine.scan();
     b.engine.scan();
     fs.writeFileSync(path.join(a.engine.root, 'hello.txt'), 'hello-from-A');
     a.engine.scan();
+    await settle();               // partner snapshot
     a.engine.gossip();
+    await settle();               // sends queued
     pump(a, b, A_SID, B_SID);
     expect(fs.readFileSync(path.join(b.engine.root, 'hello.txt'), 'utf8')).toBe('hello-from-A');
   });
 
-  it('both directions converge in one exchange', () => {
+  it('both directions converge in one exchange', async () => {
     const a = makeNode(dirA, A_SID, () => [B_SID]);
     const b = makeNode(dirB, B_SID, () => [A_SID]);
     fs.writeFileSync(path.join(a.engine.root, 'a.txt'), 'alpha');
     fs.writeFileSync(path.join(b.engine.root, 'b.txt'), 'beta');
     a.engine.scan(); b.engine.scan();
+    await settle();
     a.engine.gossip(); b.engine.gossip();
+    await settle();
     pump(a, b, A_SID, B_SID);
     expect(fs.readFileSync(path.join(b.engine.root, 'a.txt'), 'utf8')).toBe('alpha');
     expect(fs.readFileSync(path.join(a.engine.root, 'b.txt'), 'utf8')).toBe('beta');
   });
 
-  it('a local delete tombstones on both sides and does not resurrect', () => {
+  it('a local delete tombstones on both sides and does not resurrect', async () => {
     const a = makeNode(dirA, A_SID, () => [B_SID]);
     const b = makeNode(dirB, B_SID, () => [A_SID]);
     fs.writeFileSync(path.join(a.engine.root, 'x.txt'), 'x');
-    a.engine.scan(); a.engine.gossip();
+    a.engine.scan();
+    await settle();
+    a.engine.gossip();
+    await settle();
     pump(a, b, A_SID, B_SID);
     expect(fs.existsSync(path.join(b.engine.root, 'x.txt'))).toBe(true);
     // Delete on A, exchange again.
     fs.unlinkSync(path.join(a.engine.root, 'x.txt'));
-    a.engine.scan(); a.engine.gossip();
+    a.engine.scan();
+    await settle();
+    a.engine.gossip();
+    await settle();
     pump(a, b, A_SID, B_SID);
     expect(fs.existsSync(path.join(b.engine.root, 'x.txt'))).toBe(false);
     // A few more rounds must not bring it back.
     b.engine.gossip(); a.engine.gossip();
+    await settle();
     pump(a, b, A_SID, B_SID);
     expect(fs.existsSync(path.join(a.engine.root, 'x.txt'))).toBe(false);
     expect(fs.existsSync(path.join(b.engine.root, 'x.txt'))).toBe(false);

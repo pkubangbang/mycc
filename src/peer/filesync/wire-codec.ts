@@ -139,16 +139,17 @@ export function dataToMessage(df: SyncDataFrame): SyncDataMessage {
  * socket).
  */
 export const wirePort: PeerPort = {
-  sendMessage(peer: string, msg: SyncMessage): boolean {
-    // Exactly one fold, in sendSyncControl (P3 from review: the old double
-    // fold was only idempotent by accident of key order — and here it was
-    // not idempotent at all).
-    return sendSyncControl(peer, messageToControl(msg));
+  // The package's port is async (backpressure contract); mycc's transport is a
+  // synchronous socket send, so a failed send resolves immediately and the
+  // next manifest exchange is the retry. Exactly one fold happens here, in
+  // sendSyncControl.
+  async sendMessage(peer: string, msg: SyncMessage): Promise<void> {
+    sendSyncControl(peer, messageToControl(msg));
   },
-  sendData(peer: string, msg: SyncDataMessage): boolean {
-    return sendSyncData(peer, encodeDataFrame(msg.share, msg.pieceHash, msg.data));
+  async sendData(peer: string, msg: SyncDataMessage): Promise<void> {
+    sendSyncData(peer, encodeDataFrame(msg.share, msg.pieceHash, msg.data));
   },
-  partners(share: string): string[] {
+  async partners(share: string): Promise<string[]> {
     return partnersForShare(share);
   },
 };

@@ -73,7 +73,16 @@ may differ per share.
 > store, manifests, tombstones and conflicts; it knows **nothing** about
 > sockets. It speaks plain messages (`src/protocol.ts`: `manifest`,
 > `want-list`, `piece-list`, `want-pieces`, `piece`, `deletion`, `error`) and
-> takes a `PeerPort` for egress. Everything below — verbs, binary framing,
+> takes a `PeerPort` for egress.
+>
+> The package carries **no host layout and no host policy**: the caller passes
+> `rootDir` (the folder whose contents sync) and `stateDir` (piece store,
+> index, audit log — must be outside `rootDir`), and the package validates the
+> `share` id itself (`[A-Za-z0-9_-]{1,64}`) because it becomes a path component
+> and a wire field. `PeerPort` is **asynchronous** (`sendMessage`/`sendData`/
+> `partners` return promises); the engine never reads a send result — delivery
+> is best-effort and the periodic manifest exchange is the retry — so a
+> synchronous host resolves immediately. Everything below — verbs, binary framing,
 > announce membership — is the **host adapter** (`src/peer/filesync/`), with
 > `wire-codec.ts` as the one place the message vocabulary meets the wire
 > vocabulary. A different host can reuse the engine unchanged.

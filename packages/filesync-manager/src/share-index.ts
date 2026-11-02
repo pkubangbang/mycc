@@ -19,7 +19,6 @@
 
 import fs from 'fs';
 import path from 'path';
-import { PieceStore } from './store.js';
 
 export interface FileGen {
   mtimeMs: number;
@@ -67,8 +66,9 @@ export class ShareIndex {
   readonly conflicts = new Map<string, ConflictEntry>();
   private readonly file: string;
 
-  constructor(workDir: string, share: string) {
-    this.file = path.join(PieceStore.syncRoot(workDir, share), 'index.json');
+  /** @param stateDir caller-owned state directory (see PieceStore). */
+  constructor(stateDir: string) {
+    this.file = path.join(stateDir, 'index.json');
     this.load();
   }
 

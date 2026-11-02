@@ -61,13 +61,24 @@ const MAX_PIECE_LIST = 20_000;      // G3
 const MAX_REQ_BATCH = 32;           // G3 (2× REQUEST_WINDOW)
 const GEN_MAX_SKEW_MS = 24 * 60 * 60 * 1000; // G2
 
-/** Outbound sink — implemented by the host (mycc: the wire registry);
- *  fakeable in tests. `peer` is the partner's opaque id. */
+/**
+ * Outbound sink — implemented by the host (mycc: the wire registry);
+ * fakeable in tests. `peer` is the partner's opaque id.
+ *
+ * ASYNCHRONOUS BY CONTRACT. The engine does not read a send result: delivery
+ * is best-effort and correctness comes from the periodic manifest
+ * re-exchange, so a transport that drops, defers or throws only costs a
+ * retry cycle. Promises therefore express backpressure/latency (an HTTP or
+ * queue-backed transport can await its write) without the engine having to
+ * branch on transport type. Hosts that send synchronously (mycc's WebSocket)
+ * return `Promise.resolve()`; a rejected promise is logged by the engine and
+ * otherwise ignored.
+ */
 export interface PeerPort {
-  sendMessage(peer: string, message: SyncMessage): boolean;
-  sendData(peer: string, data: SyncDataMessage): boolean;
+  sendMessage(peer: string, message: SyncMessage): Promise<void>;
+  sendData(peer: string, data: SyncDataMessage): Promise<void>;
   /** Ids of peers currently reachable (live transport) for this share. */
-  partners(share: string): string[];
+  partners(share: string): Promise<string[]>;
 }
 
 /** Engine → host surface (conflict mail + diagnostics). */
@@ -75,11 +86,24 @@ export interface EngineHooks {
   appendLocalMail(from: string, title: string, content: string): void;
   verbose(tool: string, message: string): void;
   getSelfSid(): string;
-  getWorkDir(): string;
 }
 
+/** Share ids are used in paths and in the wire share field, so the PACKAGE
+ *  validates them (a host must not be the only guard). */
+const SHARE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
 export interface EngineOptions {
+  /** Share identifier (validated: `[A-Za-z0-9_-]{1,64}`). Carried on the wire. */
   share: string;
+  /** The directory whose CONTENTS are synchronized. Created if missing. */
+  rootDir: string;
+  /**
+   * Directory for this share's state — piece store, index, audit log.
+   * MUST be outside `rootDir` (otherwise state would sync itself). Kept as an
+   * explicit input so the package carries no host layout convention; mycc
+   * passes `<workDir>/.mycc/filesync/.sync/<share>`.
+   */
+  stateDir: string;
   hooks: EngineHooks;
   port: PeerPort;
   debugFilesync?: boolean;
@@ -165,6 +189,8 @@ export class FilesEngine {
   private readonly hooks: EngineHooks;
   private readonly port: PeerPort;
   private readonly maxFileBytes: number;
+  /** Partner snapshot, refreshed asynchronously by `tick()`/`gossip()`. */
+  private partnersCache: string[] = [];
   private readonly pending = new Map<string, PendingFile>();
   private watchTimer: NodeJS.Timeout | null = null;
   private gossipTimer: NodeJS.Timeout | null = null;
@@ -172,15 +198,25 @@ export class FilesEngine {
   private closed = false;
 
   constructor(opts: EngineOptions) {
+    if (!SHARE_ID_RE.test(opts.share)) {
+      throw new Error(`filesync: invalid share id (expected [A-Za-z0-9_-]{1,64})`);
+    }
+    const rootDir = path.resolve(opts.rootDir);
+    const stateDir = path.resolve(opts.stateDir);
+    const relState = path.relative(rootDir, stateDir);
+    if (relState === '' || (!relState.startsWith('..') && !path.isAbsolute(relState))) {
+      throw new Error('filesync: stateDir must be outside rootDir');
+    }
     this.share = opts.share;
     this.hooks = opts.hooks;
     this.port = opts.port;
     this.maxFileBytes = opts.maxFileBytes ?? 500 * 1024 * 1024;
-    this.root = path.join(opts.hooks.getWorkDir(), '.mycc', 'filesync', opts.share);
+    this.root = rootDir;
     fs.mkdirSync(this.root, { recursive: true });
-    this.store = new PieceStore(opts.hooks.getWorkDir(), opts.share);
-    this.index = new ShareIndex(opts.hooks.getWorkDir(), opts.share);
-    this.audit = new FrameAuditLog(opts.hooks.getWorkDir(), opts.share, opts.debugFilesync ?? false);
+    fs.mkdirSync(stateDir, { recursive: true });
+    this.store = new PieceStore(stateDir);
+    this.index = new ShareIndex(stateDir);
+    this.audit = new FrameAuditLog(stateDir, opts.debugFilesync ?? false);
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
@@ -215,8 +251,19 @@ export class FilesEngine {
   /** One periodic pass: reap in-flight state, then announce our manifest. */
   private tick(): void {
     if (this.closed) return;
-    try { this.prunePending(); } catch { /* never break the tick */ }
-    this.gossip();
+    // Partner discovery is a transport call — refresh it, then reap, then
+    // gossip, so pruning sees a current view.
+    void this.partners()
+      .then(() => { this.prunePending(); this.gossip(); })
+      .catch(() => { try { this.prunePending(); } catch { /* never break the tick */ } });
+  }
+
+  /** Refresh the partner snapshot from the transport. */
+  private async partners(): Promise<string[]> {
+    try {
+      this.partnersCache = (await this.port.partners(this.share)) ?? [];
+    } catch { /* keep the last snapshot */ }
+    return this.partnersCache;
   }
 
   /**
@@ -230,11 +277,10 @@ export class FilesEngine {
   prunePending(): void {
     if (!this.pending.size) return;
     const now = Date.now();
-    let live: Set<string> | null;
-    try { live = new Set(this.port.partners(this.share)); } catch { live = null; }
+    const live = new Set(this.partnersCache);
     for (const [key, p] of [...this.pending]) {
       const peer = key.slice(0, key.indexOf('\u0000'));
-      const drop = (live !== null && !live.has(peer)) || now - p.at > PENDING_TTL_MS;
+      const drop = !live.has(peer) || now - p.at > PENDING_TTL_MS;
       if (drop) this.pending.delete(key);
     }
     if (this.pending.size <= MAX_PENDING_FILES) return;
@@ -364,23 +410,40 @@ export class FilesEngine {
     this.audit.log('tx', '*', 'manifest', this.share, {
       entries: frame.files.length, tombstones: frame.tombstones.length,
     });
-    for (const peer of this.port.partners(this.share)) this.send(peer, frame);
+    void this.partners().then((peers) => {
+      for (const peer of peers) this.send(peer, frame);
+    });
   }
 
+  /** Send to every current partner. Uses the cache when it is warm; a cold
+   *  cache (e.g. a local delete before the first tick) refreshes first, so a
+   *  deletion notice is never silently dropped. */
   private broadcast(frame: SyncMessage): void {
-    for (const peer of this.port.partners(this.share)) this.send(peer, frame);
+    if (this.partnersCache.length) {
+      for (const peer of this.partnersCache) this.send(peer, frame);
+      return;
+    }
+    void this.partners().then((peers) => {
+      for (const peer of peers) this.send(peer, frame);
+    });
   }
 
-  private send(peer: string, frame: SyncMessage): boolean {
+  /** Fire-and-forget: delivery is best-effort, correctness comes from the
+   *  next manifest exchange. A rejected send is logged, never thrown. */
+  private send(peer: string, frame: SyncMessage): void {
     if (frame.kind !== 'manifest') {
       this.audit.log('tx', peer, frame.kind, this.share, frame as unknown as Record<string, unknown>);
     }
-    return this.port.sendMessage(peer, frame);
+    void this.port.sendMessage(peer, frame).catch((err) => {
+      this.hooks.verbose('filesync', `send to ${peer} failed: ${String(err)}`);
+    });
   }
 
-  private sendData(peer: string, pieceHash: string, data: Buffer): boolean {
+  private sendData(peer: string, pieceHash: string, data: Buffer): void {
     this.audit.log('tx', peer, 'piece', this.share, { piece: pieceHash, bytes: data.length });
-    return this.port.sendData(peer, { kind: 'piece', share: this.share, pieceHash, data });
+    void this.port.sendData(peer, { kind: 'piece', share: this.share, pieceHash, data }).catch((err) => {
+      this.hooks.verbose('filesync', `send piece to ${peer} failed: ${String(err)}`);
+    });
   }
 
   // ── Inbound (host dispatch) ──────────────────────────────────────────────
