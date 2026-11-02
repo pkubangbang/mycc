@@ -587,7 +587,10 @@ export class FilesEngine {
    *  stale `partnersCache` could gate a send; the tick and the post-handshake
    *  path pass an already-resolved list instead. */
   gossipNow(): void {
-    void this.partners().then((peers) => this.gossipTo(peers));
+    // `.catch` mirrors tick(): `send` calls `hooks.verbose`, and a throwing
+    // host hook inside this untethered chain would surface as an unhandled
+    // rejection (fatal on modern Node) from a path the caller cannot await.
+    void this.partners().then((peers) => this.gossipTo(peers)).catch(() => { /* next tick */ });
   }
 
   /** Send to every current partner. Uses the cache when it is warm; a cold
@@ -600,7 +603,7 @@ export class FilesEngine {
     }
     void this.partners().then((peers) => {
       for (const peer of peers) this.send(peer, frame);
-    });
+    }).catch(() => { /* next tick */ });
   }
 
   /** Fire-and-forget: delivery is best-effort, correctness comes from the

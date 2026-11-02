@@ -32,7 +32,7 @@ function makeEngine(notes: Array<{ relPath: string; origin: string; change: stri
     appendLocalMail: () => {},
     verbose: () => {},
     getSelfSid: () => 'SELF',
-    noteFileChange: (share, relPath, origin, change) => {
+    noteFileChange: (_share, relPath, origin, change) => {
       notes.push({ relPath, origin, change, onDisk: fs.existsSync(path.join(root, relPath)) });
     },
   };
