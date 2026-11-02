@@ -23,7 +23,7 @@ export const shareCommand: SlashCommand = {
   name: 'share',
   description: 'Bind/inspect filesync shared folders (synced across wired peers)',
   handler: (context) => {
-    const { args, ctx } = context;
+    const { args } = context;
     const mgr = getFilesyncManager();
     if (!mgr) {
       console.log(chalk.red('filesync is not available (wire plane not initialized).'));
@@ -44,19 +44,10 @@ export const shareCommand: SlashCommand = {
     // /share <id> — bind
     if (rawId) {
       if (!SHARE_ID_RE.test(rawId)) { console.log(chalk.red(`Invalid share id: ${rawId} (use [A-Za-z0-9_-]{1,64})`)); return; }
+      // `bind` pins the share todo itself (manager → pinShareTodo), so
+      // `/share` and `--share` produce the SAME reminder instead of two
+      // near-duplicate pinned entries.
       const e = mgr.bind(rawId);
-      // Pinned share todo (info-symmetry): survives compaction so the lead
-      // always knows the folder is synced and where conflict mail arrives.
-      try {
-        const todo = (ctx as { todo?: { createTodo(n: string, note: string): { id: number; hash: string }; pinTodo(id: number, hash: string, p: boolean): unknown } }).todo;
-        todo?.pinTodo(
-          ...(() => { const c = todo.createTodo(
-            `share ${rawId} — .mycc/filesync/${rawId}/ synced folder; resolve [sync-conflict] mail when it arrives`,
-            'filesync share — pinned reminder',
-          ); return [c.id, c.hash] as [number, string]; })(),
-          true,
-        );
-      } catch { /* best-effort */ }
       console.log(chalk.green(`Bound share ${chalk.bold(rawId)}`) + chalk.gray(` → ${e.root}`));
       console.log(chalk.gray(`Wired peers announcing ${rawId} sync automatically. Debug frames: ${isDebugFilesync() ? 'ON' : 'off (enable with --debug-filesync)'}.`));
       return;
