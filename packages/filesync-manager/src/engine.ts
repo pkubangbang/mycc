@@ -425,7 +425,7 @@ export class FilesEngine {
    *   2. an entry older than PENDING_TTL_MS → a peer that never answered;
    *   3. over MAX_PENDING_FILES → drop the oldest entries.
    */
-  prunePending(): void {
+  prunePending(limitOverride: number = MAX_PENDING_FILES): void {
     if (!this.pending.size) return;
     const now = Date.now();
     const live = new Set(this.partnersCache);
@@ -437,10 +437,21 @@ export class FilesEngine {
       const drop = (authoritative && !live.has(peer)) || now - p.at > PENDING_TTL_MS;
       if (drop) this.pending.delete(key);
     }
-    if (this.pending.size <= MAX_PENDING_FILES) return;
-    const oldest = [...this.pending.entries()].sort((a, b) => a[1].at - b[1].at);
-    for (const [key] of oldest.slice(0, this.pending.size - MAX_PENDING_FILES)) {
+    // `limit` lets the admission gate ask for room for the entry it is about
+    // to insert (MAX - 1), so `pending.size <= MAX` holds at every moment
+    // rather than only between two gossip ticks.
+    const limit = Math.min(limitOverride, MAX_PENDING_FILES);
+    if (this.pending.size <= limit) return;
+    // Map iteration order is INSERTION order — the cheapest, and the only
+    // order that is stable at a given millisecond (many entries can share
+    // `at` when they arrive in one manifest, which makes a timestamp sort
+    // leave the tiebreak to the sort implementation).
+    const excess = this.pending.size - limit;
+    let dropped = 0;
+    for (const key of this.pending.keys()) {
+      if (dropped >= excess) break;
       this.pending.delete(key);
+      dropped++;
     }
   }
 
@@ -770,7 +781,12 @@ export class FilesEngine {
     const key = pendingKey(peer, relPath);
     let p = this.pending.get(key);
     if (!p) {
-      if (this.pending.size >= MAX_PENDING_FILES) this.prunePending();
+      // Admission gate: prune until there is room for THIS entry. One prune only
+      // guarantees `<= MAX` when the map starts under the cap, so a manifest
+      // burst (or a hostile one) could push past it by insertion rate alone.
+      // Looping makes `pending.size <= MAX_PENDING_FILES` a hard bound, not a
+      // best-effort one — and the old code had a 1ms window where it was 257.
+      if (this.pending.size >= MAX_PENDING_FILES) this.prunePending(MAX_PENDING_FILES - 1);
       p = { entry: re, missing: [], requested: new Map(), awaitingPieceList: true, at: Date.now() };
       this.pending.set(key, p);
     }

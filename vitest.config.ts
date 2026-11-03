@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['src/tests/**/*.test.ts', 'packages/*/src/tests/**/*.test.ts'],
+    include: ['src/tests/**/*.test.ts', 'packages/*/tests/**/*.test.ts'],
     // Belt-and-braces: NOTHING outside src/tests is a test file. In particular
     // `scripts/tp-violation/` holds a MANUAL, live-provider diagnostic
     // (`main.mjs` / `probe.mjs` / `deepseek.mjs` / `ollama.mjs`) that posts

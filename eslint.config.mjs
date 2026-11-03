@@ -113,12 +113,10 @@ export default tseslint.config(
   {
     // `packages/**/*.ts` (the extracted transport-agnostic packages, e.g.
     // @pkubangbang/filesync-manager) are part of the MAIN program — tsconfig.json
-    // now includes `packages/*/src/**/*` — but their tests live outside
-    // tsconfig.test.json's src-focused excludes only by include order, so they
-    // share the src/ project binding here. Files under a package's own
-    // `src/tests/` are covered by the test project instead.
+    // includes `packages/*/src/**/*`. A package's tests live in its own
+    // top-level `tests/` directory (mirroring the extracted repo layout) and are
+    // covered by the test project below.
     files: ['packages/*/src/**/*.ts'],
-    ignores: ['packages/*/src/tests/**/*.ts'],
     languageOptions: {
       parserOptions: {
         project: './tsconfig.json',
@@ -127,7 +125,7 @@ export default tseslint.config(
   },
   {
     // Package unit tests: typed by tsconfig.test.json (same program as src/tests).
-    files: ['packages/*/src/tests/**/*.ts'],
+    files: ['packages/*/tests/**/*.ts'],
     languageOptions: {
       parserOptions: {
         project: './tsconfig.test.json',

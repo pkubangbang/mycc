@@ -6,6 +6,6 @@
     "rootDir": ".",
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*", "scripts/mycc-compose/lib/**/*.ts", "packages/*/src/**/*"],
+  "include": ["src/**/*", "scripts/mycc-compose/lib/**/*.ts", "packages/*/src/**/*", "packages/*/tests/**/*"],
   "exclude": ["node_modules", "src/web/**/*"]
 }

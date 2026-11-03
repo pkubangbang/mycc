@@ -11,10 +11,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { FilesEngine, type PeerPort, type EngineHooks } from '../engine.js';
-import type { SyncMessage, SyncDataMessage } from '../protocol.js';
-import { ShareIndex } from '../share-index.js';
-import { chunkBuffer, pieceListHash } from '../chunker.js';
+import { FilesEngine, type PeerPort, type EngineHooks } from '../src/engine.js';
+import type { SyncMessage, SyncDataMessage } from '../src/protocol.js';
+import { ShareIndex } from '../src/share-index.js';
+import { chunkBuffer, pieceListHash } from '../src/chunker.js';
 
 let tmp: string;
 beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'note-')); });

@@ -9,9 +9,9 @@
  * `start()`, then feed inbound messages back through `onMessage` / `onData`.
  * Convergence is the assertion.
  *
- * The import path is `../index.js` on purpose: importing by package name would
- * resolve through `node_modules` to `dist/`, and a test that needs `npm run
- * build` first is not a contract test a contributor can run.
+ * The import path is `../src/index.js` on purpose: importing by package name
+ * would resolve through `node_modules` to `dist/`, and a test that needs
+ * `npm run build` first is not a contract test a contributor can run.
  *
  * If a barrel export is dropped, renamed, or stops being sufficient on its
  * own, this test fails while every internal test keeps passing — which is
@@ -26,7 +26,7 @@ import {
   type PeerPort,
   type SyncMessage,
   type SyncDataMessage,
-} from '../index.js';
+} from '../src/index.js';
 
 /** What the fake transport carries: a control message or a piece frame. */
 type Delivered =

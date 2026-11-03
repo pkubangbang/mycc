@@ -8,8 +8,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { FilesEngine, type PeerPort, type EngineHooks } from '../engine.js';
-import type { SyncMessage, SyncDataMessage } from '../protocol.js';
+import { FilesEngine, type PeerPort, type EngineHooks } from '../src/engine.js';
+import type { SyncMessage, SyncDataMessage } from '../src/protocol.js';
 
 type AnyMsg = SyncMessage | SyncDataMessage;
 

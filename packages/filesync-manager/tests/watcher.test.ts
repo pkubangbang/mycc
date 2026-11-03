@@ -26,8 +26,8 @@ import path from 'path';
 import {
   FilesEngine, WATCH_DEBOUNCE_MS, WRITE_STABILITY_MS,
   type PeerPort, type EngineHooks,
-} from '../engine.js';
-import type { SyncMessage, SyncDataMessage } from '../protocol.js';
+} from '../src/engine.js';
+import type { SyncMessage, SyncDataMessage } from '../src/protocol.js';
 
 let tmp: string;
 let engine: FilesEngine | null = null;

@@ -9,11 +9,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { chunkBuffer, pieceListHash, sha256Hex } from '../chunker.js';
-import { PieceStore } from '../store.js';
-import { ShareIndex, compareGen, conflictKey } from '../share-index.js';
-import { FilesEngine, type PeerPort, type EngineHooks } from '../engine.js';
-import type { SyncMessage, SyncDataMessage } from '../protocol.js';
+import { chunkBuffer, pieceListHash, sha256Hex } from '../src/chunker.js';
+import { PieceStore } from '../src/store.js';
+import { ShareIndex, compareGen, conflictKey } from '../src/share-index.js';
+import { FilesEngine, type PeerPort, type EngineHooks } from '../src/engine.js';
+import type { SyncMessage, SyncDataMessage } from '../src/protocol.js';
 
 let tmp: string;
 beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'filesync-')); });
