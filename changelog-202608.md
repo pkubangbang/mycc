@@ -258,3 +258,16 @@ For current changelog, see `changelog-todo.md`.
 - **daemon stopped**: Terminated the `mycc-self-improvement` daemon (PID 2760) so the `service_cron` timer stops generating new review docs; the cron timer lives inside the daemon's Lead event loop so killing the PID leaves no orphaned timer.
 - **channel closed**: Removed the `code-review-sync` channel file pair (self `0b052c92` + offline peer `ae37b057`) from `~/.mycc-store/discovery/channels/`.
 - **Dropped (dir-9 发现1)**: WebSocket ping/pong heartbeat — fully implemented then reverted per user steering ("not necessary" for a single-user local dev tool); remains HELD-but-won't-pursue in the summary.
+
+<!-- Late entries recovered from changelog-todo.md during the October 2026 rotation (they were left behind by the 2026-09-02 rotation). -->
+## 2026-08-29
+### Chores
+- **Package**: Update package info.
+
+## 2026-08-30
+### Features
+- **DeepSeek**: Update README and design docs for DeepSeek `web_search` support; refine the deepseek engine.
+
+## 2026-08-31
+### Fixes
+- **Peer**: Show `/peer` and `peers` timestamps in local time (was UTC via `toISOString()`); add `formatLocalDateTime()` util in `src/utils/time.ts` and use it at all four call sites.
