@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { pathToFileURL, fileURLToPath } from 'url';
-import { watch } from 'fs';
+import { watch as chokidarWatch, type FSWatcher as ChokidarWatcher } from 'chokidar';
 import { createRequire } from 'node:module';
 import matter from 'gray-matter';
 import { agentIO } from '../../loop/agent-io.js';
@@ -82,8 +82,10 @@ interface SkillEntry {
 export class Loader implements DynamicLoader, SkillModule {
   private tools: Map<string, ToolEntry> = new Map();
   private skills: Map<string, SkillEntry> = new Map();
-  private toolWatcher: fs.FSWatcher | null = null;
-  private skillWatcher: fs.FSWatcher | null = null;
+  /** Project tools+skills hot-reload watcher (chokidar). */
+  private hotWatcher: ChokidarWatcher | null = null;
+  /** Debounced wiki re-index signal fired on a skill-file change. */
+  private scheduleSkillReindex: (() => void) | null = null;
   private silent: boolean;
   private skillKeywords: string[] | null = null;
   /**
@@ -431,30 +433,43 @@ export class Loader implements DynamicLoader, SkillModule {
    * - .mycc/skills/ - project skills (hot-reloadable)
    * Built-in tools/skills and user tools/skills are static and don't need watching.
    *
-   * Re-entry safe: closes any existing watchers before creating new ones.
+   * Backed by chokidar, not raw `fs.watch`. The hand-rolled watcher lost the
+   * exact events an editor produces: a truncate-and-rewrite of identical size
+   * emitted nothing, an atomic save (tmp + rename) looked like an unrelated
+   * pair of events, and a DELETED tool/skill stayed registered forever (the
+   * old callback only ever reloaded). chokidar normalizes both backends to
+   * add/change/unlink and gives us the removal events we can act on.
+   *
+   * Re-entry safe: closes any existing watcher before creating a new one.
    */
   watchDirectories(): void {
-    // Close any existing watchers first (re-entry safe)
+    // Close any existing watcher first (re-entry safe). chokidar's close() is
+    // async; fire-and-forget is safe because every listener is replaced by the
+    // new watcher below.
     this.stopWatching();
 
     const toolsDir = getToolsDir();
     const skillsDir = getSkillsDir();
 
-    // Debounce tool reloads — fs.watch can fire multiple events per save
-    const debouncedReloadTool = debounce(
+    // Debounce tool reloads — one save may surface as add + change.
+    // The debounce keys by path, so pass it through: a burst of events on one
+    // file coalesces, edits to two different files each still reload.
+    const reloadToolNow = debounce(
       (filepath: string) => {
         void this.reloadTool(filepath);
       },
       300,
     );
+    const debouncedReloadTool = (filepath: string) => reloadToolNow(filepath, filepath);
 
     // Debounce skill reloads
-    const debouncedReloadSkill = debounce(
+    const reloadSkillNow = debounce(
       (filepath: string) => {
         this.reloadSkill(filepath, 'project');
       },
       300,
     );
+    const debouncedReloadSkill = (filepath: string) => reloadSkillNow(filepath, filepath);
 
     // Debounced wiki re-index signal — a SEPARATE, longer debounce (2 min) so
     // a burst of skill-file edits across MULTIPLE LLM turns (e.g. an edit_file
@@ -473,47 +488,132 @@ export class Loader implements DynamicLoader, SkillModule {
       },
       120000,
     );
+    this.scheduleSkillReindex = () => debouncedReindex('__skill_change__');
 
-    // Watch .mycc/tools/ for project tool changes
-    if (fs.existsSync(toolsDir)) {
-      this.toolWatcher = watch(toolsDir, (_event, filename) => {
-        if (filename && (filename.endsWith('.ts') || filename.endsWith('.js'))) {
-          const filepath = path.join(toolsDir, filename);
-          if (!this.silent) {
-            agentIO.verbose('loader', `Reloading tool: ${filename}`);
-          }
-          debouncedReloadTool(filepath, filepath);
-        }
-      });
+    // chokidar wants existing paths; a missing dir just means "nothing to
+    // watch yet" (ensureDirs creates them at startup, tests may not).
+    const roots = [toolsDir, skillsDir].filter((d) => fs.existsSync(d));
+    if (!roots.length) return;
+
+    this.hotWatcher = chokidarWatch(roots, {
+      // loadAll() already performed the initial load — the watcher is for
+      // changes only. Firing add() for every existing file would re-import
+      // the whole tools dir on every re-entry.
+      ignoreInitial: true,
+      // Tools are flat; skills are `<name>.md` or `<name>/SKILL.md`, so one
+      // level below the root is the whole valid namespace. Deeper files are
+      // not entrypoints (and would otherwise trigger dead reloads).
+      depth: 1,
+      // Let an editor's tmp+rename settle before we import the file, and give
+      // up on a file that keeps being written (a log-ish name is not a tool).
+      awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
+      // Swap/scratch files are not entrypoints.
+      ignored: (p: string) => /(^|[\\/])(\.#|.#|.*\.tmp$)/.test(p),
+    });
+
+    // `add` and `change` go through ONE handler: chokidar reports both for a
+    // single write (and a burst of writes on one path collapses in the
+    // debounce, which is keyed by path).
+    const reload = (abs: string) => this.onHotFile(abs, toolsDir, skillsDir, 'added', debouncedReloadTool, debouncedReloadSkill);
+    this.hotWatcher.on('add', reload);
+    this.hotWatcher.on('change', reload);
+    this.hotWatcher.on('unlink', (abs: string) => this.onHotFile(abs, toolsDir, skillsDir, 'removed', debouncedReloadTool, debouncedReloadSkill));
+    // A removed skill DIRECTORY never emits `unlink` for the SKILL.md inside
+    // it — chokidar reports the directory. Skills are the only thing nested,
+    // so a directory removal is always "the skills under it are gone".
+    this.hotWatcher.on('unlinkDir', (abs: string) => {
+      for (const entry of [...this.skills.values()]) {
+        if (entry.layer !== 'project') continue;
+        const file = entry.skill.sourceFile;
+        if (!file?.startsWith('project:')) continue;
+        const abs2 = path.join(skillsDir, file.slice('project:'.length));
+        if (abs2 === abs || abs2.startsWith(abs + path.sep)) this.forgetSkill(abs2);
+      }
+    });
+    this.hotWatcher.on('error', (err: unknown) => {
+      agentIO.verbose('loader', `Hot-reload watcher error: ${String(err)}`);
+    });
+  }
+
+  /**
+   * One watcher event → the right reload/removal. `abs` is what chokidar
+   * reports (absolute when the watched roots are absolute); a non-entrypoint
+   * (wrong extension, deep file, non-SKILL.md in a skill subdir) is ignored,
+   * exactly as the old per-event filename filter did.
+   */
+  private onHotFile(
+    abs: string,
+    toolsDir: string,
+    skillsDir: string,
+    verb: 'added' | 'changed' | 'removed',
+    reloadTool: (filepath: string) => void,
+    reloadSkill: (filepath: string) => void,
+  ): void {
+    const rel = path.relative(toolsDir, abs).replace(/\\/g, '/');
+    const inTools = !rel.startsWith('..') && !path.isAbsolute(rel);
+    if (inTools) {
+      if (!rel || rel.includes('/')) return; // flat dir only
+      if (!rel.endsWith('.ts') && !rel.endsWith('.js')) return;
+      if (verb === 'removed') { this.forgetTool(abs); return; }
+      if (!this.silent) agentIO.verbose('loader', `Reloading tool: ${rel}`);
+      reloadTool(abs);
+      return;
     }
 
-    // Watch .mycc/skills/ for project skill changes (recursive for subdirectories)
-    if (fs.existsSync(skillsDir)) {
-      this.skillWatcher = watch(skillsDir, { recursive: true }, (_event, filename) => {
-        if (filename && filename.endsWith('.md')) {
-          // Only load valid entrypoints:
-          // - Root level: any *.md file
-          // - Subdirectories: only SKILL.md
-          const isRootLevel = !filename.includes(path.sep);
-          const isSkillEntrypoint = filename.endsWith(path.join(path.sep, 'SKILL.md'));
+    const srel = path.relative(skillsDir, abs).replace(/\\/g, '/');
+    if (srel.startsWith('..') || path.isAbsolute(srel) || !srel.endsWith('.md')) return;
+    // Only load valid entrypoints: root-level *.md, or <subdir>/SKILL.md.
+    const isRootLevel = !srel.includes('/');
+    const isSkillEntrypoint = srel.endsWith('/SKILL.md');
+    if (!isRootLevel && !isSkillEntrypoint) return;
+    if (verb === 'removed') { this.forgetSkill(abs); return; }
+    if (!this.silent) agentIO.verbose('loader', `Reloading skill: ${srel}`);
+    reloadSkill(abs);
+    // Schedule a debounced wiki re-index signal so the skills domain stays in
+    // sync with disk (catches merges/deletes that the per-skill skill_load
+    // re-index path can't, since that path only re-indexes the one skill it
+    // was asked to load — no orphan sweep). The 2 min debounce coalesces edits
+    // across multiple LLM turns into one signal.
+    this.scheduleSkillReindex?.();
+  }
 
-          if (isRootLevel || isSkillEntrypoint) {
-            const filepath = path.join(skillsDir, filename);
-            if (!this.silent) {
-              agentIO.verbose('loader', `Reloading skill: ${filename}`);
-            }
-            debouncedReloadSkill(filepath, filepath);
-            // Schedule a debounced wiki re-index signal so the skills domain
-            // stays in sync with disk (catches merges/deletes that the
-            // per-skill skill_load re-index path can't, since that path only
-            // re-indexes the one skill it was asked to load — no orphan
-            // sweep). The 2 min debounce coalesces edits across multiple LLM
-            // turns into one signal; the listener (ParentContext) no-ops if
-            // the wiki isn't ready yet.
-            debouncedReindex('__skill_change__');
-          }
-        }
-      });
+  /** Drop a project tool whose file was deleted. A tool that also exists at
+   *  the user layer stays: the project copy was the shadowing one, so the
+   *  next load falls back to the user definition (re-import from there). */
+  private forgetTool(abs: string): void {
+    for (const [name, entry] of this.tools) {
+      // Project tools are keyed by name; identify by re-importing would cost a
+      // module load, so match on the file the tool was loaded from when the
+      // definition records it, else fall back to a name/file-stem match.
+      if (entry.layer !== 'project') continue;
+      if (this.toolSourceMatches(name, abs)) {
+        this.tools.delete(name);
+        agentIO.brief('info', 'loader', `Removed tool: ${name} (file deleted)`);
+        return;
+      }
+      void entry; void name;
+    }
+  }
+
+  /** Whether a project tool entry was loaded from `abs` (the tool file name
+   *  stem is the module file, and the definition's `name` is conventionally
+   *  the kebab-case stem). */
+  private toolSourceMatches(name: string, abs: string): boolean {
+    const stem = path.basename(abs).replace(/\.(ts|js)$/, '');
+    return stem === name;
+  }
+
+  /** Drop a project skill whose file was deleted. Skills carry their source
+   *  path notation (`project:<rel>`), so the match is exact — no name guess. */
+  private forgetSkill(abs: string): void {
+    const sourceFile = resolveToSkillPath(abs, 'project');
+    if (!sourceFile) return;
+    for (const [name, entry] of this.skills) {
+      if (entry.layer !== 'project' || entry.skill.sourceFile !== sourceFile) continue;
+      this.skills.delete(name);
+      agentIO.brief('info', 'loader', `Removed skill: ${name} (file deleted)`);
+      this.scheduleSkillReindex?.();
+      return;
     }
   }
 
@@ -521,10 +621,11 @@ export class Loader implements DynamicLoader, SkillModule {
    * Stop watching directories
    */
   stopWatching(): void {
-    this.toolWatcher?.close();
-    this.skillWatcher?.close();
-    this.toolWatcher = null;
-    this.skillWatcher = null;
+    // chokidar's close() is async and returns a promise; the handlers are
+    // detached synchronously, so a later resolution cannot resurrect anything.
+    void this.hotWatcher?.close().catch(() => { /* already closed */ });
+    this.hotWatcher = null;
+    this.scheduleSkillReindex = null;
   }
 
   /**
