@@ -85,13 +85,28 @@ function normalizeTitle(raw: string): string {
 
 export const myccTitleTool: ToolDefinition = {
   name: 'mycc_title',
-  description: `Add a notification banner to mark a change of topic in the discussion.`,
+  description: [
+    'Mark the end of a paragraph so the human can navigate the work by chapter.',
+    '',
+    'A call does two things at once:',
+    '',
+    '  1. It DRAWS A LINE. Everything before this point closes as one paragraph — the',
+    '     transcript up to the previous title is archived into a single summary heading,',
+    '     and the title you pass is the heading for the work now in progress.',
+    '  2. It PAINTS THE SIGN. A bright banner across the terminal plus a new window/tab',
+    '     title, so each mycc window is identifiable at a glance.',
+    '',
+    'The same title twice is a no-op for the reader. The "mycc:" prefix is added for',
+    'you. Returns "OK". See the `set-title` skill for when to place a title and how to',
+    'phrase it.',
+  ].join('\n'),
   input_schema: {
     type: 'object',
     properties: {
       title: {
         type: 'string',
-        description: 'The new title. Keep it concise and descriptive.',
+        description:
+          'The heading for the paragraph you are closing — under 40 chars, e.g. "fixing the bash timeout" or "peer wire reconnect". The "mycc: " prefix is added automatically.',
       },
     },
     required: ['title'],

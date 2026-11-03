@@ -91,17 +91,30 @@ the answer to it is the same one judgement: title if the focus moved.
 
 ## Guidelines for title
 
-- Keep it under 40 characters (the "mycc: " prefix is added on top)
-- Describe the current task or focus area
-- Do NOT include "mycc:" yourself — it's prepended automatically
-- When you switch to a different task or the focus of the conversation shifts,
-  call `mycc_title` again with a new descriptive title — do not wait for the
-  nudge if the shift is obvious.
+A title is a bookmark, not a tab name: place one per paragraph of work, and
+the log turns into a table of contents.
+
+- **One per paragraph of work.** Too few and the scrollback is one endless
+  block the reader must re-read to navigate; too many and the table of
+  contents is noise.
+- **Close on completion, not mid-stride.** Title when a chunk of work is
+  actually done — bug found, feature landed, question answered — because that
+  is where a reader would want to jump back to.
+- **Retitle when the focus moves.** "filesync debugging" turning into
+  "reviewing package boundaries" is a new paragraph; the old title now lies to
+  the reader. Do not wait for the nudge if the shift is obvious.
+- **Under 40 characters** (the "mycc: " prefix is added on top), concrete and
+  verb-led: `fixing bash tool`, `filesync 200MB converge`. Name the work, not
+  the vibe.
+- **Do NOT include "mycc:" yourself** — it is prepended automatically, and a
+  stray one is cleaned up rather than doubled.
+- **Do not repeat an unchanged title** — a banner for news nobody needs.
 
 ## Notes
 
 - A title also archives the previous segment. If the work is a long continuous
   investigation with no real topic change, refreshing the title is still
-  cheap; it simply archives nothing.
+  cheap; it simply archives nothing — but prefer a real paragraph boundary
+  when one is available.
 - After auto-compaction the tally is wiped and the reminder re-arms — see
   Trigger. Respond by setting the title or staying silent, not by explaining.
