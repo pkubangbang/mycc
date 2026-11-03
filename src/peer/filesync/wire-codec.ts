@@ -85,7 +85,7 @@ export interface SyncDispatchTarget {
 
 /**
  * Engine message → the wire frame the peer expects. The transport-agnostic
- * engine (packages/filesync-manager) speaks `kind` messages; mycc's wire
+ * engine (`@pkubangbang/filesync-manager`) speaks `kind` messages; mycc's wire
  * speaks `type:'sync-*'`. This is the ONLY place the two vocabularies meet,
  * so the package stays free of wire verbs and the wire format stays stable.
  */

@@ -111,28 +111,6 @@ export default tseslint.config(
     },
   },
   {
-    // `packages/**/*.ts` (the extracted transport-agnostic packages, e.g.
-    // @pkubangbang/filesync-manager) are part of the MAIN program — tsconfig.json
-    // includes `packages/*/src/**/*`. A package's tests live in its own
-    // top-level `tests/` directory (mirroring the extracted repo layout) and are
-    // covered by the test project below.
-    files: ['packages/*/src/**/*.ts'],
-    languageOptions: {
-      parserOptions: {
-        project: './tsconfig.json',
-      },
-    },
-  },
-  {
-    // Package unit tests: typed by tsconfig.test.json (same program as src/tests).
-    files: ['packages/*/tests/**/*.ts'],
-    languageOptions: {
-      parserOptions: {
-        project: './tsconfig.test.json',
-      },
-    },
-  },
-  {
     // `scripts/**/*.ts` (the mycc-compose lib modules) are typed by a SEPARATE
     // program — tsconfig.scripts.json — not tsconfig.json. Pointing the main
     // `**/*.ts` block at them errors with "The file was not found in any of

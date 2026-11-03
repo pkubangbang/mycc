@@ -15,8 +15,8 @@ importers:
         specifier: ^0.1.3
         version: 0.1.3
       '@pkubangbang/filesync-manager':
-        specifier: file:packages/filesync-manager
-        version: link:packages/filesync-manager
+        specifier: ^0.1.0
+        version: 0.1.0
       '@vitejs/plugin-vue':
         specifier: ^6.0.9
         version: 6.0.9(vite@8.3.0(@types/node@24.13.5)(esbuild@0.28.2)(tsx@4.23.13))(vue@3.5.42(typescript@5.9.3))
@@ -126,12 +126,6 @@ importers:
       vue-tsc:
         specifier: ^3.3.11
         version: 3.3.11(typescript@5.9.3)
-
-  packages/filesync-manager:
-    dependencies:
-      chokidar:
-        specifier: ^6.0.0
-        version: 6.0.0
 
 packages:
 
@@ -619,6 +613,10 @@ packages:
   '@pkubangbang/crossroad-detector@0.1.3':
     resolution: {integrity: sha512-xa9ZJh255T2sSS7nboxfq+Vjox/QyHwOvP0ofWw9pL686eGaqxQc++U1JTKSuQod220f6H6bgv5rs6McDBEMUg==}
     engines: {node: '>=18'}
+
+  '@pkubangbang/filesync-manager@0.1.0':
+    resolution: {integrity: sha512-IwPxgOMrpSyNCteZpo326u56zZZ14yPyd8obfB0gHskguME3RHRPaFMRVXh+a9tcNhB05VbnFQ5JAcPpRs28vQ==}
+    engines: {node: '>=22.22'}
 
   '@rolldown/binding-android-arm-eabi@1.2.8':
     resolution: {integrity: sha512-tN5aztYkKCte4i5SIrrz5yK/HMjEuCqCSCJa418jOV8tZ1cBY3YF2otxB1ktPxzsLA1BeTqwapK0bfjxNvHJVw==}
@@ -2531,6 +2529,10 @@ snapshots:
   '@pkubangbang/crossroad-detector@0.1.3':
     dependencies:
       onnxruntime-node: 1.29.0
+
+  '@pkubangbang/filesync-manager@0.1.0':
+    dependencies:
+      chokidar: 6.0.0
 
   '@rolldown/binding-android-arm-eabi@1.2.8':
     optional: true

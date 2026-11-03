@@ -68,8 +68,8 @@ may differ per share.
 ## 3. Transport — frames over the existing WS
 
 > **Package boundary.** The engine is a standalone, transport-agnostic
-> package — `@pkubangbang/filesync-manager` (`packages/filesync-manager/` in
-> this repo while it is pre-publish). It knows folders, chunks, the piece
+> package — [`@pkubangbang/filesync-manager`](https://github.com/pkubangbang/filesync-manager)
+> (`^0.1.0` from npm; its own repo since v0.1.0). It knows folders, chunks, the piece
 > store, manifests, tombstones and conflicts; it knows **nothing** about
 > sockets. It speaks plain messages (`src/protocol.ts`: `manifest`,
 > `want-list`, `piece-list`, `want-pieces`, `piece`, `deletion`, `error`) and
@@ -228,7 +228,7 @@ differs: "yours kept / theirs preserved" vs "theirs kept / yours preserved").
 | Phase | Deliverable |
 |---|---|
 | 1 | this spec + `remote-peer-protocol.md` §6 update |
-| 2 | `packages/filesync-manager/` — chunker + piece store, index/tombstones/conflict log, watcher + 30 s gossip, fetch engine (transport-agnostic); host adapter `src/peer/filesync/` (frames, codec, registry) + frame diffs (`wire-client.ts`, `wire-registry.ts`, `serve/peer-wire.ts`) |
+| 2 | `@pkubangbang/filesync-manager` (github.com/pkubangbang/filesync-manager) — chunker + piece store, index/tombstones/conflict log, watcher + 30 s gossip, fetch engine (transport-agnostic); host adapter `src/peer/filesync/` (frames, codec, registry) + frame diffs (`wire-client.ts`, `wire-registry.ts`, `serve/peer-wire.ts`) |
 | 3 | config (`--share`/`MYCC_SHARES`/`--debug-filesync`: `config.ts`, `arg-canonical.ts`, `help.ts`, README), `announce.shares`, `/share` slash, conflict→mail + pinned share todo, `peer_list` shares display |
 | 4 | tests |
 
