@@ -62,7 +62,9 @@ function capturePane(sessionName: string): Promise<string> {
 
 export const handOverTool: ToolDefinition = {
   name: 'hand_over',
-  description: `Opens a popup terminal and BLOCKS until the user finishes interacting, then captures and returns the terminal output. Use ONLY when the task REQUIRES a human at the terminal — e.g. entering a password (sudo, SSH passphrase, 2FA), an interactive TUI (vim, htop, less), an SSH session, or anything reading from a TTY. For non-interactive commands use bash; for background jobs use bg_create; to drive a persistent terminal programmatically use bash with tmux send-keys/capture-pane. hand_over OWNS the tmux framing: pass the INNER foreground command only (e.g. \`sudo apt install X\`, \`vim file\`) — do NOT prefix it with \`tmux ...\` (that would nest a tmux client inside hand_over's own session).`,
+  description: `Opens a popup terminal and BLOCKS until the user finishes interacting, then captures and returns the terminal output. Use ONLY when the task REQUIRES a human at the terminal — e.g. entering a password (sudo, SSH passphrase, 2FA), an interactive TUI (vim, htop, less), an SSH session, or anything reading from a TTY. For non-interactive commands use bash; for background jobs use bg_create; to drive a persistent terminal programmatically use bash with tmux send-keys/capture-pane. hand_over OWNS the tmux framing: pass the INNER foreground command only (e.g. \`sudo apt install X\`, \`vim file\`) — do NOT prefix it with \`tmux ...\` (that would nest a tmux client inside hand_over's own session).
+
+IMPORTANT: When the user keeps the session (answers 'y'), the tool returns a session name and tmux send-keys/capture-pane commands. REUSE that session for all follow-up commands in the same context — do NOT call hand_over again for subsequent related work. Drive the existing session via bash + tmux send-keys instead. Only open a new hand_over popup for unrelated tasks or different directories.`,
   input_schema: {
     type: 'object',
     properties: {
@@ -300,9 +302,11 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
     : `Status: session closed (output captured below)\nSession name: ${sessionName}`;
 
   const nextAction = keepSession
-    ? `Next action: continue this interactive session with the bash tool —\n` +
+    ? `Next action: REUSE this session for all subsequent related commands via bash —\n` +
       `  tmux send-keys -t ${sessionName} '<command>' Enter   (type a command)\n` +
-      `  tmux capture-pane -t ${sessionName} -p               (read the screen)`
+      `  tmux capture-pane -t ${sessionName} -p               (read the screen)\n` +
+      `Do NOT call hand_over again for follow-up work in this same context; drive this existing session instead. ` +
+      `Only create a new hand_over popup if you need an independent terminal in a different directory or for an unrelated task.`
     : `Next action: the session is closed; read the captured output below and continue (or ask the user for guidance if the human reported something).`;
 
   return (
