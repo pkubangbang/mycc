@@ -18,6 +18,7 @@ import { clearAll } from '../context/memory-store.js';
 import { agentIO } from '../loop/agent-io.js';
 import { openEditor } from '../utils/open-editor.js';
 import { atomicWrite } from '../utils/atomic-write.js';
+import { isSamePath } from '../utils/path.js';
 import { probeLiveBeat } from '../peer/identity.js';
 
 /**
@@ -783,8 +784,12 @@ export async function restoreSession(sessionArg: string): Promise<SessionInit> {
   // Verify working directory matches the SOURCE session's project_dir. The
   // new session inherits the current cwd as its project_dir, so they must
   // match (you can only branch a session from within its own project).
+  //
+  // Compared via isSamePath, NOT `!==`: on Windows the drive letter case is
+  // not significant, but process.cwd() echoes whatever the shell used, so a
+  // session recorded from `D:\proj` would refuse to branch from `d:\proj`.
   const currentDir = process.cwd();
-  if (currentDir !== sourceSession.project_dir) {
+  if (!isSamePath(currentDir, sourceSession.project_dir)) {
     console.error(chalk.red('Working directory mismatch.'));
     console.error(chalk.yellow(`Current: ${currentDir}`));
     console.error(chalk.yellow(`Source session expects: ${sourceSession.project_dir}`));

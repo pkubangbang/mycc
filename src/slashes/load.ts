@@ -15,6 +15,7 @@ import { Triologue } from '../loop/triologue.js';
 import { agentIO } from '../loop/agent-io.js';
 import { getSessionContext, shouldDaemon } from '../config.js';
 import { sendToParent } from '../utils/parent-ipc.js';
+import { isSamePath } from '../utils/path.js';
 
 export const loadCommand: SlashCommand = {
   name: 'load',
@@ -57,9 +58,11 @@ export const loadCommand: SlashCommand = {
     try {
       const session = loadSessionById(sessionId);
 
-      // Check working directory
+      // Check working directory (isSamePath: Windows drive-letter case and
+      // trailing separators are not significant — a raw `!==` wrongly spawned
+      // a "restart in the right directory" for `D:\proj` vs `d:\proj`).
       const currentDir = process.cwd();
-      if (currentDir !== session.project_dir) {
+      if (!isSamePath(currentDir, session.project_dir)) {
         console.log(chalk.yellow(`Session belongs to a different project directory.`));
         console.log(chalk.gray(`  Current: ${currentDir}`));
         console.log(chalk.gray(`  Session expects: ${session.project_dir}`));

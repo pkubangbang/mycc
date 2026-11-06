@@ -65,3 +65,37 @@ export function isInsideWorkspace(resolved: string, workdir: string): boolean {
   const rel = path.relative(workdir, resolved);
   return rel === '' || (!path.isAbsolute(rel) && !rel.startsWith('..'));
 }
+
+/**
+ * Equality test for two directory paths, tolerant of the differences the OS
+ * itself ignores.
+ *
+ * A raw `a === b` string compare is wrong for the same directory spelled two
+ * ways:
+ *   - On Windows the drive letter case is not significant (`D:\proj` and
+ *     `d:\proj` are the same folder). Node's `process.cwd()` preserves the
+ *     case the shell used, so a session recorded from `D:\proj` fails to
+ *     restore from a shell sitting in `d:\proj` (and vice versa) — the
+ *     `/fork` "Working directory mismatch" false positive.
+ *   - Trailing separators (`D:\proj\`) and `.`/`..` segments differ textually
+ *     but resolve to the same place.
+ *
+ * Implementation: `path.resolve` removes trailing separators and collapses
+ * `.`/`..`; `path.normalize` folds separator style. On Windows the comparison
+ * is then case-folded (NTFS/ReFS are case-insensitive by default); on POSIX
+ * it stays case-SENSITIVE, where `/Proj` and `/proj` are genuinely different.
+ *
+ * Symlinks are NOT resolved — this is a lexical check. Callers only need to
+ * decide "same project?", which a textual comparison answers safely: a
+ * mismatch merely triggers a prompt/refusal, never a wrong-directory write.
+ *
+ * @param a - absolute or relative path (resolved against cwd)
+ * @param b - absolute or relative path (resolved against cwd)
+ * @returns true if both spell the same directory on this platform
+ */
+export function isSamePath(a: string, b: string): boolean {
+  const norm = (p: string) => path.normalize(path.resolve(p));
+  const na = norm(a);
+  const nb = norm(b);
+  return process.platform === 'win32' ? na.toLowerCase() === nb.toLowerCase() : na === nb;
+}
