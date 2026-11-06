@@ -18,18 +18,35 @@ export interface PromptConfig {
   sensitive?: boolean; // If true, value is redacted on display
   validate?: (value: string) => boolean | string;
   transform?: (value: string) => string;
+  /** Dynamic help text based on current config (e.g., host-aware API key help) */
+  dynamicHelp?: (config: Record<string, string>) => string;
 }
 
 /**
- * Validate URL format
+ * Parse a URL, returning true or an error string supplied by the caller.
+ * Keeps the parsing logic in one place; only the guidance differs per provider.
  */
-function validateUrl(url: string): boolean | string {
+function parseUrl(url: string, onError: string): boolean | string {
   try {
     new URL(url);
     return true;
   } catch {
-    return 'Invalid URL format. Example: http://127.0.0.1:11434';
+    return onError;
   }
+}
+
+/**
+ * Validate Ollama host URL with helpful examples
+ */
+function validateOllamaHost(url: string): boolean | string {
+  return parseUrl(url, 'Invalid URL. Examples:\n  Local: http://127.0.0.1:11434\n  Cloud: https://ollama.com');
+}
+
+/**
+ * Validate DeepSeek host URL with helpful example
+ */
+function validateDeepSeekHost(url: string): boolean | string {
+  return parseUrl(url, 'Invalid URL. Example: https://api.deepseek.com');
 }
 
 /**
@@ -52,8 +69,8 @@ function getOllamaConnectionPrompts(): PromptConfig[] {
       name: 'OLLAMA_HOST',
       message: 'Ollama server URL',
       default: 'http://127.0.0.1:11434',
-      help: 'The URL of your Ollama server (used for embeddings)',
-      validate: validateUrl,
+      help: 'URL of Ollama server. Local: http://127.0.0.1:11434 (default). Cloud: https://ollama.com',
+      validate: validateOllamaHost,
     },
     {
       name: 'OLLAMA_EMBEDDING_MODEL',
@@ -71,22 +88,29 @@ function getOllamaPrompts(): PromptConfig[] {
   return [
     {
       name: 'OLLAMA_API_KEY',
-      message: 'Ollama API key (optional, for cloud features)',
+      message: 'Ollama API key (optional)',
       default: '',
-      help: 'Set if using Ollama cloud features. Leave empty for local Ollama.',
+      help: 'Required for Ollama Cloud. Leave empty for local Ollama.',
       sensitive: true,
+      dynamicHelp: (config: Record<string, string>) => {
+        const host = config['OLLAMA_HOST'] || 'http://127.0.0.1:11434';
+        if (host.includes('127.0.0.1') || host.includes('localhost')) {
+          return 'Not needed for local Ollama (127.0.0.1:11434). Press Enter to skip.';
+        }
+        return 'Required for Ollama Cloud. Get your key at https://ollama.com/settings/keys';
+      },
     },
     {
       name: 'OLLAMA_MODEL',
       message: 'Ollama model name (general/chat)',
       default: 'glm-5:cloud',
-      help: 'The model to use for general chat and coding tasks.',
+      help: 'Model for chat/coding. Local: llama3.1, qwen2.5-coder. Cloud: glm-5:cloud, gemma4:31b-cloud',
     },
     {
       name: 'OLLAMA_VISION_MODEL',
       message: 'Ollama vision model (for screen/image tools)',
       default: 'none',
-      help: 'Set to "none" to disable vision features, or specify a vision-capable model.',
+      help: 'Vision model for screen/image analysis. Set "none" to disable. Requires Ollama Cloud or local vision model.',
     },
   ];
 }
@@ -101,7 +125,7 @@ function getDeepSeekPrompts(): PromptConfig[] {
       message: 'DeepSeek API host URL',
       default: 'https://api.deepseek.com',
       help: 'The DeepSeek API endpoint. Change only if using a proxy or compatible API.',
-      validate: validateUrl,
+      validate: validateDeepSeekHost,
     },
     {
       name: 'DEEPSEEK_API_KEY',
@@ -134,7 +158,7 @@ function getSharedPrompts(): PromptConfig[] {
       name: 'TOKEN_THRESHOLD',
       message: 'Token threshold for context management',
       default: '100000',
-      help: 'Context limit threshold for managing conversation size',
+      help: 'Max conversation tokens before auto-compaction. Higher = longer memory but slower. Default: 100000',
       validate: validatePositiveNumber,
     },
     {
@@ -193,7 +217,7 @@ export const ENV_REQUIREMENTS: EnvRequirement[] = [
   {
     name: 'OLLAMA_API_KEY',
     required: false,
-    instruction: 'Set OLLAMA_API_KEY for cloud features',
+    instruction: 'Set OLLAMA_API_KEY for Ollama Cloud (not needed for local 127.0.0.1:11434)',
   },
   {
     name: 'OLLAMA_MODEL',

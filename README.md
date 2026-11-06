@@ -35,7 +35,7 @@ All environment variables can be overridden via CLI flags. These take highest pr
 | Flag | Env Variable | Description |
 |------|-------------|-------------|
 | `--ollama-host` | `OLLAMA_HOST` | Ollama server URL (default: http://127.0.0.1:11434) |
-| `--ollama-api-key` | `OLLAMA_API_KEY` | Ollama API key for cloud features |
+| `--ollama-api-key` | `OLLAMA_API_KEY` | Ollama API key for cloud features (not needed for local 127.0.0.1:11434) |
 | `--ollama-model` | `OLLAMA_MODEL` | Ollama chat model (default: glm-5:cloud) |
 | `--ollama-vision-model` | `OLLAMA_VISION_MODEL` | Ollama vision model for screen/image tools |
 | `--ollama-embedding-model` | `OLLAMA_EMBEDDING_MODEL` | Embedding model for semantic search/RAG |
@@ -44,7 +44,7 @@ All environment variables can be overridden via CLI flags. These take highest pr
 | `--deepseek-model` | `DEEPSEEK_MODEL` | DeepSeek model name (default: deepseek-v4-pro) |
 | `--deepseek-vision-model` | `DEEPSEEK_VISION_MODEL` | DeepSeek vision model for screen/image tools (default: deepseek-flash) |
 | `--api-provider` | `API_PROVIDER` | API provider: "ollama" or "deepseek" (default: ollama) |
-| `--token-threshold` | `TOKEN_THRESHOLD` | Context limit threshold (default: 50000) |
+| `--token-threshold` | `TOKEN_THRESHOLD` | Context limit threshold (default: 100000) |
 | `--editor` | `EDITOR` | Text editor for file editing |
 | `--skill-match-threshold` | `SKILL_MATCH_THRESHOLD` | Skill similarity threshold 0-1 (default: 0.5) |
 | `--max-upload-mb` | `MYCC_MAX_UPLOAD_MB` | Max single-file upload size (MB) for the `/serve` Web UI (default: 50) |

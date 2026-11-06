@@ -62,7 +62,7 @@ export async function runSetup(): Promise<void> {
   if (hasExistingConfig()) {
     displayCurrentSettings();
   } else {
-    console.log(chalk.cyan('\n📋 No existing configuration found.\n'));
+    console.log(chalk.cyan('\nNo existing configuration found.\n'));
     console.log(chalk.dim('  This appears to be a fresh installation.'));
     console.log(chalk.dim('  Let\'s configure your environment.\n'));
   }
@@ -77,10 +77,10 @@ export async function runSetup(): Promise<void> {
     const fs = await import('fs');
     if (fs.existsSync(projectConfigPath)) {
       fs.unlinkSync(projectConfigPath);
-      console.log(chalk.green('\n✅ Project configuration deleted.'));
+      console.log(chalk.green('\nProject configuration deleted.'));
       console.log(chalk.dim('   Will inherit from user-level config if it exists.\n'));
     } else {
-      console.log(chalk.yellow('\n⚠️  No project configuration found to delete.'));
+      console.log(chalk.yellow('\nNo project configuration found to delete.'));
       console.log(chalk.dim('   Already using user-level config.\n'));
     }
     return;
@@ -116,13 +116,35 @@ export async function runSetup(): Promise<void> {
     await pullConfiguredModels(config, provider);
   }
 
-  // Step 8: Print success message
+  // Step 8: Print success message with next steps
   const providerLabel = provider === 'deepseek' ? 'DeepSeek' : 'Ollama';
-  console.log(chalk.green(`\n✅ Configuration saved successfully!`));
+  console.log(chalk.green(`\nConfiguration saved successfully!`));
   console.log(chalk.dim(`   Location: ${configPath}`));
   console.log(chalk.dim(`   Provider: ${providerLabel}`));
   console.log(chalk.dim(`   Type: ${location}-level\n`));
-  console.log(chalk.cyan(`You can now run mycc normally.`));
+
+  // Provider-specific next steps
+  // Resolve the host from what the user typed, falling back to the written config
+  // and finally the default — pressing Enter on OLLAMA_HOST leaves `config` without it.
+  const ollamaHost = (
+    config['OLLAMA_HOST'] || mergedConfig['OLLAMA_HOST'] || 'http://127.0.0.1:11434'
+  ).toLowerCase();
+  const isLocalOllama = ollamaHost.includes('127.0.0.1') || ollamaHost.includes('localhost');
+
+  if (provider === 'ollama' && isLocalOllama) {
+    console.log(chalk.cyan('Next steps for local Ollama:'));
+    console.log('  1. Start Ollama: ollama serve');
+    console.log('  2. Pull a model: ollama pull llama3.1');
+    console.log('  3. Run mycc: mycc');
+  } else if (provider === 'ollama') {
+    console.log(chalk.cyan('Next steps for Ollama Cloud:'));
+    console.log('  1. Ensure OLLAMA_API_KEY is set in your .env');
+    console.log('  2. Run mycc: mycc');
+  } else {
+    console.log(chalk.cyan('Next steps for DeepSeek:'));
+    console.log('  1. Verify API key at https://platform.deepseek.com');
+    console.log('  2. Run mycc: mycc');
+  }
 }
 
 // Export for CLI

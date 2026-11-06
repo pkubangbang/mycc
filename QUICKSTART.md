@@ -46,9 +46,9 @@ npm link
 
 ### 1. Choose your LLM provider
 
-mycc supports two LLM providers:
+mycc supports three ways to run its chat model: **Ollama Local**, **Ollama Cloud**, and **DeepSeek**.
 
-**Option A: Ollama (recommended)** — Run models locally. Enables all features including `web_search`, `web_fetch`, `screen`, and `read_picture`.
+**Option A: Ollama (recommended)** — Run models locally or on Ollama Cloud. Local enables all features including `web_search`, `web_fetch`, `screen`, and `read_picture`; Cloud adds hosted models on the same provider.
 
 Install Ollama:
 [download page of ollama](https://ollama.com/download)
@@ -56,7 +56,7 @@ Install Ollama:
 Ollama cloud provides the max capability, however if you do not need the online tools,
 and you are fine with the local LLM, Ollama alone without the cloud is also acceptable.
 
-Recommended models: `glm-5:cloud` and `gemma4:31b-cloud`.
+Recommended models: local `llama3.1` / `qwen2.5-coder`; cloud `glm-5:cloud` and `gemma4:31b-cloud`.
 
 **Option B: DeepSeek** — Cloud-based API. Does not require local hardware. Supports `web_search` (server-side via the Responses API — the search runs on DeepSeek's servers and returns a synthesized answer) and `screen`/`read_picture` image understanding (via the `deepseek-flash` vision model). `web_fetch` is **not** supported.
 
@@ -109,33 +109,35 @@ mycc --setup
 
 The wizard will first ask you to choose an **API provider**:
 
-**Option A: Ollama (default)** — Local LLM inference via Ollama.
-The wizard will guide you through configuring:
-- **OLLAMA_HOST** - Ollama server URL (default: http://127.0.0.1:11434)
-- **OLLAMA_MODEL** - General/chat model (default: glm-5:cloud)
-- **OLLAMA_VISION_MODEL** - Vision model for screen/image tools
-- **OLLAMA_EMBEDDING_MODEL** - Embedding model for semantic search
-- **OLLAMA_API_KEY** - API key for cloud features (optional)
-- **TOKEN_THRESHOLD** - Context limit threshold (default: 50000)
-- **EDITOR** - Text editor for file editing
+**Option A: Ollama Local (default)** — Run models on your machine.
+- No API key needed
+- Default host: http://127.0.0.1:11434
+- Recommended models: llama3.1, qwen2.5-coder
+- Configure: **OLLAMA_HOST**, **OLLAMA_MODEL** (default: glm-5:cloud), **OLLAMA_VISION_MODEL** (default: none)
 
-**Option B: DeepSeek** — Cloud-based LLM via DeepSeek API.
-The wizard will guide you through configuring:
-- **DEEPSEEK_HOST** - DeepSeek API endpoint (default: https://api.deepseek.com)
-- **DEEPSEEK_API_KEY** - Your DeepSeek API key (required)
-- **DEEPSEEK_MODEL** - DeepSeek model name (default: deepseek-v4-pro)
-- **DEEPSEEK_VISION_MODEL** - DeepSeek vision model for screen/image tools (default: deepseek-flash)
-- **OLLAMA_EMBEDDING_MODEL** - Embedding model for semantic search (always uses Ollama)
-- **TOKEN_THRESHOLD** - Context limit threshold (default: 50000)
+**Option B: Ollama Cloud** — Use hosted models at ollama.com.
+- Requires API key from https://ollama.com/settings/keys
+- Set OLLAMA_HOST=https://ollama.com
+- Recommended models: glm-5:cloud, gemma4:31b-cloud
+- Configure: **OLLAMA_API_KEY**, **OLLAMA_MODEL**, **OLLAMA_VISION_MODEL**
+
+**Option C: DeepSeek** — Cloud-based API.
+- Requires API key from https://platform.deepseek.com/api_keys
+- Configure: **DEEPSEEK_HOST** (default: https://api.deepseek.com), **DEEPSEEK_API_KEY**,
+  **DEEPSEEK_MODEL** (default: deepseek-v4-pro), **DEEPSEEK_VISION_MODEL** (default: deepseek-flash)
+
+All providers also configure:
+- **OLLAMA_EMBEDDING_MODEL** - Embedding model for semantic search; always uses Ollama (default: nomic-embed-text)
+- **TOKEN_THRESHOLD** - Context limit threshold (default: 100000)
 - **EDITOR** - Text editor for file editing
 
 > **Note:** When using DeepSeek, `web_search` **is** available (server-side via the Responses API) and `screen`/`read_picture` image understanding **is** available via the `deepseek-flash` vision model (set `DEEPSEEK_VISION_MODEL`, default `deepseek-flash`; set it to `none` to disable). `web_fetch` is **not available**. Embeddings for wiki/RAG still require Ollama (any embedding model).
 
 You can choose to store configuration at:
 - **User-level**: `~/.mycc-store/.env` (global, applies to all projects)
-- **Project-level**: `./mycc/.env` (local, applies only to current project)
+- **Project-level**: `./.mycc/.env` (local, applies only to current project)
 
-Note: The `OLLAMA_API_KEY` is only required if you use online tools (web_search, web_fetch). You can generate an API key at [ollama.com/settings/keys](https://ollama.com/settings/keys).
+Note: The `OLLAMA_API_KEY` is only required for Ollama Cloud (https://ollama.com). It is not needed when using local Ollama at `127.0.0.1:11434`. You can generate an API key at [ollama.com/settings/keys](https://ollama.com/settings/keys).
 
 ### 5. Start the app
 

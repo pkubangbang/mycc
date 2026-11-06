@@ -144,7 +144,7 @@ export function displayCurrentSettings(): void {
   const userConfig = parseEnvFile(userConfigPath);
   const projectConfig = parseEnvFile(projectConfigPath);
 
-  console.log(chalk.cyan('\n📋 Current Settings\n'));
+  console.log(chalk.cyan('\nCurrent Settings\n'));
   console.log(chalk.dim('─'.repeat(50)));
 
   for (const req of ENV_REQUIREMENTS) {

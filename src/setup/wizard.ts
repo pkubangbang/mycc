@@ -8,9 +8,14 @@
 
 import readline from 'readline';
 import chalk from 'chalk';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { getPrompts, PromptConfig } from './prompts.js';
 import { redactSensitive, parseEnvFile } from './display.js';
 import { getUserConfigPath, getProjectConfigPath } from './paths.js';
+import { isOllamaInstalled, getOllamaBinaryPath } from './ollama-setup.js';
+
+const execAsync = promisify(exec);
 
 /**
  * Create a readline interface
@@ -23,12 +28,31 @@ function createRL(): readline.ReadLine {
 }
 
 /**
+ * Detect if Ollama is installed and running locally
+ */
+async function detectLocalOllama(): Promise<{ installed: boolean; running: boolean }> {
+  const installed = await isOllamaInstalled();
+  let running = false;
+  if (installed) {
+    try {
+      const ollamaPath = getOllamaBinaryPath();
+      await execAsync(`"${ollamaPath}" list`, { timeout: 3000 });
+      running = true;
+    } catch {
+      running = false;
+    }
+  }
+  return { installed, running };
+}
+
+/**
  * Prompt for a single value
  */
 async function prompt(
   rl: readline.ReadLine,
   config: PromptConfig,
-  existingValue?: string
+  existingValue?: string,
+  allConfig?: Record<string, string>
 ): Promise<string> {
   return new Promise((resolve) => {
     let promptText = chalk.white(`${config.message}`);
@@ -44,6 +68,14 @@ async function prompt(
     }
 
     promptText += ': ';
+
+    // Show help text (dynamic takes precedence over static)
+    if (config.dynamicHelp && allConfig) {
+      const dynamicHelpText = config.dynamicHelp(allConfig);
+      console.log(chalk.dim(`  ${dynamicHelpText}`));
+    } else if (config.help) {
+      console.log(chalk.dim(`  ${config.help}`));
+    }
 
     rl.question(promptText, (answer) => {
       const trimmed = answer.trim();
@@ -64,9 +96,9 @@ async function prompt(
       if (config.validate) {
         const result = config.validate(trimmed);
         if (result !== true) {
-          console.log(chalk.red(`  ✗ ${result}`));
+          console.log(chalk.red(`  ${result}`));
           // Re-prompt
-          prompt(rl, config, existingValue).then(resolve);
+          prompt(rl, config, existingValue, allConfig).then(resolve);
           return;
         }
       }
@@ -89,10 +121,10 @@ async function promptChatProvider(
     const currentProvider = existingConfig['API_PROVIDER'] || 'ollama';
     const currentLabel = currentProvider === 'deepseek' ? 'DeepSeek' : 'Ollama';
 
-    console.log(chalk.cyan('\n🤖 Chat Provider Selection'));
+    console.log(chalk.cyan('\nChat Provider Selection'));
     console.log(chalk.dim('  Choose your chat model provider:'));
-    console.log('  [1] Ollama   - Local or cloud LLM (requires API key for cloud)');
-    console.log('  [2] DeepSeek - DeepSeek Cloud API (requires API key)');
+    console.log('  [1] Ollama   - Local or cloud LLM (API key only needed for cloud)');
+    console.log('  [2] DeepSeek - DeepSeek Cloud API (API key required)');
     console.log();
 
     const promptText = currentProvider
@@ -115,7 +147,7 @@ async function promptChatProvider(
  */
 async function promptConfigLocation(rl: readline.ReadLine): Promise<'user' | 'project' | 'delete'> {
   return new Promise((resolve) => {
-    console.log(chalk.cyan('\n📁 Configuration Location'));
+    console.log(chalk.cyan('\nConfiguration Location'));
     console.log('  [1] User-level   (~/.mycc-store/.env) - Global, applies to all projects');
     console.log('  [2] Project-level (./.mycc/.env) - Local, applies only to current project');
     console.log('  [3] Delete project config - Remove local config, inherit from user config');
@@ -172,12 +204,23 @@ export async function runWizard(
     const locationConfig = getLocationConfig(location);
 
     // Step 3: Prompt for Ollama connection (common to all providers)
-    console.log(chalk.cyan('\n🔌 Ollama Connection (used for embeddings)\n'));
+    console.log(chalk.cyan('\nOllama Connection (used for embeddings)\n'));
     console.log(chalk.dim('  Press Enter to accept the default or keep existing value.\n'));
+
+    // Detect local Ollama status
+    const ollamaStatus = await detectLocalOllama();
+    if (ollamaStatus.running) {
+      console.log(chalk.green('  Detected running Ollama instance'));
+      console.log(chalk.dim('  Local Ollama does not require an API key.\n'));
+    } else if (ollamaStatus.installed) {
+      console.log(chalk.yellow('  Ollama is installed but not running'));
+      console.log(chalk.dim('  Start it with: ollama serve\n'));
+    }
+
     const ollamaConnectionPrompts = getPrompts('ollama').slice(0, 2); // OLLAMA_HOST, OLLAMA_EMBEDDING_MODEL
     for (const promptConfig of ollamaConnectionPrompts) {
       const currentValue = locationConfig[promptConfig.name] || existingConfig[promptConfig.name];
-      const value = await prompt(rl, promptConfig, currentValue);
+      const value = await prompt(rl, promptConfig, currentValue, { ...existingConfig, ...config });
       if (value !== undefined && value !== '') {
         config[promptConfig.name] = value;
       }
@@ -189,7 +232,7 @@ export async function runWizard(
 
     // Step 5: Prompt for provider-specific values
     const providerLabel = provider === 'deepseek' ? 'DeepSeek' : 'Ollama';
-    console.log(chalk.cyan(`\n⚙️  ${providerLabel} Configuration\n`));
+    console.log(chalk.cyan(`\n${providerLabel} Configuration\n`));
     console.log(chalk.dim('  Press Enter to accept the default or keep existing value.\n'));
 
     // Get provider-specific prompts (skip Ollama connection prompts)
@@ -197,7 +240,7 @@ export async function runWizard(
     const providerPrompts = allPrompts.slice(2); // Skip OLLAMA_HOST, OLLAMA_EMBEDDING_MODEL
     for (const promptConfig of providerPrompts) {
       const currentValue = locationConfig[promptConfig.name] || existingConfig[promptConfig.name];
-      const value = await prompt(rl, promptConfig, currentValue);
+      const value = await prompt(rl, promptConfig, currentValue, { ...existingConfig, ...config });
       if (value !== undefined && value !== '') {
         config[promptConfig.name] = value;
       }
@@ -230,13 +273,13 @@ export function displaySetupHelp(): void {
   console.log(chalk.dim('  User-level:   ~/.mycc-store/.env (global)'));
   console.log(chalk.dim('  Project-level: ./.mycc/.env (local)\n'));
   console.log(chalk.cyan('Providers:'));
-  console.log(chalk.dim('  [1] Ollama   - Local or cloud LLM'));
+  console.log(chalk.dim('  [1] Ollama   - Local or cloud LLM (API key only for cloud)'));
   console.log(chalk.dim('  [2] DeepSeek - DeepSeek Cloud API (requires API key)\n'));
   console.log(chalk.cyan('Environment variables (Ollama connection - always required):'));
   console.log(chalk.dim('  OLLAMA_HOST            - Ollama server URL (for embeddings)'));
   console.log(chalk.dim('  OLLAMA_EMBEDDING_MODEL - Embedding model name\n'));
   console.log(chalk.cyan('Environment variables (Ollama):'));
-  console.log(chalk.dim('  OLLAMA_API_KEY      - API key for cloud features'));
+  console.log(chalk.dim('  OLLAMA_API_KEY      - API key for cloud (not needed for local)'));
   console.log(chalk.dim('  OLLAMA_MODEL        - Chat model name'));
   console.log(chalk.dim('  OLLAMA_VISION_MODEL - Vision model (or "none")\n'));
   console.log(chalk.cyan('Environment variables (DeepSeek):'));

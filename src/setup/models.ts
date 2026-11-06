@@ -32,7 +32,7 @@ const MODELS_TO_PULL: ModelInfo[] = [
  * Pull a single model via ollama
  */
 async function pullModel(modelName: string): Promise<{ success: boolean; error?: string }> {
-  console.log(chalk.cyan(`\n📥 Pulling model: ${modelName}`));
+  console.log(chalk.cyan(`\nPulling model: ${modelName}`));
 
   try {
     // Check if model already exists
@@ -68,7 +68,7 @@ async function pullModel(modelName: string): Promise<{ success: boolean; error?:
  * Pull all configured models (Ollama provider)
  */
 async function pullOllamaModels(config: Record<string, string>): Promise<void> {
-  console.log(chalk.cyan('\n🔄 Checking and pulling required models...\n'));
+  console.log(chalk.cyan('\nChecking and pulling required models...\n'));
 
   for (const model of MODELS_TO_PULL) {
     const modelName = config[model.envVar];
@@ -99,7 +99,7 @@ async function pullOllamaModels(config: Record<string, string>): Promise<void> {
  * Show informational message for DeepSeek provider
  */
 function showDeepSeekInfo(): void {
-  console.log(chalk.cyan('\n🔄 DeepSeek model configuration'));
+  console.log(chalk.cyan('\nDeepSeek model configuration'));
   console.log(chalk.dim('  DeepSeek models are cloud-based; no local pull is needed.'));
   console.log(chalk.dim('  Make sure your DEEPSEEK_API_KEY is valid at https://platform.deepseek.com'));
   console.log();
