@@ -872,6 +872,8 @@ interface HeldGuardLine {
   name: string;
   condition: string;
   holds: number;
+  /** True when the hold is a STALL (backward-ask with the goal unmet). */
+  stall: boolean;
 }
 
 /**
@@ -895,7 +897,8 @@ function readHeldGuards(env: MachineEnv, turn: TurnVars): HeldGuardLine[] {
     if (!Number.isFinite(id) || !count) continue;
     const todo = env.ctx.todo.getItems().find((i) => i.id === id);
     if (!todo || !todo.preventStop) continue;
-    out.push({ id, name: todo.name, condition: todo.preventStop, holds: count });
+    const stall = turn.preventStopStalls?.[id] === true;
+    out.push({ id, name: todo.name, condition: todo.preventStop, holds: count, stall });
   }
   return out.sort((a, b) => a.id - b.id);
 }
@@ -982,8 +985,11 @@ function buildStateSections(env: MachineEnv, turn: TurnVars): string[] {
     const guardLines = ['## Stop Guards (held)'];
     guardLines.push('A pinned-todo guard blocked the turn. Repeating the same claim will not release it:');
     for (const g of heldGuards) {
+      const cause = g.stall
+        ? 'STALL (backward-ask with the goal unmet) — act on a stated assumption or declare a hard blocker'
+        : 'goal unmet — satisfy the guard with concrete, verifiable evidence';
       guardLines.push(
-        `- #${g.id} "${sanitizeField(g.name)}" — guard: ${sanitizeField(g.condition)} — held ${g.holds}×`,
+        `- #${g.id} "${sanitizeField(g.name)}" — guard: ${sanitizeField(g.condition)} — held ${g.holds}× — ${cause}`,
       );
     }
     parts.push(guardLines.join('\n'));

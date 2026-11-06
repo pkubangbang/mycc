@@ -63,6 +63,18 @@ interface PreventStopVerdict {
   hash: string;
   held: boolean;
   reason?: string;
+  /**
+   * Shape of the agent's FINAL assistant message (stall classification).
+   * - 'complete' — a statement of finished work / result.
+   * - 'blocked'  — a statement of a hard blocker (missing credential,
+   *   destructive ambiguity, irreversible decision) that genuinely cannot
+   *   proceed without the user.
+   * - 'question' — a backward-ask to the user (preference / confirmation /
+   *   "should I…?") instead of acting.
+   * Optional: when absent or unparseable the gate falls back to the legacy
+   * `held`-only behavior (fail-open — never trap the agent).
+   */
+  ending?: 'complete' | 'blocked' | 'question';
 }
 
 /** Outcome of the STOP gate. */
@@ -73,6 +85,11 @@ export interface PreventStopResult {
   guard?: { id: number; name: string; condition: string };
   /** The evaluator's one-sentence grounds for the held guard. */
   reason?: string;
+  /**
+   * True when the hold is a STALL (a backward-ask with the goal unmet), not a
+   * plain goal-unmet hold. Drives the `[STALL PREVENTED]` note in stop.ts.
+   */
+  stall?: boolean;
 }
 
 /** The value returned when nothing blocks the turn. */
@@ -152,15 +169,23 @@ export async function checkPreventStop(env: MachineEnv): Promise<PreventStopResu
     'Based on the conversation context above, decide for EACH guard whether it is STILL HELD —',
     'i.e. the required state has NOT yet been verifiably reached.',
     '',
+    'ALSO classify the agent\'s FINAL assistant message (the reply that is about to end the turn):',
+    '- "complete": a statement of finished work or a result.',
+    '- "blocked": a statement of a HARD blocker (missing credential, destructive ambiguity, an irreversible',
+    '  decision) that genuinely cannot proceed without the user.',
+    '- "question": a BACKWARD-ASK to the user — a preference / confirmation / "should I…?" question',
+    '  asked INSTEAD of acting.',
+    '',
     'Reply with ONLY a JSON array, no other text. Schema:',
     '[',
-    '  {"id": <todo_id>, "hash": "<hash of that guard>", "held": <true|false>, "reason": "<one sentence>"}',
+    '  {"id": <todo_id>, "hash": "<hash of that guard>", "held": <true|false>, "ending": "<complete|blocked|question>", "reason": "<one sentence>"}',
     ']',
     '',
     'Rules:',
     '- "hash": copy the hash shown for that guard (a wrong hash voids the verdict).',
     '- "held": true when the required state is NOT satisfied yet, or you cannot verify it from the conversation.',
     '- "held": false only when the conversation contains concrete evidence the state was reached.',
+    '- "ending": classify the final assistant message per the definitions above; omit if you cannot tell.',
     '- Judge EVIDENCE, not intent: the agent saying it will do something is not proof it did.',
     '- Echo exactly one entry per guard above.',
   ].join('\n');
@@ -207,22 +232,49 @@ export async function checkPreventStop(env: MachineEnv): Promise<PreventStopResu
     return NO_HOLD;
   }
 
-  // Collect every HELD guard that verifies against a live guard (id + hash),
-  // then report the topmost (lowest id) — one actionable guard per STOP beats a
-  // wall of simultaneous holds.
-  const held: Array<{ id: number; name: string; condition: string; reason?: string }> = [];
+  // Collect every actionable guard that verifies against a live guard
+  // (id + hash), then report the topmost (lowest id) — one actionable guard
+  // per STOP beats a wall of simultaneous holds.
+  //
+  // A guard is actionable when EITHER:
+  //   (a) the evaluator judges the goal state still HELD (the classic
+  //       goal-unmet hold), OR
+  //   (b) STALL — the agent's final message is a backward-ask (ending ===
+  //       'question') AND the evaluator did NOT affirm the goal met
+  //       (held !== false). A question-ending must not let the turn park in
+  //       AWAIT while the goal is unmet; that is the stall this feature
+  //       exists to prevent.
+  //
+  // A 'blocked' ending (a HARD blocker: missing credential, destructive
+  // ambiguity, an irreversible decision) is a LEGITIMATE stop — it short-
+  // circuits to "allow stop" and OVERRIDES held, so the turn may end even
+  // with the goal unmet. A 'question' ending with the goal verifiably met
+  // (held === false) is likewise allowed to end.
+  const held: Array<{ id: number; name: string; condition: string; reason?: string; stall: boolean }> = [];
   for (const v of verdicts) {
     if (typeof v.id !== 'number' || typeof v.hash !== 'string' || typeof v.held !== 'boolean') {
       continue;
     }
-    if (!v.held) continue;
     const guard = guards.find((g) => g.id === v.id && g.hash === v.hash);
     if (!guard || !guard.preventStop) continue; // hallucinated hash / stale guard
+
+    // A declared HARD blocker is a legitimate stop — never deflect it.
+    if (v.ending === 'blocked') continue;
+
+    const goalMet = v.held === false;
+    const isQuestion = v.ending === 'question';
+    // Stall: backward-ask while the goal is not verifiably met.
+    const stall = isQuestion && !goalMet;
+    // Hold: classic goal-unmet, OR a stall.
+    const actionable = v.held || stall;
+    if (!actionable) continue;
+
     held.push({
       id: guard.id,
       name: guard.name,
       condition: guard.preventStop,
       reason: typeof v.reason === 'string' ? v.reason : undefined,
+      stall,
     });
   }
 
@@ -234,5 +286,6 @@ export async function checkPreventStop(env: MachineEnv): Promise<PreventStopResu
     held: true,
     guard: { id: top.id, name: top.name, condition: top.condition },
     ...(top.reason ? { reason: top.reason } : {}),
+    ...(top.stall ? { stall: true } : {}),
   };
 }

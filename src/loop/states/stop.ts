@@ -136,28 +136,67 @@ export async function handleStop(
     const guardResult = await checkPreventStop(env);
     if (guardResult.held && guardResult.guard) {
       const held = guardResult.guard;
+      const stall = guardResult.stall === true;
       const counts = (turn.preventStopHolds ??= {});
       counts[held.id] = (counts[held.id] ?? 0) + 1;
       const nth = counts[held.id];
+      // Record the hold CAUSE for the hint round: a stall (backward-ask with
+      // the goal unmet) needs "act on an assumption / declare a blocker",
+      // not "satisfy the guard". Track per-id; cleared when the cause flips.
+      const stalls = (turn.preventStopStalls ??= {});
+      if (stall) {
+        stalls[held.id] = true;
+      } else {
+        delete stalls[held.id];
+      }
 
-      const lines = [
-        `[STOP BLOCKED] Pinned todo #${held.id} "${held.name}" prevents finishing this turn.`,
-        `Guard: "${held.condition}"`,
-      ];
+      const lines = stall
+        ? [
+            `[STALL PREVENTED] Pinned todo #${held.id} "${held.name}" has an active stop-guard goal, ` +
+              `and your last message was a QUESTION to the user.`,
+            `Guard: "${held.condition}"`,
+            'The user is not available to answer preference/confirmation questions in auto mode. ' +
+              'Proceed with the most reasonable action toward the goal and state your assumption explicitly, ' +
+              'or — if you are genuinely blocked by a hard blocker (missing credential, destructive ambiguity, ' +
+              'an irreversible decision) — declare the blocker as a STATEMENT and call brief with low confidence.',
+          ]
+        : [
+            `[STOP BLOCKED] Pinned todo #${held.id} "${held.name}" prevents finishing this turn.`,
+            `Guard: "${held.condition}"`,
+          ];
       if (guardResult.reason) lines.push(`Evaluator's grounds: ${guardResult.reason}`);
       if (nth >= 2) {
         // Escalate from the 2nd hold: repeating the same message is what lets a
-        // held guard spin. Name the count and the ONLY way out.
-        lines.push(
-          `This is hold #${nth} in a row for this guard — the previous attempt did not satisfy it.`,
-          `Either satisfy the guard with concrete, verifiable evidence, or release it with ` +
-            `todo_pinning(id=${held.id}, hash=<current hash>, pinned=false) once it no longer applies.`,
-        );
+        // held guard spin. Name the count and the ways out.
+        if (stall) {
+          lines.push(
+            `This is stall #${nth} in a row for this guard — the previous attempt still ended in a question.`,
+            `Stop asking and ACT on a stated assumption toward the goal, or declare a hard blocker as a ` +
+              `statement. If the goal genuinely no longer applies, release the guard with ` +
+              `todo_pinning(id=${held.id}, hash=<current hash>, pinned=false).`,
+          );
+        } else {
+          lines.push(
+            `This is hold #${nth} in a row for this guard — the previous attempt did not satisfy it.`,
+            `Either satisfy the guard with concrete, verifiable evidence, or release it with ` +
+              `todo_pinning(id=${held.id}, hash=<current hash>, pinned=false) once it no longer applies.`,
+          );
+        }
       } else {
-        lines.push('Satisfy the guard before finishing, or release it if it no longer applies.');
+        lines.push(
+          stall
+            ? 'Act toward the goal on a stated assumption, or declare a hard blocker — do not end with a question.'
+            : 'Satisfy the guard before finishing, or release it if it no longer applies.',
+        );
       }
       triologue.note('SYSTEM', lines.join('\n'));
-      ctx.core.brief('info', 'stop', `Stop guard held (#${held.id}, hold ${nth})`);
+      ctx.core.brief(
+        'info',
+        'stop',
+        stall
+          ? `Stall prevented (#${held.id}, hold ${nth}) — backward-ask deflected`
+          : `Stop guard held (#${held.id}, hold ${nth})`,
+      );
       return AgentState.COLLECT;
     }
 

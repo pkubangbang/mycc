@@ -112,6 +112,15 @@ export interface TurnVars {
    * evidence; that risk is documented in docs/loop/pinned-todo-prevent-stop.md.
    */
   preventStopHolds?: Record<number, number>;
+
+  /**
+   * Ids whose most recent hold was a STALL (a backward-ask with the goal
+   * unmet), as opposed to a plain goal-unmet hold. Lives alongside
+   * `preventStopHolds` so the hint round can tag WHY the turn keeps
+   * continuing (act-on-assumption vs satisfy-the-guard) instead of inventing
+   * a generic blocker. Set/cleared by stop.ts on each hold.
+   */
+  preventStopStalls?: Record<number, true>;
 }
 
 /** Pass lifetime — fresh at every COLLECT entry, flows LLM→HOOK→{TOOL|STOP} */

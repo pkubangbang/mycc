@@ -260,3 +260,137 @@ describe('checkPreventStop', () => {
     expect(cfg.maxRetries).toBeLessThanOrEqual(1);
   });
 });
+
+describe('checkPreventStop — STALL PREVENTION (ending classification)', () => {
+  let todo: Todo;
+  let env: MachineEnv;
+
+  /** Reply with a single verdict carrying an `ending` classification. */
+  function replyEnding(
+    t: Todo,
+    id: number,
+    held: boolean,
+    ending?: 'complete' | 'blocked' | 'question',
+    reason?: string,
+  ): void {
+    const item = t.getItems().find((i) => i.id === id)!;
+    forkChatMock.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          id,
+          hash: item.hash,
+          held,
+          ...(ending ? { ending } : {}),
+          ...(reason ? { reason } : {}),
+        },
+      ]),
+    );
+  }
+
+  beforeEach(() => {
+    todo = new Todo();
+    env = makeEnv(todo);
+    forkChatMock.mockReset();
+  });
+
+  it('STALLS: question-ending with the goal unmet holds the turn (stall:true)', async () => {
+    const a = todo.createTodo('Migrate the schema');
+    todo.pinTodo(a.id, a.hash, true, 'schema is migrated and tests pass');
+    // Evaluator cannot affirm the goal met (held:true) AND the final message
+    // is a backward-ask → this is the stall the feature exists to prevent.
+    replyEnding(todo, a.id, true, 'question', 'asked which migration to run');
+
+    const r = await checkPreventStop(env);
+    expect(r.held).toBe(true);
+    expect(r.stall).toBe(true);
+    expect(r.guard?.id).toBe(a.id);
+  });
+
+  it('STALLS when the goal is not verifiably met and the ending is a question', async () => {
+    // The critical regression case: a question-ending must not slip through
+    // when the goal is unmet. held:true (not verifiably met) + question → stall.
+    const a = todo.createTodo('Migrate the schema');
+    todo.pinTodo(a.id, a.hash, true, 'schema is migrated');
+    replyEnding(todo, a.id, true, 'question');
+    expect((await checkPreventStop(env)).stall).toBe(true);
+  });
+
+  it('ALLOWS the stop: question-ending WITH the goal verifiably met (held:false)', async () => {
+    const a = todo.createTodo('Migrate the schema');
+    todo.pinTodo(a.id, a.hash, true, 'schema is migrated');
+    // Goal met (held:false) → a trailing question is fine; no stall.
+    replyEnding(todo, a.id, false, 'question');
+
+    const r = await checkPreventStop(env);
+    expect(r.held).toBe(false);
+    expect(r.stall).toBeUndefined();
+  });
+
+  it('ALLOWS the stop: blocked-ending (hard blocker) is a legitimate stop even with the goal unmet', async () => {
+    const a = todo.createTodo('Migrate the schema');
+    todo.pinTodo(a.id, a.hash, true, 'schema is migrated');
+    // Goal unmet (held:true) but the agent declared a HARD blocker → the turn
+    // MUST be allowed to end: 'blocked' short-circuits and overrides held.
+    replyEnding(todo, a.id, true, 'blocked', 'need the production DB password');
+
+    const r = await checkPreventStop(env);
+    // held:false (stop allowed), no stall — the gate does not deflect a real blocker.
+    expect(r.held).toBe(false);
+    expect(r.stall).toBeUndefined();
+  });
+
+  it('a blocked guard does not release OTHER guards that still hold', async () => {
+    const a = todo.createTodo('Blocked task');
+    const b = todo.createTodo('Unfinished task');
+    todo.pinTodo(a.id, a.hash, true, 'ga');
+    todo.pinTodo(b.id, b.hash, true, 'gb');
+    const items = todo.getItems();
+    // a declares a hard blocker (allowed to stop); b is goal-unmet + complete
+    // (still holds). The blocked verdict must not mask b's hold.
+    forkChatMock.mockResolvedValueOnce(
+      JSON.stringify([
+        { id: a.id, hash: items[0].hash, held: true, ending: 'blocked' },
+        { id: b.id, hash: items[1].hash, held: true, ending: 'complete' },
+      ]),
+    );
+
+    const r = await checkPreventStop(env);
+    expect(r.held).toBe(true);
+    expect(r.guard?.id).toBe(b.id); // b is the one reported, not the blocked a
+    expect(r.stall).toBeUndefined();
+  });
+
+  it('complete-ending with the goal unmet is a plain goal-unmet hold (no stall)', async () => {
+    const a = todo.createTodo('Migrate the schema');
+    todo.pinTodo(a.id, a.hash, true, 'schema is migrated');
+    replyEnding(todo, a.id, true, 'complete');
+
+    const r = await checkPreventStop(env);
+    expect(r.held).toBe(true);
+    expect(r.stall).toBeUndefined();
+  });
+
+  it('FAILS OPEN to legacy held-only behavior when `ending` is absent', async () => {
+    const a = todo.createTodo('Migrate the schema');
+    todo.pinTodo(a.id, a.hash, true, 'schema is migrated');
+    // No `ending` field (older model / unparseable) → fall back to `held`.
+    replyEnding(todo, a.id, false, undefined);
+
+    const r = await checkPreventStop(env);
+    expect(r.held).toBe(false);
+    expect(r.stall).toBeUndefined();
+  });
+
+  it('FAILS OPEN when `ending` is an unexpected value (not one of the three)', async () => {
+    const a = todo.createTodo('Migrate the schema');
+    todo.pinTodo(a.id, a.hash, true, 'schema is migrated');
+    const item = todo.getItems()[0];
+    forkChatMock.mockResolvedValueOnce(
+      JSON.stringify([{ id: a.id, hash: item.hash, held: false, ending: 'maybe' }]),
+    );
+
+    const r = await checkPreventStop(env);
+    expect(r.held).toBe(false);
+    expect(r.stall).toBeUndefined();
+  });
+});
