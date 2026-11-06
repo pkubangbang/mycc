@@ -31,7 +31,10 @@ a human at the TTY** and **cannot be driven non-interactively**:
 
 **Legitimate (DO use hand_over):**
 - Entering a password the agent must not know: `sudo apt install X`, a sudo
-  prompt, an SSH passphrase, an SSH key passphrase.
+  prompt, an SSH passphrase, an SSH key passphrase. (For a *persistent remote
+  sudo session* held in tmux, only the FIRST `sudo -v` prompt is handed over —
+  see "The tmux-held SSH session" below; all later privileged commands go
+  through `tmux send-keys`, not a per-command hand_over.)
 - OAuth / browser sign-in a human must approve: `ollama` cloud connect
   (waiting for sign-in), a device-flow login.
 - An interactive TUI the human drives: `vim file`, `htop`, `less log`,
@@ -121,6 +124,70 @@ Bash. Two consequences for commands you hand to the human:
 the bash+tmux fallback paths above. Do NOT misdiagnose a pwsh ParserError as
 "hand_over is broken" — read the captured pane; it shows the exact syntax error.
 
+## The tmux-held SSH session (a pty that holds a sudo ticket)
+
+A persistent `ssh -t user@host` held in a tmux pane is the standard way to get
+past a **single** sudo password prompt and then drive many privileged commands.
+Understand the mechanism before reaching for it — it is **not** "the session is
+authenticated":
+
+- **`sudo` caches its auth timestamp per terminal** (`tty_tickets` is on by
+  default on Ubuntu/Debian: the ticket file is keyed by `/dev/pts/N`). Every
+  `ssh host 'cmd'` / `ssh -o BatchMode=yes host 'cmd'` allocates a **fresh pty**,
+  so `sudo -n` inside it always reports "password required" no matter how often
+  the human typed the password elsewhere.
+- A tmux-held `ssh -t` owns **ONE pty for its whole lifetime**. `sudo -v` typed
+  once there caches the timestamp for that pty (`timestamp_timeout`, default
+  15 min); every later `tmux send-keys -t <pane> '<cmd>' Enter` lands on that
+  same pty and reuses the ticket. The ticket **dies with the pty** — a fresh
+  `ssh -t` prompts again even from the same pane.
+
+**Decision ladder (prefer the lowest rung that works):**
+1. **Do you need root at all?** `systemctl --user enable --now` +
+   `loginctl enable-linger <user>` needs no sudo and survives reboot. Try "no
+   root" before "one root prompt".
+2. **Root genuinely needed once** (install a package, write `/etc/systemd/...`):
+   one `sudo -v` in the tmux pty (hand_over just that prompt), then drive via
+   `send-keys`.
+3. **Recurring need → fix the root cause, not the session**: install a proper
+   `systemd` system unit (`/etc/systemd/system`, `systemctl enable --now`) so the
+   per-TTY problem disappears for every future session.
+4. **NOPASSWD sudoers drop-in** (`/etc/sudoers.d/...`, validated with
+   `visudo -cf`) — a **permanent security downgrade** to dodge a 15-minute
+   inconvenience. Avoid; if you must, scope it to exact commands and **treat
+   removing it as part of the task**.
+
+**Ethics — who drives the session:**
+- **The human types the password; the agent never does, and must never read it
+  from the pane.** `hand_over` is correct for exactly one thing here: the first
+  `sudo -v` / password prompt (plus real TUIs).
+- **After that, the session is a transport, not a handover.** Driving it with
+  `tmux send-keys` is legitimate agent work — do **NOT** burn a `hand_over` per
+  command.
+- `hand_over` opens a **LOCAL** popup, so a command that must run on the remote
+  box belongs in an ssh/tmux session there, not in the popup (Misuse 2 above).
+- In `--auto`/`--daemon` `hand_over` is disabled entirely; an existing tmux pane
+  the human already has open is then the only path — check `tmux list-panes -a`
+  before asking for another.
+
+**Pitfalls (all observed in real sessions):**
+- **Silent timestamp expiry**: a long `apt-get` can outlive the 15 min, then the
+  next `send-keys` sits at a password prompt. `tmux capture-pane -p` after every
+  `send-keys` — never assume.
+- **Silent pane exit**: if the ssh closes, `send-keys` types into the LOCAL shell
+  and commands run on the wrong machine. Capture the last lines and look for the
+  `user@host:~$` prompt before the next `send-keys`.
+- **Never write a raw sudoers line via `send-keys`** containing spaces/specials —
+  it splits and corrupts the file. Use `printf 'rule\n' | sudo -n tee …` and
+  always `sudo -n visudo -cf <file>` after.
+- **Cleanup**: the ticket is per-pty (nothing to revoke when ssh exits), but
+  anything you **persisted** to escape the prompt (sudoers drop-in, linger, user
+  units) **outlives it** — list it in the trail and remove it.
+
+One-line version: *a tmux-held ssh session is a single pty that can hold a sudo
+ticket — use it to clear one password prompt and drive later privileged commands;
+hand_over only the password itself, and document+revoke every permanent escape.*
+
 ## After this skill loads — re-decision tree
 
 You just got this content because the hook `replace`-d your `hand_over` call.
@@ -129,6 +196,11 @@ Resolve to exactly ONE next action — do not hedge:
 - **IF the command needs a human at the TTY** (password, OAuth, interactive
   TUI) AND runs in the correct local cwd → **re-issue the `hand_over`**. The
   gate won't fire again this window (count is now 1), so it proceeds cleanly.
+- **ELSE IF it is the FIRST `sudo -v` / password prompt in a tmux-held ssh
+  session** → **hand_over that single prompt** (the human types the password
+  once, priming the pty's sudo ticket), then drive ALL later privileged
+  commands via `tmux send-keys` into that pane — do NOT hand_over per command.
+  See "The tmux-held SSH session" above.
 - **ELSE IF it was a one-shot read/build/test** → **re-issue via `bash`**.
 - **ELSE IF it was meant for a persistent remote session** → **re-issue via
   `bash` + `tmux send-keys`** into the existing session.
