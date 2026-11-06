@@ -1,0 +1,1071 @@
+{
+  "dir": "d:\\dev\\mycc",
+  "source_file": "MYCC.md",
+  "hash": "26c1681175cb7f021e0bf4ce0dec89ba6cac1f0bf302ae8147d36fa94575d035",
+  "compiled_at": "2026-10-25T12:28:51.012Z",
+  "updated_at": "2026-11-03T14:01:57.142Z",
+  "root": {
+    "id": "/",
+    "text": "",
+    "title": "MYCC",
+    "summary": "## MYCC (Mindmap Knowledge System)\n\n`MYCC.md` is the project's self-description and the source for the **mindmap** — a tree of knowledge compiled one-way into `.mycc/mindmap.json`, letting the agent retrieve on demand instead of loading the whole doc. Each process holds its own instance (no IPC); the wiki handles cross-agent sharing.\n\n**Data model** (`src/mindmap/types.ts`): `Node` has a slash-separated `id`, `text`, `title`, LLM `summary`, `level`, `children`, and directional `links` (`target_type`: node/file/url/term). Two in-memory-only flags — `is_mycc` and `is_patch` — drive compile and rebuild.\n\n**Compilation** (`compile.ts`, `compile-utils.ts`, `explorer-agent.ts`): `/mindmap compile [--force] [file] [output]` parses markdown code-block-aware, then summarizes bottom-up using **A-N-C-E** context via an autonomous Explorer agent — 9 tools, 25-round budget, force-stop at 5, **TriologueLite** history, tools-free `retryChat` fallback, semaphore of 3 concurrent nodes. Rotation save, atomic `wx` lock with 4h-fresh resumption.\n\n**Patches** (`patch-jsonl.ts`, `patch.ts`, `recap-rewind.ts`): append-only `.mycc/mindmap-patch.jsonl` of add/update/delete actions, hash-gated replay at startup (`mindmap-loader.ts`); `/mindmap rebuild-patches` (BFS) dedupes.\n\n**Agent interface** (`src/tools/recall.ts`): path traversal with `[M]`/`[P]` markers and root-hoisted \"Key Terms\".",
+    "level": 0,
+    "children": [
+      {
+        "id": "/mycc.md",
+        "text": "This file provides guidance for Claude Code (claude.ai/code) when working with code in this repository.",
+        "title": "MYCC.md",
+        "summary": "MYCC.md is the primary Claude Code guidance document for mycc — a Node.js coding agent using Ollama (default) or DeepSeek for inference, embedding always via Ollama — with AgentContext as the central state container (ParentContext/ChildContext).\n\n**Structure**: Project Overview → Setup (pnpm; Windows/PowerShell rules, psmux, forward-slash paths) → Terminology (tools/skills/hooks/routine; session/turn/chat; populator vs system prompt; backlog/livelog + TP constraint; PROMPT vs prompt; autofly/streak; whisper line/letter box; brief) → Architecture (state machine PROMPT/COLLECT/LLM/HOOK/TOOL/STOP; Triologue as a thin facade over `src/loop/triologue/`; AgentIO singleton; IPC/IOC; Loader priority built-in > project > user; Sequence; Confusion Index; skill suggestion at COLLECT step 6; mindmap + patch line; wiki via LanceDB; auto-claim; health-check) → Hookish Skills + condition compiler (LLM translation, jsep AST, no eval) → Grant System (`dangerous=i_know`, `batch=i_know`, `bash-judge.ts`, intent wording in `src/loop/prompts/intent-lang.ts`) → Modes & Team (lead/teammates, remote peer mail, todo/issue, pinned-todo `stop-prevent-stop` guard, sealed sessions) → Tool scope table → WebUI (Vue 3, cards, steering, file upload, @-prefix teammate accordion) → Development (tool guidelines, tsx `register()`, `bin/mycc-daemon.exe`, tmux/psmux testing, vitest, eslint `no-console-in-tools`, debug flags, Docker, built-in skills table) → Pitfalls → Design Rationale & History → Reference docs.\n\nNote: the previously cited `src/loop/agent-prompts.ts` for `buildIntentLanguageSection()` no longer exists — the prompt builders moved to `src/loop/prompts/` (`lead.ts`, `common.ts`, `intent-lang.ts`, `teammate.ts`); Triologue modules now also include `brief-stack.ts`, `segment-archive.ts`, `transcript.ts`.",
+        "level": 1,
+        "children": [
+          {
+            "id": "/mycc.md/project-overview",
+            "text": "This project builds a tool called \"mycc\" -- A node.js coding agent implementation using Ollama (default) or DeepSeek API for LLM inference. The architecture follows a modular design with AgentContext as the central state container. Two API providers are supported: Ollama (full features including web_search, screen, read_picture) and DeepSeek (cloud-based, no web_fetch tool — but web_search via the server-side Responses API and screen/read_picture via the deepseek-flash vision model are supported; prompt caching). Embedding for wiki/RAG always uses Ollama regardless of provider.",
+            "title": "Project Overview",
+            "summary": "**mycc** (`@pkubangbang/mycc`, v0.11.9, per `package.json`) is a Node.js/TypeScript coding agent CLI using **Ollama (default)** or the **DeepSeek API** for inference, built around a modular **AgentContext** state container (`src/types.ts`: core, todo, mail, skill, issue, bg, team, wt, wiki, peer; ParentContext vs ChildContext). Entry point `src/index.ts`; process chain Terminal → Coordinator → Lead → Teammates.\n\nProvider selection: `getApiProvider()` in `src/config.ts` reads `API_PROVIDER` (only `'deepseek'` opts out; anything else → ollama). `src/engine/chat-provider.ts` is the single LLM facade — both providers statically imported (no top-level await), re-exporting `retryChat`, `retryMultipleChoice`, `webSearch`/`webFetch`/`imgDescribe`/`structuredChat`, `healthCheck`, and `forkChat` (prompt-cache-preserving side chat: full messages + complete tools schema; only `toolChoice` may vary).\n\nOllama has full features. DeepSeek (`src/engine/deepseek.ts`, model default `deepseek-v4-pro`, host `api.deepseek.com`, streaming SSE over `/chat/completions`, thinking enabled, max_tokens 65536): `webFetch` throws \"not supported\"; `webSearch` uses server-side `POST /responses` with `tools:[{type:'web_search'}]`, returning one synthesized result prefixed with the search-activity summary; `imgDescribe` uses the vision model (`DEEPSEEK_VISION_MODEL`, default `deepseek-flash`) via `image_url` base64 blocks in a `user` message (disabled with `=none`). Prompt caching is automatic and preserved by keeping the prefix (system+projectContext+messages+full tools) byte-identical.\n\nRAG/wiki embeddings (`src/engine/rag-provider.ts`) always use Ollama (`OLLAMA_EMBEDDING_MODEL`, nomic-embed-text default or embeddinggemma); `NAMESPACE` isolates LanceDB tables per model.",
+            "level": 2,
+            "children": [],
+            "links": []
+          },
+          {
+            "id": "/mycc.md/setup",
+            "text": "Refer to `README.md` for instructions. Prefer pnpm instead of npm. The only exception is `npm link` to install the mycc globally.\n\n**Cross-Platform Notes (Windows / PowerShell):** mycc runs on Windows, Linux, and macOS. On Windows, all `bash` tool commands execute via **PowerShell** (not cmd) — use `Get-Content file`, `Copy-Item src dest`, concatenate with `;` not `&&`, escape with backtick `` ` ``. Set `PYTHONIOENCODING=utf-8` for Python subprocesses; write operations use explicit `utf-8` encoding; the bash tool prepends `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` for CJK display. Always use forward slashes `/` in tool file paths (`normalizePathSeparators` handles `\\` → `/` before regex matching). `/fork` uses `PowerShell -EncodedCommand` to spawn terminals (avoids `wt.exe` semicolon bugs; `shell:true` removed, paths single-quoted). `psmux` replaces `tmux` on Windows (`winget install psmux`). Binary detection uses `Where.exe`/`Get-Command` instead of `which`. GUI editor spawn does not use `windowsHide` (prevents freezing).",
+            "title": "Setup",
+            "summary": "## Setup\n\nThe setup guidance lives in **MYCC.md** (the repo guidance file) and delegates to **QUICKSTART.md**, which is the real install guide. mycc is **not published** to npm (`@pkubangbang/mycc` is unlisted), so run from source: `pnpm install`, then **`npm link`** — the sole npm command — to expose the global `mycc`. Node ≥18; `sharp`/`@lancedb/lancedb`/`ripgrep` ship prebuilt, so build tools are only needed on exotic platforms. An Ollama embedding model (`ollama pull nomic-embed-text`) is mandatory even with DeepSeek; `tmux` (**psmux** on Windows) is only for `hand_over`. `mycc --setup` (`src/setup/wizard.ts`) picks config location (`~/.mycc-store/.env` vs `./.mycc/.env`) and provider.\n\n**Windows notes, verified against code:** shell resolved once in `src/utils/shell-detect.ts` (bash | zsh | pwsh7 | powershell5). `src/loop/agent-exec.ts` runs bash-tool commands via PowerShell `-EncodedCommand` with a `chcp 65001`/`$OutputEncoding`/`[Console]::OutputEncoding` UTF-8 preamble and `PYTHONUTF8=1`/`PYTHONIOENCODING=utf-8`. `/fork` uses the same encoding to dodge wt.exe's `;` bug. **Two doc inaccuracies:** (1) there is **no `normalizePathSeparators` function** — path normalization is ad-hoc `replace(/\\\\/g,'/')`; (2) binary detection uses **`where`** on Windows (`hand_over.ts:whichSync`, `open-terminal.ts:230`), not `Where.exe`/`Get-Command`. `windowsHide:true` **is** used for bash/bg; only `open-editor.ts` omits it so GUI windows show.",
+            "level": 2,
+            "children": [],
+            "links": [
+              {
+                "target_type": "file",
+                "file_path": "QUICKSTART.md",
+                "comment": "Primary setup guide: Node>=18, prebuilt native deps (sharp/@lancedb/lancedb/ripgrep), pnpm install + npm link (not published), mandatory Ollama embedding model, optional tmux/psmux"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/agent-exec.ts",
+                "comment": "Bash tool on Windows: PowerShell -EncodedCommand, chcp 65001 + $OutputEncoding + [Console]::OutputEncoding UTF-8 preamble, PYTHONUTF8/PYTHONIOENCODING, PS 5.1 Layer-2 patch, windowsHide:true"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/utils/shell-detect.ts",
+                "comment": "Single source of truth shell detection (bash/zsh/pwsh7/powershell5), detected once and committed; accessSync for MS Store reparse aliases"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/slashes/fork.ts",
+                "comment": "/fork uses powershell -NoExit -EncodedCommand (Base64 UTF-16LE) to avoid wt.exe semicolon bug; single-quoted paths, $env:KEY on Windows"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/tools/hand_over.ts",
+                "comment": "hand_over requires tmux (psmux on Windows); whichSync uses `where` on Windows, NOT `Where.exe`/`Get-Command` as the doc claims"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/utils/open-terminal.ts",
+                "comment": "Terminal launcher per platform; binary availability via `where` on Windows vs `which` (line 230)"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/setup/wizard.ts",
+                "comment": "mycc --setup wizard: config location (user ~/.mycc-store/.env vs project ./.mycc/.env), provider (Ollama/DeepSeek), always-required Ollama embeddings, TTY check"
+              },
+              {
+                "target_type": "term",
+                "term_name": "npm link",
+                "comment": "The only npm (not pnpm) command in the setup flow: @pkubangbang/mycc is unlisted on the registry, so npm link installs the global mycc binary and type exports from source."
+              },
+              {
+                "target_type": "term",
+                "term_name": "PowerShell -EncodedCommand",
+                "comment": "Base64 UTF-16LE encoding passed to `powershell -EncodedCommand` so the command string contains no `;` or quotes — dodges wt.exe's semicolon-splitting bug in the bash tool, /fork, grep and bg tasks."
+              },
+              {
+                "target_type": "term",
+                "term_name": "psmux",
+                "comment": "PowerShell-compatible tmux replacement on Windows (`winget install psmux`), required only by the hand_over tool."
+              },
+              {
+                "target_type": "term",
+                "term_name": "shell-detect",
+                "comment": "mycc's single-source-of-truth shell detection (src/utils/shell-detect.ts): bash on Linux, zsh on macOS, pwsh7 (preferred) or powershell5 on Windows, resolved once at startup and committed to with no runtime fallback."
+              },
+              {
+                "target_type": "term",
+                "term_name": "setup wizard",
+                "comment": "`mycc --setup` (src/setup/wizard.ts): interactive readline wizard choosing config location (user ~/.mycc-store/.env or project ./.mycc/.env) and provider (Ollama/DeepSeek), then writing env vars."
+              }
+            ]
+          },
+          {
+            "id": "/mycc.md/terminology",
+            "text": "This section captures the terms specific to this project.\n\n**tools/skills/hooks/routine:** tools are callable functions using the AgentContext, loaded by the \"loader\" and called by the LLM. skills are markdown files with yaml-front-matter metadata providing extra knowledge. hooks are skills with a `when` property compiled into a trigger condition (targets a timing in the agent loop; condition decides whether to apply the knowledge). routine is another name for the agent loop's ordered steps.\n\n**project / user / built-in tools & skills:** project tools/skills are in `./.mycc/tools` / `./.mycc/skills` (loaded only in this project). user tools/skills are in `~/.mycc-store/tools` / `~/.mycc-store/skills` (loaded for every project). built-in tools are in `src/tools`, built-in skills in `skills/` (loaded unconditionally). The first two are extension points; on name conflicts, built-in always wins and project shadows user.\n\n**session / turn / chat:** **session** = livelog lifetime — from session start (or last compact) to the next compact or process restart. `Sequence` session-level counters (`totalEventsCount`, `toolCallTally`, `sessionPatternLog`) reset on `clear()`, which is co-called with `triologue.compact()`. Hook conditions see livelog, not backlog. **turn** = from one user query to the next (begins at prompt submit, ends when agent returns to PROMPT; `Sequence.events` and `turn.*` functions operate here, cleared at each `markPromptBoundary()` in PROMPT). **chat** = a single LLM response including all tool calls in its delta (tool calls batched; hooks evaluate against prior chats in the same turn, not sibling tools in the same delta).\n\n**populator vs system prompt (projectContext):** two delivery channels into the prompt prefix, differing on exactly two axes. (1) **Dynamicity / rebuild cadence** — the **system prompt** is recomposed and re-installed on **every LLM call** (`handleLlm` in `src/loop/states/llm.ts` calls `buildNormalModePrompt`/`buildPlanModePrompt` then `triologue.setSystemPrompt(...)` each pass), so any volatile content (date, PID, env) embedded there invalidates the whole prompt-cache prefix every turn; the **projectContext** (populators) is rebuilt only at `clear()`/`compact()` boundaries plus one initial build (`triologue.rebuildProjectContext()` call sites: `triologue.ts` `clear()`/`compact()`, `agent-repl.ts` startup) — boundaries where the conversation prefix already changes, so refreshing adds no extra cache penalty. Invariant: `rebuildProjectContext()` must NOT be called mid-conversation. (2) **Absence of the agent's reply as ack** — the system prompt is a single bare string with **no assistant reply attached**, so the LLM never acknowledges it as a discrete message; a **populator returns a `Message[]` pair** (typically `user` context + `assistant` \"Understood…\" reply), so each injected context block carries the agent's own **acknowledgement** back into the triologue — a visible, replayable confirmation that the context was received. Consequence: static-but-lead-scoped reference material (e.g. the collaboration-mechanism map, wiki domains, platform/calendar) belongs in a populator (boundary cadence + built-in ack + one registration point), NOT in the per-call system prompt.\n\n**backlog / livelog / TP constraint:** **backlog** = the triologue JSONL file (`triologue-lead-{ts}.jsonl`) — the append-only, never-truncated authoritative record of every message that ever occurred. Written via `fs.appendFileSync` in `onMessage` (`agent-repl.ts`). Used by `/load`, `/history`, session archiving. **livelog** = the Triologue object's in-memory `messages` array — the actual context window sent to the LLM. Truncated and summarized by `triologue.compact()`; `rollbackWrapUp()` truncates back to the wrap-up mark (`truncate.ts`). The hook condition API (`Sequence`) tracks livelog, not backlog — `sequence.clear()` is co-called with compact, so counters reset when livelog shrinks. **TP constraint** (Triologue Parity) = role alternation constraint that both backlog and livelog must satisfy: `system → user → assistant → tool → assistant → tool → ...`. Violations (tool→user, tool without preceding assistant, consecutive assistant) are auto-recovered by the triologue-layer `tp-fix.ts` (or thrown with `--debug-tp`).\n\n**PROMPT vs prompt (naming collision):** **PROMPT** (all-caps) = a *stage* in the loop state machine (`src/loop/states/prompt.ts`), one of the loop phases alongside COLLECT, LLM, HOOK, TOOL, STOP. It is where the loop decides whether to engage auto mode / WAIT vs. show the prompt and block. **prompt** (lowercase) = the *terminal component* — the interactive input UI with the whisper line and multi-line edit, shown to the user when the loop blocks for input (the `agent >> ` prompt line). The autofly gate lives at the PROMPT stage and decides whether to show the prompt (terminal component) or auto-continue into WAIT. The collision was a recurring source of confusion, so keep the casing distinction precise when discussing the loop.\n\n**autofly / streak:** autofly engages auto mode automatically once a turn has gained enough \"momentum.\" The **streak** counts **LLM stages within the current turn** (autofly momentum): reset to 0 at PROMPT entry (`resetStreak()` in `prompt.ts`), +1 per LLM stage (`recordLlmSuccess()` in `llm.ts`). The autofly gate at the NEXT PROMPT entry evaluates `streak >= threshold` (default 3) when a trigger is armed (`--debug-autofly` OR an active peer channel, `ctx.peer.hasActiveChannel()`). A turn with ≥ threshold LLM stages engages auto mode (→ WAIT + \"auto mode is on.\" note); a turn with fewer does not. The PROMPT-entry reset makes the count strictly per-turn, so prior turns never carry over. ESC flips auto off and resets the streak (`setAuto(false)`), giving the user a breathing window to intervene.\n\n**prompt line / whisper line / letter box:** The **prompt line** is where the user types/submits queries: `agent >> ` (normal), `plan >> ` (plan), `run cmd ! ` (bang). The **whisper line** is a subtle hint above the prompt for transient UI feedback (e.g., \"Mycc is wrapping up...\" during ESC wrap-up; \"Press Ctrl+L again to clear history\" for the double-press window). The **letter box** is the LLM's formal reply — the last message before leaving the agent loop, a green block with a timestamp header. With DeepSeek, the letter-box strips internal DSML markup (`<ds_safety>`, `<ds_thinking>`, etc.) via regex; if stripping removes all content, a friendly fallback is shown.\n\n**prompt N (p0, p1):** **p0** = the main `agent >> ` prompt line (`UserInputProvider.getInput()`). **p1** = the secondary `Press Enter to submit (r to return) > ` prompt after the editor closes (`openMultilineEditor()`). Flow: p0 → user types `\\` + Enter → editor → p1. Enter submits; `r` + Enter reloads content back to p0 without submitting. See `docs/archived/multiline-input-case-study.md`.\n\n**bang command:** `!<command>` opens an external tmux popup for interactive command execution (bypasses the LLM; prompt switches to magenta `run cmd ! `). Press Enter to capture output and kill session, or 'k' to keep it (persistent sessions like `npm run dev`, `ssh` can be reattached). See `docs/tools/bang-command-design.md`.\n\n**brief:** a one-way status update AND the conversation checkpoint — every brief result carries a `[<hash>] OK` line and is the durable record of the stretch that follows it. It may be batched with other tool calls in the same turn (the former sole-call requirement was removed).",
+            "title": "Terminology",
+            "summary": "Terminology section defines Mycc's project-specific vocabulary; verified against code (one correction below).\n\n**tools/skills/hooks/routine & layers:** `Loader` (`src/context/shared/loader.ts`) loads user (`~/.mycc-store/tools|skills`) → project (`.mycc/tools|skills`) → built-in (`src/tools`, `skills/`); built-in wins, project shadows user. Hooks = skills with `when`, compiled by `ConditionRegistry` (`src/hook/conditions.ts`) into `trigger[]` + `condition` expression + action.\n\n**session/turn/chat:** `Sequence` (`src/hook/sequence.ts`) scopes — `turn.*` cleared by `markPromptBoundary()`, `session.*` by `compactReset()` (co-called with compact in `states/llm.ts`/`hook.ts`), `totalTurns` only by `fullClear()`.\n\n**populator vs system prompt:** `handleLlm` rebuilds the system prompt every call; populators (`registerProjectContextPopulator`, `triologue/store.ts`, `prompt-populators.ts`) rebuild only at clear/compact + startup (`agent-repl.ts`) and return a user + \"Understood…\" assistant `Message[]` pair.\n\n**backlog/livelog/TP:** JSONL `triologue-lead-<ts>.jsonl` via `JsonlTranscriptWriter`/`fs.appendFileSync` (`triologue/transcript.ts`); livelog = in-memory store; `tp-fix.ts` recovers alternation violations. `truncate.ts` shares the rollback path.\n\n**PROMPT vs prompt:** `state-machine.ts` stages PROMPT/COLLECT/LLM/HOOK/TOOL/STOP/AWAIT; prompts at `input-provider.ts` (`agent >> `, `plan >> `), `line-editor.ts` (`run cmd ! `), whisper in `line-editor.ts`/`agent-io.ts`, letter box in `utils/letter-box.ts` (DSML stripping). p0/p1 in `input-provider.ts` + `utils/multiline-input.ts`.\n\n**autofly/streak:** `auto-state.ts` (threshold default 3), gate at `states/prompt.ts`.\n\n**Correction:** recap is **removed** — `recap-note.ts` now only owns brief's `[<hash>] OK` line (`briefResultLine`/`stampBriefResult`, 8-char sha256 of call id). Brief may be **batched** with other calls (`states/hook.ts`, `tools/brief.ts`); stale docs mention \"brief must be called alone\".",
+            "level": 2,
+            "children": [],
+            "links": [
+              {
+                "target_type": "file",
+                "file_path": "src/hook/sequence.ts",
+                "comment": "Three scope levels: turn.* cleared by markPromptBoundary(), session.* by compactReset() (co-called with triologue.compact() in llm.ts/hook.ts), totalTurns only by fullClear()."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/states/llm.ts",
+                "comment": "handleLlm rebuilds the system prompt on EVERY call (buildNormal/PlanModePrompt → setSystemPrompt), and calls sequence.compactReset() after compact(); recordLlmSuccess() for autofly streak."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/states/prompt.ts",
+                "comment": "PROMPT stage gate: (isDebugAutofly() || ctx.peer.hasActiveChannel()) && streak >= autoflyThreshold && !hasSeededFirstQuery → setAuto(true); then resetStreak()."
+              }
+            ]
+          },
+          {
+            "id": "/mycc.md/architecture-core-concepts",
+            "text": "**AgentContext** — the modular state container and central interface through which tools interact with the system. Modules: `core` (work dir, logging, user questions), `todo`, `mail` (async inter-agent mailbox), `team`, `issue`, `skill`, `bg`, `wt` (git worktree), `wiki`. Two implementations: `ParentContext` (main, direct access) and `ChildContext` (child, IPC wrappers).\n\n**Triologue** — the conversation state manager: tracks message history, manages `microCompact()`/`autoCompact()` for token management, tracks the `Sequence` for hookish skill conditions, supports hint round generation for confusion recovery. Since the 2026-08 layered refactor, `src/loop/triologue.ts` is a thin **facade** over sibling modules in `src/loop/triologue/`: `store.ts` (MessageStore — message array, token accounting, project-context populators, defensive hole filtering), `pending-tools.ts` (PendingToolLedger — pending tool-call resolution + alignment validation), `compact.ts` (transcript save, summary/focus prompts, `runAutoCompact` via a `CompactDeps` adapter), `wrap-up.ts` (WrapUpManager — wrapUpMark lifecycle), `brief.ts` (brief call parsing/isolation), `recap-note.ts` (brief result rendering), `truncate.ts` (shared truncate-and-recount), and `types.ts` (shared types incl. `TriologueInternals` — the narrow interface tp-fix.ts consumes instead of the full class; public API shrank by deleting dead `getMessagesFrom` and moving the five `_`-prefixed internals behind `TriologueInternals`).\n\n**AgentIO Singleton** (`src/loop/agent-io.ts`) — manages I/O state: the LineEditor (prompt input), ESC/neglected mode, process type detection. Key: `isMainProcess()` (true in lead, false in child/teammate), `isNeglectedMode()`/`setNeglectedMode(value)`, `onNeglected(callback)`, `ask(prompt)` (main-only), `exec(cmd)` (main-only), `execEditor(args)`. Bang mode: typing `!` at prompt start switches to `run cmd ! ` (`BANG_PROMPT`). **Child processes cannot use `ask()`/`exec()` — they throw.** Use `ctx.core.question()` (IPC) for user questions and `ctx.core.brief()` for logging.\n\n**IPC and IOC** — IPC enables main↔child communication via Node.js `child_process.fork()` and message passing. IOC: `TeamManager` acts as a dispatcher — modules register handlers for specific message types (Open-Closed Principle). Key: `IpcRegistry` (dispatcher), `sendRequest`/`sendNotification` (primitives), Request-Response pattern for operations requiring results.\n\n**Loader** — unified loading of tools and skills with hot-reload for dynamic content. Priority (highest wins): (1) built-in (`src/tools/`, `skills/`), (2) project (`.mycc/tools/`, `.mycc/skills/`), (3) user (`~/.mycc-store/`). Methods: `loadAll()`, `watchDirectories()` (hot-reload), `getToolsForScope(scope)`.\n\n**State Machine** — the agent loop uses explicit states instead of a single `while(true)`: **prompt** (get user input, handle slash/bang/exit), **collect** (pre-LLM pipeline: questions, mail, hint round, todo nudge), **llm** (build system prompt, call LLM with retry), **hook** (augment tool calls, evaluate hook conditions), **tool** (execute tool calls sequentially), **stop** (handle no-tool-call case, await teammates).\n\n**Sequence** — a wrapper around Triologue providing query methods for hookish skill conditions to inspect conversation history (`turn.lastIndex('edit_file')`, `session.count('bash')`, `turn.hadError('git_commit')`).\n\n**Confusion Index** — a metric quantifying how \"stuck\" an agent is, triggering hint rounds. Scoring: `+1` per assistant response, `+0` for exploration tools, `-1` for action tools, `+2` for tool errors, `+1` for repetition. When score >= threshold (default 10): main triggers hint round (LLM self-analysis); child sends mail to lead requesting guidance.\n\n**Skill Suggestion (proactive discovery, COLLECT step 6)** — after each turn the COLLECT state runs `skillSuggester.suggestSkill` (`src/loop/states/collect-skill.ts`, invoked from `collect.ts` step 6), a proactive skill-discovery pass that surfaces relevant skills the agent has NOT yet loaded. It composes a **composite text** from three sources: **brief** = `turn.lastBriefMessage` (the agent's self-reported focus, set in TOOL), **query** = the freshest steering note or `turn.lastUserQuery` (the **trigger source** — extraction runs ONLY when query changes), **hint** = `turn.lastHintFocus` (the hint round's `focus_on`, captured in step 3). The composite is sent to the SHARED LLM extractor (`extractKeywords` in `src/loop/keyword-extractor.ts`, the same primitive used by the on-demand `skill_search` tool, so discovery and search rank identically), which returns **significance-ordered** English keywords (most discriminative first, max 5 relevant) plus a free-form semantic query. Skills are then **scored** — no longer filtered by the old `min(Y-1,(X/W)*Y)` baseline gate. **Scoring contract** (shared byte-for-byte with `skill_search`): (1) **Positional points** — for each significance-ordered keyword `kw[i]` (i < 5), every skill owning `kw[i]` as an exact case-insensitive token earns `[10, 7, 5, 3, 2][i]` points (Motor-racing style); `points > 0` is a HARD precondition, so a pure-semantic skill can never surface (0 × anything = 0). (2) **Semantic boost** — `boost = 1 + (sim − getSkillMatchThreshold())` when `sim > threshold` (neutral 1.0 at the 0.5 threshold; 0.7 → 1.2, 0.9 → 1.4); a keyword-matched skill that misses the semantic window (or a failed wiki call) keeps `boost = 1.0` — it is **never excluded** on semantic grounds (soft boost, not intersection). (3) **score = points × boost**; keep `score > 10` STRICT; sort desc; take the **top 3**. Because points ≥ 12 passes unconditionally and points ≤ 5 never can, the gate lets keyword-strong matches stand alone while a 7–10 point match must ride a genuine semantic hit. The single semantic `ctx.wiki.get` call uses a **flat `topK = 50`** (NOT derived from `listSkills().length` — the `skills` wiki domain is SHARED ACROSS PROJECTS and accumulates other projects' rows, so the loaded-skill count is not an upper bound); a saturated window (`results.length === topK`) logs a warning. Ranked skills are partitioned by `getSkillTriologueStatus` (a private method on `SkillSuggester`) into three classes — **new** (never mentioned in the triologue), **suggested** (appeared in a prior `[HINT]` note or `skill_search` result), **loaded** (already `skill_load`-ed this session) — and a single `[HINT]` note is injected via `triologue.note('HINT', ...)` listing each class with a `skill_load(name=\"<exact_name>\")` call hint. **Throttling:** a 3-pass cooldown suppresses re-triggering from consecutive user messages; a `failed` extraction (ESC abort / transient error) does NOT consume the opportunity (query stays eligible for retry), while `success`/`skipped` (trivial greeting) mark query as seen; an empty `freeformQuery` on a `success` outcome **fails fast** via `clearThrottle()` so the next pass re-attempts extraction. **Discipline:** the note is a *silent nudge* — the agent either loads a genuinely helpful skill or stays silent and continues; it must NOT write a prose reply narrating its decision (that clutters the conversation and re-triggers the same nudge). (Historically a separate `--debug-suggest` flag logged a standalone SUGGEST background task; that task was folded into this in-loop `suggestSkill` pass and the flag is now obsolete — removed from `help.ts`/`README.md`. The keyword extractor and skill-dedup logic were previously standalone modules `src/loop/keyword-extractor.ts` and `src/utils/skill-dedup.ts`; the extractor is now the SHARED module consumed by both `collect-skill.ts` and `skill_search.ts`, and the dedup logic is a private method on `SkillSuggester`.)\n\n**mindmap** — a tree-structured knowledge system compiling markdown files (like `MYCC.md`) into a navigable JSON structure. Each node has an ID (slash-separated path), text, title, summary (LLM-generated), level, children, links. The agent queries nodes via `get_node`/`recall` for efficient context retrieval. Compilation is one-way: `MYCC.md --> [compile_mindmap] --> mindmap.json`. Each agent has an independent mindmap instance (process isolation). **Patch line**: agent-discovered knowledge is recorded as append-only patches in `.mycc/mindmap-patch.jsonl` (add/update/delete), replayed into the in-memory tree at load time. `/mindmap compile` rebuilds patches (BFS dedup/stale-removal) and **preserves MYCC.md-deleted nodes as `add` patches** so trimmed content survives as patch-added knowledge. See `docs/mindmap/mindmap-design.md` and `docs/mindmap/mindmap-redesign.md`.\n\n**wiki, vector store** — a persistent knowledge base using LanceDB for vector similarity search, with WAL (Write-Ahead Log) files for audit and rebuild. Each document has hash, domain, title, content, references, embedding vector. Components (`src/context/parent/wiki.ts`): `wiki.get/put/rebuild/listDomains`. Tools: `wiki_get`, `wiki_put`, `wiki_prepare`. Config: embedding model `nomic-embed-text` (`OLLAMA_EMBEDDING_MODEL`), duplicate threshold 0.95, content limits 50-1000 chars. WAL stored in `~/.mycc-store/wiki/logs/YYYY-MM-DD.wal`; rebuild via `/wiki rebuild`.\n\n**Auto-Claim** — idle child processes automatically claim unassigned issues. When a child enters IDLE state (no tool calls), it polls for new mail and scans issues for `pending` + no owner + no blockers, then atomically claims the first match.\n\n**health-check** — runs at startup to validate Ollama connectivity and model availability: (1) server reachable, (2) model exists and can process requests, (3) `TOKEN_THRESHOLD` ≤ 80% of model's context length. Implementation `src/setup/ollama-health-check.ts` (`checkHealth` → `HealthCheckResult`). CLI flag `--skip-healthcheck` bypasses; on failure, prompts retry or exit.",
+            "title": "Architecture & Core Concepts",
+            "summary": "Architecture centers on **AgentContext** (`src/context/parent-context.ts`): modules core/todo/mail/skill(=loader)/issue/bg/team/wiki/peer, with `ParentContext` (direct) vs `ChildContext` (IPC wrappers, `src/context/ipc-registry.ts` IOC dispatcher). **Triologue** (`src/loop/triologue.ts`) is a thin facade over `src/loop/triologue/` (store, pending-tools, compact, wrap-up, brief, recap-note, transcript, truncate, segment-archive, tp-fix); `TriologueInternals` survives only in tests (tp-fix.ts uses its own dep closures). **AgentIO** (`src/loop/agent-io.ts`): main-only `ask()` throws \"question() only available in main process\"; `exec()` delegates to `agent-exec.ts`; bang `BANG_PROMPT` lives in `src/utils/line-editor.ts`. The **state machine** (`src/loop/state-machine.ts`) has AgentState PROMPT/SLASH/COLLECT/LLM/HOOK/TOOL/STOP/AWAIT with MachineEnv/TurnVars/ChatData tiers, resetting the `skillSuggester` singleton per turn. **Loader**: user → project → built-in (later wins), hot-reload, `getToolsForScope`. Confusion (threshold 10, ≥6 messages) → hint round (`hint-round.ts`) or child guidance mail. Also: Sequence, LanceDB wiki+WAL, mindmap patches, auto-claim (`teammate-worker.ts`), startup health-check (`src/engine/health-check.ts`).\n\nSkill discovery (COLLECT step 6, `src/loop/states/collect-skill.ts`) delegates scoring to the SHARED `scoreSkills` (`src/loop/skill-matcher.ts`: weights [10,7,5,3,2] over *matching evidence*, scope-aware `${scope}:${name}` boost, keep score > 10, top 3, `SKILL_SEMANTIC_TOPK = 50`) plus shared `extractKeywords`; throttle/cooldown/one-shot retry (replaying the earning composite) live on the suggester.",
+            "level": 2,
+            "children": [
+              {
+                "id": "/mycc.md/architecture-core-concepts/hookish-skills",
+                "text": "Skills that actively trigger based on patterns in the conversation sequence (vs. passive skills loaded on explicit request). Defined with a `when:` field in YAML frontmatter. Condition language queries conversation history using two scope prefixes: `turn.*` (current turn, since last user query) and `session.*` (entire livelog, since session start or last compact). Functions: `turn.count(tool?)`, `turn.lastIndex(tool)`, `turn.countResult(tool, pattern, maxChars?)`, `turn.hadError(tool?)`, `session.count(tool?)`, `session.lastIndex(tool)`, `session.countResult(tool, pattern, maxChars?)`, `session.hadError(tool?)`, plus global `isPlanMode()`. Tool spec (three-class): plain tool (`\"toolName\"`), skill_load (`\"skill_load#skillName\"`), bash (`\"bash#commandPrefix\"` — clause-split by `;`/`&&`/`||`, then prefix match). Call context: `call.metadata.*` (filePath, newLoc, existingLoc, isDestructive), `call.args.*` (raw tool args). Actions: `inject_before`, `inject_after`, `block`, `replace`, `message`, `compact`.\n\n**Condition Compiler Principles** — translates natural-language `when` into structured `{ trigger, condition, action }` via a safety-first pipeline: (1) **Lazy Compilation** — conditions are NOT compiled eagerly; a skill with `when` is \"pending\" until `skill_compile` is invoked (pending hooks are injected into LLM context at startup). (2) **LLM Translation with Structured Output** — `when` is sent to the LLM with all tools and a JSON schema enforcing the output shape. (3) **Expression Safety via jsep AST** — conditions are parsed with jsep and walked recursively (NOT `eval`/`new Function`); only `turn`/`session`/`call` root identifiers, only known `turn.*`/`session.*` functions, no dangerous identifiers, only safe string/array methods on results. (4) **Retry with Error Feedback** — up to 3 retries. (5) **Smoke Test** — evaluate against an empty mock sequence before persisting. (6) **Atomic Persistence** — temp file + rename, with backup. (7) **Source File Tracking & Orphan Cleanup** — `sourceFile` as `\"{layer}:{path}\"`; orphans auto-removed. (8) **Version History** — every compilation creates a new version in the `history` array (full audit trail). Key files: `src/hook/conditions.ts`, `src/hook/condition-validator.ts`, `src/hook/evaluator.ts`, `src/tools/skill_compile.ts`.",
+                "title": "Hookish Skills",
+                "summary": "Hookish skills carry a `when:` YAML field and actively trigger on conversation patterns. The condition language exposes `turn.*` (cleared by `Sequence.markPromptBoundary()` at STOP→PROMPT, survives compaction) and `session.*` (cleared by `compactReset()` on compact), each with `count(tool?)`, `lastIndex(tool)`, `countResult(tool, pattern, maxChars?)`, `hadError(tool?)`, plus global `isPlanMode()`/`totalTurns()` and call context `call.metadata.*`/`call.args.*` (built by `augmentCall`). Tool specs are three-class: plain name, `skill_load#name`, `bash#prefix` (clause-split by `;`/`&&`/`||`, then `startsWith`). Actions (`inject_before/after`, `block`, `replace`, `message`, `compact`) run in `HOOK_PRIORITY` order by `HookExecutor`, with per-chat injection dedup and a per-turn `stopDisturbance` cap.\n\nCompilation is lazy: pending skills surface as `[Hooks Pending]` from `buildHookInfoMessages` until `skill_compile` → `Loader.compileCondition` → `ConditionRegistry.compile`, which uses LLM JSON-schema structured output, up to 3 retries with error feedback, jsep AST validation (no eval; only `turn`/`session`/`call` roots; function-only `isPlanMode`/`totalTurns`), a smoke test on an empty mock sequence, then atomic save with backup/rollback, orphan cleanup via `sourceFile` (`layer:path`), and version history. Lead compiles on the runtime registry; children write disk then send `condition_replace` IPC. Runtime eval errors and legacy `seq.X` conditions surface as `[Hooks Erroring]`/`[Hooks Outdated]` for recompilation.",
+                "level": 3,
+                "children": [],
+                "links": [
+                  {
+                    "target_type": "file",
+                    "file_path": "src/hook/conditions.ts",
+                    "comment": "ConditionRegistry: pending/lazy compile tracking, LLM structured-output compile loop (MAX_COMPILE_RETRIES=3), trigger array validation, atomic save+backup+rollback, sourceFile orphan cleanup, version history, errored/legacy condition surfacing"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/hook/condition-validator.ts",
+                    "comment": "jsep AST validation (ALLOWED_ROOTS turn/session/call, KNOWN_SCOPED_FUNCTIONS, FUNCTION_ONLY_NAMES, DANGEROUS_IDENTIFIERS, allowed string/array methods), validateAction (bash intent language), smokeTestExpression, compileCondition pipeline"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/hook/evaluator.ts",
+                    "comment": "Safe jsep AST evaluator (no eval/Function) implementing the 8 scoped functions + isPlanMode()/totalTurns(), call context, onEvalError sink, bare-function-identifier defense"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/hook/sequence.ts",
+                    "comment": "Sequence: turn vs session scopes (markPromptBoundary/compactReset/fullClear), three-class tool spec (matchesToolSpec, extractSearchKey, splitClauses)"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/hook/hook-executor.ts",
+                    "comment": "HookExecutor: HOOK_PRIORITY, per-chat injection dedup, stopDisturbance per-turn cap, toCallContext adapter"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/hook/hook-preprocessor.ts",
+                    "comment": "augmentCall(): builds call.metadata (filePath/newLoc/existingLoc, isDestructive)"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/tools/skill_compile.ts",
+                    "comment": "skill_compile tool: delegates to ctx.skill.compileCondition, supports feedback refinement, prints version/history"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/loop/hook-bootstrap.ts",
+                    "comment": "initHookSystem + buildHookInfoMessages: [Hooks Outdated]/[Hooks Erroring]/[Hooks Pending] project-context blocks"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/shared/loader.ts",
+                    "comment": "Loader.compileCondition(): lead compiles on runtime registry; child uses temp registry + 'condition_replace' IPC; replaceCondition()"
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "Hookish Skill",
+                    "comment": "A skill with a `when:` field in YAML frontmatter that actively triggers on conversation patterns instead of being loaded on request."
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "Lazy Compilation",
+                    "comment": "A skill with `when` stays \"pending\" (surfaced as [Hooks Pending]) until skill_compile runs; conditions are never compiled eagerly."
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "tool spec (three-class)",
+                    "comment": "Condition tool argument forms: plain \"toolName\" (exact), \"skill_load#name\" (args.name substring), \"bash#commandPrefix\" (clause-split by ;/&&/|| then startsWith)."
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "turn scope vs session scope",
+                    "comment": "turn.* = current turn, cleared by markPromptBoundary() at STOP→PROMPT and survives compaction; session.* = whole livelog, cleared by compactReset() on compaction."
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "jsep AST validation",
+                    "comment": "Hook conditions are parsed with jsep and walked recursively (never eval/new Function) both at compile-time validation and runtime evaluation."
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "stopDisturbance",
+                    "comment": "Per-turn dedup set capping stop+block/replace hooks at once per turn so a stop+replace hook cannot loop forever; reset by resetTurn() at PROMPT."
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "sourceFile (layer:path)",
+                    "comment": "Conditions record their originating skill file as \"{layer}:{path}\" (user/project/built-in); missing files cause orphan cleanup on load."
+                  }
+                ]
+              },
+              {
+                "id": "/mycc.md/architecture-core-concepts/grant-system",
+                "text": "A permission system for child processes to request approval before performing sensitive operations.\n\n**Intent Language**: The `bash` tool requires an `intent` parameter in the format `VERB OBJECT PARAM PARAM ... TO PURPOSE`, where VERB is one of READ/WRITE/EDIT/DELETE/BUILD/TEST/INSTALL/RUN and OBJECT is one of SOURCE/CONFIG/DEPENDENCY/ARTIFACT/SYSTEM/DATA/TEMP/USER. Example: `READ SOURCE dir=src TO understand dependencies`. Most PARAMs are free-form; a few reserved PARAMs change routing:\n\n- **`dangerous=i_know`** — escape hatch for destructive/irreversible commands (e.g., `rm -rf`, force pushes). Declaring it skips the block AND the LLM safeguard, routing directly to the user `[y/N]` — the human's approval is the real authorization. Only affects `destructive`/`irreversible` categories (the `system` category like `git commit` stays hard-blocked — use `git_commit` instead). Unavailable in child processes. Without it, a blocked command returns a Socratic hint naming the *existence* of a PARAM override but withholding the exact key/value. Example: `DELETE DATA path=build/ dangerous=i_know TO reclaim disk space`.\n- **`batch=i_know`** — skip the LLM safeguard for batch deletions (multiple files/globs/recursive paths). Routes directly to user `[y/N]`. Only affects the DELETE + batch-delete path (does NOT bypass a hard block, does NOT cover `dangerous=i_know` patterns). Unavailable in child processes. Example: `DELETE TEMP batch=i_know TO clean build artifacts` (for `rm -rf dist/ node_modules/`).\n\nImplementation: `src/context/grant/bash-judge.ts`. The full system-prompt wording is emitted by `buildIntentLanguageSection()` in `src/loop/agent-prompts.ts`. The `hand_over` tool requires `intent` as `VERB OBJECT TO PURPOSE`; the correct VERB/OBJECT is `RUN USER TO <purpose>` (running an interactive human session) — any other dimension returns a Socratic hint. `command` is a JSON string (multi-line scripts escape newlines as `\\n`, but prefer one-lining with `&&`/`;`/`||`). It refuses to spawn a nested popup if the agent is itself inside tmux. Grant flow: `Child → requestGrant → IPC → Parent → check mode → check worktree → grant/deny`. In `plan` mode: all code changes blocked. In `normal` mode: auto-grant for owned worktree, reject otherwise.",
+                "title": "Grant System",
+                "summary": "The Grant System gates sensitive operations (write_file/edit_file/bash) behind an intent-language permission check. **Intent Language**: `VERB OBJECT [PARAM...] TO PURPOSE` — verbs READ/WRITE/EDIT/DELETE/FIND/BUILD/TEST/INSTALL/RUN, objects SOURCE/CONFIG/DEPENDENCY/ARTIFACT/SYSTEM/DATA/TEMP/USER (`intent-parser.ts`, which also exports the prompt tables). Prompt prose is emitted by `buildIntentLanguageSection()` in `src/loop/prompts/intent-lang.ts` (moved from `agent-prompts.ts`; MYCC.md is stale). PARAMs are strict whitespace-split `key=value` (lowercase keys, repeated keys to enumerate); a 7-priority tokenizer rejects malformed tokens with retry hints.\n\nReserved PARAMs: `dangerous=i_know` (destructive/irreversible only — skips hard block AND LLM safeguard, routes to user `[y/N]`; grammar still validated; `system` category like `git commit` stays hard-blocked) and `batch=i_know` (skips the LLM batch-delete classifier → user `[y/N]`). Both are rejected in children; without them, blocks return a Socratic hint naming the override's existence but withholding the key.\n\n`bash-judge.ts` runs a 6-step pipeline (dangerous patterns → missing intent → grammar → mode/verb → LLM → ask user). `dangerous-commands.ts` supplies categories plus INDIRECT_WRAPPERS/EXEC_WRAPPERS; `isComplexCommandShape()` escalates ambiguous shapes to the LLM judge. `grant-evaluator.ts`: plan mode blocks writes except allowed-file and `.mycc` plan-writable dirs; normal mode auto-grants owned-worktree *and* project-root paths for children, lets lead through. `hand_over` demands `RUN USER`, rejecting auto mode and leading `tmux` (nesting). Flow: Child → `requestGrant` → IPC `grant_request` (no timeout) → `evaluateGrant` → `recordChildDenial`, feeding the bounded denial ring read by the hint round. See `docs/tools/mode-and-grant-system.md` (Chinese, partly outdated).",
+                "level": 3,
+                "children": [],
+                "links": [
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/grant/bash-judge.ts",
+                    "comment": "Core bash judging pipeline: dangerous check, intent grammar, mode/verb gate, batch-delete LLM safeguard, dangerous=i_know / batch=i_know escape hatches, Socratic hints"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/grant/grant-evaluator.ts",
+                    "comment": "evaluateGrant dispatcher: bash → judgeBash; plan mode allowed-file + plan-mode-writable dirs; normal-mode child owned-worktree/project-root auto-grant"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/grant/dangerous-commands.ts",
+                    "comment": "DANGEROUS_COMMANDS with destructive/irreversible/system categories, INDIRECT_WRAPPERS skip and EXEC_WRAPPERS obfuscation detection, findDangerousCommand"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/loop/prompts/intent-lang.ts",
+                    "comment": "buildIntentLanguageSection() — emits the Intent Lang system prompt incl. PARAM Conventions for dangerous/batch"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/grant/intent-parser.ts",
+                    "comment": "VALID_VERBS/VALID_OBJECTS vocabularies, VERB_MEANINGS/OBJECT_MEANINGS prompt tables, single-pass PARAM tokenizer"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/tools/hand_over.ts",
+                    "comment": "hand_over requires RUN USER intent (Socratic per-dimension hints), rejects auto mode and leading tmux (nesting)"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/parent/core.ts",
+                    "comment": "Lead grant chokepoint: requestGrant → evaluateGrantForLead → recordDenial (bounded recentDenials ring, classifyDenial)"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/child/core.ts",
+                    "comment": "ChildCore.requestGrant sends IPC 'grant_request' with NO timeout (human/LLM-bound parent verdict)"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/parent-context.ts",
+                    "comment": "grant_request IPC handler → evaluateGrant(sender,...) → recordChildDenial; grant_result response"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/grant/types.ts",
+                    "comment": "GrantRequest/GrantTool/BashJudgeResult/DangerousCommand type definitions"
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "Intent Language",
+                    "comment": "VERB OBJECT [PARAM...] TO PURPOSE DSL required by bash/hand_over; verbs READ/WRITE/EDIT/DELETE/FIND/BUILD/TEST/INSTALL/RUN, objects SOURCE/CONFIG/DEPENDENCY/ARTIFACT/SYSTEM/DATA/TEMP/USER"
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "dangerous=i_know",
+                    "comment": "Reserved PARAM escape hatch for destructive/irreversible commands: skips hard block AND LLM safeguard, routes to user [y/N]; system category stays hard-blocked; rejected in children"
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "batch=i_know",
+                    "comment": "Reserved PARAM that skips the batch-delete LLM classifier and routes straight to user [y/N]; only the DELETE + isBatchDelete path; rejected in children"
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "Socratic hint",
+                    "comment": "Block message naming that a PARAM override (or the right verb/object dimension) exists while withholding the exact token, forcing the LLM to re-derive it"
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "Grant denial ring",
+                    "comment": "Bounded in-memory ring (MAX_RECENT_DENIALS=8) of recent refused grant verdicts with classifyDenial kinds, consumed by the hint round's Recent Permission Blocks"
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "isComplexCommandShape",
+                    "comment": "Local predicate in bash-judge that treats glob/write-verb matches as \"cannot classify locally\" and escalates to the LLM judge rather than blocking"
+                  }
+                ]
+              }
+            ],
+            "links": [
+              {
+                "target_type": "file",
+                "file_path": "src/loop/skill-matcher.ts",
+                "comment": "Shared skill scorer scoreSkills (KEYWORD_WEIGHTS, SKILL_SCORE_FLOOR, SKILL_TOP_N, SKILL_SEMANTIC_TOPK, scope-aware qualified-title boost) used by both skill_search and collect-skill"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/states/collect-skill.ts",
+                "comment": "SkillSuggester singleton: COLLECT step 6 proactive discovery, composite brief+query+hint, cooldown/retry budget, HINT note injection, private triologue-status partitioning"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/state-machine.ts",
+                "comment": "AgentState enum PROMPT/SLASH/COLLECT/LLM/HOOK/TOOL/STOP/AWAIT with MachineEnv/TurnVars/ChatData tiers"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/triologue.ts",
+                "comment": "Triologue facade over src/loop/triologue/ (store, pending-tools, compact, wrap-up, brief, recap-note, transcript, truncate, segment-archive, tp-fix)"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/agent-io.ts",
+                "comment": "AgentIO singleton: isMainProcess, neglected mode, main-only ask()/exec(), execEditor, PromptAbortError"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/context/shared/loader.ts",
+                "comment": "Loader: loadAll (user → project → built-in, later wins), watchDirectories hot-reload, getToolsForScope"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/context/parent-context.ts",
+                "comment": "ParentContext composing core/todo/mail/skill(loader)/issue/bg/team/wiki/peer modules and registering IPC handlers"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/context/child-context.ts",
+                "comment": "ChildContext: IPC-wrapper implementation of AgentContext for child/teammate processes"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/states/collect.ts",
+                "comment": "COLLECT pipeline: child questions, mails, team status, steering notes, hint round, todo nudge, step 6 suggestSkill"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/hint-round.ts",
+                "comment": "Hint round on confusion (CONFUSION_THRESHOLD=10, MIN_MESSAGES_FOR_HINT=6), focus_on captured for skill composite"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/keyword-extractor.ts",
+                "comment": "Shared LLM keyword extractor (significance-ordered keywords + freeformQuery) used by collect-skill and skill_search"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/context/teammate-worker.ts",
+                "comment": "Child worker: confusion scoring (+1/0/-1/+2/+1), guidance mail to lead, auto-claim of pending unowned issues"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/mindmap/patch-jsonl.ts",
+                "comment": "Append-only mindmap patch log (.mycc/mindmap-patch.jsonl) replayed into the in-memory tree"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/context/parent/wiki.ts",
+                "comment": "WikiManager: LanceDB vector store with WAL, get/put/rebuild/listDomains"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/engine/health-check.ts",
+                "comment": "HealthCheckResult probe for Ollama connectivity/model/context-length validation at startup"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/utils/line-editor.ts",
+                "comment": "LineEditor owning BANG_PROMPT ('run cmd ! ') and bang-mode toggling"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/context/ipc-registry.ts",
+                "comment": "IpcRegistry dispatcher (Open-Closed registration of message-type handlers)"
+              },
+              {
+                "target_type": "term",
+                "term_name": "AgentContext",
+                "comment": "Modular state container through which tools touch the system; ParentContext (direct) vs ChildContext (IPC wrappers)."
+              },
+              {
+                "target_type": "term",
+                "term_name": "Triologue",
+                "comment": "Conversation state facade (src/loop/triologue.ts) over store/pending-tools/compact/wrap-up/brief/recap-note/transcript/truncate/segment-archive/tp-fix; owns microCompact/autoCompact and hints."
+              },
+              {
+                "target_type": "term",
+                "term_name": "AgentIO",
+                "comment": "Process-wide I/O singleton (LineEditor, neglected/ESC mode, isMainProcess); ask()/exec() exist in main only and throw in children."
+              },
+              {
+                "target_type": "term",
+                "term_name": "Sequence",
+                "comment": "Query wrapper over Triologue (turn.lastIndex/session.count/turn.hadError) used by hookish skill conditions."
+              },
+              {
+                "target_type": "term",
+                "term_name": "Confusion Index",
+                "comment": "Per-turn \"stuck\" score (+1 assistant, 0 exploration, -1 action, +2 tool error, +1 repetition); at >=10 and >=6 messages the lead runs a hint round while a child mails the lead for guidance."
+              },
+              {
+                "target_type": "term",
+                "term_name": "state machine (AgentState)",
+                "comment": "Explicit PROMPT/SLASH/COLLECT/LLM/HOOK/TOOL/STOP/AWAIT handlers with MachineEnv/TurnVars/ChatData tiers replacing a while(true) loop."
+              },
+              {
+                "target_type": "term",
+                "term_name": "mindmap patch line",
+                "comment": "Append-only .mycc/mindmap-patch.jsonl (add/update/delete) replayed into the mindmap tree; /mindmap compile rebuilds patches and preserves MYCC.md-deleted nodes as adds."
+              },
+              {
+                "target_type": "term",
+                "term_name": "IOC (Inversion of Control) dispatcher",
+                "comment": "TeamManager acting as dispatcher; modules register IpcRegistry handlers per message type so new types need no dispatcher edits."
+              },
+              {
+                "target_type": "term",
+                "term_name": "wrapUpMark / auto-claim",
+                "comment": "wrapUpMark: WrapUpManager commit/rollback point at wrap-up turn start; auto-claim: idle children atomically claim pending, owner-less, unblocked issues."
+              }
+            ]
+          },
+          {
+            "id": "/mycc.md/modes-team",
+            "text": "**normal mode / plan mode:** mycc starts in normal mode (explore + make changes). plan mode is enabled by `/mode plan` or the `plan_on` tool; in plan mode only explorational tools are allowed and the system prompt differs.\n\n**team mode:** not actually a mode, but a state where teammates are spawned to help the lead. Orthogonal to normal/plan (solo-normal, solo-plan, team-normal, team-plan). Uses a dedicated system prompt for collaboration challenges.\n\n**lead and teammates:** the **Lead** is the main agent process (user interaction, spawns teammates, coordinates). **Teammates** are child processes executing assigned tasks. Architecture: `Terminal -> Coordinator -> Lead -> Teammates`. Teammates cannot use `tm_create`, `tm_remove`, `tm_await`, or `broadcast` directly (must request via mail to lead). Key operations (`src/context/parent/team.ts`): `createTeammate`, `listTeammates`, `awaitTeam`, `mailTo`, `broadcast` (lead only).\n\n**lead trusting teammate's autonomous cycle:** A teammate runs its own loop; two normal behaviors are NOT failures the lead should \"fix\": (1) **idle after a phase is expected, not stuck** — when a teammate finishes a phase (no open todos, no pending tool calls) it mails \"phase completed\" and enters `idle` (polls for mail/claimable issues every `POLL_INTERVAL`, `src/context/teammate-worker.ts` `enterIdleState`); the lead must not send nag mails nor take over the work. (2) **todo management is the teammate's internal affair** — it does not affect its ability to do assigned work, and the lead cannot manage a teammate's todos; do not instruct teammates to \"skip todos\" and do not treat a \"no active todos\" report as a problem. The lead should intervene only on a real stall (no output past the deadline, or a guidance request that genuinely blocks), a timeout, or an error — not on normal idle or internal todo state. A guidance-request mail is worded \"could benefit from direction\" (not necessarily blocked).\n\n**remote peer mail (cross-instance `mail_to`):** `mail_to(name=\"<session-id>/lead\", ...)` works unchanged whether the target is a **same-machine peer** (another mycc instance on THIS machine, discovered via `~/.mycc-store/discovery`) or a **remote peer** (an instance on ANOTHER machine, wired via `peer_connect`). The `mail_to` tool (`src/tools/mail_to.ts`) recognizes the `<uuid>/lead` identity pattern (session-id is a UUID, agent-name is `lead`), fail-fast validates the peer is fresh/online (`ctx.peer.isFresh`), and routes through `ctx.peer.sendPeerMail`. `PeerManager.sendPeerMail` (`src/peer/peer.ts`) is **route-aware, local-first**: (1) **LOCAL branch** — `ChannelManager.sendPeerMail` (`src/peer/channel.ts`) appends a JSONL line directly to the remote's lead mailbox (absolute path resolved from `identity.json`), gated by heartbeat freshness; the `from` field is the local identity string `<sessionId>/lead`. (2) **REMOTE branch** — when the sid is NOT a registered local identity, `sendWireMail` (`src/peer/wire-registry.ts`) resolves the pair by sid, checks the WebSocket is OPEN, stamps a high-entropy wire mail id (`<sender-sid>-<seq>-<rand>`), enforces a 4MB sender-side byte cap (`WIRE_MAX_PAYLOAD_BYTES`, CJK-aware — measures serialized UTF-8 bytes not chars), and sends a `MailFrame` over the wire. The receiver's WS handler appends to its OWN mailbox via `MailBox.appendMail` (the single mailbox writer — never a hand-rolled writer), with **seen-id dedupe** (`seenMailIdRegister`, bounded LRU of 4096) so a convergence-window mail arriving on BOTH sockets of a pair is delivered once. **At-most-once:** a send failure is LOSS (no offline queue, no ack layer) — the sending agent re-issues. **Identity string:** every instance's peer identity is `<sessionId>/lead` (`IdentityManager.getIdentityString`); this is what `mail_to` accepts as `name` and what appears as `from` on received mail. COLLECT collects peer mail into a `MAIL` note the same way as teammate mail (`collectMailsAndInput`, step 2). See `docs/peers/remote-peer-protocol.md` for the full dialer/acceptor/pair-dedupe design.\n\n**todo and issue:** **Todos** are simple task tracking items (title, status, blockedBy dependencies). **Issues** are more structured (ID, status, owner, blockedBy/blocks, comments) supporting team coordination. Hash integrity: each todo has a SHA256-based hash (first 8 hex chars) from `name|done|note`; `todo_update` requires matching hash. `pinned`/`preventStop` are deliberately NOT part of the hash, so `todo_pinning` can modify them without a `todo_update` revalidation cycle. Tools: `todo_create`, `todo_update`, `todo_pinning` (lead-only, scope `['main']`), `issue_create`, `issue_claim`, `issue_list`, `issue_close`, `issue_comment`. Slash: `/todos` (pinned show 📌), `/issues`. `todo_write` is the legacy deprecated tool.\n\n**Pinned todos and the preventStop guard:** pinned todos are protected from the auto-clear that removes completed (`done`) todos; pinning is lead-only (`todo_pinning`, scope `['main']`). A pinned todo may carry a **`preventStop` guard** — a natural-language statement about the state the work must reach. While a guard holds, the turn cannot end: `handleStop()` calls `checkPreventStop()` (`src/loop/states/stop-prevent-stop.ts`) AFTER the neglection block (ESC always wins) and BEFORE `presentResult()` / the auto-mode early return, judging ALL guards in one `forkChat` (`toolChoice='none'`, escAware-wrapped, prompt-cache preserving) that returns `[{\"id\":..,\"hash\":\"..\",\"held\":true,\"reason\":\"..\"}]`. Verdicts are matched by id+hash so a hallucinated hash cannot hold the turn; the gate never mutates the todo. A hold injects a `[STOP BLOCKED]` SYSTEM note and returns COLLECT WITHOUT `markTurnBoundary()`, so the turn legitimately continues; `TurnVars.preventStopHolds` counts consecutive holds per id and escalates from the 2nd hold (naming the count and the release call). Every failure path fails OPEN — a broken evaluator never traps the agent. Teammates are unaffected. See `docs/loop/pinned-todo-prevent-stop.md`.\n\n**user session / project session:** sessions are persisted conversation states as JSON. **Project sessions** in `.mycc/sessions/` (project-specific); **user sessions** in `~/.mycc-store/sessions/` (shared across projects). **Sealed-session principle:** a session is NEVER shared; once its mycc process exits, its files (session JSON + triologue JSONL) are sealed read-only. `/load <id>` (mid-session, empty-current-session only) or `mycc --from <id>` (cold start, also `/fork`) does NOT resume the old session — it reads it read-only, LLM re-understands the transcript into a fresh context, and continues in a BRAND NEW session. Loading the same id multiple times yields DIFFERENT new sessions (variation by re-understanding) — the basis for branching. Session structure (`src/session/types.ts`): `id`, `create_time`, `project_dir`, `lead_triologue`, `child_triologues`, `teammates`, `first_query` (bookmark title). Use `/save` to copy a project session to user dir and `/load` to branch from any sealed one.\n\n**session file vs triologue JSONL:** the **session file** (`.mycc/sessions/{uuid}/session-{uuid}.json`) holds metadata only (ID, creation time, triologue paths, teammates, first query) — created once, updated in place only by the session's own running process, sealed after exit. The **triologue JSONL** (`.mycc/sessions/{uuid}/triologue-lead-{ts}.jsonl`) is the append-only conversation log — every message appended via `onMessage` in `agent-repl.ts` with `fs.appendFileSync`; the authoritative record of agent activity. The session file tells *what sessions exist and where their logs live*; the triologue JSONL contains *what actually happened*.\n\n**slash commands:** user-initiated `/`-commands handled outside the LLM tool system (meta-operations: help, sessions, modes, knowledge bases). Registry pattern (`src/slashes/index.ts`): `slashRegistry.register`/`execute`. Built-in: `/team`, `/todos`, `/skills`, `/issues`, `/save`, `/load`, `/clear`, `/wiki`, `/domain`, `/mindmap`, `/compact`, `/mode`, `/plan`, `/help`.",
+            "title": "Modes & Team",
+            "summary": "**Modes & Team** covers modes, team architecture, tasks, sessions, and slash commands. **Plan mode** (`/mode plan`, `/plan`, `plan_on(scope:['main'])`) blocks edits, not planning; prompts dispatch in `src/loop/prompts/lead.ts` via `buildPlanModePrompt`/`buildNormalModePrompt` → solo/team × plan/normal variants, plus `buildTeammatePrompt`. Team is orthogonal **state**, not a mode. The **Lead** (`Terminal→Coordinator→Lead→Teammates`) drives `TeamManager` (`team.ts`: `createTeammate`, `awaitTeammates`, `mailTo`, `broadcast`); `awaitTeammates` is the single 1s-poll wait primitive returning `all done|holding|mail|steering|failed|timeout|esc`. Spawn/await/broadcast/pinning/plan tools are `scope:['main']`, so teammates must mail the lead. Teammates finish a phase by mailing \"phase completed\" then `enterIdleState` (`teammate-worker.ts`, `POLL_INTERVAL` 5s: poll mail, auto-claim unblocked issues) — normal idle and internal todos are NOT stalls. **Todos** carry an 8-hex SHA256 hash of `name|done|note` (`pinned`/`preventStop` excluded); **issues** start DRAFT until `issue_claim`/`issue_publish`. The pinned-todo **preventStop** guard (`stop-prevent-stop.ts`) runs at STOP after neglection, before `presentResult()`, one batched fail-open `forkChat(toolChoice='none')`, escalating holds. Sessions are sealed after exit; `/load` re-understands into a new session. Slashes register in `src/slashes/index.ts`; triologue JSONL is append-only (`transcript.ts`). See prior summary for remote peer mail details.",
+            "level": 2,
+            "children": [
+              {
+                "id": "/mycc.md/modes-team/tool-scope-constraints",
+                "text": "| Agent Type | Available Tools |\n|------------|-----------------|\n| Lead (main) | All 49 built-in tools, except `question` (child-only) |\n| Teammate (child) | All shared tools (`['main','child']`) plus `question`. Cannot use the main-only set below. |\n\n**Main-only tools**: `mycc_title`, `read_read`, `broadcast`, `hand_over`, `plan_on`, `plan_off`, `todo_pinning`, `tm_create`, `tm_remove`, `tm_await`, `peer_list`, `peer_connect`, `peer_disconnect`.\n\n> There is no separate background (bg) agent type: `bg_create` / `bg_print` / `bg_await` / `bg_remove` are ordinary tools used by the lead and by teammates.\n\n**Background Task Tools:** the bg module (`bg_create`, `bg_print`, `bg_await`, `bg_remove`) provides non-blocking command execution. `bg_create` spawns async (returns PID); `bg_print` lists tasks or shows output for a PID; `bg_await` blocks until done (optional timeout); `bg_remove` terminates by PID. Uses `spawn()` on all platforms (Windows removes `detached:true` to capture stdout/stderr); output capped ~100KB (tail-capped); killed tracked separately from failed.\n\n**Interactive Shell / /fork Command:** `/fork` spawns a new mycc instance in a separate terminal. `/fork` (current project) or `/fork --env KEY=VALUE` (forward env vars). Linux: `gnome-terminal`/`x-terminal-emulator` with bash. Windows: `PowerShell -EncodedCommand` via `wt.exe` (`shell:true` disabled, single-quoted paths).",
+                "title": "Tool Scope Constraints",
+                "summary": "Tool availability rests on one mechanism: every `ToolDefinition` in the central `builtInTools` array (`src/context/shared/registry.ts`, ~50 entries) declares `scope: string[]`, and `getToolsForScope(scope)` (`src/context/shared/loader.ts:677`) returns only tools whose array includes the scope. `ToolScope` (`src/types.ts`) is `'main' | 'child'`; the `// e.g. [... 'bg']` comment on `ToolDefinition.scope` is stale — **no bg scope exists**.\n\n**Lead** calls `getToolsForScope('main')` and gets every built-in tool except `question`. **Teammates** call `silentLoader.getToolsForScope('child')` (`teammate-worker.ts:240`) and get all shared `['main','child']` tools plus child-only `question` (`src/tools/question.ts` — lead never asks the user directly; questions arrive via teammate mail).\n\nExactly 13 tools are `scope:['main']`: `mycc_title`, `read_read`, `broadcast`, `hand_over`, `plan_on`, `plan_off`, `todo_pinning`, `tm_create`, `tm_await`, `tm_remove`, `peer_list`, `peer_connect`, `peer_disconnect`. (Note: `recap` cited in earlier drafts does not exist as a tool.) `hand_over`/`tm_*`/`broadcast` encode the lead-only orchestration surface.\n\n**bg tasks** are ordinary `['main','child']` tools, not an agent type: `src/context/shared/bg.ts` uses `spawn()`, 100KB tail cap, Windows omits `detached:true` + `unref()`, `killed` tracked apart from failed.\n\n**/fork** (`src/slashes/fork.ts` + `src/utils/open-terminal.ts`) spawns `mycc --from <sessionId>` with optional `--env KEY=VALUE`; Linux gnome-terminal/x-terminal-emulator with bash, Windows `PowerShell -EncodedCommand` via wt.exe with `shell:true` deliberately disabled.",
+                "level": 3,
+                "children": [],
+                "links": [
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/shared/registry.ts",
+                    "comment": "builtInTools array — the authoritative list of all 50 built-in tool definitions loaded into the Loader."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/shared/loader.ts",
+                    "comment": "getToolsForScope(scope) filters tools by ToolDefinition.scope.includes(scope) — the single mechanism for lead vs teammate tool availability."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/types.ts",
+                    "comment": "ToolScope = 'main' | 'child'; ToolDefinition.scope: string[] with stale 'bg' doc comment."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/tools/question.ts",
+                    "comment": "The only scope ['child'] tool — teammate-exclusive; lead must route questions through teammates."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/teammate-worker.ts",
+                    "comment": "Line 240: teammate tool list = silentLoader.getToolsForScope('child')."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/shared/bg.ts",
+                    "comment": "BackgroundTasks implementation — spawn(), 100KB tail cap, Windows detached handling, killed vs failed."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/slashes/fork.ts",
+                    "comment": "/fork slash command — spawns a new mycc instance in a separate terminal with optional --env forwarding."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/utils/open-terminal.ts",
+                    "comment": "Cross-platform terminal launcher: Linux gnome-terminal/x-terminal-emulator, Windows wt.exe + PowerShell -EncodedCommand with shell:true disabled."
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "ToolScope",
+                    "comment": "Union type 'main' | 'child' (src/types.ts) — the only two scope values; there is no 'bg' scope despite the stale doc comment."
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "getToolsForScope",
+                    "comment": "Loader method (src/context/shared/loader.ts:677) returning only tools whose scope array includes the given scope; called with 'main' by the lead and 'child' by teammates."
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "main-only tools",
+                    "comment": "The 13 tools with scope ['main']: mycc_title, read_read, broadcast, hand_over, plan_on, plan_off, todo_pinning, tm_create, tm_await, tm_remove, peer_list, peer_connect, peer_disconnect."
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "builtInTools registry",
+                    "comment": "Central array in src/context/shared/registry.ts listing every built-in tool; loader.loadBuiltInTools() registers them all with highest priority (not overridable by user/project tools)."
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "bg module",
+                    "comment": "bg_create/bg_print/bg_await/bg_remove — non-blocking command execution tools scoped ['main','child']; not a separate agent scope."
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "/fork",
+                    "comment": "Slash command spawning a fresh mycc instance in a separate terminal from a sealed session (--from), with optional --env KEY=VALUE forwarding."
+                  }
+                ]
+              }
+            ],
+            "links": [
+              {
+                "target_type": "file",
+                "file_path": "src/context/parent/team.ts",
+                "comment": "TeamManager: createTeammate, awaitTeammates (unified wait primitive), listTeammates, mailTo, broadcast, printTeam, removeTeammate, handleChildMessage IPC"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/context/teammate-worker.ts",
+                "comment": "Teammate child loop: POLL_INTERVAL idle polling, enterIdleState (mail + auto-claim issues), \"phase completed\" mail, guidance request wording, eta budget/heartbeat, circuit breaker"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/session/types.ts",
+                "comment": "Session metadata shape: version, id, create_time, project_dir, lead_triologue, child_triologues, teammates, first_query, sourceSessionId (fork)"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/slashes/index.ts",
+                "comment": "Slash command registry: register/execute, full built-in command list incl. /mode, /plan, /todos, /issues, /team, /load, /save, /fork"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/triologue/transcript.ts",
+                "comment": "Append-only triologue JSONL sink: one fs.appendFileSync per line, never seek/truncate"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/prompts/lead.ts",
+                "comment": "Prompt entry points buildPlanModePrompt/buildNormalModePrompt dispatch to solo/team plan+normal variants and buildTeammatePrompt; contains the \"lead trusting teammate idle & todo state\" boundaries text and draft-issue team workflow"
+              },
+              {
+                "target_type": "file",
+                "file_path": "docs/loop/pinned-todo-prevent-stop.md",
+                "comment": "Reference doc for the pinned-todo preventStop STOP guard design"
+              },
+              {
+                "target_type": "file",
+                "file_path": "docs/session/slash-commands.md",
+                "comment": "Reference doc for the slash-command system"
+              },
+              {
+                "target_type": "file",
+                "file_path": "docs/session/fork-design.md",
+                "comment": "Fork/branch design: loading a sealed session re-understands it into a new session"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/tools/todo_create.ts",
+                "comment": "Todo tool (scope ['main','child']) returning id+hash"
+              },
+              {
+                "target_type": "term",
+                "term_name": "TeamManager (createTeammate / awaitTeammates)",
+                "comment": "The lead-side team module in src/context/parent/team.ts: spawns child-process teammates over IPC, and awaitTeammates is the SINGLE unified wait primitive polling every 1s for 'all done'|'holding'|'mail'|'steering'|'esc'|'timeout'."
+              },
+              {
+                "target_type": "term",
+                "term_name": "enterIdleState",
+                "comment": "The teammate's idle phase inside src/context/teammate-worker.ts: after mailing \"phase completed\" it polls every POLL_INTERVAL (5s) for new mail and auto-claims unblocked pending issues — normal, not stuck."
+              },
+              {
+                "target_type": "term",
+                "term_name": "sealed session / re-understand on load",
+                "comment": "A session's files become read-only once its process exits; /load or --from reads the old transcript and the LLM re-understands it into a BRAND NEW session (same id loaded twice yields different sessions — the basis for branching)."
+              },
+              {
+                "target_type": "term",
+                "term_name": "todo hash (SHA256 of name|done|note)",
+                "comment": "First 8 hex chars; todo_update requires a matching hash. pinned/preventStop are deliberately excluded so todo_pinning can change them without a revalidation cycle."
+              },
+              {
+                "target_type": "term",
+                "term_name": "draft issue status",
+                "comment": "issue_create makes DRAFT issues invisible to teammate auto-claim until finalized via issue_claim (→ in_progress) or issue_publish (→ pending)."
+              }
+            ]
+          },
+          {
+            "id": "/mycc.md/webui-features",
+            "text": "A Vue 3-based WebUI is served by mycc itself via an embedded Express + Vite + WebSocket stack (`src/serve/serve-hub.ts`, `src/web/`). It provides a browser-based chat interface as an alternative to the terminal REPL: Markdown rendering (letter-box → chat bubbles); interactive **cards** replacing terminal `ask()` prompts (input/confirm/choice) — `CardItem.vue`; session history via `/history` (backed by the durable triologue JSONL transcript, survives serve stop/restart and page closes); 30s disconnect-reconnect timer with graceful warm shutdown. For the developer reference (component layout, WS protocol, input/card bridges, reconnect replay), see `src/web/README.md`.\n\n**steering (WebUI mid-task direction):** lets the user queue direction for the agent *while the LLM is mid-run* without interrupting it. The buffer is a **lazy process-wide singleton** `getSteeringManager()` (`src/loop/steering-manager.ts`; API `addNote`/`peekNotes`/`peekTexts`/`drainNotes`/`isNonEmpty`/`takeForDelivery`/`resolveBoomerang`/`clear`), distinct from the file-backed **mail** system. `ServeHub` is the **sole writer**: `pushSteer` → `addNote` → `journalUserSubmission(text,'steer')` → `steer-echo` → flush; `resolveSteering` → atomic `resolveBoomerang` split (selected → `submitInput(joinSteeringNotes(...))`; discarded → verbose discarded-ids log) supports per-note discard/send. Loop states are pure **readers**. Three delivery seams re-run the pure check `takeForDelivery(isInputBlocked(), isWrapUpInFlight())` through the shared private `flushSteeringAtSeam()` (`serve-hub.ts`): **WRITE** (`pushSteer`), **ARM** (`waitForInput` armed), **WAKE** (`onWrapUpSettled()` called directly by `esc-wrap-up.ts` on both settle paths, gated on `isRunning()`). **Two consumption paths**: (1) **COLLECT** (`src/loop/states/collect.ts`, step 2c) — in-flight notes drained and injected verbatim as a `REMINDER` (no synthesis); (2) **PROMPT** (`src/loop/states/prompt.ts`) — if the run was interrupted (ESC/停止) and the user submits a fresh query, the held notes are merged into the submission via `peekTexts`/`drainNotes` (`hub` retained only for file uploads + flush broadcast); the two paths are mutually exclusive (PROMPT drains first). Lifecycle (A2): `stop()` calls `manager.clear()` only when `!this.restarting` — held notes **survive `restartServe()`** and are wiped on terminal stop; both `WebInputProvider` fallback branches clear on entry-fallback + post-abort (restart branches return before any wipe). Frontend unchanged (`src/web/src/main.ts`, `ChatInput.vue`, `SteeringBuffer.vue`): when `isRunning`, `send()` routes to `sendSteer`; the buffer bar is populated solely by the server's `steer-echo` broadcast (single source of truth — no local push); `steer-flush` clears it. `/history` returns `{ messages, steeringBuffer }` where `steeringBuffer` = `manager.peekNotes()` (`{id,text}[]`; ETag folds in steering-length + `agentRunning`). Import boundary (A6, enforced by `src/tests/loop/steering-boundary.test.ts`): no `src/loop/**` file may call hub steering methods or import `serve-registry`.\n\n**file upload (WebUI chat-box attachments):** mirrors the steering design — same ephemeral-queue architecture in `ServeHub` (`fileUploadQueue`), same two consumption paths (COLLECT in-flight vs PROMPT stale). Key contrast: file uploads are **informational resources saved and noted, never synthesized** — no `forkChat` merge at PROMPT. Files travel inline in the JSON `WsMessage` as base64 (no multer/multipart); both `input` and `steer` carry an optional `files` array. COLLECT (step 2d) drains and saves to `./.mycc/uploaded/` as `${Date.now()}_${filename}` (base64-decoded), injecting a `REMINDER` listing each file (with truncated user-text preview if provided). PROMPT drains stale files with the same save logic and a `REMINDER` — no synthesis (files are read via `read_picture`/`read_file` in the next turn). No client-side buffer bar for files (`file-upload`/`file-flush` echoes are no-ops). The upload queue is not in `/history` and does not survive a serve stop/restart.\n\n**neglection and esc return:** neglection is triggered when the user presses ESC during LLM inference — signals the agent to quickly wrap up without further tool calls. \"Neglected mode\" aborts ongoing LLM calls, buffers subsequent output, forces a text-only response. Key: `agentIO.isNeglectedMode()`, `setNeglectedMode(value)`, `onNeglected(callback)`; IPC message `{ type: 'neglection' }` (coordinator → lead on ESC).\n\n**esc-aware wrap-up:** on ESC during LLM inference the system enters **wrap-up mode** — the LLM call is aborted via AbortController, a quick \"wrap-up\" LLM call runs in background to produce a concise text-only response, the prompt line reappears immediately, and the wrap-up result is displayed when ready (with commit/rollback logic). Grace period: if the user starts typing before wrap-up completes, the result is discarded. See `docs/loop/esc-wrap-up-redesign.md`. `ctx.core.escAware(operation, onCleanUp)` wraps slow operations for ESC-aware quick return — on ESC the original promise continues in background, `onCleanUp` is invoked immediately, its result returned to the caller. `Core.escAware()` (parent) uses `agentIO.onNeglected()`; `ChildCore.escAware()` is a placeholder (TODO: IPC). Use `escAware` for high-level operations (tool execution, file ops, network requests); use a manual `AbortController` for low-level stream handling (`retryChat()`, hint round). Currently used by tool execution (`src/loop/states/tool.ts`).\n\n**crossroad:** improves LLM response quality by detecting \"turning words\" (e.g., \"However\", \"Wait\", \"但\", \"但是\") in the draft response, generating alternative continuations via parallel `forkChat` calls, selecting the best path while preserving prompt cache. Implementation: `src/hook/crossroad.ts` (runs in the HOOK state before tool execution; debug with `--debug-tp`). Consecutive crossroads contribute to the hint round confusion index.\n\n**@-prefix teammate label convention:** teammate tool output and status messages are routed to a separate `state.teammateMessages` array rather than the main chat log. Routing is decided by a string convention on the existing `label` field — no new WS message types, no `sender` field. The label is `@<teammate>/<tool>` (e.g., `@coder/bash`); `@` marks a teammate message, `/` splits teammate name from tool name. No tool tag → `@<teammate>`. Data flow: the tool tag was historically dropped at the IPC boundary, so **child** (`src/context/child/core.ts`, `ChildCore.brief()`) forwards `tool` in the `log` IPC payload, and **parent** (`src/context/parent/team.ts`, `handleChildMessage()`) builds `@${sender}/${tool}` (falls back to `@${sender}`). Other lifecycle paths (`teammate_ready`, `eta_update`, `status`, `exit`/`error`) are intentionally NOT prefixed. Frontend (`src/web/src/main.ts`): messages whose `label` starts with `@` go into `teammateMessages`; `/history` returns a flat array the client splits. Approximate persistence: teammate messages flow through the same `messageLog` (`MAX_LOG_SIZE = 1000`), replayed on reconnect, but lost on serve stop/restart (the transcript records teammate turns, not their brief/log output).\n\n**Teammate accordion UI:** teammate messages grouped by name and rendered in an accordion UI rather than mixed into the main chat. **`TeammateCard.vue`** — floating top-right card, one row per active teammate (`@name(count): currentTool`), click to open the drawer; hides when the drawer is open or no teammate messages. **`TeammateDrawer.vue`** — right-half panel with stacked accordions per teammate; header `@name(count): current_tool`, body is a flat chronological timeline with `[tool]` prefix tags; first accordion expanded by default; multiple may be open; ✕ closes. Grouping is a frontend computed property — no backend per-teammate state.",
+            "title": "WebUI Features",
+            "summary": "**WebUI Features.** mycc's Vue 3 SPA (`src/web/`, dev ref `src/web/README.md`) is served in-process by `src/serve/serve-hub.ts` (Express + Vite middleware + `/ws`; `/history`, `/health`, `/config`): markdown chat bubbles, interactive **cards** (`CardItem.vue`) replacing `ask()`, durable `/history` from the triologue JSONL, 30s disconnect timer, warm shutdown, `restartServe()` (重启). `message-dispatch.ts` holds the DOM-free phase FSM.\n\n**Steering** — lazy singleton `getSteeringManager()` (`src/loop/steering-manager.ts`; addNote/peekNotes/peekTexts/drainNotes/isNonEmpty/takeForDelivery/resolveBoomerang/clear). ServeHub is the sole writer; emission is intrinsic: every mutation bumps a monotonic `revision` and notifies one hub observer → `steer-state` `{steeringRevision, notes}` broadcast (**replaced** the old `steer-echo`/`steer-flush` deltas and `resolve-guard.ts`). Client `adoptSteering` accepts only strictly newer revisions (review ⊆ queue, buffer = queue − review). Three seams (`flushSteeringAtSeam`): WRITE (`pushSteer`), ARM (`waitForInput`), WAKE (`onWrapUpSettled()`, called directly by `esc-wrap-up.ts`, gated on `isRunning()`). Consumption: COLLECT 2c (verbatim `REMINDER`) vs PROMPT (`forkChat` synthesis via `synthesizeWithSteering`, drains first). `resolveSteering` = atomic boomerang + discarded-id log; empty queue still re-emits as ack. `stop()` clears only when `!restarting`. `/history` also returns `isRunning`; ETag folds revision + agentRunning. Boundary: `steering-boundary.test.ts`.\n\n**Files upload:** `fileUploadQueue`, base64 inline, COLLECT 2e / PROMPT (no synthesis) → `.mycc/uploaded/${Date.now()}_${filename}` + REMINDER; not in `/history`, lost on stop.\n\n**ESC:** neglection (`agentIO.isNeglectedMode/setNeglectedMode/onNeglected`, IPC `neglection`), wrap-up mode, `ctx.core.escAware()` (`states/tool.ts`). **Crossroad** (`src/loop/crossroad.ts`). **`@<teammate>/<tool>` labels** → `teammateMessages`; `TeammateCard.vue`/`TeammateDrawer.vue` accordions.",
+            "level": 2,
+            "children": [],
+            "links": [
+              {
+                "target_type": "file",
+                "file_path": "src/web/src/stores/chat-store.ts",
+                "comment": "Frontend steering adoption rule (adoptSteering): revision-ordered snapshot adoption, review⊆queue, buffer=queue−review; resetSteering/populateSteeringReview"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/states/collect.ts",
+                "comment": "COLLECT step 2c drains steering into a verbatim REMINDER; step 2e drains file uploads to .mycc/uploaded/"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/web/src/components/SteeringReviewCard.vue",
+                "comment": "PROMPT \"继续…\" review card: send-as-query / per-note discard / discard-all"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/serve/serve-hub.ts",
+                "comment": "Hub: sole steering writer (pushSteer/resolveSteering), onChange→steer-state broadcast, flushSteeringAtSeam, /history revisioned snapshot, fileUploadQueue"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/web/src/message-dispatch.ts",
+                "comment": "DOM-free message dispatch: phase FSM table, steer-state→adoptSteering, populates review at prompt, file-upload/file-flush no-ops"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/serve/serve-ws-handler.ts",
+                "comment": "WS inbound frame handling: 'steer' → pushSteer, 'steer-resolve' → resolveSteering(sendIds), 'input' with optional files"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/states/prompt.ts",
+                "comment": "PROMPT path: stale steering synthesized via forkChat synthesizeWithSteering; stale files saved without synthesis; drains before COLLECT path"
+              },
+              {
+                "target_type": "term",
+                "term_name": "revisioned steering snapshot (steer-state)",
+                "comment": "Every SteeringManager mutation bumps a monotonic revision and broadcasts the whole queue({revision,notes}) as `steer-state`; replaces the old steer-echo/steer-flush delta protocol, and the client adopts only strictly newer revisions."
+              },
+              {
+                "target_type": "term",
+                "term_name": "adoptSteering",
+                "comment": "Frontend store rule: adopt snapshot only if revision is newer; review ⊆ queue; buffer = queue − review — no resolve guard needed"
+              },
+              {
+                "target_type": "term",
+                "term_name": "SteeringReviewCard (继续…)",
+                "comment": "At PROMPT, notes still queued (never consumed) surface as a review card offering send-as-query, per-note discard, or discard-all (auto mode abandons review)"
+              }
+            ]
+          },
+          {
+            "id": "/mycc.md/development",
+            "text": "**How to add a tool/skill:** to add a tool — (1) refer to existing code in `src/tools/` for the pattern; (2) create a file in `.mycc/tools` (hot-reloadable); (3) let the user test it manually and iterate from feedback; (4) once qualified, migrate it into `src/tools` and update the loader to make it built-in. See `skills/add-tool/SKILL.md`. To add a skill — same flow with `skills/` as the reference and `.mycc/skills` as the hot-reloadable folder, migrating into `skills/` to make it built-in.\n\n**Tool Development Guidelines:** **Fail Early** — tools should fail early and explicitly rather than silently degrading. **No Direct Console Output in Tools** — tools MUST NOT use `console.log`/`console.error`; use `ctx.core.brief()` for all user-facing output.\n\n**Scripts interop (JS → TS via tsx/esm/api):** the `scripts/` folder contains globally-available bin entry points (registered in `package.json` `bin`, linked via `npm link`). Entry points stay as `.js` (npm/Windows `.cmd` wrappers invoke `node <target.js>` — shebangs are bypassed on Windows, so `bin` must point at `.js`). To let a `.js` script import `.ts` files (both sibling logic in `scripts/` and utilities in `src/`), use the `tsx/esm/api` `register()` call at the top of the `.js` entry, then dynamically import the `.ts` file:\n\n```js\n#!/usr/bin/env node\nimport { register } from 'tsx/esm/api';\nregister();\n\nconst { parseArgs } = await import('../../src/utils/arg-parser.ts');\n```\n\n`register()` installs the tsx ESM loader in-process (no child-process spawn, no build step, no separate `tsconfig.json` needed for scripts). After `register()`, dynamic `import()` accepts `.ts` specifiers directly — use explicit `.ts` extensions in the specifier (e.g. `'./logic.ts'`, `'../../src/utils/foo.ts'`). For static imports between sibling `.ts` files, keep the project convention of `.js` extensions (`import { foo } from './bar.js'` for `bar.ts`) — tsx resolves these automatically. This pattern lets `scripts/*.js` reuse real `src/*.ts` implementations instead of hand-duplicating them (e.g. `mycc-mail.js` previously duplicated `src/peer/identity.ts` and `src/peer/channel.ts` logic with \"must mirror\" comments).\n\n**Detached launch on Windows (`bin/mycc-daemon.exe`):** any Windows background/detached mycc instance (the `--daemon` Lead, and every peer launched by `mycc-compose`) MUST start through `bin/mycc-daemon.exe` (Go, `src/native/daemon-wrapper/main.go`; build: `cd src/native/daemon-wrapper && go build -o ../../../bin/mycc-daemon.exe`). It calls `CreateProcessW` with `CREATE_NEW_CONSOLE` (the Lead gets its own console → survives the launcher) + `STARTF_USESHOWWINDOW`/`SW_HIDE` (that console is hidden → no blank window). A plain spawn cannot do both: `detached:true` forces a console (Windows ignores `CREATE_NO_WINDOW` under `DETACHED_PROCESS`, Node issue #21825) → blank window; dropping `detached` → no console → the child dies with the launcher.\n\nInvocation (see `src/utils/daemon-launch.ts:88`; reuse for any new detached launcher):\n\n```ts\nconst wrapperPath = resolve(PROJECT_ROOT, 'bin', 'mycc-daemon.exe');\nconst useWrapper = process.platform === 'win32' && existsSync(wrapperPath);\nchild = spawn(wrapperPath, [\n  process.execPath, loaderPath, scriptPath, ...forwardedArgs, // node.exe, tsx loader, entry (src/index.ts), flags\n], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env, detached: true });\nchild.unref(); // then read the Lead PID from the wrapper's stdout\n```\n\nGate on `win32 && existsSync(wrapperPath)`; keep the plain spawn on Unix and as the wrapper-missing fallback. Do not use a wscript/VBScript shim or an env marker.\n\n**How to test this app** — use tmux to simulate interactive terminal sessions:\n\n```bash\ntmux new-session -s mycc-test -d -x 80 -y 24\ntmux send-keys -t mycc-test \"/help\" Enter\ntmux capture-pane -t mycc-test -p\ntmux kill-session -t mycc-test\n```\n\n**Unit Tests** — uses **vitest**; tests in `src/tests/`. `pnpm test` (all) or `pnpm test src/tests/tools/` (specific directory).\n\n**Output Behavior Principles:** **High-Contrast Explanations** — (1) lead with the conclusion (state what changed in ONE line); (2) use tables for comparison (before/after); (3) use diff notation (`+` added, `-` removed, `→` renamed/moved); (4) one change = one line (3 changes = 3 bullets, not a story); (5) avoid filler narration. **Ponytail (Simplicity First) Principle** — in plan mode, responses should be concise and avoid over-explaining; state the conclusion, provide reasoning only if requested (documented in the plan-mode system prompt).\n\n**Code Cleanup** — use TypeScript's strict checks: `pnpm typecheck --noUnusedLocals --noUnusedParameters`. Use ESLint (MUST do before commit); the project uses `typescript-eslint` with a custom `no-console-in-tools` rule (disallows `console.log`/`console.error` in `src/tools/` — use `ctx.core.brief()`). Use prettier after significant changes. `pnpm lint` (all), `pnpm lint src/tools/screen.ts` (specific), `pnpm format`.\n\n**中文顿号 Multi-line Edit:** the `edit_file` tool supports multi-line mode triggered by Chinese enumeration punctuation. When `old_text` ends with `、` (顿号), the tool auto-detects that multiple matching blocks may exist and adjusts its matching strategy — handles the common case of Chinese code comments using 顿号 as separators.\n\n**Debug Flags:**\n\n| Flag | Effect |\n|------|--------|\n| `--debug-tp` | **Triologue Parity** — on a role transition violation, throw with stack trace instead of auto-recovering. For developing the auto-fixer or debugging `triologue.ts`. |\n| `--debug-eval` | **Expression Evaluation** — prints the parsed AST tree for each hook condition expression during evaluation. For developing hookish skills with custom `when` conditions. |\n| `--debug-autofly` | **Autofly Debug** — arms the autofly gate at PROMPT so auto mode engages on the per-turn LLM-stage streak threshold (`--autofly=N`, default 3) without an active peer channel. |\n| `--debug-wire` | **Wire Debug** — test-only escape hatch (`MYCC_WIRE_ALLOW_LOCAL`): allows `peer_connect` to a same-store / self peer. Not for production. |\n| `--disable-crossroad` | **Skip Crossroad** — disables turning-word detection entirely. No truncation, no continuation generation. |\n\nCombine with `-v` (verbose) for maximum detail.\n\n**Docker Support:** a Dockerfile is provided at project root. The Docker setup builds mycc in a Node.js container, supports auto-input/output via JSONL files, and is useful for CI/CD pipelines and automated testing. `docker build -t mycc .` then `docker run -it mycc`.",
+            "title": "Development",
+            "summary": "Development covers mycc contribution workflows. Tools/skills follow a two-phase flow (`skills/add-tool/SKILL.md`): prototype in hot-reloadable `.mycc/tools`/`.mycc/skills`, iterate with the user, then migrate to built-in — which really means registering in the `builtInTools` array of `src/context/shared/registry.ts` (loaded by `loader.ts`, whose `fs.watch` hot-reloads only `.mycc`; precedence built-in < user (`~/.mycc-store/tools`) < project). Tools must fail early and log only via `ctx.core.brief()`, enforced by `custom/no-console-in-tools` (`eslint-rules/no-console-in-tools.js` + `eslint.config.mjs`). Scripts interop is real: `.js` bin entries (`package.json` `bin`) call `register()` from `tsx/esm/api` then dynamic-import `.ts` with explicit extensions. Windows detached launches gate on `win32 && existsSync(bin/mycc-daemon.exe)` in `src/utils/daemon-launch.ts` (Go wrapper `src/native/daemon-wrapper/main.go`). Tests: vitest under `src/tests/`; `pnpm test` = typecheck + vitest; `test:tty` opt-in.\n\nCorrections: no Dockerfile exists at project root; the 顿号 behavior is multi-line **input** entry (`src/loop/states/prompt.ts:315` — a trailing `、` or `\\` opens the editor), not an `edit_file` mode — `src/tools/edit.ts` is literal-match-only with unique-occurrence + post-write verification/rollback. Debug flags (`--debug-tp`, `--debug-eval`, `--debug-autofly`, `--debug-wire`, `--disable-crossroad`, plus `--debug-ansi`) live in `src/utils/arg-canonical.ts` → `MYCC_*` env vars.",
+            "level": 2,
+            "children": [
+              {
+                "id": "/mycc.md/development/built-in-skills-reference",
+                "text": "mycc ships with the following built-in skills (in `skills/` directory):\n\n| Skill | Description |\n|-------|-------------|\n| `self-learning` | Bloom's 2-Sigma tutor — guides the LLM to teach the user, with `todo_create`/`todo_update` integration for progress tracking |\n| `mycc-self-awareness` | Meta-knowledge about mycc itself — capabilities, architecture, and how to interact with the system |\n| `coordination` | Human-in-the-loop guidance for lead-teammate collaboration workflow |\n| `hint-round` | Encourages wiki search when stuck on errors or missing knowledge |\n| `environment-detection` | Multi-platform directory detection with PowerShell/Bash/CMD cheatsheets |\n| `add-tool` | Step-by-step guide for adding custom tools to the project |\n| `create-skill` | Meta-skill for creating new skills with templates (process, reference, lesson, hookish) |\n| `pdf` | PDF text extraction via unpdf and OCR via tesseract.js |\n| `tech-doc-writing` | Technical documentation writing guide covering wire format, API docs, READMEs |\n| `clear-sessions` | Session cleanup and management |\n| `compact-on-intent-trap` | Automatic compaction when agent is stuck in intent loops |\n| `set-title` | Terminal title management |\n| `mycc-online-hotfix` | Live debugging and hotfix workflow using bash + tmux for tool bugs |\n\nSkills are loaded from three layers: built-in (`skills/`), project (`.mycc/skills/`), and user (`~/.mycc-store/skills/`). Built-in skills have the highest priority.",
+                "title": "Built-in Skills Reference",
+                "summary": "Built-in skills live in `<packageRoot>/skills/` and are the highest-priority layer of `src/context/shared/loader.ts` (user `~/.mycc-store/skills/` → project `.mycc/skills/`, the only hot-reloadable layer → built-in; built-in can never be shadowed). Actual contents today: 21 skill dirs plus a single-file `tech-doc-writing.md` (root-level `*.md` and `<name>/SKILL.md` are the two valid entrypoints). Frontmatter: `name`, `description`, `keywords`, optional `when` (hookish), `service`/`service_cron`.\n\nCorrections to the MYCC.md table: `hint-round` is NOT a skill — it is `src/loop/hint-round.ts`, which injects `[HINT]` (blocker/next_step/wiki_query) notes; `mycc-online-hotfix` is no longer under `skills/`. Undocumented built-ins: hookish `plan-quality`, `hand-over-ethics`, `learn-from-past`, `compact-on-intent-trap`, `set-title` (silent nudge after 12 tool calls); service skill `lfplater-skill-manager` (`*/10 * * * *`, turns `.mycc/lfplater/` notes into skills); workflow skills `mediator` (cross-instance channel-file pairs), `mycc-compose` (declarative peer groups), `coordination` (11 in-instance team patterns), `worktree`, `mdcalc`, `install-from-zip`, `chores-handbook`, `serve-public-dir` (WebUI `.mycc/public/`). Many are progressive-disclosure: `skill_load` prints the absolute Location so the agent can `read_file` sibling references.",
+                "level": 3,
+                "children": [],
+                "links": [
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/shared/loader.ts",
+                    "comment": "Three-layer skill loader; built-in skills loaded from <packageRoot>/skills and cannot be shadowed; parses name/description/keywords/when/service/service_cron frontmatter"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "skills/create-skill/SKILL.md",
+                    "comment": "Meta-skill defining skill types/templates (process, reference, lesson, hookish, service) and frontmatter rules"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "skills/lfplater-skill-manager/SKILL.md",
+                    "comment": "The only service skill: service:true + service_cron \"*/10 * * * *\", closed learning loop turning lfplater notes into skills"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "skills/mediator/SKILL.md",
+                    "comment": "Cross-instance wiring skill (channel file pairs, firstQuery) — the manual counterpart to mycc-compose"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/loop/hint-round.ts",
+                    "comment": "Proves hint-round is a code module ([HINT] wiki-search nudge), not a skill directory"
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "three-layer skill loading",
+                    "comment": "user ~/.mycc-store/skills/ → project .mycc/skills/ (hot-reloadable) → built-in <packageRoot>/skills/; built-in wins and cannot be shadowed"
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "hookish skill",
+                    "comment": "Skill whose `when:` frontmatter is compiled by skill_compile into a hook condition with block/replace/inject actions"
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "service skill",
+                    "comment": "Skill with `service: true` and optional `service_cron`; runs headless via `--daemon <skill>` (lfplater-skill-manager, */10 * * * *)"
+                  },
+                  {
+                    "target_type": "term",
+                    "term_name": "progressive-disclosure skill",
+                    "comment": "Skill folder whose SKILL.md holds the mental model while sibling .md files hold detail; skill_load prints Location so the agent can read_file siblings"
+                  }
+                ]
+              }
+            ],
+            "links": [
+              {
+                "target_type": "file",
+                "file_path": "MYCC.md",
+                "comment": "Source doc containing the Development section text being documented."
+              },
+              {
+                "target_type": "file",
+                "file_path": "skills/add-tool/SKILL.md",
+                "comment": "The referenced add-tool skill: tool structure, ctx.core.brief() logging, scope table, checklist, .mycc/tools → built-in flow."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/states/prompt.ts",
+                "comment": "Line ~315: the real 顿号 behavior is multi-line INPUT entry (prompt ending in `、` opens the editor), not an edit_file matching mode."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/tools/edit.ts",
+                "comment": "edit_file is literal old_text matching, unique-occurrence required, with post-write verification/rollback — no 顿号 multi-line matching strategy."
+              },
+              {
+                "target_type": "file",
+                "file_path": "package.json",
+                "comment": "bin entries and scripts: test = typecheck:all && vitest run, typecheck, lint, format, test:tty opt-in."
+              },
+              {
+                "target_type": "term",
+                "term_name": "顿号 multi-line input",
+                "comment": "A prompt line ending in Chinese `、` (like a trailing backslash) opens the multi-line editor at the PROMPT state (src/loop/states/prompt.ts) — it is an input feature, not an edit_file matching mode."
+              }
+            ]
+          },
+          {
+            "id": "/mycc.md/pitfalls",
+            "text": "**Tool descriptions are for LLM awareness, not user-facing:** the `description` field is read by the LLM to understand what a tool does. It should NOT be user-facing documentation with verbose parameter explanations or step-by-step workflows. The description is about **what** the tool does, not **how** it does it internally. Implementation details (confirmation prompts, mail notifications) belong in code comments, not the description field. Keep it concise and LLM-oriented.\n\n**DeepSeek API pitfalls:** when using DeepSeek (API_PROVIDER=deepseek): `web_fetch` is unavailable; `web_search` IS available (server-side via the Responses API) and `screen`/`read_picture` ARE available (images via OpenAI-style `image_url` content blocks on /chat/completions, vision model from `DEEPSEEK_VISION_MODEL`, default `deepseek-flash`; set it to `none` to disable); DSML stripping (the letter-box strips internal DSML markup like `<ds_safety>`/`<ds_thinking>`); prompt caching (automatic for repeated prefixes); embedding still uses Ollama (wiki/RAG requires a local Ollama with `nomic-embed-text`); `tool_choice=\"none\"` for wrap-up mode (prevents raw XML tool calls). Detailed reference: `docs/providers/deepseek-api-reference.md`.\n\n**agentIO singleton works differently in child processes:** `agentIO` (`src/loop/agent-io.ts`) is imported by both main and child, but `initMain()` is only called in the main process. `isMainProcess()` returns `true` in main (lead), `false` in child (teammates) — `isMainProcessFlag` defaults to `false` and only becomes `true` after `initMain()`. **Important**: only use `isMainProcess()` to distinguish lead vs teammate context. Other methods (`ask()`, `exec()`) throw in child processes. For code working in both contexts: use `agentIO.isMainProcess()` to check, `ctx.core.question()` for user questions (IPC), `ctx.core.brief()` for logging (IPC in child).\n\n**Loop Notation (LN):** a compact notation for message role rotation in the agent loop. Each comma-separated unit is one message. Units: `system` (system prompt), `user` (user query), `[tool1, tool2]?` (assistant's batched tool call, `?` = called by LLM), `tool1!` (tool result, one at a time), `agent` (assistant text reply), `_tool1_` (tool call replaced with placeholder after compaction). Example single-turn: `system, user, [tool1]?, tool1!, agent`. Example with batching + compaction: `system, user, [tool1]?, tool1!, [tool2, tool3]?, tool2!, _tool3_, agent, user, agent` (system → user → tool1 call → result → tool2+tool3 batched → tool2 result → tool3 compacted → agent reply → user → agent reply). Conventions: `[]?` groups batched calls from the same delta; `!` marks a result; `_` wraps a compacted call; bare units (system/user/agent) are pure text.",
+            "title": "Pitfalls",
+            "summary": "The **Pitfalls** section (MYCC.md lines 227–235) lists four contributor gotchas:\n\n1. **Tool `description` is LLM-facing, not user docs** — state *what* the tool does, not verbose parameter walkthroughs or internal steps; confirmation prompts/mail notifications belong in code comments. Conventions live in `skills/add-tool/SKILL.md`.\n\n2. **DeepSeek API pitfalls** (`API_PROVIDER=deepseek`): `web_fetch` unavailable, but `web_search` works (server-side, Responses API) and `screen`/`read_picture` work via OpenAI-style `image_url` blocks — vision model from `DEEPSEEK_VISION_MODEL` (default `deepseek-flash`, `none` disables; `src/config.ts:788/821`). DSML stripping happens in the letter box via `stripInternalMarkup()` (`src/utils/letter-box.ts`), matching ASCII-pipe *and* fullwidth-vline tag forms behind an `includes('DSML')` gate. Prompt caching is automatic; embeddings still need local Ollama `nomic-embed-text`; `tool_choice=\"none\"` in wrap-up blocks raw XML tool calls. See `docs/providers/deepseek-api-reference.md` and `deepseek-api-pitfalls.md` (six documented bugs, e.g. `reasoning_content` must be echoed back when tool_calls are present).\n\n3. **agentIO in child processes** (`src/loop/agent-io.ts`): `isMainProcessFlag` defaults `false` (line 145) and only `initMain()` sets it `true` (222); `isMainProcess()` (325) is the *only* reliable lead/teammate discriminator. `ask()`/`exec()` throw \"question() only available in main process\" (785) — children use `ctx.core.question()` and `ctx.core.brief()` (IPC).\n\n4. **Loop Notation (LN)**: `system`/`user`/`agent` are pure text; `[tool1, tool2]?` = batched LLM calls from one delta; `tool1!` = a single tool result; `_tool1_` = call replaced by a compaction placeholder. Single turn: `system, user, [tool1]?, tool1!, agent`. Also used to check turn-pattern (TP) violations, e.g. in `docs/loop/esc-wrap-up-redesign.md`'s \"LN Analysis\".",
+            "level": 2,
+            "children": [],
+            "links": [
+              {
+                "target_type": "file",
+                "file_path": "MYCC.md",
+                "comment": "Pitfalls section source (lines 227-235): tool description guidance, DeepSeek pitfalls, agentIO child-process behavior, Loop Notation"
+              },
+              {
+                "target_type": "file",
+                "file_path": "docs/loop/esc-wrap-up-redesign.md",
+                "comment": "Contains a \"Loop Notation (LN) Analysis\" section using the notation described in Pitfalls"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/agent-io.ts",
+                "comment": "agentIO singleton: isMainProcessFlag defaults false (145), initMain() sets true (222), isMainProcess() (325), ask() throws 'question() only available in main process' (785)"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/utils/letter-box.ts",
+                "comment": "stripInternalMarkup() strips DeepSeek DSML tags (ASCII-pipe and fullwidth-vline forms) from letter-box output"
+              },
+              {
+                "target_type": "file",
+                "file_path": "docs/providers/deepseek-api-pitfalls.md",
+                "comment": "Catalog of six known DeepSeek integration bugs referenced by the Pitfalls section"
+              },
+              {
+                "target_type": "file",
+                "file_path": "docs/providers/deepseek-api-reference.md",
+                "comment": "DeepSeek API reference linked from Pitfalls: tools[].description, tool_choice none/auto/required, thinking mode, reasoning_content echo-back rules"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/config.ts",
+                "comment": "DEEPSEEK_VISION_MODEL config: default 'deepseek-flash' (line 788), 'none' disables screen/read_picture (line 821)"
+              },
+              {
+                "target_type": "file",
+                "file_path": "skills/add-tool/SKILL.md",
+                "comment": "Add-tool conventions for writing the LLM-facing description field"
+              },
+              {
+                "target_type": "term",
+                "term_name": "Loop Notation (LN)",
+                "comment": "Compact notation for message role rotation in the agent loop: system/user/agent (pure text), [tool1, tool2]? (batched LLM tool calls), tool1! (result, one at a time), _tool1_ (compacted-call placeholder)"
+              },
+              {
+                "target_type": "term",
+                "term_name": "isMainProcess()",
+                "comment": "The only reliable lead-vs-teammate discriminator: true in main (lead), false in child (teammates) — isMainProcessFlag defaults false until initMain() runs"
+              },
+              {
+                "target_type": "term",
+                "term_name": "DSML stripping",
+                "comment": "DeepSeek-specific: stripInternalMarkup() in letter-box.ts removes internal DSML markup (&lt;ds_safety&gt;/&lt;ds_thinking&gt;/tool_calls), matching both ASCII-pipe and fullwidth-vline tag forms, gated on includes('DSML')"
+              },
+              {
+                "target_type": "term",
+                "term_name": "tool description (LLM-facing)",
+                "comment": "The tool spec `description` field is read by the LLM to know WHAT a tool does — keep it concise and LLM-oriented; implementation details (confirmation prompts, mail notifications) belong in code comments"
+              },
+              {
+                "target_type": "term",
+                "term_name": "DEEPSEEK_VISION_MODEL",
+                "comment": "Env var for the vision model used by screen/read_picture (default deepseek-flash); set to 'none' to disable vision tools (src/config.ts:788,821)"
+              }
+            ]
+          },
+          {
+            "id": "/mycc.md/design-rationale-history",
+            "text": "The \"why it is like this\" record. Source comments state the **invariant**; the\nstory of how the invariant was discovered lives here, so a file never has to be\nread as a changelog.\n\n**Triologue: no message merging.** `triologue.note()` / `user()` used to merge a\nnew note into the preceding message when the role matched. That made one\ntriologue message stand for several facts, so compaction could drop half of them\nand TP repair could not tell which. Every note is now its own message; the cost\nis a longer transcript, the benefit is a transcript that can be reasoned about\nmessage by message. `TriologueLite` (child side) still merges and therefore still\nhas the old failure mode.\n\n**Wire registry: three indexes, one live socket per sid.** A remote peer used to\nbe keyed by endpoint alone. A simultaneous mutual dial keys the same peer twice\n(our typed URL vs its announced endpoint), and a peer restart changes its sid\nunder a stable endpoint — so `pairs` (endpoint → entry), `sidIndex`\n(sid → endpoint) and `socketsBySid` (sid → socket census) now coexist. Rules that\nfall out: `sidIndex` may point at a *surviving* endpoint after a teardown\n(never delete it blindly), the census is the authority for \"who still holds this\nsid\", and a teardown must close the sockets it removes or they keep delivering\nmail from an entry nobody lists.\n\n**Peer wire: a close code is not an HTTP status.** An unauthorized upgrade is\nrefused with a bare `HTTP/1.1 401` at the upgrade handshake, which never becomes\na WS close frame — the dialer observes 1006. Any diagnosable auth failure must\ntherefore be reported by the *acceptor* (brief, not verbose), and the dialer\nmust treat an unrecorded socket close as a settled failure rather than waiting\nfor a pair that will never exist.\n\n**Teammate lifecycle: status follows the process, not the request.** Removing a\nteammate is a request; its exit is a fact. Status is written by the exit/error\nhandler (`failed` for a non-zero exit, `shutdown` for a clean one), the process\nmap entry stays until that fires so late IPC responses are not dropped, and the\nissue board is released at removal — a claimed issue with a dead owner is\nunclaimable forever, because claiming accepts draft/pending only.\n\n**Agent loop: one owner per cross-turn flag.** `crossroadOccurred`,\n`hasSeededFirstQuery`, the skill-suggester throttle and `wrapUpState` were each\nreset from several states. A flag cleared by two states is a flag whose lifetime\nnobody owns; each now has one writer, and any skip it causes is reported (a\nsilent skip is indistinguishable from \"checked, nothing there\").\n\n**Plan mode gates commands, not verbs.** The declared intent verb is written by\nthe agent being gated, so it cannot be the gate. Plan mode checks the command's\nshape (dangerous list, batch delete, write verbs, git writers) before honouring a\nread-only verb.",
+            "title": "Design Rationale & History",
+            "summary": "This section (MYCC.md, \"Design Rationale & History\", lines 237–285) is the project's \"why it is like this\" record: source files state the invariant, and this section holds the discovery story so code never reads as a changelog. Five entries:\n\n**Triologue: no message merging** — `note()`/`user()` in `src/loop/triologue.ts` no longer fold a new note into a preceding same-role message; merging made compaction drop half a multi-fact message and defeated TP repair. `TriologueLite` (src/loop/triologue-lite.ts) still merges.\n\n**Wire registry: three indexes, one live socket per sid** — `src/peer/wire-registry.ts` keeps `pairs` (endpoint→entry), `sidIndex` (sid→endpoint) and `socketsBySid` (the authoritative sid census); a teardown must close the sockets it removes.\n\n**Peer wire: a close code is not an HTTP status** — `src/serve/peer-wire.ts` refuses upgrades with a bare `HTTP/1.1 401` (`WIRE_CLOSE_UNAUTHORIZED`), which the dialer (`src/peer/wire-client.ts`) sees as 1006; the acceptor must report auth failures and the dialer must settle on an unrecorded close.\n\n**Teammate lifecycle** — `src/context/parent/team.ts` exit handler writes `failed`/`shutdown` and releases claimed issues.\n\n**Agent-loop flags** — one writer each (`crossroadOccurred`, `skillSuggester`, `wrapUpState`).\n\n**Plan mode** — `src/context/grant/bash-judge.ts` gates command shape, not the agent-declared verb.",
+            "level": 2,
+            "children": [],
+            "links": [
+              {
+                "target_type": "file",
+                "file_path": "MYCC.md",
+                "comment": "Contains the \"Design Rationale & History\" section itself (lines 237-285), which source comments cross-reference by name."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/triologue.ts",
+                "comment": "Enforces the \"no message merging\" invariant in note()/user(); documents deferred-input replay and the removed merge behaviour."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/peer/wire-registry.ts",
+                "comment": "Three-index peer registry (pairs/sidIndex/socketsBySid), sid census authority, teardown-closes-sockets rule, WIRE_CLOSE_UNAUTHORIZED=401."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/peer/wire-client.ts",
+                "comment": "Dialer side: 401 is an HTTP handshake status not a WS close code (ws reports 1006); unrecorded close must settle the dial."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/serve/peer-wire.ts",
+                "comment": "Acceptor refuses unauthorized upgrade with bare HTTP/1.1 401 and briefs the operator (row peer-004)."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/context/parent/team.ts",
+                "comment": "Teammate lifecycle: exit/error handler owns status (failed vs shutdown), process map entry kept until exit, issue board released at removal."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/states/collect-skill.ts",
+                "comment": "SkillSuggester singleton owns its own throttle state (lastQuery/cooldown/retryBudget) — single writer for the cross-turn flag."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/context/grant/bash-judge.ts",
+                "comment": "Plan mode gates command SHAPE (dangerous list, batch delete, write verbs, git writers) rather than trusting the declared intent verb."
+              },
+              {
+                "target_type": "term",
+                "term_name": "no message merging",
+                "comment": "Triologue invariant: every note()/user() is its own message, never merged into a preceding same-role message, so compaction and TP repair can reason message by message. TriologueLite still merges."
+              },
+              {
+                "target_type": "term",
+                "term_name": "sid census",
+                "comment": "socketsBySid — the authoritative view of \"who still holds this peer sid\"; sidIndex (sid→endpoint) is only a secondary index and may point at a surviving endpoint after teardown."
+              },
+              {
+                "target_type": "term",
+                "term_name": "WIRE_CLOSE_UNAUTHORIZED",
+                "comment": "Constant 401 in src/peer/wire-registry.ts — an HTTP upgrade-handshake status, not a WS close code; the ws client surfaces a refused upgrade as close 1006."
+              },
+              {
+                "target_type": "term",
+                "term_name": "one owner per cross-turn flag",
+                "comment": "Agent-loop rule: each cross-turn flag (crossroadOccurred, hasSeededFirstQuery, skill-suggester throttle, wrapUpState) has exactly one writing state, and any skip it causes must be reported."
+              },
+              {
+                "target_type": "term",
+                "term_name": "plan mode gates commands, not verbs",
+                "comment": "The declared intent verb is authored by the gated agent, so plan mode checks the command's shape (dangerous list, batch delete, write verbs, git writers) instead of honouring a read-only verb."
+              },
+              {
+                "target_type": "term",
+                "term_name": "TriologueLite",
+                "comment": "Child-side simplified Triologue facade (src/loop/triologue-lite.ts) used by teammates/explorers; it still merges notes and therefore retains the old failure mode."
+              }
+            ]
+          },
+          {
+            "id": "/mycc.md/reference-documents",
+            "text": "- `docs/context/agent-context.md` - AgentContext module (Chinese)\n- `docs/loop/agent-loop.md` - Agent loop (Chinese)\n- `docs/tools/agent-tools.md` - Built-in tools reference\n- `docs/context/child-context.md` - Child process and IPC (Chinese)\n- `docs/tools/dynamic-loading.md` - Tool/skill loading mechanism\n- `docs/loop/pinned-todo-prevent-stop.md` - Pinned todos and the preventStop stop-guard design\n- `docs/database-schema.md` - Data storage schema (Chinese, historical reference — SQLite removed in v0.7.0)",
+            "title": "Reference Documents",
+            "summary": "MYCC.md lines 288–294 list seven deep-dive docs. Verified all exist and are current except the last: `docs/database-schema.md` is stale — the file now lives at `docs/archived/database-schema.md` (SQLite removed in v0.7.0; storage is in-memory `src/context/memory-store.ts` for issues/blockages/teammates plus JSON `src/context/worktree-store.ts` at `.mycc/worktrees.json`).\n\nThe others: `docs/context/agent-context.md` (CN) — ParentContext vs ChildContext, 9-module table (core/todo/mail/skill/issue/bg/team/wiki/peer). `docs/loop/agent-loop.md` (CN) — STAR loop as an 8-state machine (PROMPT/SLASH/COLLECT/LLM/HOOK/TOOL/STOP/AWAIT) over MachineEnv/TurnVars/PassData; autoCompact (50K) at LLM; todo nudge every 3 passes, brief every 5; 11-step COLLECT pipeline. `docs/tools/agent-tools.md` — ToolDefinition interface, scope reference, per-tool params, summary table. `docs/context/child-context.md` (CN) — IpcClient primitives, IPC handlers, WORK/IDLE/HOLDING/SHUTDOWN lifecycle. `docs/tools/dynamic-loading.md` — Loader sources (built-in > project > user for skills; user/project/built-in for tools), hot-reload only project `.mycc/` (300ms debounce). `docs/loop/pinned-todo-prevent-stop.md` — main-only `todo_pinning`, one batched `forkChat` per STOP, id+hash staleness checks, fail-open.",
+            "level": 2,
+            "children": [],
+            "links": [
+              {
+                "target_type": "file",
+                "file_path": "docs/context/agent-context.md",
+                "comment": "AgentContext module reference (Chinese): ParentContext vs ChildContext, 9-module table, per-module API"
+              },
+              {
+                "target_type": "file",
+                "file_path": "docs/loop/agent-loop.md",
+                "comment": "Agent loop state machine (Chinese): 8 states, MachineEnv/TurnVars/PassData, autoCompact, nudges, 11-step COLLECT"
+              },
+              {
+                "target_type": "file",
+                "file_path": "docs/tools/agent-tools.md",
+                "comment": "Built-in tools reference: ToolDefinition interface, scope reference, per-tool params, summary table"
+              },
+              {
+                "target_type": "file",
+                "file_path": "docs/context/child-context.md",
+                "comment": "Child process / IPC reference (Chinese): IpcClient, module table, WORK/IDLE/HOLDING/SHUTDOWN lifecycle"
+              },
+              {
+                "target_type": "file",
+                "file_path": "docs/tools/dynamic-loading.md",
+                "comment": "Loader: unified tool/skill loading, source priority, hot-reload only for project .mycc/, skill discovery"
+              },
+              {
+                "target_type": "file",
+                "file_path": "docs/loop/pinned-todo-prevent-stop.md",
+                "comment": "Design doc for pinned todos and preventStop stop guard (batched forkChat, id+hash staleness, fail-open)"
+              },
+              {
+                "target_type": "file",
+                "file_path": "docs/archived/database-schema.md",
+                "comment": "Historical DB schema (Chinese); SQLite removed in v0.7.0. MYCC.md's docs/database-schema.md link is stale."
+              },
+              {
+                "target_type": "term",
+                "term_name": "preventStop stop guard",
+                "comment": "Natural-language condition on a pinned todo that forbids ending the turn at STOP; judged by one batched forkChat and fails open."
+              },
+              {
+                "target_type": "term",
+                "term_name": "ToolDefinition",
+                "comment": "Tool interface in src/types.ts: name, description, JSONSchema7 input_schema, scope array, handler; all built-in tools conform."
+              },
+              {
+                "target_type": "term",
+                "term_name": "Loader",
+                "comment": "src/context/shared/loader.ts singleton — single entry point for built-in/project/user tools and skills; hot-reloads only project .mycc/ dirs (300ms debounce)."
+              }
+            ]
+          }
+        ],
+        "links": [
+          {
+            "target_type": "file",
+            "file_path": "MYCC.md",
+            "comment": "The guidance document itself; section summarizes its structure and content."
+          },
+          {
+            "target_type": "file",
+            "file_path": "src/loop/triologue.ts",
+            "comment": "Thin facade over src/loop/triologue/* — core architecture described in MYCC.md."
+          },
+          {
+            "target_type": "file",
+            "file_path": "src/loop/states/collect.ts",
+            "comment": "COLLECT pipeline (steps 2–6) including steering drain and skill suggestion."
+          },
+          {
+            "target_type": "file",
+            "file_path": "src/context/grant/bash-judge.ts",
+            "comment": "Grant System / intent-language enforcement implementation."
+          },
+          {
+            "target_type": "file",
+            "file_path": "src/loop/crossroad.ts",
+            "comment": "Crossroad turning-word detection (with optional semantic detector package) documented in MYCC.md WebUI/loop features."
+          },
+          {
+            "target_type": "file",
+            "file_path": "src/loop/prompts/intent-lang.ts",
+            "comment": "buildIntentLanguageSection() — emits the Grant System intent-language wording (MYCC.md moved it from agent-prompts.ts to loop/prompts/)."
+          },
+          {
+            "target_type": "term",
+            "term_name": "Triologue facade modules",
+            "comment": "`src/loop/triologue.ts` is a thin facade over `store`, `pending-tools`, `compact`, `wrap-up`, `brief`, `brief-stack`, `recap-note`, `segment-archive`, `transcript`, `truncate`, `tp-fix`, `types`."
+          },
+          {
+            "target_type": "term",
+            "term_name": "Design Rationale & History section",
+            "comment": "MYCC.md's closing \"why it is like this\" record (no message merging, three wire indexes, close-code vs HTTP status, status follows process, one owner per flag, plan mode gates commands not verbs) kept out of source comments."
+          },
+          {
+            "target_type": "term",
+            "term_name": "remote peer mail (local-first routing)",
+            "comment": "`mail_to(\"<uuid>/lead\")` routes local-first via ChannelManager JSONL append, else over the wire with a 4MB cap, at-most-once semantics and seen-id dedupe."
+          }
+        ]
+      }
+    ],
+    "links": [
+      {
+        "target_type": "file",
+        "file_path": "docs/mindmap/mindmap-design.md",
+        "comment": "Design doc: Node/Mindmap/Link type declarations, A-N-C-E algorithm table, link types, process isolation, compilation flow."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/mindmap/types.ts",
+        "comment": "Definitive type definitions for Node, Mindmap, Link, ANCEContext, MindmapPatchAction including in-memory-only is_mycc/is_patch flags."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/slashes/mindmap.ts",
+        "comment": "The /mindmap slash command handlers: compile (--force, file, output), get, patch, validate, rebuild-patches."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/mindmap/explorer-agent.ts",
+        "comment": "Explorer agent: 9 EXPLORER_TOOLS, MAX_ROUNDS_DEFAULT=25, FORCE_STOP_THRESHOLD=5, TriologueLite history, tools-free retryChat fallback."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/mindmap/compile.ts",
+        "comment": "compile_mindmap with Semaphore(MAX_CONCURRENT_NODES=3), force flag, atomic save."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/tools/recall.ts",
+        "comment": "Agent-facing recall tool: [M]/[P] child markers and root-hoisted \"Key Terms\" from term links."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/mindmap/patch-jsonl.ts",
+        "comment": "Append-only mindmap-patch.jsonl log: append/read/write/rebuild/validate patch actions."
+      }
+    ]
+  }
+}

@@ -6,6 +6,9 @@ sigma/
 .worktrees/
 
 /.mycc/*
+# The compiled mindmap knowledge tree is source-like: track it so clones get the
+# same compiled tree. The .bak rotation stays ignored via the /.mycc/* rule above.
+!/.mycc/mindmap.json
 # .mycc/skills/ is a project-level prototype sandbox for skills. It is NOT
 # tracked by git — skills here are local experiments. Approved skills are
 # migrated to the built-in skills/ directory (see tool-and-skill-development).
