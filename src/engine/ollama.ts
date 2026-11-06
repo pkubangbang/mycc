@@ -298,6 +298,11 @@ export async function retryChat(
           stream,
           () => stream.abort(),
           {
+            // Stall observability: tag every PROGRESS/STALL/TTFT line with the
+            // model and attempt so a cloud-model silent hang (e.g.
+            // mimo-v2.6-pro:cloud sitting >300s with no token) is identifiable
+            // in the log and attributable to a specific attempt.
+            obs: { attempt, model: request.model ?? MODEL },
             firstTokenTimeoutMs: attemptTimeoutMs,
             tokenLivenessTimeoutMs: attemptLivenessMs,
             signal,

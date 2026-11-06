@@ -448,6 +448,58 @@ export function stopSpinner(): void {
 // Stream Collection (provider-agnostic)
 // ============================================================================
 
+// ============================================================================
+// Stream Stall Observability
+// ============================================================================
+//
+// The silent-hang problem: with some cloud models (e.g. mimo-v2.6-pro:cloud)
+// the LLM stream can sit >300s without emitting a single token, yet the only
+// user-visible feedback is the spinner's elapsed counter. When it finally
+// resolves or errors there is no record of *where* the time went (first-token
+// wait? mid-stream intermission? thinking pause? which attempt? which model?).
+// The two observability layers below make a stall self-diagnosing.
+//
+// Layer 1 — PROGRESS (agentIO.verbose, every PROGRESS_LOG_INTERVAL_MS):
+//   a heartbeat line while the stream is alive, carrying attempt, model,
+//   elapsed, tokens so far, the gap since the last chunk, and the phase
+//   (thinking/response). Verbose-only, so it costs nothing in normal runs
+//   but with `-v` the timeline of a hang is fully recorded.
+//
+// Layer 2 — STALL WARNING (agentIO.warn, at STALL_WARN_AFTER_MS of silence):
+//   fired ONCE per stream window when the gap since the last chunk crosses
+//   the threshold. This one is NOT verbose-gated — a >300s silent hang must
+//   be visible in a plain run too. It names the phase and the armed liveness
+//   window so "is it about to trip the watchdog or still within tolerance?"
+//   is answerable at a glance.
+
+/** How often a verbose PROGRESS heartbeat line is emitted during streaming. */
+export const PROGRESS_LOG_INTERVAL_MS = 30_000;
+
+/** Gap since the last chunk that triggers a one-shot (per window) STALL
+ *  warning line. Deliberately well below the liveness windows so the warning
+ *  precedes the watchdog abort and the operator sees the stall before the
+ *  stream is torn down. */
+export const STALL_WARN_AFTER_MS = 20_000;
+
+/** Live per-stream observability snapshot fed to the progress/stall logs. */
+export interface StreamObsContext {
+  /** 1-based attempt number within the retry loop. */
+  attempt: number;
+  /** Model identifier (or sub-op name like 'hint-round'). */
+  model: string;
+  /** Optional sub-operation tag for callers like imgDescribe / structured ops. */
+  op?: string;
+}
+
+/** Format a millisecond duration compactly for log lines ("12.3s", "2m 05s"). */
+function fmtMs(ms: number): string {
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const totalS = Math.floor(ms / 1000);
+  const m = Math.floor(totalS / 60);
+  const s = totalS % 60;
+  return `${m}m ${String(s).padStart(2, '0')}s`;
+}
+
 export class StreamTimeoutError extends Error {
   constructor(
     message: string,
@@ -507,9 +559,14 @@ export async function collectStream<T>(
      *  updateSpinnerTokens. Receives the raw chunk; the provider decides
      *  which fields to estimate. Not invoked on abort or timeout. */
     onChunk?: (chunk: T) => void;
+    /** Optional observability context (attempt, model, op) for the PROGRESS
+     *  heartbeat and STALL warning lines. When omitted, no progress/stall
+     *  logging happens (collectStream stays silent) — callers that want the
+     *  stall timeline must opt in. */
+    obs?: StreamObsContext;
   },
 ): Promise<T[]> {
-  const { firstTokenTimeoutMs, tokenLivenessTimeoutMs, livenessMsForChunk, signal, onChunk } = config;
+  const { firstTokenTimeoutMs, tokenLivenessTimeoutMs, livenessMsForChunk, signal, onChunk, obs } = config;
   const baseLivenessMs = tokenLivenessTimeoutMs ?? DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS;
   // The currently-active liveness window. Initialized to the base; updated
   // per chunk by livenessMsForChunk (e.g. widened for thinking chunks,
@@ -522,6 +579,53 @@ export async function collectStream<T>(
   let firstTokenReceived = false;
   let firstTokenTimeoutFired = false;
   let livenessTimeoutFired = false;
+
+  // ── Stall observability trackers (Layer 1 + Layer 2, see top of section) ──
+  // lastChunkAt / chunkCount / streamStart track the stream's liveness in
+  // wall-clock terms independent of the liveness watchdog. progressInterval
+  // emits a verbose heartbeat every PROGRESS_LOG_INTERVAL_MS; stallWarnId is
+  // a one-shot-per-window timer that fires a warning once the gap since the
+  // last chunk crosses STALL_WARN_AFTER_MS. All are cleared in cleanup().
+  const streamStart = Date.now();
+  let lastChunkAt = streamStart;
+  let chunkCount = 0;
+  let progressInterval: ReturnType<typeof setInterval> | null = null;
+  let stallWarnId: ReturnType<typeof setTimeout> | null = null;
+  // Only emit the STALL warning once per collectStream window (per phase gap):
+  // rearmed on every chunk so a stream that alternates thinking/response gets
+  // one warning per genuine silence, not one per timer tick.
+  let stallWarnArmed = true;
+
+  const obsTag = obs ? `${obs.op ? `${obs.op  }/` : ''}${obs.model}#a${obs.attempt}` : undefined;
+
+  const armStallWarn = () => {
+    if (!obs || !stallWarnArmed) return;
+    if (stallWarnId) clearTimeout(stallWarnId);
+    stallWarnId = setTimeout(() => {
+      stallWarnArmed = false;
+      const gap = Date.now() - lastChunkAt;
+      agentIO.warn(
+        `STALL [${obsTag}] no chunk for ${fmtMs(gap)} ` +
+        `(tokens so far: ${chunkCount}, liveness window: ${fmtMs(currentLivenessMs)}, ` +
+        `first token: ${firstTokenReceived ? 'yes' : 'not yet'})`,
+      );
+    }, STALL_WARN_AFTER_MS);
+  };
+
+  if (obs) {
+    progressInterval = setInterval(() => {
+      const gap = Date.now() - lastChunkAt;
+      agentIO.verbose(
+        'stream',
+        `PROGRESS [${obsTag}] elapsed=${fmtMs(Date.now() - streamStart)} ` +
+        `chunks=${chunkCount} sinceLastChunk=${fmtMs(gap)} ` +
+        `phase-window=${fmtMs(currentLivenessMs)} firstToken=${firstTokenReceived}`,
+      );
+    }, PROGRESS_LOG_INTERVAL_MS);
+    // Do not let the heartbeat keep the event loop alive if a caller forgets
+    // cleanup — collectStream always cleans up in `finally`, this is a safety net.
+    if (typeof progressInterval.unref === 'function') progressInterval.unref();
+  }
 
   const armLiveness = () => {
     if (livenessTimeoutId) clearTimeout(livenessTimeoutId);
@@ -543,6 +647,8 @@ export async function collectStream<T>(
   const cleanup = () => {
     if (firstTokenTimeoutId) clearTimeout(firstTokenTimeoutId);
     if (livenessTimeoutId) clearTimeout(livenessTimeoutId);
+    if (progressInterval) clearInterval(progressInterval);
+    if (stallWarnId) clearTimeout(stallWarnId);
     if (signal) {
       signal.removeEventListener('abort', onAbort);
       if (abortPromiseListener) signal.removeEventListener('abort', abortPromiseListener);
@@ -574,6 +680,7 @@ export async function collectStream<T>(
   // the former one-shot total cap (responseTimeoutMs) that killed slow
   // streams mid-generation at an arbitrary wall-clock ceiling.
   armLiveness();
+  armStallWarn();
 
   // Sentinel value for the abort promise — resolves instead of rejects
   // to avoid unhandled Promise rejections when abort wins the race.
@@ -597,9 +704,19 @@ export async function collectStream<T>(
             clearTimeout(firstTokenTimeoutId);
             firstTokenTimeoutId = null;
           }
+          if (obs) {
+            agentIO.verbose('stream', `TTFT [${obsTag}] first token after ${fmtMs(Date.now() - streamStart)}`);
+          }
         }
 
         chunks.push(chunk);
+        chunkCount++;
+        lastChunkAt = Date.now();
+        // A fresh chunk re-arms the one-shot STALL warning so a stream that
+        // alternates active bursts and thinking pauses gets one warning per
+        // genuine silence rather than latching after the first.
+        stallWarnArmed = true;
+        armStallWarn();
         onChunk?.(chunk);
 
         // Per-chunk liveness classification: the provider's classifier (if
