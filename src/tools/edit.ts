@@ -13,7 +13,7 @@ import { stripBom, detectLineEnding, normalizeLineEndings, countReplacementChars
 export const editTool: ToolDefinition = {
   name: 'edit_file',
   description:
-    'Replace exact text in an existing file (old_text is a literal match, not a regex). Use this for targeted edits instead of rewriting entire files. After writing, the file is re-read and verified; on failure the original content is restored and an error is returned.',
+    'Replace exact text in an existing file (old_text is a literal match, not a regex). Use this for targeted edits instead of rewriting entire files. PREFER this over shell text replacement for editing existing files (bash `sed -i`, pwsh `(Get-Content x) -replace ... | Set-Content`) — unlike those, it refuses an ambiguous old_text that matches more than once (instead of silently editing the first match), preserves the file\'s BOM state and CRLF/LF line endings, and re-reads + verifies the write, restoring the original content on failure.',
   input_schema: {
     type: 'object',
     properties: {
@@ -24,7 +24,7 @@ export const editTool: ToolDefinition = {
       old_text: {
         type: 'string',
         description:
-          'Exact LITERAL text to find and replace (NOT a regex — ) $ [ . * are matched verbatim). Must match exactly including whitespace and be unique in the file.',
+          'Exact LITERAL text to find and replace (NOT a regex — ) $ [ . * are matched verbatim). Must match exactly including whitespace and be unique in the file — a multi-occurrence match is rejected with an error rather than silently editing the first occurrence.',
       },
       new_text: {
         type: 'string',

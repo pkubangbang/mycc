@@ -355,6 +355,28 @@ describe('editTool', () => {
     expect(editTool.input_schema.required).toContain('new_text');
   });
 
+  // The tool description is the ONLY always-in-context channel that tells the
+  // agent why edit_file beats shell text replacement (bash `sed -i`, pwsh
+  // `-replace | Set-Content`) for in-place edits. Without this wording the
+  // multi-match guard is discoverable only AFTER a bad edit. Lock both steers:
+  //  - description.name: prefer this tool over shell text replacement
+  //  - description.old_text: an ambiguous match is REJECTED, not first-only
+  it('should steer the agent away from shell text replacement', () => {
+    const desc = editTool.description;
+    expect(desc).toMatch(/PREFER this over shell text replacement/i);
+    expect(desc).toContain('sed -i');
+    expect(desc).toContain('-replace');
+    expect(desc).toMatch(/matches more than once/i);
+    expect(desc).toMatch(/BOM/i);
+    expect(desc).toMatch(/line endings/i);
+
+    const oldTextDesc = String(
+      (editTool.input_schema.properties as Record<string, { description?: string }>).old_text.description
+    );
+    expect(oldTextDesc).toMatch(/unique in the file/i);
+    expect(oldTextDesc).toMatch(/rejected/i);
+  });
+
   // Regression test for the reported bug: a missing/non-string `path` argument
   // previously crashed with "Cannot read properties of undefined (reading
   // 'startsWith')" because edit's pre-try setup called resolvePath(undefined)
