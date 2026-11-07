@@ -9,10 +9,36 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { vi } from 'vitest';
-import type { AgentContext, CoreModule, AskResult } from '../../types.js';
+import type { AgentContext, CoreModule, AskResult, ToolDefinition } from '../../types.js';
 
 // Re-export comprehensive mock utilities
 export { createMockContext as createFullMockContext, createMinimalMockContext } from '../test-utils/mock-context.js';
+
+/**
+ * A never-aborting AbortSignal for tool-handler tests.
+ *
+ * `ToolDefinition.handler` requires a signal (see its doc comment in
+ * src/types.ts), so tests must supply one. Use this for any tool that does
+ * not itself exercise cancellation; use an explicit `AbortController` when it
+ * does. A single module-level instance keeps assertions like
+ * `expect(ctx.core.webFetch).toHaveBeenCalledWith(url, signal)` stable across a
+ * file without each test building its own.
+ */
+export const testSignal: AbortSignal = new AbortController().signal;
+
+/**
+ * Invoke a tool handler the way the loop does, defaulting the required signal.
+ * Tests that care about cancellation pass their own signal as the third
+ * argument; everything else gets the shared never-aborting `testSignal`.
+ */
+export function runTool(
+  tool: { handler: ToolDefinition['handler'] },
+  ctx: AgentContext,
+  args: Record<string, unknown>,
+  signal?: AbortSignal,
+): string | Promise<string> {
+  return tool.handler(ctx, args, signal ?? testSignal);
+}
 
 /**
  * Wrap a plain answer string into an AskResult (the shape Core.question()

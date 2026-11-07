@@ -48,13 +48,17 @@ npm link
 
 mycc supports three ways to run its chat model: **Ollama Local**, **Ollama Cloud**, and **DeepSeek**.
 
-**Option A: Ollama (recommended)** — Run models locally or on Ollama Cloud. Local enables all features including `web_search`, `web_fetch`, `screen`, and `read_picture`; Cloud adds hosted models on the same provider.
+**Option A: Ollama (recommended)** — Run chat and vision models locally, through local Ollama's cloud routing, or directly on Ollama Cloud. Local-only chat and vision do not need an API key. The `web_search` / `web_fetch` tools also send requests to `OLLAMA_HOST`, using the server's experimental web routes. The server must support those routes and determines whether their backend is local or Ollama Cloud.
 
 Install Ollama:
 [download page of ollama](https://ollama.com/download)
 
-Ollama cloud provides the max capability, however if you do not need the online tools,
-and you are fine with the local LLM, Ollama alone without the cloud is also acceptable.
+Ollama Cloud provides hosted models and can back the web tools. Local Ollama
+supports local chat, local vision, and embeddings without a Cloud API key.
+Web-tool requests follow `OLLAMA_HOST`; the Ollama server's backend determines
+whether web execution is local or cloud-backed and whether authentication is
+needed. See the [local versus cloud capability matrix](README.md#local-ollama-versus-ollama-cloud)
+for request targets and credential requirements.
 
 Recommended models: local `llama3.1` / `qwen2.5-coder`; cloud `glm-5:cloud` and `gemma4:31b-cloud`.
 
@@ -69,7 +73,7 @@ Get an API key at [platform.deepseek.com](https://platform.deepseek.com/api_keys
 - Skill matching and retrieval
 - Document similarity operations
 
-After installing Ollama, pull an embedding model:
+After installing Ollama locally, pull an embedding model:
 ```bash
 ollama pull nomic-embed-text
 ```
@@ -109,11 +113,13 @@ mycc --setup
 
 The wizard will first ask you to choose an **API provider**:
 
-**Option A: Ollama Local (default)** — Run models on your machine.
-- No API key needed
-- Default host: http://127.0.0.1:11434
+**Option A: Ollama Local (default)** — Run chat and vision models on your machine.
+- No API key needed for local-only chat and vision
+- Default chat/vision target: http://127.0.0.1:11434
+- A `:cloud` model uses local cloud routing; authenticate the local server with `ollama signin`
+- `web_search` and `web_fetch` use this server's experimental web routes; backend authentication depends on its configuration
 - Recommended models: llama3.1, qwen2.5-coder
-- Configure: **OLLAMA_HOST**, **OLLAMA_MODEL** (default: glm-5:cloud), **OLLAMA_VISION_MODEL** (default: none)
+- Setup wizard defaults: **OLLAMA_HOST**=`http://127.0.0.1:11434`, **OLLAMA_MODEL**=`llama3.1`, **OLLAMA_VISION_MODEL**=`none`; choose a cloud model explicitly if wanted
 
 **Option B: Ollama Cloud** — Use hosted models at ollama.com.
 - Requires API key from https://ollama.com/settings/keys
@@ -127,7 +133,7 @@ The wizard will first ask you to choose an **API provider**:
   **DEEPSEEK_MODEL** (default: deepseek-v4-pro), **DEEPSEEK_VISION_MODEL** (default: deepseek-flash)
 
 All providers also configure:
-- **OLLAMA_EMBEDDING_MODEL** - Embedding model for semantic search; always uses Ollama (default: nomic-embed-text)
+- **OLLAMA_EMBEDDING_MODEL** - Ollama embedding model for semantic search; uses `OLLAMA_HOST` (default local `127.0.0.1:11434`)
 - **TOKEN_THRESHOLD** - Context limit threshold (default: 100000)
 - **EDITOR** - Text editor for file editing
 
@@ -137,7 +143,13 @@ You can choose to store configuration at:
 - **User-level**: `~/.mycc-store/.env` (global, applies to all projects)
 - **Project-level**: `./.mycc/.env` (local, applies only to current project)
 
-Note: The `OLLAMA_API_KEY` is only required for Ollama Cloud (https://ollama.com). It is not needed when using local Ollama at `127.0.0.1:11434`. You can generate an API key at [ollama.com/settings/keys](https://ollama.com/settings/keys).
+Note: `OLLAMA_API_KEY` is not needed for **local-only** chat, vision, or
+embeddings. Locally routed cloud chat and vision require `ollama signin` on
+the local Ollama server; direct cloud operations require a valid key. Web tools follow
+`OLLAMA_HOST`; their authentication and cloud egress depend on that Ollama
+server's web-backend configuration. Generate an API key at
+[ollama.com/settings/keys](https://ollama.com/settings/keys). See the
+[capability matrix](README.md#local-ollama-versus-ollama-cloud).
 
 ### 5. Start the app
 

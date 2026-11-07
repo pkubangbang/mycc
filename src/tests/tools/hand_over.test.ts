@@ -14,7 +14,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handOverTool, parseTerminalArgs } from '../../tools/hand_over.js';
-import { createMockContext, createTempDir, removeTempDir } from './test-utils.js';
+
 import type { AgentContext } from '../../types.js';
 
 // Mock agentIO so handler never touches the real terminal.
@@ -105,10 +105,10 @@ describe('Cluster A — hand_over intent validation', () => {
   it('accepts RUN USER TO enter sudo password (unchanged happy path)', async () => {
     // Happy path proceeds past validation into tmux/session creation; we only
     // assert it does NOT return one of the Socratic rejection strings.
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'sudo apt install -y tmux',
       intent: 'RUN USER TO enter sudo password',
-    });
+    }, testSignal);
     expect(result).not.toContain('Intent format is:');
     expect(result).not.toContain("doesn't match that");
     expect(result).not.toContain("doesn't mean");
@@ -121,10 +121,10 @@ describe('Cluster A — hand_over intent validation', () => {
     // session's initial shell-command argument (the old cmd.exe metacharacter
     // breakage). We assert on spawn's argv, turning the previously-green
     // "does not contain a rejection" into a real delivery-contract check.
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'echo a & echo b > C:\\tmp\\x.txt',
       intent: 'RUN USER TO run a metacharacter command',
-    });
+    }, testSignal);
 
     expect(result).not.toContain('Failed to create session');
 
@@ -147,10 +147,10 @@ describe('Cluster A — hand_over intent validation', () => {
   });
 
   it('rejects READ USER TO ... with Socratic verb hint (names "execute a command or process," never RUN)', async () => {
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'sudo apt install -y tmux',
       intent: 'READ USER TO enter sudo password',
-    });
+    }, testSignal);
     expect(result).toContain('OBJECT is right');
     expect(result).toContain('VERB "READ"');
     expect(result).toContain('execute a command or process');
@@ -160,10 +160,10 @@ describe('Cluster A — hand_over intent validation', () => {
   });
 
   it('rejects RUN SYSTEM TO ... with Socratic object hint (names "human interacting with a terminal," never USER)', async () => {
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'sudo apt install -y tmux',
       intent: 'RUN SYSTEM TO enter sudo password',
-    });
+    }, testSignal);
     expect(result).toContain('OBJECT "SYSTEM"');
     expect(result).toContain('human interacting with a terminal');
     // Withholds the answer token.
@@ -172,20 +172,20 @@ describe('Cluster A — hand_over intent validation', () => {
   });
 
   it('rejects a malformed intent with the format reminder', async () => {
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'sudo apt install -y tmux',
       intent: 'garbled nonsense without TO',
-    });
+    }, testSignal);
     expect(result).toContain('Intent format is:');
     expect(result).toContain('VERB OBJECT');
     expect(result).toContain('TO PURPOSE');
   });
 
   it('rejects an empty intent with the format reminder', async () => {
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'sudo apt install -y tmux',
       intent: '',
-    });
+    }, testSignal);
     // Empty intent fails parseIntent → format reminder path.
     expect(result).toContain('Intent format is:');
   });
@@ -224,10 +224,10 @@ describe('Cluster B — P1-1 tmux nesting self-check', () => {
 
   it('rejects `tmux attach -t foo` with the contract message, regardless of $TMUX (inside)', async () => {
     insideTmux();
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'tmux attach -t foo',
       intent: 'RUN USER TO reattach to foo',
-    });
+    }, testSignal);
     // Rejects with the unconditional leading-tmux contract message.
     expect(result).toContain('Error:');
     expect(result).toContain('starts with `tmux`');
@@ -240,10 +240,10 @@ describe('Cluster B — P1-1 tmux nesting self-check', () => {
 
   it('rejects `tmux -L sock attach -t foo` (covers -L socket form)', async () => {
     insideTmux();
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'tmux -L sock attach -t foo',
       intent: 'RUN USER TO reattach via named socket',
-    });
+    }, testSignal);
     expect(result).toContain('Error:');
     expect(result).toContain('starts with `tmux`');
     expect(result).toContain('tmux -L sock attach -t foo');
@@ -251,10 +251,10 @@ describe('Cluster B — P1-1 tmux nesting self-check', () => {
 
   it('rejects `tmux switch-client -t foo`', async () => {
     insideTmux();
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'tmux switch-client -t foo',
       intent: 'RUN USER TO switch client',
-    });
+    }, testSignal);
     expect(result).toContain('Error:');
     expect(result).toContain('starts with `tmux`');
     expect(result).toContain('switch-client');
@@ -262,10 +262,10 @@ describe('Cluster B — P1-1 tmux nesting self-check', () => {
 
   it('rejects `tmux new-session ...` — the nesting hole (now closed)', async () => {
     insideTmux();
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'tmux new-session -d -s bar',
       intent: 'RUN USER TO spawn a detached session',
-    });
+    }, testSignal);
     expect(result).toContain('Error:');
     expect(result).toContain('starts with `tmux`');
     expect(result).toContain('new-session');
@@ -273,10 +273,10 @@ describe('Cluster B — P1-1 tmux nesting self-check', () => {
 
   it('rejects `tmux send-keys ...` — the nesting hole (now closed)', async () => {
     insideTmux();
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: "tmux send-keys -t foo 'x' Enter",
       intent: 'RUN USER TO send a key to foo',
-    });
+    }, testSignal);
     expect(result).toContain('Error:');
     expect(result).toContain('starts with `tmux`');
     expect(result).toContain('send-keys');
@@ -284,10 +284,10 @@ describe('Cluster B — P1-1 tmux nesting self-check', () => {
 
   it('rejects `tmux kill-session -t bar` — the nesting hole (now closed)', async () => {
     insideTmux();
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'tmux kill-session -t bar',
       intent: 'RUN USER TO kill a session',
-    });
+    }, testSignal);
     expect(result).toContain('Error:');
     expect(result).toContain('starts with `tmux`');
     expect(result).toContain('kill-session');
@@ -296,10 +296,10 @@ describe('Cluster B — P1-1 tmux nesting self-check', () => {
   // (i) $TMUX-unset + `tmux attach` now rejected (previously the $TMUX-unset hole).
   it('outside tmux: rejects `tmux attach -t foo` ($TMUX unset — no longer a hole)', async () => {
     outsideTmux();
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'tmux attach -t foo',
       intent: 'RUN USER TO reattach to foo',
-    });
+    }, testSignal);
     expect(result).toContain('Error:');
     expect(result).toContain('starts with `tmux`');
     expect(result).toContain('its own tmux session');
@@ -308,10 +308,10 @@ describe('Cluster B — P1-1 tmux nesting self-check', () => {
   // (ii) $TMUX-unset + `tmux new-session ...` now rejected (the hole, outside tmux).
   it('outside tmux: rejects `tmux new-session -d -s bar` ($TMUX unset — no longer a hole)', async () => {
     outsideTmux();
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'tmux new-session -d -s bar',
       intent: 'RUN USER TO spawn a detached session',
-    });
+    }, testSignal);
     expect(result).toContain('Error:');
     expect(result).toContain('starts with `tmux`');
   });
@@ -322,10 +322,10 @@ describe('Cluster B — P1-1 tmux nesting self-check', () => {
   // downstream `tmux new-session ...` path is not what we're verifying here.
   it('inside tmux: does NOT reject a plain `ssh` (foreground interactive payload)', async () => {
     insideTmux();
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'ssh user@host',
       intent: 'RUN USER TO ssh into host',
-    });
+    }, testSignal);
     expect(result).not.toContain('starts with `tmux`');
     expect(result).not.toContain('INNER interactive command');
     expect(result).not.toContain('use `bash` instead');
@@ -333,10 +333,10 @@ describe('Cluster B — P1-1 tmux nesting self-check', () => {
 
   it('inside tmux: does NOT reject a plain `vim file` (foreground interactive payload)', async () => {
     insideTmux();
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'vim notes.txt',
       intent: 'RUN USER TO edit notes',
-    });
+    }, testSignal);
     expect(result).not.toContain('starts with `tmux`');
     expect(result).not.toContain('INNER interactive command');
     expect(result).not.toContain('use `bash` instead');
@@ -344,10 +344,10 @@ describe('Cluster B — P1-1 tmux nesting self-check', () => {
 
   it('inside tmux: does NOT reject a plain `sudo apt install -y tmux`', async () => {
     insideTmux();
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'sudo apt install -y tmux',
       intent: 'RUN USER TO enter sudo password',
-    });
+    }, testSignal);
     expect(result).not.toContain('starts with `tmux`');
     expect(result).not.toContain('INNER interactive command');
     expect(result).not.toContain('use `bash` instead');
@@ -355,10 +355,10 @@ describe('Cluster B — P1-1 tmux nesting self-check', () => {
 
   it('outside tmux: does NOT reject a plain `sudo apt install -y tmux` ($TMUX unset)', async () => {
     outsideTmux();
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'sudo apt install -y tmux',
       intent: 'RUN USER TO enter sudo password',
-    });
+    }, testSignal);
     expect(result).not.toContain('starts with `tmux`');
     expect(result).not.toContain('INNER interactive command');
     expect(result).not.toContain('use `bash` instead');
@@ -387,10 +387,10 @@ describe('Cluster C — empty command opens an interactive shell (no "undefined"
   });
 
   it('does NOT send-keys the literal "undefined" for an empty command', async () => {
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: '',
       intent: 'RUN USER TO open interactive shell',
-    });
+    }, testSignal);
     // Must reach the session path (not a validation/prereq rejection).
     expect(result).not.toContain('Failed to create session');
     expect(result).not.toContain('Intent format is:');
@@ -403,19 +403,19 @@ describe('Cluster C — empty command opens an interactive shell (no "undefined"
   });
 
   it('labels the result "(interactive shell)" instead of "undefined"', async () => {
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: '',
       intent: 'RUN USER TO open interactive shell',
-    });
+    }, testSignal);
     expect(result).toContain('User ran: (interactive shell)');
     expect(result).not.toContain('User ran: undefined');
   });
 
   it('records a non-undefined todo body for an empty command', async () => {
-    await handOverTool.handler(ctx, {
+    await runTool(handOverTool, ctx, {
       command: '',
       intent: 'RUN USER TO open interactive shell',
-    });
+    }, testSignal);
     const createTodo = ctx.todo.createTodo as ReturnType<typeof vi.fn>;
     expect(createTodo).toHaveBeenCalled();
     const [, body] = createTodo.mock.calls[createTodo.mock.calls.length - 1];
@@ -423,10 +423,10 @@ describe('Cluster C — empty command opens an interactive shell (no "undefined"
   });
 
   it('still send-keys a real command (non-empty unchanged behavior)', async () => {
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'vim notes.txt',
       intent: 'RUN USER TO edit notes',
-    });
+    }, testSignal);
     expect(result).not.toContain('Failed to create session');
 
     const calls = vi.mocked(cp.spawn).mock.calls.map((c) => c[1]) as string[][];
@@ -446,6 +446,8 @@ import { retryChat } from '../../engine/chat-provider.js';
 // Import the mocked agentIO so Cluster D can pin the ask() answer to 'n'
 // (killSession path → summarizeOutput branch).
 import { agentIO } from '../../loop/agent-io.js';
+import { createMockContext, createTempDir, removeTempDir, runTool, testSignal } from './test-utils.js';
+
 
 // ═══════════════════════════════════════════════════════════════════════
 // Cluster D — 弱点2: summarizeOutput fallback + parseTerminalArgs dispatch
@@ -496,10 +498,10 @@ describe('Cluster D — 弱点2 summarizeOutput fallback + parseTerminalArgs', (
     vi.mocked(cp.spawn).mockImplementation((() => makePaneProc(longOutput)) as never)
     vi.mocked(retryChat).mockRejectedValue(new Error('model down'));
 
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'long-running-cmd',
       intent: 'RUN USER TO run a long command',
-    });
+    }, testSignal);
 
     // The raw output is preserved (head-truncated), NOT replaced by a bare
     // '(summarization failed)' placeholder that drops the captured bytes.
@@ -517,10 +519,10 @@ describe('Cluster D — 弱点2 summarizeOutput fallback + parseTerminalArgs', (
     vi.mocked(cp.spawn).mockImplementation((() => makePaneProc(longOutput)) as never)
     vi.mocked(retryChat).mockResolvedValue({ message: { role: 'assistant', content: 'LLM summary of output' } } as never);
 
-    const result = await handOverTool.handler(ctx, {
+    const result = await runTool(handOverTool, ctx, {
       command: 'long-running-cmd',
       intent: 'RUN USER TO run a long command',
-    });
+    }, testSignal);
 
     expect(result).toContain('LLM summary of output');
     expect(result).not.toContain('summarization failed');
@@ -530,10 +532,10 @@ describe('Cluster D — 弱点2 summarizeOutput fallback + parseTerminalArgs', (
     const shortOutput = Array.from({ length: 50 }, (_, i) => `line ${i}`).join('\n');
     vi.mocked(cp.spawn).mockImplementation((() => makePaneProc(shortOutput)) as never)
 
-    await handOverTool.handler(ctx, {
+    await runTool(handOverTool, ctx, {
       command: 'short-cmd',
       intent: 'RUN USER TO run a short command',
-    });
+    }, testSignal);
 
     expect(vi.mocked(retryChat)).not.toHaveBeenCalled();
   });

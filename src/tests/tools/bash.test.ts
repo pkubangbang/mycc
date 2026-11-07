@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { bashTool } from '../../tools/bash.js';
 import { agentIO } from '../../loop/agent-io.js';
 import { checkDangerousCommand } from '../../context/grant/dangerous-commands.js';
-import { createMockContext, createTempDir, removeTempDir } from './test-utils.js';
+
 import type { AgentContext } from '../../types.js';
 
 // Mock agentIO.exec
@@ -48,11 +48,11 @@ describe('bashTool', () => {
       timedOut: false,
     });
 
-    const result = await bashTool.handler(ctx, {
+    const result = await runTool(bashTool, ctx, {
       command: 'echo hello',
       intent: 'test output',
       timeout: 5,
-    });
+    }, testSignal);
 
     expect(mockExec).toHaveBeenCalledWith({
       cwd: tempDir,
@@ -73,11 +73,11 @@ describe('bashTool', () => {
       timedOut: false,
     });
 
-    const result = await bashTool.handler(ctx, {
+    const result = await runTool(bashTool, ctx, {
       command: 'badcmd',
       intent: 'test failure',
       timeout: 5,
-    });
+    }, testSignal);
 
     expect(result).toContain('Command failed');
     expect(result).toContain('exit: 127');
@@ -91,11 +91,11 @@ describe('bashTool', () => {
       reason: 'Command blocked: Recursive delete from root directory',
     });
 
-    const result = await bashTool.handler(ctx, {
+    const result = await runTool(bashTool, ctx, {
       command: 'rm -rf /',
       intent: 'dangerous test',
       timeout: 5,
-    });
+    }, testSignal);
 
     expect(result).toContain('Command blocked');
   });
@@ -106,11 +106,11 @@ describe('bashTool', () => {
       reason: 'Command blocked: Privileged deletion',
     });
 
-    const result = await bashTool.handler(ctx, {
+    const result = await runTool(bashTool, ctx, {
       command: 'sudo rm -rf /home',
       intent: 'dangerous test',
       timeout: 5,
-    });
+    }, testSignal);
 
     expect(result).toContain('Command blocked');
   });
@@ -121,11 +121,11 @@ describe('bashTool', () => {
       reason: 'Command blocked: Filesystem formatting',
     });
 
-    const result = await bashTool.handler(ctx, {
+    const result = await runTool(bashTool, ctx, {
       command: 'mkfs.ext4 /dev/sda1',
       intent: 'dangerous test',
       timeout: 5,
-    });
+    }, testSignal);
 
     expect(result).toContain('Command blocked');
   });
@@ -136,11 +136,11 @@ describe('bashTool', () => {
       reason: 'Command blocked: Disk imaging operation',
     });
 
-    const result = await bashTool.handler(ctx, {
+    const result = await runTool(bashTool, ctx, {
       command: 'dd if=/dev/zero of=/dev/sda',
       intent: 'dangerous test',
       timeout: 5,
-    });
+    }, testSignal);
 
     expect(result).toContain('Command blocked');
   });
@@ -155,11 +155,11 @@ describe('bashTool', () => {
       timedOut: true,
     });
 
-    const result = await bashTool.handler(ctx, {
+    const result = await runTool(bashTool, ctx, {
       command: 'sleep 100',
       intent: 'test timeout',
       timeout: 1,
-    });
+    }, testSignal);
 
     expect(result).toContain('Error: Command timeout after 1 seconds');
     expect(result).toContain('1 seconds');
@@ -175,11 +175,11 @@ describe('bashTool', () => {
       timedOut: false,
     });
 
-    const result = await bashTool.handler(ctx, {
+    const result = await runTool(bashTool, ctx, {
       command: 'long running command',
       intent: 'test interruption',
       timeout: 5,
-    });
+    }, testSignal);
 
     expect(result).toBe('Command interrupted by user.');
   });
@@ -194,11 +194,11 @@ describe('bashTool', () => {
       timedOut: false,
     });
 
-    const result = await bashTool.handler(ctx, {
+    const result = await runTool(bashTool, ctx, {
       command: 'test',
       intent: 'test mixed output',
       timeout: 5,
-    });
+    }, testSignal);
 
     expect(result).toContain('[stdout]');
     expect(result).toContain('standard output');
@@ -216,11 +216,11 @@ describe('bashTool', () => {
       timedOut: false,
     });
 
-    await bashTool.handler(ctx, {
+    await runTool(bashTool, ctx, {
       command: 'test',
       intent: 'test',
       timeout: 5,
-    });
+    }, testSignal);
 
     // Verify brief was called (part of context validation)
     expect(ctx.core.brief).toHaveBeenCalled();
@@ -236,11 +236,11 @@ describe('bashTool', () => {
       timedOut: false,
     });
 
-    const result = await bashTool.handler(ctx, {
+    const result = await runTool(bashTool, ctx, {
       command: 'true',
       intent: 'test empty output',
       timeout: 5,
-    });
+    }, testSignal);
 
     expect(result).toContain('Command completed successfully');
     // Should not have [stdout] or [stderr] sections for empty output
@@ -266,12 +266,12 @@ describe('bashTool', () => {
       timedOut: false,
     });
 
-    const result = await bashTool.handler(ctx, {
+    const result = await runTool(bashTool, ctx, {
       command: 'echo display this to the user',
       intent: 'test display',
       timeout: 5,
       display: true,
-    });
+    }, testSignal);
 
     // LLM still receives the full structured result
     expect(result).toContain('Command completed successfully');
@@ -292,11 +292,11 @@ describe('bashTool', () => {
       timedOut: false,
     });
 
-    await bashTool.handler(ctx, {
+    await runTool(bashTool, ctx, {
       command: 'echo silent output',
       intent: 'test no display',
       timeout: 5,
-    });
+    }, testSignal);
 
     // bash_display brief must never fire without display=true.
     // (Other briefs like 'bash' progress still happen, so check the specific label.)
@@ -315,12 +315,12 @@ describe('bashTool', () => {
       timedOut: false,
     });
 
-    await bashTool.handler(ctx, {
+    await runTool(bashTool, ctx, {
       command: 'failing-cmd',
       intent: 'test empty stdout with display',
       timeout: 5,
       display: true,
-    });
+    }, testSignal);
 
     // No stdout to display → bash_display brief must not fire.
     const calls = vi.mocked(ctx.core.brief).mock.calls;
@@ -378,11 +378,11 @@ describe('bashTool timeout coercion', () => {
       exitCode: 0,
       timedOut: false,
     });
-    await bashTool.handler(ctx, {
+    await runTool(bashTool, ctx, {
       command: 'echo hi',
       intent: 'test coercion',
       ...args,
-    });
+    }, testSignal);
     expect(mockExec).toHaveBeenCalledTimes(1);
     return mockExec.mock.calls[0][0].timeout;
   }
@@ -434,11 +434,11 @@ describe('bashTool timeout coercion', () => {
         exitCode: 0,
         timedOut: false,
       });
-      return bashTool.handler(ctx, {
+      return runTool(bashTool, ctx, {
         command: 'echo hi',
         intent: 'test warning',
         ...args,
-      });
+      }, testSignal);
     }
 
     it('includes a warning when timeout is undefined', async () => {
@@ -484,11 +484,11 @@ describe('bashTool timeout coercion', () => {
         exitCode: 137,
         timedOut: true,
       });
-      const result = await bashTool.handler(ctx, {
+      const result = await runTool(bashTool, ctx, {
         command: 'sleep 100',
         intent: 'test',
         timeout: 120,
-      });
+      }, testSignal);
       expect(result).toContain('[Warning: bash timeout]');
       expect(result).toContain('Command timeout after 60 seconds');
     });
@@ -503,11 +503,11 @@ describe('bashTool timeout coercion', () => {
         exitCode: -1,
         timedOut: false,
       });
-      const result = await bashTool.handler(ctx, {
+      const result = await runTool(bashTool, ctx, {
         command: 'long cmd',
         intent: 'test',
         timeout: 90,
-      });
+      }, testSignal);
       expect(result).toContain('[Warning: bash timeout]');
       expect(result).toContain('Command interrupted by user.');
     });
@@ -701,7 +701,7 @@ describe('checkDangerousCommand', () => {
 
 import { judgeBash } from '../../context/grant/bash-judge.js';
 import { findDangerousCommand } from '../../context/grant/dangerous-commands.js';
-
+import { createMockContext, createTempDir, removeTempDir, runTool, testSignal } from './test-utils.js';
 describe('Cluster C — findDangerousCommand wrapper semantics', () => {
   // ── C3: observation-skip for pure-observation tmux subcommands ─────
   describe('C3 observation-skip (INDIRECT_WRAPPERS)', () => {

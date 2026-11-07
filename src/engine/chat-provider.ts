@@ -62,10 +62,11 @@ export type { RetryConfig, ErrorType } from './chat-helpers.js';
  *     (minifying/truncating rewrites the sequence → cache miss → full recompute).
  *   - `tools` MUST be the complete tool list (omitting it drops cached tokens
  *     → cache miss). Pass the same `getToolsForScope(...)` result the loop uses.
- * The ONE safe knob is `toolChoice`: it is a sampling parameter that governs
+ * The ONE safe knob is `tool_choice`: it is a sampling parameter that governs
  * whether the model may EMIT tool calls — it is NOT part of the cached prefix
  * token sequence, so `toolChoice:'none'` constrains output to text-only while
  * keeping the tools schema cached. Use it for text-only forks (crossroad, plan-scope).
+ * Internally this is sent as the canonical `tool_choice` field.
  *
  * Used by:
  * - plan-scope — reflect on the larger scope of a brief (PLAN mode)
@@ -95,18 +96,15 @@ export async function forkChat(
     msgs.push({ role: 'user', content: prompt });
   }
 
-  // Build request with full tools (preserves the cached prefix) plus optional
-  // toolChoice. toolChoice is a sampling param — NOT part of the cached token
-  // sequence — so 'none' constrains output to text-only without a cache miss.
-  // DeepSeek reads toolChoice from the request object (deepseek.ts:359-362);
-  // Ollama spreads the entire request and silently ignores unknown fields.
+  // Canonical provider-neutral tool_choice; DeepSeek also accepts the legacy
+  // camelCase alias, while Ollama forwards the wire-level field unchanged.
   const chatRequest: Record<string, unknown> = {
     model: MODEL,
     messages: msgs,
     tools,
   };
   if (toolChoice) {
-    chatRequest.toolChoice = toolChoice;
+    chatRequest.tool_choice = toolChoice;
   }
 
   const response = await retryChat(

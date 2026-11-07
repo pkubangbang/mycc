@@ -12,9 +12,9 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { peersTool } from '../../tools/peer_list.js';
-import { createFullMockContext } from './test-utils.js';
-import type { AgentContext, IdentityEntry } from '../../types.js';
 
+import type { AgentContext, IdentityEntry } from '../../types.js';
+import { createFullMockContext, runTool, testSignal } from './test-utils.js';
 // Anchored to the real Date.now() at module load: the tool calls Date.now()
 // internally, so heartbeat timestamps must be relative to the real now for
 // the 1h cutoff to behave deterministically.
@@ -52,7 +52,7 @@ describe('peersTool — 1-hour cutoff', () => {
     (ctx.peer.getLatestHeartbeat as ReturnType<typeof vi.fn>).mockReturnValue(NOW - 2 * HOUR);
     (ctx.peer.isFresh as ReturnType<typeof vi.fn>).mockReturnValue(false);
 
-    const result = await peersTool.handler(ctx, { all: true });
+    const result = await runTool(peersTool, ctx, { all: true }, testSignal);
 
     // All peers omitted -> the empty-rows branch reports the omitted count
     // (not "no instances registered", which would be misleading).
@@ -70,7 +70,7 @@ describe('peersTool — 1-hour cutoff', () => {
     (ctx.peer.getLatestHeartbeat as ReturnType<typeof vi.fn>).mockReturnValue(NOW - 5 * MIN);
     (ctx.peer.isFresh as ReturnType<typeof vi.fn>).mockReturnValue(false);
 
-    const result = await peersTool.handler(ctx, { all: true });
+    const result = await runTool(peersTool, ctx, { all: true }, testSignal);
 
     expect(result).toContain(SID_RECENT_STALE);
     expect(result).toContain('offline');
@@ -83,7 +83,7 @@ describe('peersTool — 1-hour cutoff', () => {
     (ctx.peer.getLatestHeartbeat as ReturnType<typeof vi.fn>).mockReturnValue(NOW - 10 * 1000);
     (ctx.peer.isFresh as ReturnType<typeof vi.fn>).mockReturnValue(true);
 
-    const result = await peersTool.handler(ctx, {});
+    const result = await runTool(peersTool, ctx, {}, testSignal);
 
     expect(result).toContain(SID_FRESH);
     expect(result).toContain('online');
@@ -97,7 +97,7 @@ describe('peersTool — 1-hour cutoff', () => {
     (ctx.peer.getPid as ReturnType<typeof vi.fn>).mockReturnValue(4242);
     (ctx.peer.getBriefs as ReturnType<typeof vi.fn>).mockReturnValue([]);
 
-    const result = await peersTool.handler(ctx, {});
+    const result = await runTool(peersTool, ctx, {}, testSignal);
 
     expect(result).toContain('pid: 4242');
     // The kill command must match the host platform.
@@ -113,7 +113,7 @@ describe('peersTool — 1-hour cutoff', () => {
     (ctx.peer.getPid as ReturnType<typeof vi.fn>).mockReturnValue(null);
     (ctx.peer.getBriefs as ReturnType<typeof vi.fn>).mockReturnValue([]);
 
-    const result = await peersTool.handler(ctx, {});
+    const result = await runTool(peersTool, ctx, {}, testSignal);
 
     expect(result).toContain(SID_FRESH);
     expect(result).not.toMatch(/\bpid:/);
@@ -127,7 +127,7 @@ describe('peersTool — 1-hour cutoff', () => {
     // with all=true the peer is listed either way because the cutoff is skipped.
     (ctx.peer.isFresh as ReturnType<typeof vi.fn>).mockReturnValue(false);
 
-    const result = await peersTool.handler(ctx, { all: true });
+    const result = await runTool(peersTool, ctx, { all: true }, testSignal);
 
     expect(result).toContain(SID_NO_HB);
     expect(result).not.toContain('older than 1h omitted');
@@ -146,7 +146,7 @@ describe('peersTool — 1-hour cutoff', () => {
     // never surfaced; the FRESH session returns no briefs.
     (ctx.peer.getBriefs as ReturnType<typeof vi.fn>).mockReturnValue([]);
 
-    const result = await peersTool.handler(ctx, { all: true });
+    const result = await runTool(peersTool, ctx, { all: true }, testSignal);
 
     // The fresh peer IS listed; the stale peer's briefs are not surfaced.
     expect(result).toContain(SID_FRESH);

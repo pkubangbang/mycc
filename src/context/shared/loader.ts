@@ -9,6 +9,7 @@ import { watch as chokidarWatch, type FSWatcher as ChokidarWatcher } from 'choki
 import { createRequire } from 'node:module';
 import matter from 'gray-matter';
 import { agentIO } from '../../loop/agent-io.js';
+import { isCancellation } from '../../loop/cancellation.js';
 import { resolveToSkillPath, type SkillLayer } from '../../utils/skill-path-resolver.js';
 import { builtInTools } from './registry.js';
 import { ConditionRegistry, type Condition } from '../../hook/conditions.js';
@@ -688,10 +689,13 @@ export class Loader implements DynamicLoader, SkillModule {
   }
 
   /**
-   * Execute a tool by name
-   * From merged ToolLoader interface
+   * Execute a tool by name.
+   * The signal is REQUIRED: every execution host must supply one (the lead's
+   * ESC controller, a child's process cancel token, or the process token held
+   * by a non-interactive caller such as a hook action). Making it optional is
+   * what allowed a call site to drop cancellation without any compile error.
    */
-  async execute(name: string, ctx: AgentContext, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
+  async execute(name: string, ctx: AgentContext, args: Record<string, unknown>, signal: AbortSignal): Promise<string> {
     const entry = this.tools.get(name);
     if (!entry) {
       return `Unknown tool: ${name}`;
@@ -701,6 +705,18 @@ export class Loader implements DynamicLoader, SkillModule {
       const result = await entry.tool.handler(ctx, args, signal);
       return result;
     } catch (err) {
+      // Cancellation must NOT become a tool result. Stringifying it here used
+      // to turn "the user pressed ESC" / "the teammate is shutting down" into
+      // `Error executing web_fetch: The operation was aborted`, which the loop
+      // fed back to the model as an ordinary failure — inviting a retry of the
+      // very tool that was cancelled — and raised the confusion index for
+      // correct behaviour. Rethrowing lets the single owner (TOOL state via
+      // isCancellationError) route it to STOP/wrap-up.
+      //
+      // The test is on the CALLER's signal plus the error's identity: a
+      // transport-level abort that our own retry loop gave up on is still a
+      // real failure, and must keep its string result.
+      if (isCancellation(err, signal)) throw err;
       return `Error executing ${name}: ${(err as Error).message}`;
     }
   }

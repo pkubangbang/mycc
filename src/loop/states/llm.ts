@@ -167,9 +167,7 @@ export async function handleLlm(
       // Read the assistant's reasoning/thinking. Ollama exposes it as the
       // `thinking` field; DeepSeek exposes it as `reasoning_content`. Read
       // both, preferring whichever is present (Ollama path, DeepSeek path).
-      const assistantReasoning =
-        (assistantMessage as unknown as Record<string, unknown>).thinking as string | undefined
-        || (assistantMessage as unknown as Record<string, unknown>).reasoning_content as string | undefined;
+      const assistantReasoning = assistantMessage.thinking || assistantMessage.reasoning_content;
       chat.assistantReasoningContent = assistantReasoning;
 
       // Release the LLM call's abort controller — it's no longer needed

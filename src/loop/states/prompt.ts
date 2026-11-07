@@ -35,6 +35,7 @@ import type { RetryConfig } from '../../engine/chat-helpers.js';
 import { tryGetServeHub } from '../../serve/serve-registry.js';
 import { agentIO, PromptAbortError } from '../agent-io.js';
 import { autoState } from '../auto-state.js';
+import { getProcessSignal } from '../cancel-token.js';
 
 /**
  * Tighter retry config for steering synthesis. The synthesized query is a
@@ -351,10 +352,14 @@ export async function handlePrompt(
     // shell) from a real command, and `undefined` would be stringified into
     // the literal text "undefined" typed into the pane.
     const command = query.trim().slice(1).trim();
+    // `!` commands run at PROMPT, before the LLM turn: there is no ESC turn
+    // controller to borrow, so hand the tool the process-wide token. hand_over
+    // blocks on a human at the terminal and must not be aborted by anything
+    // but process shutdown.
     const result = await loader.execute('hand_over', env.ctx, {
       command,
       intent: `RUN USER TO execute interactive command from user`,
-    });
+    }, getProcessSignal());
     triologue.note(
       'REMINDER',
       `The user ran an interactive command in the handed-over terminal (${command || 'plain shell'}). Captured output:\n\n${result}`,

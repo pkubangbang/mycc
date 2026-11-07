@@ -6,8 +6,8 @@
  */
 
 import chalk from 'chalk';
-import { Ollama } from 'ollama';
-import type { ChatRequest, ChatResponse, WebSearchResult, WebFetchResponse } from 'ollama';
+import { OllamaHttpClient } from './ollama-http.js';
+import type { ChatRequest, ChatResponse, WebSearchResult, WebFetchResponse } from './provider-types.js';
 import { getOllamaHost, getOllamaApiKey, getOllamaModel, getVisionModel, isVisionEnabled } from '../config.js';
 import { agentIO } from '../loop/agent-io.js';
 import type { HealthCheckResult } from './health-check.js';
@@ -33,6 +33,7 @@ import {
   type RetryChatConfig,
 } from './chat-helpers.js';
 import { estimateTextTokens } from '../utils/token.js';
+import { createOllamaWebClient } from './ollama-web.js';
 
 export const MODEL = getOllamaModel();
 
@@ -40,10 +41,11 @@ export const MODEL = getOllamaModel();
 const OLLAMA_HOST = getOllamaHost();
 const OLLAMA_API_KEY = getOllamaApiKey();
 
-const ollama = new Ollama({
+const ollama = new OllamaHttpClient({
   host: OLLAMA_HOST,
-  ...(OLLAMA_API_KEY ? { headers: { Authorization: `Bearer ${OLLAMA_API_KEY}` } } : {}),
+  apiKey: OLLAMA_API_KEY,
 });
+const ollamaWeb = createOllamaWebClient({ host: OLLAMA_HOST, apiKey: OLLAMA_API_KEY });
 
 const NEGLECTED_SPINNER_TEXT = 'Hold on';
 
@@ -237,21 +239,15 @@ export async function retryChat(
       }
 
       try {
-        // The ollama library creates its OWN internal AbortController for the
-        // fetch() POST (browser.mjs processStreamableRequest) — our `signal`
-        // cannot reach it. So if the TCP connect hangs (Windows wsarecv,
-        // ~21s OS timeout), `ollama.chat()` blocks with no way for the
-        // watchdog/turn signal to abort it. Race the POST against a per-
-        // attempt timeout keyed off firstTokenTimeoutMs; also reject if our
-        // signal fires during the POST. On race loss the underlying
-        // ollama.chat() promise is still pending — when it eventually
-        // resolves we call stream.abort() to release the library's internal
-        // socket (prevents socket accumulation across 4× retries), and
-        // suppress its rejection to avoid unhandledRejection.
+        // Own cancellation before calling chat(): ESC and the first-token
+        // deadline must abort the initial POST even before response headers.
+        const chatController = new AbortController();
+        const abortChat = () => chatController.abort(signal?.reason);
+        if (signal) signal.addEventListener('abort', abortChat);
         const chatPromise = ollama.chat({
           ...request,
           stream: true,
-        } as ChatRequest & { stream: true });
+        } as ChatRequest & { stream: true }, chatController.signal);
 
         const postTimeoutMs = attemptTimeoutMs;
         let postTimeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -262,6 +258,7 @@ export async function retryChat(
         let postAbortListener: (() => void) | undefined;
         const postRacePromise = new Promise<never>((_, reject) => {
           postTimeoutId = setTimeout(() => {
+            chatController.abort();
             reject(new StreamTimeoutError(
               `Ollama POST timed out after ${postTimeoutMs}ms (connection hang)`,
               'first-token',
@@ -280,18 +277,15 @@ export async function retryChat(
         try {
           stream = await Promise.race([chatPromise, postRacePromise]);
         } catch (raceErr) {
-          // Race lost — chatPromise still pending. Attach cleanup so that
-          // when it eventually settles we release the library's socket
-          // (stream.abort()) or swallow the rejection. Without this the
-          // orphaned fetch could hold a socket for the OS TCP timeout and,
-          // across 4× retries, accumulate leaked sockets.
-          chatPromise
-            .then((s) => { try { s.abort(); } catch { /* already gone */ } })
-            .catch(() => { /* suppress orphaned rejection */ });
+          // Abort now, not only if the pending connection eventually yields a
+          // stream. Suppress its expected post-abort rejection.
+          chatController.abort();
+          chatPromise.catch(() => {});
           throw raceErr;
         } finally {
           if (postTimeoutId) clearTimeout(postTimeoutId);
           if (signal && postAbortListener) signal.removeEventListener('abort', postAbortListener);
+          if (signal) signal.removeEventListener('abort', abortChat);
         }
 
         const chunks = await collectStream<ChatResponse>(
@@ -422,33 +416,30 @@ export async function retryMultipleChoice(
 // ─── Auxiliary (gated capabilities) ─────────────────────────────────────
 
 /**
- * Web search via Ollama.
+ * Web search through the host-aware Ollama web client.
  */
-export async function webSearch(query: string): Promise<WebSearchResult[]> {
+export async function webSearch(query: string, signal?: AbortSignal): Promise<WebSearchResult[]> {
   return retryWithBackoff(async () => {
-    const response = await ollama.webSearch({ query });
+    const response = await ollamaWeb.webSearch({ query }, signal);
     return response.results || [];
-  }, { maxRetries: 2 });
+  }, { maxRetries: 2, signal });
 }
 
 /**
- * Web fetch via Ollama.
+ * Web fetch through the host-aware Ollama web client.
  */
-export async function webFetch(url: string): Promise<WebFetchResponse> {
+export async function webFetch(url: string, signal?: AbortSignal): Promise<WebFetchResponse> {
   return retryWithBackoff(async () => {
-    return await ollama.webFetch({ url });
-  }, { maxRetries: 2 });
+    return ollamaWeb.webFetch({ url }, signal);
+  }, { maxRetries: 2, signal });
 }
 
 /**
  * Image description via the Ollama vision model.
  *
- * This used to be a bare non-streaming `ollama.chat()` with no signal, no
- * timeout, and no retry — which meant a slow cloud vision model could hang
- * the call indefinitely and ESC could not interrupt it (the ollama library
- * creates its OWN internal AbortController for the fetch POST that our
- * signal cannot reach; documented in the retryChat code comment). The
- * `screen` tool would therefore "time out" with no way to recover.
+ * The owned HTTP transport exposes abort() on its stream; retryChat threads
+ * ESC and watchdog cancellation into that controller. Vision inherits the same
+ * POST race, stream liveness checks, and retry behavior as ordinary chat.
  *
  * The fix: route through `retryChat` (stream:true) so imgDescribe inherits
  * the same robustness the main chat loop enjoys — the per-attempt POST-race
@@ -512,7 +503,7 @@ export async function healthCheck(tokenThreshold: number): Promise<HealthCheckRe
   }
 
   try {
-    const modelInfo = await ollama.show({ model: MODEL });
+    const modelInfo = await ollama.show(MODEL);
 
     startSpinner('Powered by Ollama. Initializing');
     const startTime = Date.now();

@@ -11,9 +11,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { readPictureTool } from '../../tools/read-picture.js';
-import { createMockContext, createTempDir, removeTempDir } from './test-utils.js';
-import type { AgentContext, PictureResult } from '../../types.js';
 
+import type { AgentContext, PictureResult } from '../../types.js';
+import { createMockContext, createTempDir, removeTempDir, runTool, testSignal } from './test-utils.js';
 describe('readPictureTool', () => {
   let tempDir: string;
   let ctx: AgentContext;
@@ -45,7 +45,7 @@ describe('readPictureTool', () => {
     };
     (ctx.core.readPictureCached as ReturnType<typeof vi.fn>).mockResolvedValue(result);
 
-    const out = await readPictureTool.handler(ctx, { path: 'img.png' });
+    const out = await runTool(readPictureTool, ctx, { path: 'img.png' }, testSignal);
 
     expect(ctx.core.readPictureCached).toHaveBeenCalledTimes(1);
     // Called with the absolute path, undefined prompt, undefined cache token
@@ -71,11 +71,11 @@ describe('readPictureTool', () => {
     };
     (ctx.core.readPictureCached as ReturnType<typeof vi.fn>).mockResolvedValue(result);
 
-    const out = await readPictureTool.handler(ctx, {
+    const out = await runTool(readPictureTool, ctx, {
       path: 'img.png',
       prompt: 'What text is visible?',
       cache: 'aaaaaaaaaaaaaaaa',
-    });
+    }, testSignal);
 
     const [absPath, prompt, cacheToken] = (ctx.core.readPictureCached as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(absPath).toBe(path.join(tempDir, 'img.png'));
@@ -97,7 +97,7 @@ describe('readPictureTool', () => {
     };
     (ctx.core.readPictureCached as ReturnType<typeof vi.fn>).mockResolvedValue(result);
 
-    const out = await readPictureTool.handler(ctx, { path: 'img.png' });
+    const out = await runTool(readPictureTool, ctx, { path: 'img.png' }, testSignal);
 
     expect(out).toContain('cached desc');
     expect(out).toContain('Cache token: cccccccccccccccc');
@@ -106,13 +106,13 @@ describe('readPictureTool', () => {
   // ── Path validation (unchanged from before) ────────────────────────────
 
   it('should block path traversal attacks', async () => {
-    const out = await readPictureTool.handler(ctx, { path: '../../../etc/passwd' });
+    const out = await runTool(readPictureTool, ctx, { path: '../../../etc/passwd' }, testSignal);
     expect(out).toContain('Error: Path escapes workspace');
     expect(ctx.core.readPictureCached).not.toHaveBeenCalled();
   });
 
   it('should block absolute path outside workspace', async () => {
-    const out = await readPictureTool.handler(ctx, { path: '/etc/passwd' });
+    const out = await runTool(readPictureTool, ctx, { path: '/etc/passwd' }, testSignal);
     expect(out).toContain('Error: Path escapes workspace');
     expect(ctx.core.readPictureCached).not.toHaveBeenCalled();
   });
@@ -124,13 +124,13 @@ describe('readPictureTool', () => {
     // masking the wrong location. Now safePath uses resolvePath (matching
     // read/write/edit), so `~/some.png` expands to <home>/some.png, which is
     // outside the temp workdir and is rejected as escaping the workspace.
-    const out = await readPictureTool.handler(ctx, { path: '~/some.png' });
+    const out = await runTool(readPictureTool, ctx, { path: '~/some.png' }, testSignal);
     expect(out).toContain('Error: Path escapes workspace: ~/some.png');
     expect(ctx.core.readPictureCached).not.toHaveBeenCalled();
   });
 
   it('should handle non-existent file', async () => {
-    const out = await readPictureTool.handler(ctx, { path: 'nope.png' });
+    const out = await runTool(readPictureTool, ctx, { path: 'nope.png' }, testSignal);
     expect(out).toBe('Error: Image file not found: nope.png');
     expect(ctx.core.readPictureCached).not.toHaveBeenCalled();
   });
@@ -144,7 +144,7 @@ describe('readPictureTool', () => {
     const file = path.join(tempDir, 'doc.txt');
     fs.writeFileSync(file, 'hello');
 
-    const out = await readPictureTool.handler(ctx, { path: 'doc.txt' });
+    const out = await runTool(readPictureTool, ctx, { path: 'doc.txt' }, testSignal);
 
     expect(out).toContain('Error:');
     expect(out).toContain('.txt');
@@ -163,7 +163,7 @@ describe('readPictureTool', () => {
     // extension before any decode is attempted.
     fs.writeFileSync(file, Buffer.from('424D0000000000000000000000000000', 'hex'));
 
-    const out = await readPictureTool.handler(ctx, { path: 'pic.bmp' });
+    const out = await runTool(readPictureTool, ctx, { path: 'pic.bmp' }, testSignal);
 
     expect(out).toContain('Error:');
     expect(out).toContain('.bmp');
@@ -184,7 +184,7 @@ describe('readPictureTool', () => {
       cacheToken: 'dddddddddddddddd',
     });
 
-    const out = await readPictureTool.handler(ctx, { path: 'sub/nested.png' });
+    const out = await runTool(readPictureTool, ctx, { path: 'sub/nested.png' }, testSignal);
 
     const [absPath] = (ctx.core.readPictureCached as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(absPath).toBe(path.join(tempDir, 'sub', 'nested.png'));
@@ -197,7 +197,7 @@ describe('readPictureTool', () => {
     makeImage('img.png');
     (ctx.core.readPictureCached as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('vision model failed'));
 
-    const out = await readPictureTool.handler(ctx, { path: 'img.png' });
+    const out = await runTool(readPictureTool, ctx, { path: 'img.png' }, testSignal);
 
     expect(out).toContain('Error:');
     expect(out).toContain('vision model failed');

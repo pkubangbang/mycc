@@ -1,11 +1,41 @@
 # MYCC - My Coding Company
 
-A CLI coding agent using Ollama-cloud for LLM inference, written in nodejs.
+A CLI coding agent using Ollama for local or cloud LLM inference, written in nodejs.
 
 **Getting started:** see [QUICKSTART.md](QUICKSTART.md) for installation,
 provider setup (Ollama / DeepSeek), the embedding model, tmux, the setup
 wizard, launching the app (auto / daemon / serve), and the optional
 cross-machine peer wire.
+
+### Local Ollama versus Ollama Cloud
+
+With `API_PROVIDER=ollama`, capabilities do not all use the same Ollama
+endpoint. **Local routed** means a `:cloud` model request goes to the local
+Ollama server, which forwards it to Ollama Cloud; inference is therefore
+cloud-backed even though the request target is localhost.
+
+| Capability | Local only | Local routed | Cloud only | Request target | `OLLAMA_API_KEY` |
+|---|:---:|:---:|:---:|---|---|
+| Embedding (wiki/RAG and skill matching) | Yes | No | Yes | `OLLAMA_HOST` (default `127.0.0.1:11434`) | Local only: no; direct cloud: yes |
+| Chat + vision (`screen` / `read_picture`) | Yes | Yes | Yes | Local and local-routed: `127.0.0.1:11434`; direct cloud: `ollama.com` | Local only: no; local routed: server sign-in; direct cloud: yes |
+| `web_search` / `web_fetch` | No | Yes | Yes | Local/custom: `OLLAMA_HOST` + `/api/experimental/web_*`; direct cloud: `ollama.com/api/web_*` | Cloud: yes; local/custom: server-dependent |
+
+Chat and vision use the configured host. Web requests use host-aware routes:
+direct `https://ollama.com` retains the cloud `/api/web_*` endpoints and API
+key; local/custom hosts use their **experimental** `/api/experimental/web_*`
+routes without forwarding that key. The local server must support them.
+Local Ollama can proxy those requests to Ollama Cloud or, where supported, to a
+local backend configured by `OLLAMA_CLOUD_BASE_URL`. Consequently, localhost
+as mycc's request target does not by itself guarantee local web execution or an
+absence of public-network egress. `web_fetch` responses are normalized to supply
+a missing URL and convert absent links to an empty list.
+
+For local cloud-routed chat and vision, authenticate the local Ollama server
+with `ollama signin`. Direct cloud requests use `OLLAMA_API_KEY`; the key is
+also used by embeddings when `OLLAMA_HOST=https://ollama.com`. Local web-tool
+authentication belongs to the server/backend, and mycc does not forward that
+key to local/custom hosts. Generate a key at
+[ollama.com/settings/keys](https://ollama.com/settings/keys).
 
 > New to mycc's concepts (letterbox, session, teammate, mindmap, intent
 > language)? The `mycc-self-awareness` skill is a plain-language glossary.
@@ -35,7 +65,7 @@ All environment variables can be overridden via CLI flags. These take highest pr
 | Flag | Env Variable | Description |
 |------|-------------|-------------|
 | `--ollama-host` | `OLLAMA_HOST` | Ollama server URL (default: http://127.0.0.1:11434) |
-| `--ollama-api-key` | `OLLAMA_API_KEY` | Ollama API key for cloud features (not needed for local 127.0.0.1:11434) |
+| `--ollama-api-key` | `OLLAMA_API_KEY` | Direct Ollama Cloud API key for chat/embeddings/web; local-routed chat uses `ollama signin`; local/custom web authentication is server-side |
 | `--ollama-model` | `OLLAMA_MODEL` | Ollama chat model (default: glm-5:cloud) |
 | `--ollama-vision-model` | `OLLAMA_VISION_MODEL` | Ollama vision model for screen/image tools |
 | `--ollama-embedding-model` | `OLLAMA_EMBEDDING_MODEL` | Embedding model for semantic search/RAG |

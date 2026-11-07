@@ -4,9 +4,9 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { todoCreateTool } from '../../tools/todo_create.js';
-import { createMockContext } from './test-utils.js';
-import type { AgentContext, TodoModule } from '../../types.js';
 
+import type { AgentContext, TodoModule } from '../../types.js';
+import { createMockContext, runTool, testSignal } from './test-utils.js';
 function createMockTodoContext(): { ctx: AgentContext; mockTodo: TodoModule } {
   const mockTodo: TodoModule = {
     createTodo: vi.fn(() => ({ id: 1, name: 'test', done: false, hash: 'abc12345' })),
@@ -39,7 +39,7 @@ describe('todoCreateTool', () => {
     vi.mocked(mockTodo.createTodo).mockReturnValue({ id: 1, name: 'New task', done: false, hash: 'def67890' });
     vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [ ] 1. New task [hash: def67890]');
 
-    const result = todoCreateTool.handler(ctx, { name: 'New task' });
+    const result = runTool(todoCreateTool, ctx, { name: 'New task' }, testSignal);
     expect(mockTodo.createTodo).toHaveBeenCalledWith('New task', undefined);
     expect(result).toContain('Created todo #1');
     expect(result).toContain('New task');
@@ -50,42 +50,42 @@ describe('todoCreateTool', () => {
     vi.mocked(mockTodo.createTodo).mockReturnValue({ id: 2, name: 'Task with note', done: false, hash: 'ghi11111', note: 'important' });
     vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [ ] 2. Task with note (important) [hash: ghi11111]');
 
-    const result = todoCreateTool.handler(ctx, { name: 'Task with note', note: 'important' });
+    const result = runTool(todoCreateTool, ctx, { name: 'Task with note', note: 'important' }, testSignal);
     expect(mockTodo.createTodo).toHaveBeenCalledWith('Task with note', 'important');
     expect(result).toContain('note: important');
   });
 
   it('should return error for empty name', () => {
-    const result = todoCreateTool.handler(ctx, { name: '' });
+    const result = runTool(todoCreateTool, ctx, { name: '' }, testSignal);
     expect(result).toBe('Error: name is required and must be a non-empty string.');
     expect(mockTodo.createTodo).not.toHaveBeenCalled();
   });
 
   it('should return error for missing name', () => {
-    const result = todoCreateTool.handler(ctx, {});
+    const result = runTool(todoCreateTool, ctx, {}, testSignal);
     expect(result).toBe('Error: name is required and must be a non-empty string.');
     expect(mockTodo.createTodo).not.toHaveBeenCalled();
   });
 
   it('should return error for whitespace-only name', () => {
-    const result = todoCreateTool.handler(ctx, { name: '   ' });
+    const result = runTool(todoCreateTool, ctx, { name: '   ' }, testSignal);
     expect(result).toBe('Error: name is required and must be a non-empty string.');
     expect(mockTodo.createTodo).not.toHaveBeenCalled();
   });
 
   it('should return error for non-string name', () => {
-    const result = todoCreateTool.handler(ctx, { name: 123 as unknown as string });
+    const result = runTool(todoCreateTool, ctx, { name: 123 as unknown as string }, testSignal);
     expect(result).toBe('Error: name is required and must be a non-empty string.');
     expect(mockTodo.createTodo).not.toHaveBeenCalled();
   });
 
   it('should trim whitespace from name', () => {
-    todoCreateTool.handler(ctx, { name: '  Padded task  ' });
+    runTool(todoCreateTool, ctx, { name: '  Padded task  ' }, testSignal);
     expect(mockTodo.createTodo).toHaveBeenCalledWith('Padded task', undefined);
   });
 
   it('should trim whitespace from note', () => {
-    todoCreateTool.handler(ctx, { name: 'Task', note: '  padded note  ' });
+    runTool(todoCreateTool, ctx, { name: 'Task', note: '  padded note  ' }, testSignal);
     expect(mockTodo.createTodo).toHaveBeenCalledWith('Task', 'padded note');
   });
 
@@ -93,7 +93,7 @@ describe('todoCreateTool', () => {
     vi.mocked(mockTodo.createTodo).mockReturnValue({ id: 1, name: 'Task', done: false, hash: 'abc12345' });
     vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [ ] 1. Task [hash: abc12345]');
 
-    const result = todoCreateTool.handler(ctx, { name: 'Task' });
+    const result = runTool(todoCreateTool, ctx, { name: 'Task' }, testSignal);
     // The tool returns the item + hash; the list is rendered by the loop
     // (collect.ts nudge) and `/todos` — so it MUST NOT echo it, or every
     // create would duplicate the rendering. (The title asserted the opposite
@@ -106,7 +106,7 @@ describe('todoCreateTool', () => {
     vi.mocked(mockTodo.createTodo).mockReturnValue({ id: 1, name: 'My task', done: false, hash: 'abc12345' });
     vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [ ] 1. My task [hash: abc12345]');
 
-    todoCreateTool.handler(ctx, { name: 'My task' });
+    runTool(todoCreateTool, ctx, { name: 'My task' }, testSignal);
     expect(ctx.core.brief).toHaveBeenCalledWith('info', 'todo_create', expect.any(String), expect.stringContaining('My task'));
   });
 
@@ -125,18 +125,18 @@ describe('todoCreateTool', () => {
 
   it('should handle special characters in name', () => {
     const specialName = 'Fix bug #123 [URGENT] <test>';
-    todoCreateTool.handler(ctx, { name: specialName });
+    runTool(todoCreateTool, ctx, { name: specialName }, testSignal);
     expect(mockTodo.createTodo).toHaveBeenCalledWith(specialName, undefined);
   });
 
   it('should accept very long name', () => {
     const longName = 'A'.repeat(500);
-    todoCreateTool.handler(ctx, { name: longName });
+    runTool(todoCreateTool, ctx, { name: longName }, testSignal);
     expect(mockTodo.createTodo).toHaveBeenCalledWith(longName, undefined);
   });
 
   it('should handle empty note as undefined', () => {
-    todoCreateTool.handler(ctx, { name: 'Task', note: '' });
+    runTool(todoCreateTool, ctx, { name: 'Task', note: '' }, testSignal);
     expect(mockTodo.createTodo).toHaveBeenCalledWith('Task', undefined);
   });
 });

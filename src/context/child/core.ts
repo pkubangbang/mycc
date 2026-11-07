@@ -8,6 +8,7 @@ import type { CrossroadCardWire } from '../../loop/crossroad-card.js';
 import { ipc, sendStatus } from './ipc-helpers.js';
 import { isVerbose } from '../../config.js';
 import { BaseCore } from '../shared/base-core.js';
+import { deriveDisposableController } from '../../loop/cancel-token.js';
 
 /**
  * Core module for child process
@@ -230,23 +231,45 @@ export class ChildCore extends BaseCore implements CoreModule {
   }
 
   /**
-   * Wrap a slow operation with ESC-aware quick return
-   * 
-   * In child processes, ESC handling is not yet implemented.
-   * This simply executes the operation with a dummy abort controller.
-   * TODO: Implement IPC-based ESC handling for child processes.
-   * 
-   * @param operation - A function that receives an AbortController and returns the slow operation promise
-   * @param _onCleanUp - Cleanup function (unused in child process, kept for API consistency)
-   * @returns Result of the operation
+   * Wrap a slow operation with process-cancellation awareness.
+   *
+   * A child cannot receive ESC directly (the key is handled by the lead's
+   * line editor), so this does NOT mirror the lead's ESC semantics. What it
+   * DOES provide is a controller derived from the child's process-wide
+   * cancel token (src/loop/cancel-token.ts): when the lead tears the teammate
+   * down, every in-flight operation observing this signal is aborted
+   * immediately instead of running to its own timeout.
+   *
+   * Previously this handed out a bare `new AbortController()` that nothing
+   * ever aborted — a signal that type-checked as real but could never fire.
+   *
+   * @param operation - A function that receives the derived AbortController
+   * @param onCleanUp - Runs once if the process is cancelled mid-flight,
+   *   matching the lead's escAware contract (the caller returns this value
+   *   instead of an aborted operation's result)
+   * @returns Result of the operation, or the cleanup value on cancellation
    */
   async escAware<T>(
     operation: (abortController: AbortController) => Promise<T>,
-    _onCleanUp: () => T | Promise<T>
+    onCleanUp: () => T | Promise<T>
   ): Promise<T> {
-    // Child processes don't receive ESC directly - they rely on parent IPC
-    // For now, just execute the operation with a dummy abort controller
-    const abortController = new AbortController();
-    return operation(abortController);
+    // `dispose` detaches this operation's listener from the process token. It
+    // must run on EVERY exit path — a successful tool call would otherwise
+    // leave one listener behind, accumulating for the lifetime of a long-lived
+    // teammate (the peer's #3 finding).
+    const { controller: abortController, dispose } = deriveDisposableController();
+    try {
+      if (abortController.signal.aborted) return await onCleanUp();
+      try {
+        return await operation(abortController);
+      } catch (err) {
+        // Cancellation is expected here, not a failure: report it through the
+        // same cleanup path the lead uses for ESC.
+        if (abortController.signal.aborted) return await onCleanUp();
+        throw err;
+      }
+    } finally {
+      dispose();
+    }
   }
 }

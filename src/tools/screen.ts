@@ -22,6 +22,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { isCancellation } from '../loop/cancellation.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -443,6 +444,9 @@ export const screenTool: ToolDefinition = {
       const description = await ctx.core.imgDescribe(screenshotPath, customPrompt, signal);
       return `## Screen Content\n\n${description}`;
     } catch (error: unknown) {
+      // Cancellation propagates; the `finally` below still removes the temp
+      // screenshot, so rethrowing does not leak the file.
+      if (isCancellation(error, signal)) throw error;
       const err = error as Error;
       ctx.core.brief('error', 'screen', err.message);
       return `## ❌ Screen Tool Error\n\n${err.message}`;

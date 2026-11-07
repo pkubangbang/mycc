@@ -17,11 +17,12 @@
  * or extend the signature to accept a title parameter.
  */
 
-import { Ollama } from 'ollama';
-import { getOllamaHost } from '../config.js';
+import { OllamaHttpClient } from './ollama-http.js';
+import { getOllamaHost, getOllamaApiKey } from '../config.js';
 
-const ollama = new Ollama({
+const ollama = new OllamaHttpClient({
   host: getOllamaHost(),
+  apiKey: getOllamaApiKey(),
 });
 
 export const EMBEDDING_MODEL = process.env.OLLAMA_EMBEDDING_MODEL || 'embeddinggemma';

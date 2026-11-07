@@ -6,9 +6,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { editTool } from '../../tools/edit.js';
-import { createMockContext, createTempDir, removeTempDir } from './test-utils.js';
-import type { AgentContext } from '../../types.js';
 
+import type { AgentContext } from '../../types.js';
+import { createMockContext, createTempDir, removeTempDir, runTool, testSignal } from './test-utils.js';
 describe('editTool', () => {
   let tempDir: string;
   let ctx: AgentContext;
@@ -26,11 +26,11 @@ describe('editTool', () => {
     const testFile = path.join(tempDir, 'edit.txt');
     fs.writeFileSync(testFile, 'Hello, World!');
 
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'edit.txt',
       old_text: 'World',
       new_text: 'Universe',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -42,11 +42,11 @@ describe('editTool', () => {
     const testFile = path.join(tempDir, 'multiline.txt');
     fs.writeFileSync(testFile, 'line1\nline2\nline3');
 
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'multiline.txt',
       old_text: 'line1\nline2',
       new_text: 'replaced',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -58,11 +58,11 @@ describe('editTool', () => {
     const testFile = path.join(tempDir, 'delete.txt');
     fs.writeFileSync(testFile, 'Hello, World!');
 
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'delete.txt',
       old_text: ', World',
       new_text: '',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -74,11 +74,11 @@ describe('editTool', () => {
     const testFile = path.join(tempDir, 'notfound.txt');
     fs.writeFileSync(testFile, 'Hello, World!');
 
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'notfound.txt',
       old_text: 'Goodbye',
       new_text: 'test',
-    });
+    }, testSignal);
 
     expect(result).toContain('Error:');
     expect(result).toContain('Text not found');
@@ -88,11 +88,11 @@ describe('editTool', () => {
     const testFile = path.join(tempDir, 'duplicate.txt');
     fs.writeFileSync(testFile, 'foo bar foo baz foo');
 
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'duplicate.txt',
       old_text: 'foo',
       new_text: 'replaced',
-    });
+    }, testSignal);
 
     expect(result).toContain('Error:');
     expect(result).toContain('Found 3 occurrences');
@@ -103,11 +103,11 @@ describe('editTool', () => {
     const testFile = path.join(tempDir, 'unique.txt');
     fs.writeFileSync(testFile, 'foo bar baz foo');
 
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'unique.txt',
       old_text: 'bar',
       new_text: 'replaced',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -124,11 +124,11 @@ describe('editTool', () => {
     // target for asserting the external-access branch. A non-sensitive
     // external target reaches requestExternalPathAccess → 'Path escapes
     // workspace'. (The sensitive-path branch is covered in path-validation.)
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: '../../../tmp/mycc-traversal-probe.txt',
       old_text: 'root',
       new_text: 'hacked',
-    });
+    }, testSignal);
 
     // Traversal patterns resolve outside the workspace but are not sensitive
     // system paths, so they reach the requestExternalPathAccess denial.
@@ -136,11 +136,11 @@ describe('editTool', () => {
   });
 
   it('should handle non-existent file', async () => {
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'nonexistent.txt',
       old_text: 'something',
       new_text: 'else',
-    });
+    }, testSignal);
 
     expect(result).toContain('Error:');
     expect(result).toContain('ENOENT');
@@ -150,11 +150,11 @@ describe('editTool', () => {
     const testFile = path.join(tempDir, 'special.txt');
     fs.writeFileSync(testFile, 'placeholder');
 
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'special.txt',
       old_text: 'placeholder',
       new_text: 'Line1\nLine2\tTabbed\nUnicode: \u4e2d\u6587',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -167,11 +167,11 @@ describe('editTool', () => {
     fs.writeFileSync(testFile, '  indented\n\ttabbed\n  more');
 
     // Should match exact indentation
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'whitespace.txt',
       old_text: '  indented',
       new_text: 'replaced',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -184,11 +184,11 @@ describe('editTool', () => {
     fs.writeFileSync(testFile, 'HelloWorld');
 
     // 'World' is a substring of 'HelloWorld' and should be found
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'partial.txt',
       old_text: 'World',
       new_text: 'Universe',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -200,11 +200,11 @@ describe('editTool', () => {
     const testFile = path.join(tempDir, 'empty.txt');
     fs.writeFileSync(testFile, '');
 
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'empty.txt',
       old_text: 'anything',
       new_text: 'something',
-    });
+    }, testSignal);
 
     expect(result).toContain('Error:');
     expect(result).toContain('Text not found');
@@ -216,11 +216,11 @@ describe('editTool', () => {
     const testFile = path.join(dir, 'space file.txt');
     fs.writeFileSync(testFile, 'original');
 
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'space folder/space file.txt',
       old_text: 'original',
       new_text: 'edited',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -233,11 +233,11 @@ describe('editTool', () => {
     fs.writeFileSync(testFile, 'line1\r\nline2\r\nline3');
 
     // LLM provides LF-only old_text (as always happens in JSON tool calls)
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'crlf.txt',
       old_text: 'line1\nline2',
       new_text: 'replaced',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -249,11 +249,11 @@ describe('editTool', () => {
     const testFile = path.join(tempDir, 'preserve-crlf.txt');
     fs.writeFileSync(testFile, 'header\r\ncontent\r\nfooter');
 
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'preserve-crlf.txt',
       old_text: 'content',
       new_text: 'modified',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -267,11 +267,11 @@ describe('editTool', () => {
     fs.writeFileSync(testFile, 'a\nb\nc');
 
     // LLM might send CRLF if it previously read a CRLF file
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'lf-file.txt',
       old_text: 'a\r\nb',
       new_text: 'replaced',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -284,11 +284,11 @@ describe('editTool', () => {
     fs.writeFileSync(testFile, '﻿' + 'Hello, World!');
 
     // LLM sends old_text without BOM (from read output after BOM stripping)
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'bom.txt',
       old_text: 'Hello',
       new_text: 'Bonjour',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
     // The self-check should report bom=true (preserved)
@@ -307,12 +307,12 @@ describe('editTool', () => {
     const testFile = path.join(tempDir, 'bom-strip.txt');
     fs.writeFileSync(testFile, '﻿' + 'Hello, World!');
 
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'bom-strip.txt',
       old_text: 'Hello',
       new_text: 'Bonjour',
       strip_bom: true,
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
     expect(result).toContain('bom=false');
@@ -327,11 +327,11 @@ describe('editTool', () => {
     const testFile = path.join(tempDir, 'nobom.txt');
     fs.writeFileSync(testFile, 'Hello, World!');
 
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'nobom.txt',
       old_text: 'Hello',
       new_text: 'Bonjour',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
     expect(result).toContain('bom=false');
@@ -362,21 +362,21 @@ describe('editTool', () => {
   // "Error executing edit_file: ...". The handler must now return a clean
   // Error string (not throw) so the agent gets an actionable message.
   it('should return a clean Error when path arg is missing (no escaping throw)', async () => {
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       old_text: 'foo',
       new_text: 'bar',
-    });
+    }, testSignal);
 
     expect(result).toBe('Error: `path` argument is required and must be a non-empty string.');
     expect(result).not.toContain('Cannot read properties of undefined');
   });
 
   it('should return a clean Error when path arg is an empty string', async () => {
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: '',
       old_text: 'foo',
       new_text: 'bar',
-    });
+    }, testSignal);
 
     expect(result).toBe('Error: `path` argument is required and must be a non-empty string.');
   });
@@ -385,10 +385,10 @@ describe('editTool', () => {
     const testFile = path.join(tempDir, 'exists.txt');
     fs.writeFileSync(testFile, 'Hello');
 
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'exists.txt',
       new_text: 'bar',
-    });
+    }, testSignal);
 
     expect(result).toBe('Error: `old_text` argument is required and must be a string.');
   });
@@ -397,10 +397,10 @@ describe('editTool', () => {
     const testFile = path.join(tempDir, 'exists2.txt');
     fs.writeFileSync(testFile, 'Hello');
 
-    const result = await editTool.handler(ctx, {
+    const result = await runTool(editTool, ctx, {
       path: 'exists2.txt',
       old_text: 'Hello',
-    });
+    }, testSignal);
 
     expect(result).toBe('Error: `new_text` argument is required and must be a string.');
   });
@@ -415,11 +415,11 @@ describe('editTool', () => {
       const testFile = path.join(tempDir, 'le-crlf.txt');
       fs.writeFileSync(testFile, 'alpha\r\nbeta\r\ngamma');
 
-      const result = await editTool.handler(ctx, {
+      const result = await runTool(editTool, ctx, {
         path: 'le-crlf.txt',
         old_text: 'beta',
         new_text: 'BETA',
-      });
+      }, testSignal);
 
       expect(result).toMatch(/^OK/);
       expect(result).toContain('newline=crlf');
@@ -430,11 +430,11 @@ describe('editTool', () => {
       const testFile = path.join(tempDir, 'le-lf.txt');
       fs.writeFileSync(testFile, 'alpha\nbeta\ngamma');
 
-      const result = await editTool.handler(ctx, {
+      const result = await runTool(editTool, ctx, {
         path: 'le-lf.txt',
         old_text: 'beta',
         new_text: 'BETA',
-      });
+      }, testSignal);
 
       expect(result).toMatch(/^OK/);
       expect(result).toContain('newline=lf');

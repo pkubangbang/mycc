@@ -23,14 +23,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { readTool } from '../../tools/read.js';
 import { writeTool } from '../../tools/write.js';
 import { editTool } from '../../tools/edit.js';
-import {
-  createMockContext,
-  createTempDir,
-  removeTempDir,
-  pathTraversalPatterns,
-} from './test-utils.js';
-import type { AgentContext } from '../../types.js';
 
+import type { AgentContext } from '../../types.js';
+import { createMockContext, createTempDir, pathTraversalPatterns, removeTempDir, runTool, testSignal } from './test-utils.js';
 // Traversal patterns: resolve outside the workspace but are NOT sensitive
 // system paths, so they reach the requestExternalPathAccess() denial.
 //
@@ -69,7 +64,7 @@ describe('path validation', () => {
     // requestExternalPathAccess(), which the mock denies with 'Path escapes workspace'.
     for (const pattern of [...traversalPatterns, ...sensitiveSystemPaths]) {
       it(`should block path traversal pattern: ${pattern}`, async () => {
-        const result = await readTool.handler(ctx, { path: pattern });
+        const result = await runTool(readTool, ctx, { path: pattern }, testSignal);
         expect(result).toContain('Error: Path escapes workspace');
       });
     }
@@ -80,7 +75,7 @@ describe('path validation', () => {
     it.each(pathTraversalPatterns)(
       'denies the shared traversal corpus entry %s at the guard (not by accident)',
       async (pattern) => {
-        const result = await readTool.handler(ctx, { path: pattern });
+        const result = await runTool(readTool, ctx, { path: pattern }, testSignal);
         expect(result).toContain('Error: Path escapes workspace');
         expect(result).not.toContain('File not found');
       },
@@ -90,20 +85,20 @@ describe('path validation', () => {
   describe('writeTool', () => {
     for (const pattern of traversalPatterns) {
       it(`should block path traversal pattern: ${pattern}`, async () => {
-        const result = await writeTool.handler(ctx, {
+        const result = await runTool(writeTool, ctx, {
           path: pattern,
           content: 'malicious',
-        });
+        }, testSignal);
         // Traversal patterns reach the external-access denial.
         expect(result).toContain('Error: Path escapes workspace');
       });
     }
     for (const pattern of sensitiveSystemPaths) {
       it(`should block sensitive system path: ${pattern}`, async () => {
-        const result = await writeTool.handler(ctx, {
+        const result = await runTool(writeTool, ctx, {
           path: pattern,
           content: 'malicious',
-        });
+        }, testSignal);
         // Sensitive system paths short-circuit to the protected-path
         // rejection before the external-access check — assert that exact
         // branch, not a generic 'Error:'.
@@ -116,22 +111,22 @@ describe('path validation', () => {
   describe('editTool', () => {
     for (const pattern of traversalPatterns) {
       it(`should block path traversal pattern: ${pattern}`, async () => {
-        const result = await editTool.handler(ctx, {
+        const result = await runTool(editTool, ctx, {
           path: pattern,
           old_text: 'test',
           new_text: 'test',
-        });
+        }, testSignal);
         // Traversal patterns reach the external-access denial.
         expect(result).toContain('Error: Path escapes workspace');
       });
     }
     for (const pattern of sensitiveSystemPaths) {
       it(`should block sensitive system path: ${pattern}`, async () => {
-        const result = await editTool.handler(ctx, {
+        const result = await runTool(editTool, ctx, {
           path: pattern,
           old_text: 'test',
           new_text: 'test',
-        });
+        }, testSignal);
         // Sensitive system paths short-circuit to the protected-path
         // rejection before the external-access check — assert that exact
         // branch, not a generic 'Error:'.

@@ -16,7 +16,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { skillSearchTool } from '../../tools/skill_search.js';
-import { createMockContext } from './test-utils.js';
+
 import type { AgentContext, Skill, SkillModule, WikiModule } from '../../types.js';
 
 // ── Mocks ───────────────────────────────────────────────────────────────
@@ -50,7 +50,7 @@ vi.mock('../../config.js', () => ({
 
 // Import the mocked extractor so tests can override its return per-case.
 import { extractKeywords } from '../../loop/keyword-extractor.js';
-
+import { createMockContext, runTool, testSignal } from './test-utils.js';
 const mockedExtractKeywords = vi.mocked(extractKeywords);
 
 /**
@@ -171,7 +171,7 @@ describe('skillSearchTool - Basics', () => {
     ctx = createMockContextWithSkills('/tmp/test', skills);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code'], freeformQuery: 'code review' });
 
-    const result = await skillSearchTool.handler(ctx, { search: 'code' });
+    const result = await runTool(skillSearchTool, ctx, { search: 'code' }, testSignal);
 
     expect(result).toContain("No skills found matching 'code'");
   });
@@ -185,7 +185,7 @@ describe('skillSearchTool - Basics', () => {
     ctx = createMockContextWithSkills('/tmp/test', skills);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
 
-    const result = await skillSearchTool.handler(ctx, { search: 'code review' });
+    const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
     expect(result).toContain('code-review');
     expect(result).toContain('Found 1 skill');
@@ -203,7 +203,7 @@ describe('skillSearchTool - Basics', () => {
     ctx = createMockContextWithSkills('/tmp/test', skills);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
 
-    const result = await skillSearchTool.handler(ctx, { search: 'code review' });
+    const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
     expect(result).toContain("No skills found matching 'code review'");
   });
@@ -222,7 +222,7 @@ describe('skillSearchTool - Basics', () => {
       freeformQuery: 'many',
     });
 
-    const result = await skillSearchTool.handler(ctx, { search: 'many keywords' });
+    const result = await runTool(skillSearchTool, ctx, { search: 'many keywords' }, testSignal);
 
     // 'extra-only' must NOT appear (6th keyword ignored, 0 points).
     expect(result).not.toContain('extra-only');
@@ -248,7 +248,7 @@ describe('skillSearchTool - Basics', () => {
     ]);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code'], freeformQuery: 'code review' });
 
-    const result = await skillSearchTool.handler(ctx, { search: 'code' });
+    const result = await runTool(skillSearchTool, ctx, { search: 'code' }, testSignal);
 
     expect(result).toContain('code-review');
     expect(result).toContain('score 12');
@@ -274,7 +274,7 @@ describe('skillSearchTool - Basics', () => {
     ]);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
 
-    const result = await skillSearchTool.handler(ctx, { search: 'code review' });
+    const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
     expect(result).toContain('code-review');
     expect(result).toContain('score 17');
@@ -295,7 +295,7 @@ describe('skillSearchTool - Basics', () => {
     ]);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
 
-    const result = await skillSearchTool.handler(ctx, { search: 'code review' });
+    const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
     expect(result).toContain('code-review');
     expect(result).toContain('score 17');
@@ -318,7 +318,7 @@ describe('skillSearchTool - Basics', () => {
     ]);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
 
-    const result = await skillSearchTool.handler(ctx, { search: 'code review' });
+    const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
     expect(result).toContain("No skills found matching 'code review'");
   });
@@ -344,7 +344,7 @@ describe('skillSearchTool - Basics', () => {
     ]);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
 
-    const result = await skillSearchTool.handler(ctx, { search: 'code review' });
+    const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
     // All four clear score > 10, but only top 3 are returned.
     expect(result).toContain('Found 3 skill');
@@ -365,14 +365,14 @@ describe('skillSearchTool - Basics', () => {
 
   it('handles empty search parameter', async () => {
     ctx = createMockContextWithSkills('/tmp/test', [createSampleSkill()]);
-    const result = await skillSearchTool.handler(ctx, { search: '' });
+    const result = await runTool(skillSearchTool, ctx, { search: '' }, testSignal);
 
     expect(result).toContain('ERROR: The "search" parameter is required and must be a non-empty string.');
   });
 
   it('handles search with only whitespace', async () => {
     ctx = createMockContextWithSkills('/tmp/test', [createSampleSkill()]);
-    const result = await skillSearchTool.handler(ctx, { search: '   ' });
+    const result = await runTool(skillSearchTool, ctx, { search: '   ' }, testSignal);
 
     expect(result).toContain('ERROR: The "search" parameter is required and must be a non-empty string.');
   });
@@ -411,7 +411,7 @@ describe('skillSearchTool - Basics', () => {
     ctx2.wiki = wikiModule;
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
 
-    const result = await skillSearchTool.handler(ctx2, { search: 'code review' });
+    const result = await runTool(skillSearchTool, ctx2, { search: 'code review' }, testSignal);
 
     // Keyword points (17) still surface the skill; boost defaults to 1.0.
     expect(result).toContain('code-review');
@@ -425,7 +425,7 @@ describe('skillSearchTool - Basics', () => {
     ]);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: [], freeformQuery: '' });
 
-    const result = await skillSearchTool.handler(ctx, { search: 'something vague' });
+    const result = await runTool(skillSearchTool, ctx, { search: 'something vague' }, testSignal);
 
     expect(result).toContain("No skills found matching 'something vague'");
   });
@@ -436,7 +436,7 @@ describe('skillSearchTool - Basics', () => {
     ]);
     mockedExtractKeywords.mockResolvedValue({ status: 'skipped' });
 
-    const result = await skillSearchTool.handler(ctx, { search: 'hello' });
+    const result = await runTool(skillSearchTool, ctx, { search: 'hello' }, testSignal);
 
     expect(result).toContain("No skills found matching 'hello'");
   });
@@ -447,7 +447,7 @@ describe('skillSearchTool - Basics', () => {
     ]);
     mockedExtractKeywords.mockResolvedValue({ status: 'failed' });
 
-    const result = await skillSearchTool.handler(ctx, { search: 'code review' });
+    const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
     expect(result).toContain("No skills found matching 'code review'");
   });
@@ -459,7 +459,7 @@ describe('skillSearchTool - Basics', () => {
     ctx = createMockContextWithSkills('/tmp/test', skills);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
 
-    await skillSearchTool.handler(ctx, { search: 'code review' });
+    await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
     expect(ctx.core.brief).toHaveBeenCalledWith('info', 'skill_search', expect.stringContaining('code-review'), 'code review');
   });
@@ -472,7 +472,7 @@ describe('skillSearchTool - Basics', () => {
     ctx = createMockContextWithSkills('/tmp/test', skills);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
 
-    await skillSearchTool.handler(ctx, { search: 'code review' });
+    await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
     expect(ctx.wiki.get).toHaveBeenCalledWith(
       expect.any(String),
@@ -503,7 +503,7 @@ describe('skillSearchTool - Basics', () => {
     ]);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
 
-    const result = await skillSearchTool.handler(ctx, { search: 'code review' });
+    const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
     expect(result).toContain('code-review');
     // score must be 17 (points only, boost 1.0) — NOT 17 * 1.4 = 23.8.
@@ -525,7 +525,7 @@ describe('skillSearchTool - Basics', () => {
     ]);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
 
-    const result = await skillSearchTool.handler(ctx, { search: 'code review' });
+    const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
     expect(result).toContain('code-review');
     expect(result).toContain('score 17'); // boost 1.0, not 1.3
@@ -545,7 +545,7 @@ describe('skillSearchTool - Basics', () => {
     ]);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
 
-    const result = await skillSearchTool.handler(ctx, { search: 'code review' });
+    const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
     expect(result).toContain('code-review');
     // 17 * (1 + (0.9 - 0.5)) = 17 * 1.4 = 23.8

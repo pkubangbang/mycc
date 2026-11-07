@@ -20,7 +20,7 @@
 import { MODEL, retryChat, webSearch as engineWebSearch, webFetch as engineWebFetch } from '../engine/chat-provider.js';
 import type { Message, Tool, ToolCall } from '../types.js';
 import type { Node } from './types.js';
-import type { WebFetchResponse } from 'ollama';
+import type { WebFetchResponse } from '../engine/provider-types.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
@@ -30,6 +30,7 @@ import { TriologueLite } from '../loop/triologue-lite.js';
 import type { MisorderWarning, ToolAlignmentWarning } from '../loop/triologue-lite.js';
 import { JsonlTranscriptWriter, asAppendablePiece } from '../loop/triologue/transcript.js';
 import { grepSearch } from '../utils/grep-search.js';
+import { validateWebFetchUrl } from '../utils/web-url.js';
 
 /**
  * Configuration constants
@@ -552,12 +553,18 @@ function markTerm(
 /**
  * Helper: Wrap a promise with a timeout
  */
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage: string): Promise<T> {
+function withTimeout<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  errorMessage: string,
+): Promise<T> {
+  const controller = new AbortController();
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
+      controller.abort();
       reject(new Error(errorMessage));
     }, timeoutMs);
-    promise
+    operation(controller.signal)
       .then((result) => {
         clearTimeout(timer);
         resolve(result);
@@ -579,7 +586,7 @@ async function webSearch(query: string): Promise<string> {
 
   try {
     const results = await withTimeout(
-      engineWebSearch(query),
+      (signal) => engineWebSearch(query, signal),
       WEB_TIMEOUT_MS,
       `Web search timed out after ${WEB_TIMEOUT_MS / 1000}s`
     );
@@ -592,7 +599,8 @@ async function webSearch(query: string): Promise<string> {
 
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
-      lines.push(`## Result ${i + 1}`);
+      lines.push(`## Result ${i + 1}${result.title ? `: ${result.title}` : ''}`);
+      if (result.url) lines.push(`**URL:** ${result.url}`);
       lines.push(result.content || '(no content)');
       lines.push('');
     }
@@ -611,23 +619,19 @@ async function webFetch(url: string): Promise<string> {
     return 'Error: url is required';
   }
 
-  // Validate URL format
-  try {
-    new URL(url);
-  } catch {
-    return 'Error: Invalid URL format. Please provide a valid URL starting with http:// or https://';
-  }
+  const validationError = validateWebFetchUrl(url);
+  if (validationError) return validationError;
 
   try {
     const response: WebFetchResponse = await withTimeout(
-      engineWebFetch(url),
+      (signal) => engineWebFetch(url, signal),
       WEB_TIMEOUT_MS,
       `Web fetch timed out after ${WEB_TIMEOUT_MS / 1000}s`
     );
 
     const lines = [
       `## Fetched: ${response.title || 'Untitled'}`,
-      `**URL:** ${url}\n`,
+      `**URL:** ${response.url}\n`,
       '### Content',
       response.content || '(no content)',
       '',

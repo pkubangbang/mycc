@@ -6,9 +6,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { readTool } from '../../tools/read.js';
-import { createMockContext, createTempDir, removeTempDir } from './test-utils.js';
-import type { AgentContext } from '../../types.js';
 
+import type { AgentContext } from '../../types.js';
+import { createMockContext, createTempDir, removeTempDir, runTool, testSignal } from './test-utils.js';
 describe('readTool', () => {
   let tempDir: string;
   let ctx: AgentContext;
@@ -26,7 +26,7 @@ describe('readTool', () => {
     const testFile = path.join(tempDir, 'test.txt');
     fs.writeFileSync(testFile, 'Hello, World!');
 
-    const result = await readTool.handler(ctx, { path: 'test.txt' });
+    const result = await runTool(readTool, ctx, { path: 'test.txt' }, testSignal);
 
     // Result now includes header with file stats
     expect(result).toContain('Hello, World!');
@@ -39,7 +39,7 @@ describe('readTool', () => {
     const content = 'line1\nline2\nline3\nline4\nline5';
     fs.writeFileSync(testFile, content);
 
-    const result = await readTool.handler(ctx, { path: 'test.txt', limit: 2 });
+    const result = await runTool(readTool, ctx, { path: 'test.txt', limit: 2 }, testSignal);
 
     // The limit must actually truncate: lines beyond it are NOT returned.
     expect(result).toContain('File: test.txt');
@@ -55,7 +55,7 @@ describe('readTool', () => {
     const testFile = path.join(tempDir, 'test.txt');
     fs.writeFileSync(testFile, 'single line');
 
-    const result = await readTool.handler(ctx, { path: 'test.txt', limit: 100 });
+    const result = await runTool(readTool, ctx, { path: 'test.txt', limit: 100 }, testSignal);
 
     // Result now includes header
     expect(result).toContain('single line');
@@ -63,7 +63,7 @@ describe('readTool', () => {
   });
 
   it('should block path traversal attacks', async () => {
-    const result = await readTool.handler(ctx, { path: '../../../etc/passwd' });
+    const result = await runTool(readTool, ctx, { path: '../../../etc/passwd' }, testSignal);
 
     // read has no sensitive-path guard; every external path goes through
     // requestExternalPathAccess, which the mock denies with 'Path escapes workspace'.
@@ -71,13 +71,13 @@ describe('readTool', () => {
   });
 
   it('should block absolute path outside workspace', async () => {
-    const result = await readTool.handler(ctx, { path: '/etc/passwd' });
+    const result = await runTool(readTool, ctx, { path: '/etc/passwd' }, testSignal);
 
     expect(result).toContain('Error: Path escapes workspace');
   });
 
   it('should block null byte injection', async () => {
-    const result = await readTool.handler(ctx, { path: 'test.txt\x00../../../etc/passwd' });
+    const result = await runTool(readTool, ctx, { path: 'test.txt\x00../../../etc/passwd' }, testSignal);
 
     // The null-byte path resolves outside the workspace, so it is denied via
     // requestExternalPathAccess (not silently read).
@@ -90,14 +90,14 @@ describe('readTool', () => {
     const testFile = path.join(subdir, 'nested.txt');
     fs.writeFileSync(testFile, 'nested content');
 
-    const result = await readTool.handler(ctx, { path: 'subdir/nested.txt' });
+    const result = await runTool(readTool, ctx, { path: 'subdir/nested.txt' }, testSignal);
 
     expect(result).toContain('nested content');
     expect(result).toContain('File: subdir/nested.txt');
   });
 
   it('should handle non-existent file', async () => {
-    const result = await readTool.handler(ctx, { path: 'nonexistent.txt' });
+    const result = await runTool(readTool, ctx, { path: 'nonexistent.txt' }, testSignal);
 
     expect(result).toContain('Error:');
     expect(result).toContain('File not found');
@@ -110,7 +110,7 @@ describe('readTool', () => {
     const largeContent = 'x'.repeat(300000);
     fs.writeFileSync(testFile, largeContent);
 
-    const result = await readTool.handler(ctx, { path: 'large.txt' });
+    const result = await runTool(readTool, ctx, { path: 'large.txt' }, testSignal);
 
     // Should show a preview with head + tail of the long line, not an error
     expect(result).toContain('File: large.txt');
@@ -127,7 +127,7 @@ describe('readTool', () => {
     const testFile = path.join(tempDir, 'newlines.txt');
     fs.writeFileSync(testFile, '\n\n\n');
 
-    const result = await readTool.handler(ctx, { path: 'newlines.txt' });
+    const result = await runTool(readTool, ctx, { path: 'newlines.txt' }, testSignal);
 
     // Result now includes header
     expect(result).toContain('\n\n\n');
@@ -145,7 +145,7 @@ describe('readTool', () => {
     const symlink = path.join(tempDir, 'link.txt');
     fs.symlinkSync(realFile, symlink);
 
-    const result = await readTool.handler(ctx, { path: 'link.txt' });
+    const result = await runTool(readTool, ctx, { path: 'link.txt' }, testSignal);
 
     expect(result).toContain('real content');
     expect(result).toContain('File: link.txt');
@@ -157,7 +157,7 @@ describe('readTool', () => {
     const testFile = path.join(dir, 'space file.txt');
     fs.writeFileSync(testFile, 'space content');
 
-    const result = await readTool.handler(ctx, { path: 'space folder/space file.txt' });
+    const result = await runTool(readTool, ctx, { path: 'space folder/space file.txt' }, testSignal);
 
     expect(result).toContain('space content');
     expect(result).toContain('File: space folder/space file.txt');
@@ -167,7 +167,7 @@ describe('readTool', () => {
     const testFile = path.join(tempDir, 'bom.txt');
     fs.writeFileSync(testFile, '﻿' + 'Hello, World!');
 
-    const result = await readTool.handler(ctx, { path: 'bom.txt' });
+    const result = await runTool(readTool, ctx, { path: 'bom.txt' }, testSignal);
 
     // Should contain the content but NOT the BOM character
     expect(result).toContain('Hello, World!');
@@ -178,7 +178,7 @@ describe('readTool', () => {
     const testFile = path.join(tempDir, 'no-bom.txt');
     fs.writeFileSync(testFile, 'Normal content');
 
-    const result = await readTool.handler(ctx, { path: 'no-bom.txt' });
+    const result = await runTool(readTool, ctx, { path: 'no-bom.txt' }, testSignal);
 
     expect(result).toContain('Normal content');
   });
@@ -187,7 +187,7 @@ describe('readTool', () => {
     const testFile = path.join(tempDir, 'cjk-bom.txt');
     fs.writeFileSync(testFile, '﻿' + '你好世界');
 
-    const result = await readTool.handler(ctx, { path: 'cjk-bom.txt' });
+    const result = await runTool(readTool, ctx, { path: 'cjk-bom.txt' }, testSignal);
 
     expect(result).toContain('你好世界');
     expect(result).not.toContain('﻿');
@@ -218,7 +218,7 @@ describe('readTool', () => {
     const testFile = path.join(tempDir, 'crossroad-1700000000000.json');
     fs.writeFileSync(testFile, JSON.stringify(record, null, 2));
 
-    const result = await readTool.handler(ctx, { path: 'crossroad-1700000000000.json' });
+    const result = await runTool(readTool, ctx, { path: 'crossroad-1700000000000.json' }, testSignal);
 
     // The FULL JSON content is returned to the LLM (with header), not a short
     // confirmation. The LLM can see the real text and edit it.

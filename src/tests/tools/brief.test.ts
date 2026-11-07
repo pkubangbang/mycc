@@ -4,9 +4,9 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { briefTool } from '../../tools/brief.js';
-import { createMockContext, createTempDir, removeTempDir } from './test-utils.js';
-import type { AgentContext } from '../../types.js';
 
+import type { AgentContext } from '../../types.js';
+import { createMockContext, createTempDir, removeTempDir, runTool, testSignal } from './test-utils.js';
 describe('briefTool', () => {
   let tempDir: string;
   let ctx: AgentContext;
@@ -23,7 +23,7 @@ describe('briefTool', () => {
 
   describe('happy path', () => {
     it('should send simple message and return the success result', () => {
-      const result = briefTool.handler(ctx, { message: 'Task completed', confidence: 10 });
+      const result = runTool(briefTool, ctx, { message: 'Task completed', confidence: 10 }, testSignal);
 
       // The success line ends with a period: the loop may append the plan-scope
       // reflection to it in plan mode (see src/loop/plan-scope.ts).
@@ -32,14 +32,14 @@ describe('briefTool', () => {
     });
 
     it('should record the brief into the peer heartbeat via recordBrief', () => {
-      briefTool.handler(ctx, { message: 'Task completed', confidence: 10 });
+      runTool(briefTool, ctx, { message: 'Task completed', confidence: 10 }, testSignal);
       // The brief tool must forward message + confidence to the peer heartbeat
       // so the `peers` tool can surface this instance's progress.
       expect(ctx.peer.recordBrief).toHaveBeenCalledWith('Task completed', 10);
     });
 
     it('should not call recordBrief before validating inputs (empty message)', () => {
-      briefTool.handler(ctx, { message: '', confidence: 10 });
+      runTool(briefTool, ctx, { message: '', confidence: 10 }, testSignal);
       expect(ctx.peer.recordBrief).not.toHaveBeenCalled();
     });
 
@@ -53,7 +53,7 @@ describe('briefTool', () => {
 
   describe('edge cases', () => {
     it('should return error for empty string message', () => {
-      const result = briefTool.handler(ctx, { message: '' });
+      const result = runTool(briefTool, ctx, { message: '' }, testSignal);
 
       expect(result).toBe('Error: message parameter is required and must be a string');
       expect(ctx.core.brief).not.toHaveBeenCalled();
@@ -62,7 +62,7 @@ describe('briefTool', () => {
 
   describe('error handling', () => {
     it('should return error for missing message parameter', () => {
-      const result = briefTool.handler(ctx, { confidence: 10 });
+      const result = runTool(briefTool, ctx, { confidence: 10 }, testSignal);
 
       expect(result).toBe('Error: message parameter is required and must be a string');
       expect(ctx.core.brief).not.toHaveBeenCalled();
@@ -73,7 +73,7 @@ describe('briefTool', () => {
 
 
     it('should return error for missing confidence parameter', () => {
-      const result = briefTool.handler(ctx, { message: 'test' });
+      const result = runTool(briefTool, ctx, { message: 'test' }, testSignal);
 
       expect(result).toContain('Error: confidence parameter is required and must be a number between 0 and 10');
       // The prescriptive tail tells the LLM how to repair the call in one retry.
@@ -108,11 +108,11 @@ describe('briefTool', () => {
 
     it('should update confusion index based on confidence', () => {
       // High confidence (10) should reduce confusion (delta = 8 - 10 = -2)
-      briefTool.handler(ctx, { message: 'test', confidence: 10 });
+      runTool(briefTool, ctx, { message: 'test', confidence: 10 }, testSignal);
       expect(ctx.core.increaseConfusionIndex).toHaveBeenCalledWith(-2);
 
       // Low confidence (5) should increase confusion (delta = 8 - 5 = 3)
-      briefTool.handler(ctx, { message: 'test', confidence: 5 });
+      runTool(briefTool, ctx, { message: 'test', confidence: 5 }, testSignal);
       expect(ctx.core.increaseConfusionIndex).toHaveBeenCalledWith(3);
     });
   });

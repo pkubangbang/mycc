@@ -4,8 +4,7 @@
 
 import type { ChildProcess } from 'child_process';
 import type { JSONSchema7 } from 'json-schema';
-import type { Message as OllamaMessage, ToolCall as OllamaToolCall } from 'ollama';
-import { WebFetchResponse, WebSearchResult } from 'ollama';
+import type { ProviderMessage, ProviderToolCall, WebFetchResponse, WebSearchResult } from './engine/provider-types.js';
 import type { Mindmap } from './mindmap/types.js';
 import type { Condition } from './hook/conditions.js';
 import type { ValidationResult } from './hook/condition-validator.js';
@@ -20,7 +19,7 @@ import type { CrossroadCardWire } from './loop/crossroad-card.js';
  * Extended ToolCall with id property
  * Ollama returns tool calls with unique IDs that need to be echoed back in tool responses
  */
-export interface ToolCall extends OllamaToolCall {
+export interface ToolCall extends ProviderToolCall {
   id: string;
 }
 
@@ -62,7 +61,7 @@ export type NoteCategory =
  * - hook_name: for user-role messages injected by hooks, the originating hook skill name
  *   (used by the minifier to emit ux[hook-name]| and attribute the note to its source)
  */
-export interface Message extends OllamaMessage {
+export interface Message extends ProviderMessage {
   reasoning_content?: string;
   tool_call_id?: string;
   hook_name?: string;
@@ -118,7 +117,15 @@ export interface ToolDefinition {
   description: string;
   input_schema: JSONSchema7;
   scope: string[]; // e.g., ['main', 'child', 'bg']
-  handler: (ctx: AgentContext, args: Record<string, unknown>, signal?: AbortSignal) => string | Promise<string>;
+  /**
+   * Third argument is the cancellation signal. It is REQUIRED, and every tool
+   * must forward it to any long-running I/O it performs. An optional signal
+   * made dropped wiring compile silently (a teammate path once passed
+   * nothing and every web call became uncancellable), so the contract now
+   * forces each execution host to supply one — the lead's ESC controller or
+   * a child's process cancel token (src/loop/cancel-token.ts).
+   */
+  handler: (ctx: AgentContext, args: Record<string, unknown>, signal: AbortSignal) => string | Promise<string>;
 }
 
 /**
@@ -450,12 +457,12 @@ export interface CoreModule {
    * Search the web for information
    * @param query - The search query
    */
-  webSearch(query: string): Promise<WebSearchResult[]>;
+  webSearch(query: string, signal?: AbortSignal): Promise<WebSearchResult[]>;
   /**
    * Fetch and parse content from a specific URL
    * @param url - The URL to fetch
    */
-  webFetch(url: string): Promise<WebFetchResponse>;
+  webFetch(url: string, signal?: AbortSignal): Promise<WebFetchResponse>;
   /**
    * Describe an image using the vision model
    * @param image - Base64-encoded image string or file path
@@ -1436,7 +1443,7 @@ export interface DynamicLoader {
   stopWatching(): void;
   // ToolLoader methods (merged)
   getToolsForScope(scope: ToolScope): Tool[];
-  execute(name: string, ctx: AgentContext, args: Record<string, unknown>): Promise<string>;
+  execute(name: string, ctx: AgentContext, args: Record<string, unknown>, signal: AbortSignal): Promise<string>;
   // SkillModule methods (merged)
   loadSkills(): Promise<void>;
   listSkills(): Skill[];

@@ -14,6 +14,7 @@ import { loader } from '../../context/shared/loader.js';
 import { isVerbose } from '../../config.js';
 import { loopEvents } from '../loop-events.js';
 import { stampBriefResult } from '../triologue/recap-note.js';
+import { isCancellation } from '../cancellation.js';
 
 // Tools that are purely exploratory (information gathering)
 const EXPLORATION_TOOLS = new Set([
@@ -75,6 +76,9 @@ export async function handleTool(
 
     const toolCallId = toolCall.id;
     const toolName = toolCall.function.name;
+    // Declared at loop-body scope (not inside the try) so the catch below can
+    // read the signal this call actually ran with.
+    let toolSignal: AbortSignal | undefined;
 
     // Hook-blocked call: register rejection, continue to next
     if (hookResult.blockedCalls.has(toolCallId)) {
@@ -89,9 +93,14 @@ export async function handleTool(
     }
 
     try {
-      // Use escAware for ESC-interruptible tool execution
+      // Use escAware for ESC-interruptible tool execution. The controller is
+      // exposed to the catch below via `toolSignal` so it can ask "was THIS
+      // call cancelled?" using the signal it actually ran with — a handler that
+      // re-wraps the abort into a new Error would otherwise look like an
+      // ordinary tool failure.
       const output = await ctx.core.escAware(
         async (abortController) => {
+          toolSignal = abortController.signal;
           return await loader.execute(
             toolName,
             ctx,
@@ -214,6 +223,19 @@ export async function handleTool(
 
         // Error increases confusion
         ctx.core.increaseConfusionIndex(2);
+      } else if (isCancellation(err, toolSignal)) {
+        // Cancellation is NOT a tool failure. Reporting it as "Error: aborted"
+        // would (a) push the model to retry a tool the user just cancelled,
+        // (b) count +2 on the confusion index for the agent's own correct
+        // behaviour, and (c) break triologue parity, because the assistant
+        // message still carries this call id. Mirror the ESC path instead:
+        // skip the remaining calls, then go to STOP for centralized wrap-up.
+        loopEvents.emit('esc_interrupt', { state: 'tool' });
+        triologue.skipPendingTools(
+          'Tool execution cancelled (process shutting down or operation aborted).',
+          'Tool use skipped after cancellation.',
+        );
+        return AgentState.STOP;
       } else {
         // Catch any other tool error, log as tool result, and continue
         // This prevents tool failures from killing the agent

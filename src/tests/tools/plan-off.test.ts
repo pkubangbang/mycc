@@ -9,11 +9,11 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { planOffTool } from '../../tools/plan_off.js';
-import { createMockContext, createTempDir, removeTempDir, askResult } from './test-utils.js';
+
 import type { AgentContext } from '../../types.js';
 import type { Core } from '../../context/parent/core.js';
 import type { TeamManager } from '../../context/parent/team.js';
-
+import { askResult, createMockContext, createTempDir, removeTempDir, runTool, testSignal } from './test-utils.js';
 describe('planOffTool', () => {
   let tempDir: string;
   let ctx: AgentContext;
@@ -37,7 +37,7 @@ describe('planOffTool', () => {
   describe('idempotent in normal mode', () => {
     it('should return success without prompting when already in normal mode', async () => {
       vi.mocked(ctx.core.getMode).mockReturnValue('normal');
-      const result = await planOffTool.handler(ctx, {});
+      const result = await runTool(planOffTool, ctx, {}, testSignal);
       expect(result).toContain('Already in normal mode');
       expect(ctx.core.question).not.toHaveBeenCalled();
     });
@@ -46,7 +46,7 @@ describe('planOffTool', () => {
   describe('[y/N] confirmation convention', () => {
     it('should treat empty response (Enter) as No and stay in plan mode', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult(''));
-      const result = await planOffTool.handler(ctx, {});
+      const result = await runTool(planOffTool, ctx, {}, testSignal);
       expect(result).toContain('User declined');
       expect(result).toContain('Staying in plan mode');
       expect((ctx.core as unknown as Core).setMode).not.toHaveBeenCalledWith('normal');
@@ -54,49 +54,49 @@ describe('planOffTool', () => {
 
     it('should treat whitespace-only response as No', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('   '));
-      const result = await planOffTool.handler(ctx, {});
+      const result = await runTool(planOffTool, ctx, {}, testSignal);
       expect(result).toContain('User declined');
       expect((ctx.core as unknown as Core).setMode).not.toHaveBeenCalledWith('normal');
     });
 
     it('should treat "n" as No and stay in plan mode', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n'));
-      const result = await planOffTool.handler(ctx, {});
+      const result = await runTool(planOffTool, ctx, {}, testSignal);
       expect(result).toContain('User declined');
       expect((ctx.core as unknown as Core).setMode).not.toHaveBeenCalledWith('normal');
     });
 
     it('should treat "no" as No and stay in plan mode', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('no'));
-      const result = await planOffTool.handler(ctx, {});
+      const result = await runTool(planOffTool, ctx, {}, testSignal);
       expect(result).toContain('User declined');
       expect((ctx.core as unknown as Core).setMode).not.toHaveBeenCalledWith('normal');
     });
 
     it('should treat "y" as Yes and exit plan mode', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('y'));
-      const result = await planOffTool.handler(ctx, {});
+      const result = await runTool(planOffTool, ctx, {}, testSignal);
       expect(result).toContain('Normal mode activated');
       expect((ctx.core as unknown as Core).setMode).toHaveBeenCalledWith('normal');
     });
 
     it('should treat "yes" as Yes and exit plan mode', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('yes'));
-      const result = await planOffTool.handler(ctx, {});
+      const result = await runTool(planOffTool, ctx, {}, testSignal);
       expect(result).toContain('Normal mode activated');
       expect((ctx.core as unknown as Core).setMode).toHaveBeenCalledWith('normal');
     });
 
     it('should treat quoted "y" as Yes', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('"y"'));
-      const result = await planOffTool.handler(ctx, {});
+      const result = await runTool(planOffTool, ctx, {}, testSignal);
       expect(result).toContain('Normal mode activated');
       expect((ctx.core as unknown as Core).setMode).toHaveBeenCalledWith('normal');
     });
 
     it('should treat quoted empty as No (not a stray User responded "")', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('""'));
-      const result = await planOffTool.handler(ctx, {});
+      const result = await runTool(planOffTool, ctx, {}, testSignal);
       // Quoted empty normalizes to '' -> denied branch, not the ambiguous branch
       expect(result).toContain('User declined');
       expect(result).not.toContain('User responded: ""');
@@ -106,7 +106,7 @@ describe('planOffTool', () => {
   describe('ambiguous non-empty response', () => {
     it('should ask for clarification when user types something other than y/n', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('maybe'));
-      const result = await planOffTool.handler(ctx, {});
+      const result = await runTool(planOffTool, ctx, {}, testSignal);
       expect(result).toContain('did not confirm');
       expect(result).toContain('maybe');
       expect((ctx.core as unknown as Core).setMode).not.toHaveBeenCalledWith('normal');

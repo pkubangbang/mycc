@@ -90,12 +90,12 @@ function getOllamaPrompts(): PromptConfig[] {
       name: 'OLLAMA_API_KEY',
       message: 'Ollama API key (optional)',
       default: '',
-      help: 'Required for Ollama Cloud. Leave empty for local Ollama.',
+      help: 'Required for cloud-backed models. Web tools use OLLAMA_HOST; their backend determines authentication.',
       sensitive: true,
       dynamicHelp: (config: Record<string, string>) => {
         const host = config['OLLAMA_HOST'] || 'http://127.0.0.1:11434';
         if (host.includes('127.0.0.1') || host.includes('localhost')) {
-          return 'Not needed for local Ollama (127.0.0.1:11434). Press Enter to skip.';
+          return 'Local-only models need no key. For :cloud models routed by local Ollama, use ollama signin. Web backend authentication is server-side.';
         }
         return 'Required for Ollama Cloud. Get your key at https://ollama.com/settings/keys';
       },
@@ -103,7 +103,7 @@ function getOllamaPrompts(): PromptConfig[] {
     {
       name: 'OLLAMA_MODEL',
       message: 'Ollama model name (general/chat)',
-      default: 'glm-5:cloud',
+      default: 'llama3.1',
       help: 'Model for chat/coding. Local: llama3.1, qwen2.5-coder. Cloud: glm-5:cloud, gemma4:31b-cloud',
     },
     {
@@ -217,7 +217,7 @@ export const ENV_REQUIREMENTS: EnvRequirement[] = [
   {
     name: 'OLLAMA_API_KEY',
     required: false,
-    instruction: 'Set OLLAMA_API_KEY for Ollama Cloud (not needed for local 127.0.0.1:11434)',
+    instruction: 'Set OLLAMA_API_KEY for cloud-backed models (not needed for local-only chat/vision; web backend auth is server-side)',
   },
   {
     name: 'OLLAMA_MODEL',

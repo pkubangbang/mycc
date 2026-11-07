@@ -15,10 +15,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { gitCommitTool } from '../../tools/git_commit.js';
 import { agentIO } from '../../loop/agent-io.js';
-import { createMockContext, createTempDir, removeTempDir, askResult } from './test-utils.js';
+
 import type { AgentContext } from '../../types.js';
 import { AUTO_ADD_SUFFIX } from '../../loop/auto-state.js';
-
+import { askResult, createMockContext, createTempDir, removeTempDir, runTool, testSignal } from './test-utils.js';
 // Mock agentIO: exec (git status check) + isMainProcess (teammate gate)
 vi.mock('../../loop/agent-io.js', () => ({
   agentIO: {
@@ -69,7 +69,7 @@ describe('gitCommitTool', () => {
   describe('[y/N] confirmation convention', () => {
     it('should treat empty response (Enter) as No and cancel the commit', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult(''));
-      const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'test commit' }, testSignal);
       expect(result).toContain('Commit cancelled by user');
       // Must NOT surface the confusing ambiguous-feedback message
       expect(result).not.toContain('User responded: ""');
@@ -78,26 +78,26 @@ describe('gitCommitTool', () => {
 
     it('should treat whitespace-only response as No', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('   '));
-      const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'test commit' }, testSignal);
       expect(result).toContain('Commit cancelled by user');
       expect(result).not.toContain('User responded: ""');
     });
 
     it('should treat "n" as No and cancel the commit', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n'));
-      const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'test commit' }, testSignal);
       expect(result).toContain('Commit cancelled by user');
     });
 
     it('should treat "no" as No and cancel the commit', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('no'));
-      const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'test commit' }, testSignal);
       expect(result).toContain('Commit cancelled by user');
     });
 
     it('should treat quoted empty as No (not a stray User responded "")', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('""'));
-      const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'test commit' }, testSignal);
       // Quoted empty normalizes to '' -> denied branch, not the ambiguous branch
       expect(result).toContain('Commit cancelled by user');
       expect(result).not.toContain('User responded: ""');
@@ -105,7 +105,7 @@ describe('gitCommitTool', () => {
 
     it('should treat quoted "n" as No', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('"n"'));
-      const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'test commit' }, testSignal);
       expect(result).toContain('Commit cancelled by user');
     });
   });
@@ -113,7 +113,7 @@ describe('gitCommitTool', () => {
   describe('auto-mode rejection', () => {
     it('should report auto mode is on (not "cancelled by user") when denied in auto mode', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n', 'auto'));
-      const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'test commit' }, testSignal);
       expect(result).toContain('auto mode is ON');
       expect(result).toContain('exit auto mode');
       expect(result).toContain('ESC');
@@ -126,14 +126,14 @@ describe('gitCommitTool', () => {
       // which normalizes to '' -> denied. The handler must still detect auto mode
       // via source === 'auto' (no longer via getAuto()).
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('', 'auto'));
-      const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'test commit' }, testSignal);
       expect(result).toContain('auto mode is ON');
       expect(result).not.toContain('Commit cancelled by user');
     });
 
     it('should still return "cancelled by user" when denied outside auto mode', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n'));
-      const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'test commit' }, testSignal);
       expect(result).toContain('Commit cancelled by user');
       expect(result).not.toContain('auto mode is ON');
     });
@@ -142,14 +142,14 @@ describe('gitCommitTool', () => {
   describe('ambiguous non-empty response', () => {
     it('should ask for clarification when user types something other than y/n', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('maybe'));
-      const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'test commit' }, testSignal);
       expect(result).toContain('did not confirm');
       expect(result).toContain('maybe');
     });
 
     it('should surface the feedback text in the response for the agent to iterate', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('change the message'));
-      const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'test commit' }, testSignal);
       expect(result).toContain('change the message');
       expect(result).toContain('did not confirm');
     });
@@ -157,22 +157,22 @@ describe('gitCommitTool', () => {
 
   describe('validation', () => {
     it('should reject empty commit message', async () => {
-      const result = await gitCommitTool.handler(ctx, { message: '' });
+      const result = await runTool(gitCommitTool, ctx, { message: '' }, testSignal);
       expect(result).toBe('Error: The "message" parameter is required and must be a non-empty string');
     });
 
     it('should reject whitespace-only commit message', async () => {
-      const result = await gitCommitTool.handler(ctx, { message: '   ' });
+      const result = await runTool(gitCommitTool, ctx, { message: '   ' }, testSignal);
       expect(result).toBe('Error: The "message" parameter is required and must be a non-empty string');
     });
 
     it('should reject missing commit message', async () => {
-      const result = await gitCommitTool.handler(ctx, {});
+      const result = await runTool(gitCommitTool, ctx, {}, testSignal);
       expect(result).toBe('Error: The "message" parameter is required and must be a non-empty string');
     });
 
     it('should reject non-string commit message', async () => {
-      const result = await gitCommitTool.handler(ctx, { message: 123 as unknown as string });
+      const result = await runTool(gitCommitTool, ctx, { message: 123 as unknown as string }, testSignal);
       expect(result).toBe('Error: The "message" parameter is required and must be a non-empty string');
     });
 
@@ -184,7 +184,7 @@ describe('gitCommitTool', () => {
         exitCode: 0,
         timedOut: false,
       });
-      const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'test commit' }, testSignal);
       expect(result).toBe('Error: No staged changes to commit. Use `git add` to stage changes first.');
       // Should not have prompted the user
       expect(ctx.core.question).not.toHaveBeenCalled();
@@ -200,7 +200,7 @@ describe('gitCommitTool', () => {
       // layer (out of scope for the [y/N] fix), we assert only that the user
       // is NOT prompted — the teammate path delegates to the lead.
       try {
-        await gitCommitTool.handler(ctx, { message: 'teammate commit' });
+        await runTool(gitCommitTool, ctx, { message: 'teammate commit' }, testSignal);
       } catch {
         // appendMail throws "Session context not initialized" in the test
         // harness; that is expected and fine — the point is the handler did
@@ -238,7 +238,7 @@ describe('gitCommitTool', () => {
       vi.mocked(ctx.core.getAuto).mockReturnValue(true);
       onBranch('main');
 
-      const result = await gitCommitTool.handler(ctx, { message: 'auto commit' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'auto commit' }, testSignal);
 
       // The whole point: the interactive prompt is SKIPPED.
       expect(ctx.core.question).not.toHaveBeenCalled();
@@ -272,7 +272,7 @@ describe('gitCommitTool', () => {
       allowList(['main']);
       vi.mocked(ctx.core.getAuto).mockReturnValue(true);
 
-      const result = await gitCommitTool.handler(ctx, { message: 'auto commit body' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'auto commit body' }, testSignal);
 
       expect(result).toContain('Commit successful');
       expect(ctx.core.question).not.toHaveBeenCalled();
@@ -289,7 +289,7 @@ describe('gitCommitTool', () => {
       vi.mocked(ctx.core.getAuto).mockReturnValue(false);
       onBranch('main');
 
-      const result = await gitCommitTool.handler(ctx, { message: 'autoAdd' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'autoAdd' }, testSignal);
 
       expect(ctx.core.question).not.toHaveBeenCalled();
       expect(result).not.toContain('Commit cancelled by user');
@@ -301,7 +301,7 @@ describe('gitCommitTool', () => {
       onBranch('main');
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n'));
 
-      const result = await gitCommitTool.handler(ctx, { message: 'manual' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'manual' }, testSignal);
 
       expect(ctx.core.question).toHaveBeenCalled();
       expect(result).toContain('Commit cancelled by user');
@@ -313,7 +313,7 @@ describe('gitCommitTool', () => {
       onBranch('feature/foo');
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n', 'auto'));
 
-      const result = await gitCommitTool.handler(ctx, { message: 'nope' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'nope' }, testSignal);
 
       expect(ctx.core.question).toHaveBeenCalled();
       expect(result).toContain('auto mode is ON');
@@ -326,7 +326,7 @@ describe('gitCommitTool', () => {
       onBranch('HEAD');
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n', 'auto'));
 
-      const result = await gitCommitTool.handler(ctx, { message: 'detached' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'detached' }, testSignal);
 
       expect(ctx.core.question).toHaveBeenCalled();
       expect(result).toContain('auto mode is ON');
@@ -339,7 +339,7 @@ describe('gitCommitTool', () => {
       onBranch('main');
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n', 'auto'));
 
-      const result = await gitCommitTool.handler(ctx, { message: 'plan-mode commit' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'plan-mode commit' }, testSignal);
 
       // A grant is a capability, never a mode override.
       expect(ctx.core.question).toHaveBeenCalled();
@@ -351,7 +351,7 @@ describe('gitCommitTool', () => {
       vi.mocked(ctx.core.getAuto).mockReturnValue(true);
       vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n', 'auto'));
 
-      const result = await gitCommitTool.handler(ctx, { message: 'list empty' });
+      const result = await runTool(gitCommitTool, ctx, { message: 'list empty' }, testSignal);
 
       expect(ctx.core.question).toHaveBeenCalled();
       expect(result).toContain('auto mode is ON');

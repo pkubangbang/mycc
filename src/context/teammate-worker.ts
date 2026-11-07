@@ -20,6 +20,9 @@ import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildW
 import { loadDomains } from './parent/wiki-utils.js';
 import { getTokenThreshold, getSessionContext, getSessionDir, setSessionContext, isVerbose } from '../config.js';
 import { TriologueLite } from '../loop/triologue-lite.js';
+import { cancelProcess, getProcessSignal } from '../loop/cancel-token.js';
+import { isCancellation } from '../loop/cancellation.js';
+import { composeTurnWatchdog, type TurnWatchdog } from './turn-watchdog.js';
 import { JsonlTranscriptWriter, asAppendablePiece } from '../loop/triologue/transcript.js';
 import { ipc, sendStatus } from './child/ipc-helpers.js';
 import { parseIntent, isReadOnlyVerb } from '../context/grant/intent-parser.js';
@@ -67,48 +70,15 @@ const TURN_WATCHDOG_MIN_MS = 60_000;        // never shorter than 60s
 const TURN_WATCHDOG_BUDGET_FRACTION = 0.5;  // use up to half of remaining budget
 
 /**
- * Create a per-turn AbortController + deadline watchdog.
- * Returns the signal to pass into retryChat/compact, plus an abort() to call
- * on early completion (frees the timer) and the deadline ms (for logging).
- *
- * The watchdog aborts the call if it runs past the computed turn deadline.
- * Caller MUST call .abort(true) (manual=false) to release the timer once the
- * awaited call settles, otherwise the setTimeout keeps a dangling reference.
+ * Per-turn watchdog for this worker: composes the turn deadline with the
+ * process cancel token. See src/context/turn-watchdog.ts for the composition
+ * and for why the two abort sources must stay distinguishable.
+ * The caller MUST call clearTimeout() once the awaited call settles, or the
+ * timer keeps a dangling reference.
  */
-function createTurnWatchdog(): {
-  signal: AbortSignal;
-  clearTimeout: () => void;
-  deadlineMs: number;
-} {
-  // Compute remaining ETA budget (if known)
-  let remaining = Infinity;
-  if (budgetSent && deadlineMs > 0) {
-    remaining = Math.max(0, deadlineMs - Date.now());
-  }
-
-  // Per-turn cap: half the remaining budget, bounded to [min, fallback].
-  let cap: number;
-  if (Number.isFinite(remaining)) {
-    cap = Math.min(remaining * TURN_WATCHDOG_BUDGET_FRACTION, TURN_WATCHDOG_FALLBACK_MS);
-    cap = Math.max(cap, TURN_WATCHDOG_MIN_MS);
-  } else {
-    cap = TURN_WATCHDOG_FALLBACK_MS;
-  }
-
-  const controller = new AbortController();
-  const deadline = Date.now() + cap;
-  const timer = setTimeout(() => controller.abort(), cap);
-
-  // unref so the timer never keeps the worker process alive on its own
-  if (typeof (timer as unknown as { unref?: () => void }).unref === 'function') {
-    (timer as unknown as { unref: () => void }).unref();
-  }
-
-  return {
-    signal: controller.signal,
-    clearTimeout: () => clearTimeout(timer),
-    deadlineMs: deadline,
-  };
+function createTurnWatchdog(): TurnWatchdog {
+  const remaining = budgetSent && deadlineMs > 0 ? deadlineMs - Date.now() : Infinity;
+  return composeTurnWatchdog(TURN_WATCHDOG_BUDGET_FRACTION, TURN_WATCHDOG_FALLBACK_MS, TURN_WATCHDOG_MIN_MS, remaining);
 }
 
 /**
@@ -444,6 +414,13 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           await triologue.compact(undefined, compactWatchdog.signal, tools, await ctx.wiki.listDomains());
         } catch (err) {
           if (err instanceof StreamAbortedError && compactWatchdog.signal.aborted) {
+            if (compactWatchdog.cause() === 'shutdown') {
+              // Cooperative unwind: the lead is removing this teammate. No
+              // "stuck" report, no context note, no fall-through to retryChat.
+              compactWatchdog.clearTimeout();
+              ctx.core.verbose('worker', 'compact aborted by teammate shutdown');
+              return;
+            }
             const elapsed = Date.now() - compactStart;
             reportStuckTurn('compact summarization watchdog', elapsed);
             triologue.note('SYSTEM',
@@ -484,6 +461,13 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       } catch (err) {
         watchdog.clearTimeout();
         if (err instanceof StreamAbortedError && watchdog.signal.aborted) {
+          if (watchdog.cause() === 'shutdown') {
+            // The lead is removing this teammate: unwind quietly. Reporting a
+            // "stuck turn" here would mail a misleading WARNING and the loop
+            // would continue into another turn the shutdown just cancelled.
+            ctx.core.verbose('worker', 'LLM turn aborted by teammate shutdown');
+            return;
+          }
           // Watchdog fired: report and let the loop continue (mail poll resumes).
           const elapsed = Date.now() - turnStart;
           reportStuckTurn('LLM turn watchdog', elapsed);
@@ -589,7 +573,10 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         const args = tc.function.arguments as Record<string, unknown>;
 
         try {
-          const output = await silentLoader.execute(toolName, ctx, args);
+          // The child's process cancel token, NOT a throwaway controller: when
+          // the lead tears this teammate down, in-flight tools (web_fetch,
+          // bash) observe the abort instead of running to their own timeout.
+          const output = await silentLoader.execute(toolName, ctx, args, getProcessSignal());
           triologue.tool(toolName, output, tc.id);
 
           // NOTE: Auto-compact no longer runs inside the tool loop. It has
@@ -689,6 +676,29 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           }
 
         } catch (err) {
+          // Cancellation is the LEAD's shutdown, not a teammate failure: do not
+          // brief it as an error, do not push a confusion point, and do not hand
+          // the model a retryable tool result. Mirror the lead's TOOL state —
+          // close out the outstanding calls so triologue parity holds (the
+          // assistant message above registered them as pending), then unwind.
+          if (isCancellation(err, getProcessSignal())) {
+            ctx.core.verbose('worker', `${toolName} cancelled: ${(err as Error).message}`);
+            // Close EVERY call still outstanding (this one plus any later in the
+            // list) so triologue parity holds: the assistant message above
+            // registered them as pending, and a tool message must answer each.
+            const pendingIds = toolCalls.slice(toolCalls.indexOf(tc));
+            for (const pendingCall of pendingIds) {
+              // Each result must carry ITS OWN function name: triologue pairs a
+              // tool message with its pending call, and stamping every result
+              // with the first cancelled tool's name mislabels the rest.
+              triologue.tool(
+                pendingCall.function.name,
+                'Tool execution cancelled (teammate is shutting down).',
+                pendingCall.id,
+              );
+            }
+            return;
+          }
           const errorMsg = (err as Error).message;
           ctx.core.brief('error', toolName, errorMsg);
           triologue.tool(toolName, `error: ${errorMsg}`, tc.id);
@@ -938,6 +948,12 @@ process.on('message', (msg: { type: string;[key: string]: unknown }) => {
     });
   } else if (msg.type === 'shutdown') {
     shutdownRequested = true;
+    // Cancel BEFORE the loop notices the flag: the loop only checks it between
+    // turns, so a teammate blocked in a 30s web_fetch or a 3-minute LLM turn
+    // would otherwise run to completion before exiting. This is the lead's
+    // cooperative path (removeTeammate / dismissTeam send this message) and is
+    // the ONLY graceful one — see gracefulExit() for why.
+    cancelProcess('shutdown requested by lead');
   } else if (msg.type === 'mode_change') {
     // Handle mode change notification from parent
     // Note: Child processes (teammates) are always in normal mode
@@ -955,26 +971,37 @@ process.on('message', (msg: { type: string;[key: string]: unknown }) => {
 });
 
 // === Process Lifecycle ===
-process.on('disconnect', () => {
+//
+// All four handlers exit immediately. That is deliberate and must stay:
+// `tm_remove(force)` and `dismissTeam(force)` send SIGTERM expecting the
+// process to die now, and `tm_await`/status tracking rely on the exit event
+// arriving promptly. So the honest contract is:
+//
+//   graceful (IPC 'shutdown')  -> cancelProcess() -> the loop unwinds between
+//                                 turns; in-flight tools/LLM aborted at once
+//   immediate (signal/disconnect) -> cancelProcess() then exit on the NEXT
+//                                 tick, so any I/O holding a handle is
+//                                 released instead of abandoned mid-flight.
+//
+// Calling cancelProcess() before exit is not a graceful delay: it is what makes
+// the cancellation observable to in-flight work at all. Without it, the exit
+// itself was the only "cancellation", and no tool could react to it.
+function exitLifecycle(trigger: string): void {
   sendStatus('shutdown');
-  process.exit(0);
-});
+  cancelProcess(trigger);
+  // One tick lets abort listeners run and lets a finished tool's result reach
+  // the parent when its promise settles synchronously on abort.
+  setImmediate(() => process.exit(0));
+}
 
-process.on('SIGTERM', () => {
-  sendStatus('shutdown');
-  process.exit(0);
-});
+process.on('disconnect', () => exitLifecycle('parent disconnected'));
 
-process.on('SIGINT', () => {
-  sendStatus('shutdown');
-  process.exit(0);
-});
+process.on('SIGTERM', () => exitLifecycle('SIGTERM'));
+
+process.on('SIGINT', () => exitLifecycle('SIGINT'));
 
 // Handle SIGHUP (sent when parent process exits)
-process.on('SIGHUP', () => {
-  sendStatus('shutdown');
-  process.exit(0);
-});
+process.on('SIGHUP', () => exitLifecycle('SIGHUP'));
 
 // Log that worker is ready (before ctx is available, use sendNotification).
 // Verbose-only: this fires on every teammate spawn and would otherwise clutter

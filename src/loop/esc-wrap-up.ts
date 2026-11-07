@@ -40,7 +40,7 @@ import {
   hasPendingWrapUp,
   markWrapUpShown,
 } from './wrap-up-state.js';
-import type { Tool } from 'ollama';
+import type { Tool } from '../engine/provider-types.js';
 // NOTE: The wrap-up LIFECYCLE STATE (the `wrapUpState` singleton, its accessors
 // getWrapUpState/hasPendingWrapUp/markWrapUpShown/clearWrapUp, the
 // WRAP_UP_GRACE_PERIOD_MS constant and the pure evaluateWrapUp() policy) now

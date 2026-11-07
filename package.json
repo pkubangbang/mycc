@@ -49,7 +49,6 @@
     "jsep": "^1.4.0",
     "markdown-it": "^15.0.2",
     "minimist": "^1.2.8",
-    "ollama": "^0.6.3",
     "pinia": "^4.0.3",
     "ripgrep": "^0.3.1",
     "sharp": "^0.35.4",

@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { issueListTool } from '../../tools/issue_list.js';
 import type { AgentContext, IssueModule, CoreModule } from '../../types.js';
-
+import { runTool, testSignal } from './test-utils.js';
 // Factory to create mock issue module
 function createMockIssueModule(): IssueModule {
   return {
@@ -90,7 +90,7 @@ describe('issueListTool', () => {
   it('should list empty issues', async () => {
     mockIssue.printIssues = vi.fn().mockResolvedValue('No issues.');
 
-    const result = await issueListTool.handler(ctx, {});
+    const result = await runTool(issueListTool, ctx, {}, testSignal);
 
     expect(mockIssue.printIssues).toHaveBeenCalled();
     expect(result).toBe('No issues.');
@@ -103,7 +103,7 @@ describe('issueListTool', () => {
   [x] #3: Completed issue @developer`;
     mockIssue.printIssues = vi.fn().mockResolvedValue(formattedOutput);
 
-    const result = await issueListTool.handler(ctx, {});
+    const result = await runTool(issueListTool, ctx, {}, testSignal);
 
     expect(mockIssue.printIssues).toHaveBeenCalled();
     expect(result).toContain('Issues:');
@@ -121,7 +121,7 @@ describe('issueListTool', () => {
   [-] #5: Abandoned issue`;
     mockIssue.printIssues = vi.fn().mockResolvedValue(formattedOutput);
 
-    const result = await issueListTool.handler(ctx, {});
+    const result = await runTool(issueListTool, ctx, {}, testSignal);
 
     expect(result).toContain('[ ]'); // pending
     expect(result).toContain('[>]'); // in_progress
@@ -137,7 +137,7 @@ describe('issueListTool', () => {
   [x] #3: Blocker 2`;
     mockIssue.printIssues = vi.fn().mockResolvedValue(formattedOutput);
 
-    const result = await issueListTool.handler(ctx, {});
+    const result = await runTool(issueListTool, ctx, {}, testSignal);
 
     expect(result).toContain('blocked:2,3');
   });
@@ -148,7 +148,7 @@ describe('issueListTool', () => {
   [ ] #2: Unclaimed issue`;
     mockIssue.printIssues = vi.fn().mockResolvedValue(formattedOutput);
 
-    const result = await issueListTool.handler(ctx, {});
+    const result = await runTool(issueListTool, ctx, {}, testSignal);
 
     expect(result).toContain('@test-agent');
     expect(result).not.toContain('@test-agent @'); // no duplicate
@@ -159,7 +159,7 @@ describe('issueListTool', () => {
   it('should handle empty args object', async () => {
     mockIssue.printIssues = vi.fn().mockResolvedValue('No issues.');
 
-    const result = await issueListTool.handler(ctx, {});
+    const result = await runTool(issueListTool, ctx, {}, testSignal);
 
     expect(mockIssue.printIssues).toHaveBeenCalled();
     expect(result).toBe('No issues.');
@@ -168,10 +168,10 @@ describe('issueListTool', () => {
   it('should ignore extra parameters', async () => {
     mockIssue.printIssues = vi.fn().mockResolvedValue('No issues.');
 
-    const result = await issueListTool.handler(ctx, {
+    const result = await runTool(issueListTool, ctx, {
       extra: 'parameter',
       another: 123,
-    });
+    }, testSignal);
 
     expect(mockIssue.printIssues).toHaveBeenCalled();
     expect(result).toBe('No issues.');
@@ -180,7 +180,7 @@ describe('issueListTool', () => {
   it('should handle null args', async () => {
     mockIssue.printIssues = vi.fn().mockResolvedValue('No issues.');
 
-    const result = await issueListTool.handler(ctx, null as unknown as Record<string, unknown>);
+    const result = await runTool(issueListTool, ctx, null as unknown as Record<string, unknown>, testSignal);
 
     expect(mockIssue.printIssues).toHaveBeenCalled();
     expect(result).toBe('No issues.');

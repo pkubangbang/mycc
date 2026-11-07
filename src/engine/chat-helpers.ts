@@ -5,7 +5,7 @@
  * Provider-specific code lives in ollama.ts / deepseek.ts.
  */
 
-import type { ChatRequest } from 'ollama';
+import type { ChatRequest } from './provider-types.js';
 import { agentIO } from '../loop/agent-io.js';
 import { isPlainOutput } from '../config.js';
 
@@ -80,6 +80,8 @@ const TRANSIENT_ERROR_PATTERNS = [
  */
 export function isTransientError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
+  const status = (err as Error & { status?: unknown }).status;
+  if (typeof status === 'number' && (status === 408 || status === 429 || status >= 500)) return true;
   const msg = err.message.toLowerCase();
   return TRANSIENT_ERROR_PATTERNS.some((pattern) => msg.includes(pattern));
 }
@@ -320,13 +322,14 @@ export function escalateFirstTokenTimeout(
 
 export async function retryWithBackoff<T>(
   operation: () => Promise<T>,
-  config?: Partial<RetryConfig> & { timeoutMs?: number }
+  config?: Partial<RetryConfig> & { timeoutMs?: number; signal?: AbortSignal }
 ): Promise<T> {
   const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= cfg.maxRetries + 1; attempt++) {
     try {
+      if (config?.signal?.aborted) throw new StreamAbortedError();
       if (config?.timeoutMs) {
         return await Promise.race([
           operation(),
@@ -337,6 +340,7 @@ export async function retryWithBackoff<T>(
       }
       return await operation();
     } catch (e) {
+      if (config?.signal?.aborted || e instanceof StreamAbortedError) throw e;
       const err = normalizeFetchError(e);
       if (!isTransientError(err)) {
         throw err;
@@ -346,9 +350,12 @@ export async function retryWithBackoff<T>(
 
       const isLastAttempt = attempt > cfg.maxRetries;
       if (!isLastAttempt) {
-        const delay = calculateDelay(attempt, cfg);
+        const retryAfterMs = (err as Error & { retryAfterMs?: unknown }).retryAfterMs;
+        const delay = typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs)
+          ? Math.min(Math.max(0, retryAfterMs), cfg.maxDelayMs)
+          : calculateDelay(attempt, cfg);
         agentIO.verbose('retry', `Attempt ${attempt}/${cfg.maxRetries + 1} failed: ${lastError.message}. Retrying in ${delay}ms...`);
-        await sleep(delay);
+        await sleep(delay, config?.signal);
       }
     }
   }

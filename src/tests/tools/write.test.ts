@@ -6,9 +6,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { writeTool } from '../../tools/write.js';
-import { createMockContext, createTempDir, removeTempDir } from './test-utils.js';
-import type { AgentContext } from '../../types.js';
 
+import type { AgentContext } from '../../types.js';
+import { createMockContext, createTempDir, removeTempDir, runTool, testSignal } from './test-utils.js';
 describe('writeTool', () => {
   let tempDir: string;
   let ctx: AgentContext;
@@ -23,10 +23,10 @@ describe('writeTool', () => {
   });
 
   it('should write content to file', async () => {
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: 'new.txt',
       content: 'Hello, World!',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -35,10 +35,10 @@ describe('writeTool', () => {
   });
 
   it('should create parent directories automatically', async () => {
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: 'deep/nested/dir/file.txt',
       content: 'nested content',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -53,10 +53,10 @@ describe('writeTool', () => {
     const testFile = path.join(tempDir, 'existing.txt');
     fs.writeFileSync(testFile, 'original content');
 
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: 'existing.txt',
       content: 'new content',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -65,10 +65,10 @@ describe('writeTool', () => {
   });
 
   it('should write empty content', async () => {
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: 'empty.txt',
       content: '',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -77,10 +77,10 @@ describe('writeTool', () => {
   });
 
   it('should block path traversal attacks', async () => {
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: '../../../tmp/malicious.txt',
       content: 'malicious',
-    });
+    }, testSignal);
 
     // Traversal patterns resolve outside the workspace but are not sensitive
     // system paths, so they reach the requestExternalPathAccess denial.
@@ -88,10 +88,10 @@ describe('writeTool', () => {
   });
 
   it('should block absolute path outside workspace', async () => {
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: '/tmp/malicious.txt',
       content: 'malicious',
-    });
+    }, testSignal);
 
     expect(result).toContain('Error: Path escapes workspace');
   });
@@ -99,13 +99,13 @@ describe('writeTool', () => {
   it('should handle special characters in content', async () => {
     const specialContent = 'Line1\nLine2\tTabbed\nUnicode: \u4e2d\u6587';
 
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: 'special.txt',
       content: specialContent,
       // Pin LF so the round-trip equality check is stable across platforms;
       // the default 'auto' would convert to CRLF on Windows.
       newline: 'lf',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -116,10 +116,10 @@ describe('writeTool', () => {
   it('should handle large content', async () => {
     const largeContent = 'x'.repeat(100000);
 
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: 'large.txt',
       content: largeContent,
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -132,10 +132,10 @@ describe('writeTool', () => {
     fs.mkdirSync(path.join(tempDir, 'mydir'));
 
     // Writing to a path that would conflict
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: 'mydir',
       content: 'content',
-    });
+    }, testSignal);
 
     // Should fail because mydir is a directory (EISDIR from writeFileSync)
     expect(result).toContain('Error:');
@@ -143,10 +143,10 @@ describe('writeTool', () => {
   });
 
   it('should handle paths with spaces', async () => {
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: 'folder with spaces/file name.txt',
       content: 'content',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -158,10 +158,10 @@ describe('writeTool', () => {
   });
 
   it('should strip BOM from content before writing', async () => {
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: 'bom.txt',
       content: '﻿' + 'Hello, World!',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -172,10 +172,10 @@ describe('writeTool', () => {
   });
 
   it('should not add BOM to output', async () => {
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: 'no-bom.txt',
       content: 'Normal content without BOM',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
 
@@ -185,11 +185,11 @@ describe('writeTool', () => {
   });
 
   it('should write CRLF when newline is crlf', async () => {
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: 'crlf.txt',
       content: 'line1\nline2\nline3',
       newline: 'crlf',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
     expect(result).toContain('newline=crlf');
@@ -204,11 +204,11 @@ describe('writeTool', () => {
   });
 
   it('should write LF when newline is lf', async () => {
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: 'lf.txt',
       content: 'line1\r\nline2\r\nline3',
       newline: 'lf',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
     expect(result).toContain('newline=lf');
@@ -218,11 +218,11 @@ describe('writeTool', () => {
   });
 
   it('should report byte-level self-check in return string', async () => {
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: 'selfcheck.txt',
       content: 'Hello',
       newline: 'lf',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
     // Self-check fields: first4 (hex bytes), bom (bool), newline (style)
@@ -234,11 +234,11 @@ describe('writeTool', () => {
   });
 
   it('should add BOM when bom: true is set', async () => {
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: 'with-bom.txt',
       content: 'Hello',
       bom: true,
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
     expect(result).toContain('bom=true');
@@ -251,10 +251,10 @@ describe('writeTool', () => {
   });
 
   it('should default to no BOM (bom: false)', async () => {
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: 'default-no-bom.txt',
       content: 'Hello',
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
     expect(result).toContain('bom=false');
@@ -265,11 +265,11 @@ describe('writeTool', () => {
 
   it('should strip a BOM from content even when bom: true re-adds it (no double BOM)', async () => {
     // Content already has a BOM; bom:true should yield exactly one BOM.
-    const result = await writeTool.handler(ctx, {
+    const result = await runTool(writeTool, ctx, {
       path: 'single-bom.txt',
       content: '\uFEFF' + 'Hello',
       bom: true,
-    });
+    }, testSignal);
 
     expect(result).toMatch(/^OK/);
     const buf = fs.readFileSync(path.join(tempDir, 'single-bom.txt'));

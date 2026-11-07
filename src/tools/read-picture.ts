@@ -16,6 +16,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { resolvePath, isInsideWorkspace } from '../utils/path.js';
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { isCancellation } from '../loop/cancellation.js';
 
 /**
  * Validate path doesn't escape workspace.
@@ -118,6 +119,9 @@ export const readPictureTool: ToolDefinition = {
 
       return formatResult(imagePath, result.pairs, result.cacheToken);
     } catch (error: unknown) {
+      // A cancelled vision call is rethrown, not reported: the caller (Loader,
+      // then TOOL) owns the STOP/wrap-up decision. See src/loop/cancellation.ts.
+      if (isCancellation(error, signal)) throw error;
       const err = error as Error;
       ctx.core.brief('error', 'read_picture', err.message);
       return `Error: ${err.message}`;

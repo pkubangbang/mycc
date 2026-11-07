@@ -7,8 +7,9 @@
 
 import type { Mindmap } from '../../mindmap/types.js';
 import { webSearch as engineWebSearch, webFetch as engineWebFetch } from '../../engine/chat-provider.js';
-import { isPlainOutput as configIsPlainOutput } from '../../config.js';
-import { WebFetchResponse, WebSearchResult } from 'ollama';
+import { getApiProvider, getOllamaHost, isPlainOutput as configIsPlainOutput } from '../../config.js';
+import { isDirectOllamaCloud } from '../../engine/ollama-web.js';
+import type { WebFetchResponse, WebSearchResult } from '../../engine/provider-types.js';
 
 /**
  * BaseCore - Common base for Core modules
@@ -97,17 +98,43 @@ export abstract class BaseCore {
     this.confusionIndex = 0;
   }
 
+  private webAuthError(message: string, cause: unknown): Error {
+    if (getApiProvider() !== 'ollama') return cause instanceof Error ? cause : new Error(message);
+    const guidance = isDirectOllamaCloud(getOllamaHost())
+      ? 'Set OLLAMA_API_KEY for direct Ollama Cloud web access'
+      : `Authenticate or configure the web backend on Ollama at ${getOllamaHost()} (for local cloud proxying, use 'ollama signin'); mycc does not forward OLLAMA_API_KEY to this host`;
+    const signinUrl = (cause as { signinUrl?: unknown })?.signinUrl;
+    const signin = typeof signinUrl === 'string' ? ` Sign in at ${signinUrl}.` : '';
+    return new Error(`${guidance}.${signin} Original error: ${message}`, { cause });
+  }
+
+  /**
+   * Is this failure an authentication refusal?
+   *
+   * Prefer the transport's own classification (`OllamaHttpError.kind`, which
+   * covers 401/403 AND the `{ error }`-over-HTTP-200 shape Ollama uses) over
+   * sniffing the message for "401"/"unauthorized". The text fallback remains
+   * only for errors raised before the HTTP layer (e.g. a bare TypeError).
+   */
+  private isAuthFailure(error: unknown): boolean {
+    const kind = (error as { kind?: unknown })?.kind;
+    if (kind === 'auth') return true;
+    if (kind !== undefined) return false;
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes('401') || message.includes('unauthorized') || message.includes('Unauthorized');
+  }
+
   /**
    * Search the web for information
    * @param query - The search query
    */
-  async webSearch(query: string): Promise<WebSearchResult[]> {
+  async webSearch(query: string, signal?: AbortSignal): Promise<WebSearchResult[]> {
     try {
-      return await engineWebSearch(query);
+      return await engineWebSearch(query, signal);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes('401') || message.includes('unauthorized') || message.includes('Unauthorized')) {
-        throw new Error(`Unauthorized: Set OLLAMA_API_KEY in .env for web search access. Original error: ${message}`, { cause: error });
+      if (signal?.aborted) throw error;
+      if (this.isAuthFailure(error)) {
+        throw this.webAuthError(error instanceof Error ? error.message : String(error), error);
       }
       throw error;
     }
@@ -117,13 +144,16 @@ export abstract class BaseCore {
    * Fetch and parse content from a specific URL
    * @param url - The URL to fetch
    */
-  async webFetch(url: string): Promise<WebFetchResponse> {
+  async webFetch(url: string, signal?: AbortSignal): Promise<WebFetchResponse> {
     try {
-      return await engineWebFetch(url);
+      return await engineWebFetch(url, signal);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes('401') || message.includes('unauthorized') || message.includes('Unauthorized')) {
-        throw new Error(`Unauthorized: Set OLLAMA_API_KEY in .env for web fetch access. Original error: ${message}`, { cause: error });
+      // A cancelled request is not an auth problem: never dress an abort up as
+      // "check your API key", which is exactly what a text match on "aborted"
+      // would have been able to do.
+      if (signal?.aborted) throw error;
+      if (this.isAuthFailure(error)) {
+        throw this.webAuthError(error instanceof Error ? error.message : String(error), error);
       }
       throw error;
     }

@@ -3,9 +3,9 @@
  * Each provider exports its own healthCheck() function.
  */
 
-import type { ChatResponse } from 'ollama';
-import { Ollama } from 'ollama';
-import { getOllamaHost } from '../config.js';
+import type { ChatResponse } from './provider-types.js';
+import { OllamaHttpClient } from './ollama-http.js';
+import { getOllamaHost, getOllamaApiKey } from '../config.js';
 import type { RetryChatRequest, RetryChatConfig } from './chat-helpers.js';
 
 export interface HealthCheckResult {
@@ -107,10 +107,9 @@ export async function probeModel(
  * or misnamed. Probing at health-check time surfaces the problem early with
  * an actionable message (the exact `ollama pull <model>` command).
  *
- * Uses the Ollama JS client (same path as `rag-nomic.ts`/`rag-embeddinggemma.ts`
- * at runtime) rather than a raw REST call, so the probe exercises the real
- * code path. The embedding model is provided by Ollama regardless of the
- * chat API provider (Ollama or DeepSeek) — both providers call this.
+ * Uses the same owned HTTP transport as rag-nomic.ts/rag-embeddinggemma.ts,
+ * so the probe exercises the production embedding path. The embedding model is
+ * provided by Ollama regardless of the chat API provider.
  *
  * @returns A warning string on failure (non-fatal — the agent can still run
  *   chat-only; RAG features just won't work), or `null` on success.
@@ -118,7 +117,7 @@ export async function probeModel(
 export async function probeEmbeddingModel(): Promise<string | null> {
   const embeddingModel = process.env.OLLAMA_EMBEDDING_MODEL || 'nomic-embed-text';
   try {
-    const ollama = new Ollama({ host: getOllamaHost() });
+    const ollama = new OllamaHttpClient({ host: getOllamaHost(), apiKey: getOllamaApiKey() });
     const response = await ollama.embed({ model: embeddingModel, input: 'test' });
     if (!response.embeddings || response.embeddings.length === 0) {
       throw new Error('Model returned no embeddings');

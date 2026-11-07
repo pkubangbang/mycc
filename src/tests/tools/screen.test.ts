@@ -28,7 +28,7 @@ vi.mock('child_process', () => ({
 
 import { execSync } from 'child_process';
 import { screenTool, resetEnvCacheForTests } from '../../tools/screen.js';
-import { createMockContext, createTempDir, removeTempDir } from './test-utils.js';
+import { createMockContext, createTempDir, removeTempDir, runTool, testSignal } from './test-utils.js';
 
 describe('screenTool detectEnvironment memoization + probe arg', () => {
   let tempDir: string;
@@ -58,13 +58,13 @@ describe('screenTool detectEnvironment memoization + probe arg', () => {
     vi.mocked(ctx.core.imgDescribe).mockResolvedValue('screen content');
 
     // First call: detectEnvironment probes the candidate list.
-    await screenTool.handler(ctx, {});
+    await runTool(screenTool, ctx, {}, testSignal);
     const firstRoundProbes = envProbeCalls();
     expect(firstRoundProbes).toBeGreaterThan(0);
 
     // Calls 2 and 3 (probe defaults to false) must reuse the cached result.
-    await screenTool.handler(ctx, {});
-    await screenTool.handler(ctx, {});
+    await runTool(screenTool, ctx, {}, testSignal);
+    await runTool(screenTool, ctx, {}, testSignal);
 
     expect(envProbeCalls()).toBe(firstRoundProbes);
   });
@@ -73,20 +73,20 @@ describe('screenTool detectEnvironment memoization + probe arg', () => {
     const ctx = createMockContext(tempDir);
     vi.mocked(ctx.core.imgDescribe).mockResolvedValue('screen content');
 
-    await screenTool.handler(ctx, {});
+    await runTool(screenTool, ctx, {}, testSignal);
     const firstRoundProbes = envProbeCalls();
     expect(firstRoundProbes).toBeGreaterThan(0);
 
     // probe=true must bypass the cache and run a fresh round of probes.
     vi.mocked(execSync).mockClear();
-    await screenTool.handler(ctx, { probe: true });
+    await runTool(screenTool, ctx, { probe: true }, testSignal);
     const reprobeCalls = envProbeCalls();
     expect(reprobeCalls).toBe(firstRoundProbes);
 
     // A subsequent default call (probe=false) must reuse the refreshed
     // cache — no new probes.
     vi.mocked(execSync).mockClear();
-    await screenTool.handler(ctx, {});
+    await runTool(screenTool, ctx, {}, testSignal);
     expect(envProbeCalls()).toBe(0);
   });
 
@@ -94,12 +94,12 @@ describe('screenTool detectEnvironment memoization + probe arg', () => {
     const ctx = createMockContext(tempDir);
     vi.mocked(ctx.core.imgDescribe).mockResolvedValue('screen content');
 
-    await screenTool.handler(ctx, { probe: false });
+    await runTool(screenTool, ctx, { probe: false }, testSignal);
     const firstRoundProbes = envProbeCalls();
     expect(firstRoundProbes).toBeGreaterThan(0);
 
     vi.mocked(execSync).mockClear();
-    await screenTool.handler(ctx, { probe: false });
+    await runTool(screenTool, ctx, { probe: false }, testSignal);
     expect(envProbeCalls()).toBe(0);
   });
 

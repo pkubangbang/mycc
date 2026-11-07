@@ -7,7 +7,10 @@
  */
 
 import chalk from 'chalk';
-import type { ChatRequest, ChatResponse, WebSearchResult, WebFetchResponse, Message as OllamaMessage, ToolCall as OllamaToolCall } from 'ollama';
+import type {
+  ChatRequest, ChatResponse, WebSearchResult, WebFetchResponse,
+  ProviderMessage, ProviderToolCall,
+} from './provider-types.js';
 import type { Message } from '../types.js';
 import { agentIO } from '../loop/agent-io.js';
 import type { HealthCheckResult } from './health-check.js';
@@ -56,12 +59,11 @@ function getApiKey(): string {
 // Message Normalization (Ollama format → DeepSeek format)
 // ============================================================================
 
-interface NormalizedMessage {
-  role: string;
+interface NormalizedMessage extends Omit<ProviderMessage, 'content' | 'tool_calls'> {
   content: string | ContentBlock[];
   reasoning_content?: string;
-  tool_calls?: OllamaToolCall[];
   tool_call_id?: string;
+  tool_calls?: ProviderToolCall[];
 }
 
 /**
@@ -73,7 +75,7 @@ type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string; detail?: 'low' | 'high' | 'original' | 'auto' } };
 
-function normalizeMessage(msg: OllamaMessage): NormalizedMessage {
+function normalizeMessage(msg: ProviderMessage): NormalizedMessage {
   // The codebase uses the extended `Message` type which adds tool_call_id + reasoning_content
   const extended = msg as Message;
 
@@ -107,7 +109,7 @@ function normalizeMessage(msg: OllamaMessage): NormalizedMessage {
             ? tc.function.arguments
             : JSON.stringify(tc.function.arguments),
       },
-    })) as unknown as OllamaToolCall[];
+    })) as unknown as ProviderToolCall[];
 
     // DeepSeek requires reasoning_content on ALL assistant messages with tool_calls
     // when thinking mode is enabled, even for messages from before the mode switch.
@@ -262,18 +264,13 @@ async function deepseekChat(
  * "premature close" so `isTransientError()` classifies it as transient and
  * `retryChat` auto-retries (a fresh stream usually completes successfully).
  */
-// ollama's ToolCall.function.arguments is typed as { [key: string]: any },
-// so the parsed object must match that shape. We cast JSON.parse's result
-// rather than annotating the return type, to avoid the no-explicit-any rule.
-type ToolCallArgs = ChatResponse['message']['tool_calls'] extends Array<infer T>
-  ? T extends { function: { arguments: infer A } }
-    ? A
-    : never
-  : never;
+// Provider-neutral tool-call arguments are records on the engine boundary;
+// DeepSeek's wire adapter serializes them to JSON strings.
+type ProviderToolArgs = ProviderToolCall['function']['arguments'];
 
-function safeParseToolArgs(args: string): ToolCallArgs {
+function safeParseToolArgs(args: string): ProviderToolArgs {
   try {
-    return JSON.parse(args) as ToolCallArgs;
+    return JSON.parse(args) as ProviderToolArgs;
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     throw new Error(
@@ -444,7 +441,7 @@ export async function retryChat(
         // hole from any other caller (forkChat, retryMultipleChoice, wrap-up)
         // can never reach normalizeMessage and crash on `extended.role`.
         const messages = (request.messages || [])
-          .filter((m): m is OllamaMessage => !!m && typeof m === 'object' && m.role !== undefined)
+          .filter((m): m is ProviderMessage => !!m && typeof m === 'object' && m.role !== undefined)
           .map((m) => {
             // Multimodal passthrough: a message carrying an Ollama-style
             // `images[]` array (used by imgDescribe) is emitted as an
@@ -503,8 +500,8 @@ export async function retryChat(
           body.tools = request.tools as unknown[];
         }
 
-        // Allow callers to override tool_choice (e.g., 'none' for wrap-up)
-        const toolChoice = (request as Record<string, unknown>).toolChoice;
+        // tool_choice is canonical; retain the legacy camelCase alias.
+        const toolChoice = request.tool_choice ?? (request as Record<string, unknown>).toolChoice;
         if (toolChoice) {
           body.tool_choice = toolChoice as DeepSeekRequestBody['tool_choice'];
         }
@@ -693,12 +690,16 @@ interface ResponsesResponse {
  * content for a web search. Returns the synthesis (final answer) along with a
  * summary of the search actions the server performed.
  */
-async function deepseekResponsesWebSearch(query: string): Promise<string> {
+async function deepseekResponsesWebSearch(query: string, signal?: AbortSignal): Promise<string> {
   const url = `${getHost()}/responses`;
   const apiKey = getApiKey();
 
   const response = await fetch(url, {
     method: 'POST',
+    // Same 30s ceiling the Ollama web client uses, combined with the caller's
+    // signal so ESC/cancellation reaches the request itself rather than only
+    // unwinding the await.
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
@@ -773,14 +774,27 @@ async function deepseekResponsesWebSearch(query: string): Promise<string> {
   return `${header}${answer}`;
 }
 
-export async function webSearch(query: string): Promise<WebSearchResult[]> {
+/**
+ * Web search via DeepSeek's Responses API.
+ *
+ * The public signature mirrors the Ollama provider exactly (see CoreModule in
+ * src/types.ts): `(query, signal)`. Previously it accepted only `query`, which
+ * type-checked fine at the facade (`export const webSearch = active.webSearch`)
+ * but silently dropped the caller's AbortSignal under API_PROVIDER=deepseek.
+ */
+export async function webSearch(query: string, signal?: AbortSignal): Promise<WebSearchResult[]> {
   return retryWithBackoff(async () => {
-    const content = await deepseekResponsesWebSearch(query);
+    const content = await deepseekResponsesWebSearch(query, signal);
     return [{ content }];
-  }, { maxRetries: 2 });
+  }, { maxRetries: 2, signal });
 }
 
-export async function webFetch(_url: string): Promise<WebFetchResponse> {
+/**
+ * Web fetch is not offered by DeepSeek. Declared `async` so the failure is a
+ * REJECTED promise: a synchronous throw would violate the CoreModule contract
+ * and escape any caller that attaches its error handling after the call.
+ */
+export async function webFetch(_url: string, _signal?: AbortSignal): Promise<WebFetchResponse> {
   throw new Error('webFetch not supported by DeepSeek provider');
 }
 
@@ -833,7 +847,7 @@ export async function imgDescribe(image: string, prompt?: string, signal?: Abort
           // data-URL media type.
           images: [image],
           imageMime: mime,
-        } as unknown as OllamaMessage,
+        } as ProviderMessage,
       ],
     },
     { signal, noSpinner: true },

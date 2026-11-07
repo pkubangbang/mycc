@@ -8,6 +8,7 @@ import * as fs from 'fs/promises';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { retryChat, MODEL } from '../engine/chat-provider.js';
 import { getTokenThreshold } from '../config.js';
+import { isCancellation } from '../loop/cancellation.js';
 
 export const readReadTool: ToolDefinition = {
   name: 'read_read',
@@ -50,9 +51,11 @@ export const readReadTool: ToolDefinition = {
       const summary = await twoTurnSummary(content, focus, TOKEN_THRESHOLD, ctx, signal);
       return summary;
     } catch (error: unknown) {
-      if (signal?.aborted) {
-        return 'Error: Interrupted by user.';
-      }
+      // Rethrow rather than return a string: the loop's single owner (TOOL via
+      // isCancellation) turns this into STOP + wrap-up, whereas a returned
+      // "Error: Interrupted by user." was a tool result the model could act on
+      // (e.g. retry the read) after the user had already interrupted.
+      if (isCancellation(error, signal)) throw error;
       return `Error: ${(error as Error).message}`;
     }
   }

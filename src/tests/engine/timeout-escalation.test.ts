@@ -60,29 +60,25 @@ vi.mock('../../engine/health-check.js', () => ({
   probeModel: vi.fn(),
 }));
 
-// Mock the `ollama` package: replace the Ollama class so ollama.chat() returns
-// a fake async-iterable stream object immediately (with an abort() no-op).
-// retryChat races ollama.chat() (the POST) against a setTimeout keyed off the
-// per-attempt timeout; if we let the real client run it hits the network. By
-// resolving the POST instantly we reach collectStream (mocked below), where
-// the per-attempt timeout is observable.
-vi.mock('ollama', () => {
+// Mock the owned Ollama HTTP transport so retryChat reaches the collectStream
+// double without network access. The observable retry/watchdog contract remains
+// unchanged by the SDK replacement.
+vi.mock('../../engine/ollama-http.js', () => {
   function makeFakeStream() {
     return {
       abort() { /* no-op for tests */ },
       async *[Symbol.asyncIterator]() {
-        // collectStream is mocked, so this iterator is never consumed.
         yield { message: { content: '' }, done: true, done_reason: 'stop' };
       },
     };
   }
-  class Ollama {
+  class OllamaHttpClient {
     constructor(_opts: unknown) {}
     async chat(_req: unknown) { return makeFakeStream(); }
     async list() { return { models: [] }; }
-    async show(_m: unknown) { return { model_info: {}, details: {} }; }
+    async show(_model: string) { return { model_info: {}, details: {} }; }
   }
-  return { Ollama };
+  return { OllamaHttpClient };
 });
 
 import {

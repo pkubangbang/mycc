@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { issueCommentTool } from '../../tools/issue_comment.js';
 import type { AgentContext, IssueModule, CoreModule, Issue } from '../../types.js';
-
+import { runTool, testSignal } from './test-utils.js';
 // Factory to create mock issue module
 function createMockIssueModule(): IssueModule {
   return {
@@ -105,10 +105,10 @@ describe('issueCommentTool', () => {
   it('should add a comment to an issue', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createSampleIssue());
 
-    const result = await issueCommentTool.handler(ctx, {
+    const result = await runTool(issueCommentTool, ctx, {
       id: 1,
       comment: 'This is a test comment',
-    });
+    }, testSignal);
 
     expect(mockIssue.getIssue).toHaveBeenCalledWith(1);
     expect(mockIssue.addComment).toHaveBeenCalledWith(1, 'This is a test comment', undefined);
@@ -119,11 +119,11 @@ describe('issueCommentTool', () => {
   it('should add a comment with poster name', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createSampleIssue());
 
-    const result = await issueCommentTool.handler(ctx, {
+    const result = await runTool(issueCommentTool, ctx, {
       id: 1,
       comment: 'Great progress!',
       poster: 'alice',
-    });
+    }, testSignal);
 
     expect(mockIssue.addComment).toHaveBeenCalledWith(1, 'Great progress!', 'alice');
     expect(result).toBe('OK');
@@ -133,10 +133,10 @@ describe('issueCommentTool', () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createSampleIssue());
 
     const specialComment = 'Code: `const x = 1;`\n**Bold** text\n```javascript\nconsole.log("hello");\n```';
-    const result = await issueCommentTool.handler(ctx, {
+    const result = await runTool(issueCommentTool, ctx, {
       id: 1,
       comment: specialComment,
-    });
+    }, testSignal);
 
     expect(mockIssue.addComment).toHaveBeenCalledWith(1, specialComment, undefined);
     expect(result).toBe('OK');
@@ -146,10 +146,10 @@ describe('issueCommentTool', () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createSampleIssue());
 
     const longComment = 'A'.repeat(1000);
-    const result = await issueCommentTool.handler(ctx, {
+    const result = await runTool(issueCommentTool, ctx, {
       id: 1,
       comment: longComment,
-    });
+    }, testSignal);
 
     expect(mockIssue.addComment).toHaveBeenCalledWith(1, longComment, undefined);
     expect(result).toBe('OK');
@@ -159,18 +159,18 @@ describe('issueCommentTool', () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createSampleIssue());
 
     // First comment
-    const result1 = await issueCommentTool.handler(ctx, {
+    const result1 = await runTool(issueCommentTool, ctx, {
       id: 1,
       comment: 'First comment',
-    });
+    }, testSignal);
     expect(result1).toBe('OK');
 
     // Second comment
-    const result2 = await issueCommentTool.handler(ctx, {
+    const result2 = await runTool(issueCommentTool, ctx, {
       id: 1,
       comment: 'Second comment',
       poster: 'bob',
-    });
+    }, testSignal);
     expect(result2).toBe('OK');
 
     expect(mockIssue.addComment).toHaveBeenCalledTimes(2);
@@ -179,9 +179,9 @@ describe('issueCommentTool', () => {
   // ========== Error Case Tests ==========
 
   it('should reject missing id', async () => {
-    const result = await issueCommentTool.handler(ctx, {
+    const result = await runTool(issueCommentTool, ctx, {
       comment: 'Test comment',
-    });
+    }, testSignal);
 
     expect(result).toBe('Error: id must be an integer');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_comment', 'Invalid id parameter');
@@ -190,29 +190,29 @@ describe('issueCommentTool', () => {
   });
 
   it('should reject non-integer id', async () => {
-    const result = await issueCommentTool.handler(ctx, {
+    const result = await runTool(issueCommentTool, ctx, {
       id: 'abc',
       comment: 'Test comment',
-    });
+    }, testSignal);
 
     expect(result).toBe('Error: id must be an integer');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_comment', 'Invalid id parameter');
   });
 
   it('should reject float id', async () => {
-    const result = await issueCommentTool.handler(ctx, {
+    const result = await runTool(issueCommentTool, ctx, {
       id: 1.5,
       comment: 'Test comment',
-    });
+    }, testSignal);
 
     expect(result).toBe('Error: id must be an integer');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_comment', 'Invalid id parameter');
   });
 
   it('should reject missing comment', async () => {
-    const result = await issueCommentTool.handler(ctx, {
+    const result = await runTool(issueCommentTool, ctx, {
       id: 1,
-    });
+    }, testSignal);
 
     expect(result).toBe('Error: comment parameter is required and must be a string');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_comment', 'Missing or invalid comment parameter');
@@ -221,20 +221,20 @@ describe('issueCommentTool', () => {
   });
 
   it('should reject empty comment', async () => {
-    const result = await issueCommentTool.handler(ctx, {
+    const result = await runTool(issueCommentTool, ctx, {
       id: 1,
       comment: '',
-    });
+    }, testSignal);
 
     expect(result).toBe('Error: comment parameter is required and must be a string');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_comment', 'Missing or invalid comment parameter');
   });
 
   it('should reject non-string comment', async () => {
-    const result = await issueCommentTool.handler(ctx, {
+    const result = await runTool(issueCommentTool, ctx, {
       id: 1,
       comment: { text: 'nested' },
-    });
+    }, testSignal);
 
     expect(result).toBe('Error: comment parameter is required and must be a string');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_comment', 'Missing or invalid comment parameter');
@@ -243,10 +243,10 @@ describe('issueCommentTool', () => {
   it('should return error for non-existent issue', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(undefined);
 
-    const result = await issueCommentTool.handler(ctx, {
+    const result = await runTool(issueCommentTool, ctx, {
       id: 999,
       comment: 'Test comment',
-    });
+    }, testSignal);
 
     expect(result).toBe('Error: Issue #999 not found');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_comment', 'Issue #999 not found');
@@ -258,11 +258,11 @@ describe('issueCommentTool', () => {
   it('should handle undefined poster as anonymous', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createSampleIssue());
 
-    const result = await issueCommentTool.handler(ctx, {
+    const result = await runTool(issueCommentTool, ctx, {
       id: 1,
       comment: 'Test comment',
       poster: undefined,
-    });
+    }, testSignal);
 
     // Handler passes undefined to addComment which defaults to 'anonymous'
     expect(mockIssue.addComment).toHaveBeenCalledWith(1, 'Test comment', undefined);
@@ -282,10 +282,10 @@ describe('issueCommentTool', () => {
     };
     mockIssue.getIssue = vi.fn().mockResolvedValue(pendingIssue);
 
-    const result = await issueCommentTool.handler(ctx, {
+    const result = await runTool(issueCommentTool, ctx, {
       id: 1,
       comment: 'Note before claiming',
-    });
+    }, testSignal);
 
     expect(result).toBe('OK');
     expect(mockIssue.addComment).toHaveBeenCalled();
@@ -305,10 +305,10 @@ describe('issueCommentTool', () => {
     };
     mockIssue.getIssue = vi.fn().mockResolvedValue(completedIssue);
 
-    const result = await issueCommentTool.handler(ctx, {
+    const result = await runTool(issueCommentTool, ctx, {
       id: 1,
       comment: 'Follow-up note',
-    });
+    }, testSignal);
 
     expect(result).toBe('OK');
     expect(mockIssue.addComment).toHaveBeenCalled();
