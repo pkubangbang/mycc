@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted, computed } from 'vue';
+import { ref, watch, nextTick, onMounted, onUnmounted, computed } from 'vue';
 import type { ChatMessage, ChatState } from '../types';
 import { chatApi, isMessageVisible } from '../main';
 import { messageKey } from '../message-key';
@@ -254,6 +254,286 @@ function loadMore(): void {
   });
 }
 
+/**
+ * Jump to the PREVIOUS AWAIT hint (the "↑ prev" button on an AWAIT row).
+ *
+ * Lives here because only this component knows the full filtered order: the
+ * target may be collapsed out of the render window, so "where is the previous
+ * hint?" cannot be answered from MessageItem's own props.
+ *
+ * Scan / expand / wait loop. One expansion is not guaranteed to reveal an
+ * AWAIT, and after a capacity change the rows are not measurable until Vue has
+ * flushed AND the browser has laid out. So instead of guessing how many ticks
+ * to wait, each round asks the DOM the question it actually cares about — "is
+ * an earlier AWAIT hint rendered yet?" — and repeats until it is (bounded by a
+ * per-step timeout and a step count). AWAIT hints carry `data-await-hint`; rows
+ * carry `data-msg-key`; both survive an expansion, so newly prepended rows are
+ * found by the same query.
+ */
+/**
+ * Jump to the PREVIOUS AWAIT hint (the "↑ prev" button on an AWAIT row).
+ *
+ * The target is chosen by DATA, marked in the DOM, and then scrolled to by the
+ * browser. Three facts make this exact, and each replaces a guess the earlier
+ * implementations had to make:
+ *
+ *   1. WHICH row? — the key of the previous AWAIT entry, held in
+ *      `prevAwaitTargetKey`. The key comes from `messageKey`, the same function
+ *      the v-for uses, so "the row with this key" is literally one row.
+ *   2. WHEN is it rendered? — the template puts `is-prev-await-target` on THE
+ *      row whose key matches the ref, so at most one row in the document
+ *      carries that class. The loop expands the collapsed window until
+ *      `querySelector('.is-prev-await-target')` returns a node; no index
+ *      arithmetic, no key reconstruction, nothing to drift.
+ *   3. WHERE does it land? — `scrollIntoView({ block: 'start' })`. The browser
+ *      owns the stop position, honouring `scroll-margin-top` (the breathing
+ *      room) and any scroll container between the row and the viewport.
+ *
+ * This is what fixes the in-range case too: when the target is already
+ * rendered, no expansion runs at all — the ref is set, the row is marked, and
+ * one `scrollIntoView` positions it. Nothing recomputes a scroll offset from a
+ * rect measured in an earlier frame, which is what used to make the stop land
+ * slightly wrong.
+ */
+/** Breathing room between the landed hint and the viewport's bottom edge. */
+const JUMP_BOTTOM_PAD = 8;
+/** Eased-scroll duration: short enough to feel instant, long enough to show the
+ *  direction of travel (a 30-screen jump in 0ms is disorienting). */
+const JUMP_TWEEN_MS = 260;
+
+let jumpCancelTween: (() => void) | null = null;
+
+/**
+ * Ease `el.scrollTop` to `dest` over {@link JUMP_TWEEN_MS}.
+ *
+ * The destination is computed by the caller from the CURRENT layout, so it is
+ * exact; this only decides how the view travels there. Two properties the
+ * native smooth scroll lacked, and both matter here:
+ *   - CANCELLABLE: a second jump (or any new scroll request) aborts the first,
+ *     so two animations never fight over scrollTop;
+ *   - NO OVERSHOOT: every frame moves monotonically towards `dest` along a fixed
+ *     ease-out curve, so a stale measurement cannot throw the view thousands of
+ *     pixels past the target (measured with `behavior:'smooth'`: 42658 for a
+ *     ~3300px target).
+ * `prefers-reduced-motion` is honoured by jumping straight there.
+ */
+function tweenScroll(el: HTMLElement, dest: number): void {
+  jumpCancelTween?.();
+  const reduced = typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduced) {
+    el.scrollTop = dest;
+    jumpCancelTween = null;
+    return;
+  }
+
+  const from = el.scrollTop;
+  const delta = dest - from;
+  if (Math.abs(delta) < 1) {
+    el.scrollTop = dest;
+    jumpCancelTween = null;
+    return;
+  }
+
+  const start = performance.now();
+  let raf = 0;
+  let cancelled = false;
+  jumpCancelTween = () => {
+    cancelled = true;
+    if (raf) cancelAnimationFrame(raf);
+  };
+
+  const frame = (now: number): void => {
+    if (cancelled) return;
+    const t = Math.min(1, (now - start) / JUMP_TWEEN_MS);
+    // easeOutCubic: fast start, gentle settle — reads as "arrived", not "drifted".
+    const eased = 1 - Math.pow(1 - t, 3);
+    el.scrollTop = from + delta * eased;
+    if (t < 1) {
+      raf = requestAnimationFrame(frame);
+    } else {
+      el.scrollTop = dest; // land exactly, never on a rounding remainder
+      jumpCancelTween = null;
+    }
+  };
+  raf = requestAnimationFrame(frame);
+}
+
+function jumpToPrevAwait(fromIndex: number): void {
+  const el = scrollContainer.value;
+  if (!el) return;
+
+  const JUMP_STEP_TIMEOUT_MS = 2000;
+  const JUMP_MAX_EXPANSIONS = 60; // MAX_VISIBLE / SCROLL_BATCH, with headroom
+
+  const isEntryHint = (m: ChatMessage): boolean =>
+    m.label === 'await' && (m.content ?? '').includes('waiting for an event');
+
+  // 1. Pick the target message (not a node): the nearest AWAIT entry above the
+  //    clicked row, searched over the FULL filtered list so a collapsed target
+  //    is still found. Its key is what the template compares against.
+  let targetMsg: ChatMessage | null = null;
+  for (let i = fromIndex - 1; i >= 0; i--) {
+    const m = filteredMessages.value[i];
+    if (m && isEntryHint(m)) { targetMsg = m; break; }
+  }
+  if (!targetMsg) {
+    flashJumpNotice('上面没有更早的 AWAIT 提示了');
+    return;
+  }
+
+  // messageKey is index-sensitive only for id-less messages; every live and
+  // history-loaded message carries an id (main.ts assigns one), so the index
+  // argument is irrelevant here and 0 keeps the call site simple.
+  const targetKey = messageKey(targetMsg, 0);
+  prevAwaitTargetKey.value = targetKey;
+  userScrolledUp = true;
+  showScrollButton.value = true;
+
+  const findTarget = (): HTMLElement | null =>
+    el.querySelector<HTMLElement>('.is-prev-await-target');
+
+  // Clear the marker + flash ONLY after the jump has finished with it. A fixed
+  // timeout used to race the scroll: the class could disappear before
+  // scrollIntoView ran (or the flash could be added to a node about to be
+  // reset), which is why "marked" was sometimes observed as 0.
+  let finishTimer: ReturnType<typeof setTimeout> | null = null;
+  const finish = (): void => {
+    if (finishTimer) return;
+    finishTimer = setTimeout(() => { prevAwaitTargetKey.value = null; }, 1200);
+  };
+
+  /**
+   * Scroll the marked row to the top of the container.
+   *
+   * WHY THIS WAITS FOR GEOMETRY INSTEAD OF SCROLLING IMMEDIATELY: the marker
+   * only exists once Vue has rendered it, but "rendered" is not "laid out where
+   * it belongs". Right after an expansion the row can be measured at a
+   * meaningless offset (observed: -39423px) because the prepend's viewport
+   * restoration and the browser's scroll anchoring settle over the following
+   * frame(s). `scrollIntoView` on such a row is a no-op-to-wrong jump.
+   *
+   * So we poll the row's position relative to the container and only scroll once
+   * it is a sane position in the scrollable range; the number of polls is
+   * bounded, then we scroll anyway rather than doing nothing.
+   */
+  const settle = (): void => {
+    const row = findTarget();
+    if (!row) {
+      // The class was applied to a key that is not in the rendered window: the
+      // window hit MAX_VISIBLE before reaching it.
+      flashJumpNotice('上一条 AWAIT 太远，已超出可回看窗口');
+      prevAwaitTargetKey.value = null;
+      return;
+    }
+
+    // The row is `display: contents`: it has no box, so measure its first child.
+    const box = (): HTMLElement | null =>
+      row.firstElementChild instanceof HTMLElement ? row.firstElementChild : null;
+
+    let polls = 0;
+    const attempt = (): void => {
+      const child = box();
+      const ready = child !== null;
+      const containerRect = el.getBoundingClientRect();
+      const rowTop = child ? child.getBoundingClientRect().top - containerRect.top : NaN;
+      // A sane row is somewhere within the whole scroll height (not a runaway
+      // negative offset produced by a mid-layout measurement).
+      const sane = ready && rowTop > -el.scrollHeight && rowTop < el.scrollHeight;
+
+      if (!sane && polls++ < 30) {
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(attempt);
+        else setTimeout(attempt, 16);
+        return;
+      }
+
+      // `row` is the `.chat-msg-row` wrapper: `display: contents` ⇒ NO box, and
+      // scrollIntoView on it is a no-op. Scroll its first child (the real
+      // `.message-row` / CardItem root), which is the element that carries the
+      // `scroll-margin-top` breathing room from the scoped stylesheet.
+      const target = row.firstElementChild instanceof HTMLElement ? row.firstElementChild : row;
+      // Place the hint at the BOTTOM of the viewport, not the top: the jump is
+      // meant to lead into the section that FOLLOWS it, so the user reads
+      // downward from there rather than being dropped at the end of the
+      // previous section.
+      //
+      // NOT `scrollIntoView({behavior:'smooth'})`. Measured: the native smooth
+      // scroll overshoots (scrollTop reached 42658 for a ~3300 target) because
+      // it interpolates from a start offset sampled once while the container's
+      // layout is still settling, and it is not cancellable. So WE own both the
+      // position and the motion: compute the exact destination, then ease
+      // scrollTop towards it over a few frames with a rAF tween. The end point
+      // is exact by construction; the easing is purely cosmetic.
+      const dest = Math.max(
+        0,
+        el.scrollTop + (target.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom) + JUMP_BOTTOM_PAD,
+      );
+      tweenScroll(el, dest);
+      const hint = row.querySelector<HTMLElement>('[data-await-hint]');      if (hint) {
+        hint.classList.add('await-hint--landed');
+        window.setTimeout(() => hint.classList.remove('await-hint--landed'), 1000);
+      }
+      finish();
+    };
+    attempt();
+  };
+
+  // 2. Expand until the marked row exists. Each round waits for the Vue flush
+  //    plus one layout frame, with a timeout so a render that never arrives
+  //    cannot wedge the handler.
+  let expansions = 0;
+  const step = (): void => {
+    if (findTarget()) { settle(); return; }
+
+    const ceiling =
+      !hasCollapsedAbove.value || capacity.value + tailBuffer.value >= MAX_VISIBLE;
+    if (ceiling || expansions >= JUMP_MAX_EXPANSIONS) { settle(); return; }
+
+    expansions++;
+    loadMore(); // grows the window; it restores the current anchor itself
+    let settled = false;
+    const next = (): void => {
+      if (settled) return;
+      settled = true;
+      step();
+    };
+    nextTick(() => {
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(next);
+      else setTimeout(next, 0);
+    });
+    setTimeout(next, JUMP_STEP_TIMEOUT_MS);
+  };
+
+  // The class only appears after Vue re-renders with the new ref value, so the
+  // first check has to wait a tick; `step` does that implicitly by re-checking
+  // after each expansion. Seed it through the same path for uniformity.
+  nextTick(step);
+}
+
+/**
+ * Key of the AWAIT row to mark as the jump destination (null = none). Declared
+ * before `jumpToPrevAwait` uses it; kept as a ref so the template re-renders
+ * the unique class when it changes.
+ */
+const prevAwaitTargetKey = ref<string | null>(null);
+
+
+/**
+ * One transient line for a jump that cannot happen — a silent no-op reads as a
+ * dead button, and a modal for a navigation miss is disproportionate. Re-entry
+ * clears the old timer so rapid clicks extend the notice.
+ */
+const jumpNotice = ref('');
+let jumpNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+function flashJumpNotice(text: string): void {
+  jumpNotice.value = text;
+  if (jumpNoticeTimer) clearTimeout(jumpNoticeTimer);
+  jumpNoticeTimer = setTimeout(() => { jumpNotice.value = ''; }, 3000);
+}
+onUnmounted(() => {
+  if (jumpNoticeTimer) clearTimeout(jumpNoticeTimer);
+});
+
 function scrollToBottom(): void {
   const el = scrollContainer.value;
   if (el) {
@@ -463,9 +743,15 @@ onMounted(() => {
       :key="messageKey(msg, index)"
       :data-msg-key="messageKey(msg, index)"
       class="chat-msg-row"
+      :class="{ 'is-prev-await-target': prevAwaitTargetKey !== null && prevAwaitTargetKey === messageKey(msg, index) }"
     >
       <CardItem v-if="msg.type === 'card' && msg.card" :card="msg.card" />
-      <MessageItem v-else :message="msg" :on-quote="onQuote" />
+      <MessageItem
+        v-else
+        :message="msg"
+        :on-quote="onQuote"
+        @jump-prev-await="jumpToPrevAwait(filteredMessages.length - visibleMessages.length + index)"
+      />
     </div>
     <!-- Temporary "继续…" card: surfaces flushed steering notes for the user
          to send as a query or discard when the agent reaches PROMPT. Rendered
@@ -479,6 +765,7 @@ onMounted(() => {
       @discard-note="onDiscardSteeringNote"
       @discard-all="onDiscardAllSteering"
     />
+    <div v-if="jumpNotice" class="jump-notice">{{ jumpNotice }}</div>
     <!-- ESC / interrupt button — at the bottom of the chat history
          (document-relative, scrolls with content). Two variants share the
          same interrupt handler but differ in look:
@@ -553,6 +840,16 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* Outcome line for a prev-AWAIT jump that could not complete: a system remark
+   about navigation, never a bubble. */
+.jump-notice {
+  padding: 2px 16px 6px;
+  font-size: 12px;
+  font-style: italic;
+  text-align: center;
+  color: var(--text-muted);
+  user-select: none;
+}
 .chat-log {
   flex: 1;
   overflow-y: auto;
@@ -570,6 +867,16 @@ onMounted(() => {
    geometry getBoundingClientRect needs. */
 .chat-msg-row {
   display: contents;
+}
+/* The "↑ prev" jump destination (ChatLog.jumpToPrevAwait). The row whose message
+   key the handler stored carries this class, so at most ONE row has it; the
+   handler then calls scrollIntoView({ block: 'start' }).
+   The row is `display: contents` and generates no box, so the breathing room
+   must be set on its CHILD, which is the element the browser actually scrolls.
+   Keeping the offset in CSS means the scroller owns the final position instead
+   of the handler computing one from a rect that may be stale when applied. */
+.chat-msg-row.is-prev-await-target > * {
+  scroll-margin-bottom: 8px;
 }
 /* Collapse affordance at the top of the chat log. Rendered only when older
    messages are hidden behind the collapse window (hasCollapsedAbove). The

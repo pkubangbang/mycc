@@ -19,6 +19,28 @@ const props = defineProps<{
 // User messages align right (WeChat self-bubble style); everything else left.
 const isUser = computed(() => props.message.type === 'user');
 
+const emit = defineEmits<{ (e: 'jump-prev-await'): void }>();
+
+// AWAIT lifecycle note: brief('info', 'await', …) from src/loop/states/await.ts.
+// Rendered as one grey line instead of a bubble — it explains what the agent is
+// doing, it is not content. 'waiting for an event' opens a wait (red dot, and
+// the only one carrying the ↑ prev jump); 'waking up' reports the event that
+// ended it (green dot + time). data-await-hint is ChatLog's scan marker.
+type AwaitKind = 'await' | 'wake' | 'other';
+function awaitKindOf(content: string): AwaitKind {
+  if (content.includes('waking up')) return 'wake';
+  if (content.includes('waiting for an event')) return 'await';
+  return 'other';
+}
+
+const isAwaitHint = computed(() => props.message.label === 'await');
+const awaitKind = computed<AwaitKind>(() => awaitKindOf(props.message.content ?? ''));
+const showPrevJump = computed(() => awaitKind.value === 'await');
+const awaitWakeTime = computed(() => {
+  if (awaitKind.value !== 'wake' || !props.message.timestamp) return '';
+  return new Date(props.message.timestamp).toLocaleTimeString('en-GB', { hour12: false });
+});
+
 // Bash tool's pre-execution info log: brief('info', 'bash', command, intent)
 // produces a LogEntry with type:'log', label:'bash', content:<command>,
 // detail:<intent-lang>. The command is a raw shell string, NOT markdown —
@@ -323,7 +345,42 @@ function quoteContent(): void {
 </script>
 
 <template>
-  <div class="message-row" :class="{ 'is-user': isUser }">
+  <div v-if="isAwaitHint" class="await-hint" data-await-hint>
+    <span v-if="awaitKind !== 'other'" class="await-dot" :class="awaitKind" aria-hidden="true" />
+    <span class="await-text">{{ message.content }}</span>
+    <span v-if="awaitWakeTime" class="await-time">({{ awaitWakeTime }})</span>
+    <button
+      v-if="showPrevJump"
+      class="await-prev"
+      type="button"
+      title="跳到上一条 AWAIT"
+      aria-label="跳到上一条 AWAIT"
+      @click="emit('jump-prev-await')"
+    >
+      <!-- A DRAWN chevron, sized and centred by layout rather than by character
+           metrics. Character substitutions (⌃, ＾, ‸) all sit differently inside
+           their em box and none of them reads as the intended "go up" chevron.
+           An inline-flex row with `align-items: center` puts the icon's box
+           centre on the label's box centre, which is the requested "same height
+           as the text" — one rule, no pixel offsets. -->
+      <svg
+        class="await-prev-icon"
+        viewBox="0 0 24 24"
+        width="9"
+        height="9"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="3"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <polyline points="6 15 12 9 18 15" />
+      </svg>
+      <span class="await-prev-label">PREV</span>
+    </button>
+  </div>
+  <div v-else class="message-row" :class="{ 'is-user': isUser }">
     <div class="message-col">
       <div v-if="header" class="message-header">{{ header }}</div>
       <div class="bubble" :class="[message.type, { mono: isMonospace, 'bash-card': isBashCommand, 'plan-scope-bubble': isPlanScope }]">
@@ -406,6 +463,108 @@ function quoteContent(): void {
 </template>
 
 <style scoped>
+.await-hint {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 16px;
+  margin: 1px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  font-style: italic;
+  color: var(--text-muted);
+  user-select: none;
+  border-radius: 4px;
+  /* Landing flash after a jump. A TRANSITION, not an @keyframes animation:
+     a keyframes block in this SFC makes vue-tsc abort with an internal parse
+     error, so the flash is expressed as a class toggled by ChatLog that these
+     transitions ease back to rest. */
+  transition: background-color 0.9s ease-out, color 0.9s ease-out;
+}
+/* Dot = state: red blocked on an external event, green woken. */
+.await-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  transform: translateY(-1px);
+}
+.await-dot.await { background: #e5484d; }
+.await-dot.wake { background: #30a46c; }
+.await-time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+/* Ghost jump button, immediately after the text and always visible: a control
+   that only appears on hover must be discovered by hovering the very line it
+   leads away from. */
+/* Inline text button, not a flex box.
+ *
+ * A flex container inside a baseline-aligned line has to be told how to align
+ * itself, and every answer needs a compensating offset: `baseline` misplaces a
+ * replaced element (its baseline is its bottom edge), `center` floats the
+ * whole control off the text. An INLINE box sidesteps the problem — its
+ * baseline IS the baseline of its last line box, i.e. the word "PREV" — so the
+ * button lands on the message text's baseline by construction. The chevron is a
+ * plain character in the same run, so it inherits that baseline too.
+ *
+ * Sizing is the text's own: font-size and line-height inherit from the hint, and
+ * the only padding is horizontal breathing room for the hover wash. */
+.await-prev {
+  /* Inline-flex so the icon and the word are laid out as one control, and its
+     CENTRE is shared: `align-items: center` puts the 9px chevron's box centre on
+     the 10px label's box centre. That is the "same height as the text" the
+     control needs, and it is one rule instead of per-element offsets.
+     `align-self: baseline` would drag the row back to the old replaced-element
+     problem; `center` here is about the button's OWN children, while the button
+     still participates in the hint line as a normal inline-level box. */
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  /* Upright: the hint line is italic, and a slanted all-caps label reads as a
+     rendering fault rather than emphasis. */
+  font-style: normal;
+  line-height: 1;
+  color: var(--text-muted);
+  opacity: 0.7;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+/* Drawn chevron: the SVG scales with the label's font size (em units), so the
+   icon stays proportionate if the hint's typography ever changes. */
+.await-prev-icon {
+  flex: 0 0 auto;
+  width: 0.9em;
+  height: 0.9em;
+  display: block;
+}
+.await-prev-label {
+  line-height: 1;
+}
+.await-prev:hover,
+.await-prev:focus-visible {
+  opacity: 1;
+  color: var(--text-secondary);
+  background-color: rgba(127, 127, 127, 0.18);
+  outline: none;
+}
+/* The landing state ChatLog applies for ~1s: the line briefly gains a wash and
+   a darker hue, then eases back via the transition above. */
+.await-hint--landed {
+  color: var(--text-secondary);
+  background-color: rgba(127, 127, 127, 0.16);
+}
 .message-row {
   display: flex;
   padding: 4px 16px;
