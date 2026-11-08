@@ -11,20 +11,21 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const bgCreateTool: ToolDefinition = {
   name: 'bg_create',
-  description: 'Run a bash command asynchronously (non-blocking). Returns pid for use with bg_await/bg_print/bg_remove. Use for long-running commands like servers or builds. Subject to the same grant model as the bash tool (requires intent; rejected in plan mode).',
+  description:
+    'Run a bash command asynchronously (non-blocking). Returns pid for use with bg_await/bg_print/bg_remove. Use for long-running commands like servers or builds. Subject to the same grant model as the bash tool (requires intent; rejected in plan mode).',
   input_schema: {
     type: 'object',
     properties: {
       command: {
         type: 'string',
-        description: 'Bash command to run asynchronously. Runs in workspace directory. Cannot be interactive.',
+        description: 'Bash command to run asynchronously. Runs in workspace directory. Cannot be interactive.'
       },
       intent: {
         type: 'string',
-        description: 'REQUIRED: Explain why this command is needed (use intent language).',
-      },
+        description: 'REQUIRED: Explain why this command is needed (use intent language).'
+      }
     },
-    required: ['command', 'intent'],
+    required: ['command', 'intent']
   },
   scope: ['main', 'child'],
 
@@ -78,5 +79,5 @@ export const bgCreateTool: ToolDefinition = {
       ctx.core.brief('error', 'bg_create', err.message);
       return `Error: ${err.message}`;
     }
-  },
+  }
 };

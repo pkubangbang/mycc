@@ -70,7 +70,7 @@ export function buildCacheKey(sessionId: string | null | undefined): string | nu
 export function validateCacheRecord(
   record: ChatlogCacheRecord | null | undefined,
   sessionId: string,
-  version: number = CACHE_VERSION,
+  version: number = CACHE_VERSION
 ): ChatlogCacheRecord | null {
   if (!record) return null;
   if (record.sessionId !== sessionId) return null;
@@ -87,14 +87,14 @@ export function makeCacheRecord(
   sessionId: string,
   messages: ChatMessage[],
   teammateMessages: ChatMessage[],
-  version: number = CACHE_VERSION,
+  version: number = CACHE_VERSION
 ): ChatlogCacheRecord {
   return {
     sessionId,
     version,
     savedAt: Date.now(),
     messages: messages.slice(),
-    teammateMessages: teammateMessages.slice(),
+    teammateMessages: teammateMessages.slice()
   };
 }
 
@@ -125,9 +125,11 @@ export function pruneOtherSessions(allKeys: string[], activeKey: string): string
 function openDb(): Promise<IDBDatabase | null> {
   return new Promise((resolve) => {
     try {
-      const indexedDB: IDBFactory | undefined =
-        (globalThis as unknown as { indexedDB?: IDBFactory }).indexedDB;
-      if (!indexedDB) { resolve(null); return; }
+      const indexedDB: IDBFactory | undefined = (globalThis as unknown as { indexedDB?: IDBFactory }).indexedDB;
+      if (!indexedDB) {
+        resolve(null);
+        return;
+      }
       const req = indexedDB.open(DB_NAME, CACHE_VERSION);
       req.onupgradeneeded = () => {
         try {
@@ -173,7 +175,11 @@ export async function readCachedChatlog(sessionId: string | null | undefined): P
       resolve(null);
     } finally {
       // Close eagerly; a read is a one-shot operation.
-      try { db.close(); } catch { /* ignore */ }
+      try {
+        db.close();
+      } catch {
+        /* ignore */
+      }
     }
   });
 }
@@ -186,7 +192,7 @@ export async function readCachedChatlog(sessionId: string | null | undefined): P
 export async function writeCachedChatlog(
   sessionId: string | null | undefined,
   messages: ChatMessage[],
-  teammateMessages: ChatMessage[],
+  teammateMessages: ChatMessage[]
 ): Promise<void> {
   const key = buildCacheKey(sessionId);
   if (!key) return;
@@ -201,11 +207,13 @@ export async function writeCachedChatlog(
       const keysReq = store.getAllKeys();
       keysReq.onsuccess = () => {
         try {
-          const allKeys = (keysReq.result as string[]).filter(
-            (k): k is string => typeof k === 'string',
-          );
+          const allKeys = (keysReq.result as string[]).filter((k): k is string => typeof k === 'string');
           for (const other of pruneOtherSessions(allKeys, key)) {
-            try { store.delete(other); } catch { /* ignore single delete fail */ }
+            try {
+              store.delete(other);
+            } catch {
+              /* ignore single delete fail */
+            }
           }
         } catch {
           // prune failure is non-fatal — the put below still writes the active record
@@ -222,7 +230,11 @@ export async function writeCachedChatlog(
     } catch {
       resolve();
     } finally {
-      try { db.close(); } catch { /* ignore */ }
+      try {
+        db.close();
+      } catch {
+        /* ignore */
+      }
     }
   });
 }
@@ -246,7 +258,11 @@ export async function clearCachedChatlog(sessionId: string | null | undefined): 
     } catch {
       resolve();
     } finally {
-      try { db.close(); } catch { /* ignore */ }
+      try {
+        db.close();
+      } catch {
+        /* ignore */
+      }
     }
   });
 }

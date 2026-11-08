@@ -74,7 +74,10 @@ function isWellFormedPath(p: string): boolean {
   if (p.length === 1) return true; // "/"
   if (p.endsWith('/')) return false; // no trailing slash (except root)
   if (p.includes('//')) return false; // no double slashes
-  return p.slice(1).split('/').every(s => s.length > 0);
+  return p
+    .slice(1)
+    .split('/')
+    .every((s) => s.length > 0);
 }
 
 /**
@@ -104,7 +107,7 @@ export function getPatchPath(projectDir?: string): string {
 export function appendPatch(
   action: MindmapPatchAction,
   patchPath: string,
-  sink: LineSink = fileLineSink(patchPath),
+  sink: LineSink = fileLineSink(patchPath)
 ): boolean {
   if (!validatePatchAction(action)) {
     return false;
@@ -167,7 +170,7 @@ export function writePatches(actions: MindmapPatchAction[], patchPath: string): 
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  const valid = actions.filter(a => validatePatchAction(a));
+  const valid = actions.filter((a) => validatePatchAction(a));
   const content = valid.map((a) => JSON.stringify(a)).join('\n');
   // Trailing newline if non-empty
   const output = content.length > 0 ? `${content}\n` : '';
@@ -207,11 +210,7 @@ export function clearPatches(patchPath: string): void {
  * @param mindmapHash - Hash of the freshly compiled mindmap.json
  * @returns Array of clean patch actions
  */
-export function rebuildPatches(
-  mergedTree: Node,
-  baseTree: Node,
-  mindmapHash: string,
-): MindmapPatchAction[] {
+export function rebuildPatches(mergedTree: Node, baseTree: Node, mindmapHash: string): MindmapPatchAction[] {
   const actions: MindmapPatchAction[] = [];
   const now = new Date().toISOString();
   const queue: Node[] = [mergedTree];
@@ -229,9 +228,7 @@ export function rebuildPatches(
     if (!node.is_mycc) {
       // Patch-added node → emit 'add' action
       const segments = node.id.split('/').filter((s) => s.length > 0);
-      const parentPath = segments.length > 0
-        ? `/${segments.slice(0, -1).join('/')}`
-        : '/';
+      const parentPath = segments.length > 0 ? `/${segments.slice(0, -1).join('/')}` : '/';
       actions.push({
         action: 'add',
         path: parentPath,
@@ -239,7 +236,7 @@ export function rebuildPatches(
         text: node.text,
         timestamp: now,
         reason: 'Rebuilt from in-memory state',
-        mindmap_hash: mindmapHash,
+        mindmap_hash: mindmapHash
       });
     } else if (!basePaths.has(node.id)) {
       // MYCC.md-deleted node (was is_mycc, now absent from fresh base) →
@@ -250,9 +247,7 @@ export function rebuildPatches(
         // root is always present — no action
       } else {
         const segments = node.id.split('/').filter((s) => s.length > 0);
-        const parentPath = segments.length > 0
-          ? `/${segments.slice(0, -1).join('/')}`
-          : '/';
+        const parentPath = segments.length > 0 ? `/${segments.slice(0, -1).join('/')}` : '/';
         actions.push({
           action: 'add',
           path: parentPath,
@@ -260,7 +255,7 @@ export function rebuildPatches(
           text: node.text,
           timestamp: now,
           reason: 'Preserved from MYCC.md deletion',
-          mindmap_hash: mindmapHash,
+          mindmap_hash: mindmapHash
         });
       }
     } else if (node.is_patch) {
@@ -271,7 +266,7 @@ export function rebuildPatches(
         text: node.text,
         timestamp: now,
         reason: 'Rebuilt from in-memory state',
-        mindmap_hash: mindmapHash,
+        mindmap_hash: mindmapHash
       });
     }
     // else: is_mycc=true, is_patch=false, in base → pure MYCC.md node, no action

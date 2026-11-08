@@ -8,20 +8,21 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const todoCreateTool: ToolDefinition = {
   name: 'todo_create',
-  description: 'Create a new todo item. Returns the item with its id and hash — save these to reference the item later with todo_update.',
+  description:
+    'Create a new todo item. Returns the item with its id and hash — save these to reference the item later with todo_update.',
   input_schema: {
     type: 'object',
     properties: {
       name: {
         type: 'string',
-        description: 'Todo item name/description',
+        description: 'Todo item name/description'
       },
       note: {
         type: 'string',
-        description: 'Optional note for the item',
-      },
+        description: 'Optional note for the item'
+      }
     },
-    required: ['name'],
+    required: ['name']
   },
   scope: ['main', 'child'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
@@ -39,5 +40,5 @@ export const todoCreateTool: ToolDefinition = {
   name: ${item.name}
   done: false${item.note ? `\n  note: ${item.note}` : ''}
   hash: ${item.hash}`;
-  },
+  }
 };

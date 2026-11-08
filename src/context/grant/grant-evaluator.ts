@@ -26,10 +26,7 @@ export type { GrantRequest, GrantTool } from './types.js';
  */
 export function isPlanModeWritablePath(resolvedPath: string, workDir: string): boolean {
   return getPlanModeWritableDirs().some((rel) =>
-    isPathContained(
-      resolvedPath,
-      path.isAbsolute(rel) ? rel : path.resolve(workDir, rel)
-    )
+    isPathContained(resolvedPath, path.isAbsolute(rel) ? rel : path.resolve(workDir, rel))
   );
 }
 
@@ -50,7 +47,7 @@ export function isPathContained(candidate: string, root: string): boolean {
 
 /**
  * Evaluate a grant request from a child process or tool
- * 
+ *
  * For bash: Uses the 6-step judging process
  * For files: Checks mode and worktree ownership
  */
@@ -79,13 +76,13 @@ export async function evaluateGrant(
       // a plain string (Promise<string>), so unwrap .answer here to keep
       // the bash-judge interface unchanged.
       (query: string, asker: string, options?: { onEsc?: string }) =>
-        core.question(query, asker, options).then(r => r.answer),
-      core.escAware.bind(core)   // Pass escAware function for ESC handling
+        core.question(query, asker, options).then((r) => r.answer),
+      core.escAware.bind(core) // Pass escAware function for ESC handling
     );
 
     return {
       approved: result.decision === 'allow',
-      reason: result.reason,
+      reason: result.reason
     };
   }
 
@@ -93,14 +90,12 @@ export async function evaluateGrant(
   if (mode === 'plan') {
     // Check allowed file for plan mode
     const allowedFile = core.getAllowedFile();
-    
+
     if (request.path && allowedFile) {
       const resolvedRequested = path.isAbsolute(request.path)
         ? request.path
         : path.resolve(core.getWorkDir(), request.path);
-      const resolvedAllowed = path.isAbsolute(allowedFile)
-        ? allowedFile
-        : path.resolve(core.getWorkDir(), allowedFile);
+      const resolvedAllowed = path.isAbsolute(allowedFile) ? allowedFile : path.resolve(core.getWorkDir(), allowedFile);
 
       if (resolvedRequested === resolvedAllowed) {
         return { approved: true };
@@ -122,7 +117,7 @@ export async function evaluateGrant(
 
     return {
       approved: false,
-      reason: `Plan mode is ACTIVE - code changes are temporarily restricted.${allowedFile ? ` Only ${allowedFile} can be edited.` : ''}`,
+      reason: `Plan mode is ACTIVE - code changes are temporarily restricted.${allowedFile ? ` Only ${allowedFile} can be edited.` : ''}`
     };
   }
 
@@ -133,7 +128,7 @@ export async function evaluateGrant(
     }
 
     const worktrees = await listWorktrees(core.getWorkDir());
-    const ownedWt = worktrees.find(wt => wt.name === sender);
+    const ownedWt = worktrees.find((wt) => wt.name === sender);
 
     if (ownedWt) {
       const resolved = path.resolve(core.getWorkDir(), request.path);
@@ -151,7 +146,7 @@ export async function evaluateGrant(
 
     return {
       approved: false,
-      reason: `'${request.path}' is outside your worktree. Teammates can only modify files within their assigned worktree.`,
+      reason: `'${request.path}' is outside your worktree. Teammates can only modify files within their assigned worktree.`
     };
   }
 

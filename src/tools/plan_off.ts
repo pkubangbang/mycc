@@ -20,7 +20,7 @@ export const planOffTool: ToolDefinition = {
   input_schema: {
     type: 'object',
     properties: {},
-    required: [],
+    required: []
   },
   scope: ['main'],
   handler: async (ctx: AgentContext, _args: Record<string, unknown>): Promise<string> => {
@@ -58,8 +58,10 @@ export const planOffTool: ToolDefinition = {
 
     // Parse response - only 'y' or 'yes' (case-insensitive) grants permission
     let normalized = response.trim().toLowerCase();
-    if ((normalized.startsWith('"') && normalized.endsWith('"')) ||
-        (normalized.startsWith("'") && normalized.endsWith("'"))) {
+    if (
+      (normalized.startsWith('"') && normalized.endsWith('"')) ||
+      (normalized.startsWith("'") && normalized.endsWith("'"))
+    ) {
       normalized = normalized.slice(1, -1).trim();
     }
     const granted = normalized === 'y' || normalized === 'yes';
@@ -83,5 +85,5 @@ export const planOffTool: ToolDefinition = {
     team.broadcastModeChange('normal');
     ctx.core.brief('info', 'plan_off', 'Normal mode activated');
     return `Normal mode activated.\n\nCode changes are now allowed. All tools are fully functional.`;
-  },
+  }
 };

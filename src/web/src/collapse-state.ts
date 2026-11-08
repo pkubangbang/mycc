@@ -64,10 +64,7 @@ export function windowSize(s: CollapseState): number {
  * `filteredLength` is the current filtered-list size; if the window already
  * shows everything there is nothing to expand.
  */
-export function loadMore(
-  s: CollapseState,
-  filteredLength: number = Number.POSITIVE_INFINITY,
-): CollapseState {
+export function loadMore(s: CollapseState, filteredLength: number = Number.POSITIVE_INFINITY): CollapseState {
   if (windowSize(s) >= filteredLength) return s; // nothing collapsed above
   const capacity = Math.min(s.capacity + SCROLL_BATCH, MAX_VISIBLE);
   return { capacity, tailBuffer: s.tailBuffer, trackingTail: false };
@@ -104,10 +101,7 @@ export function leaveTail(s: CollapseState): CollapseState {
  * when tracking — the caller scrolls to bottom so the new message is in
  * view even when the rendered length stayed constant at the floor).
  */
-export function onAppend(
-  s: CollapseState,
-  delta: number,
-): { state: CollapseState; shouldScrollToTail: boolean } {
+export function onAppend(s: CollapseState, delta: number): { state: CollapseState; shouldScrollToTail: boolean } {
   if (delta <= 0) return { state: s, shouldScrollToTail: false };
   if (s.trackingTail) {
     // Trim capacity toward the floor. Net window change: -(delta) (the
@@ -119,7 +113,7 @@ export function onAppend(
       state: { capacity, tailBuffer: 0, trackingTail: true },
       // Re-scroll even when the rendered length is unchanged (the floor
       // swap case) so the new tail message is guaranteed in view.
-      shouldScrollToTail: true,
+      shouldScrollToTail: true
     };
   }
   // Not tracking: buffer into t, clamp (x + t) to MAX_VISIBLE.
@@ -136,7 +130,7 @@ export function onAppend(
   }
   return {
     state: { capacity, tailBuffer, trackingTail: false },
-    shouldScrollToTail: false,
+    shouldScrollToTail: false
   };
 }
 
@@ -255,7 +249,7 @@ export function classifyChange(
   prevVerbose: boolean | undefined,
   nextVerbose: boolean,
   prevFilteredLength: number | undefined,
-  nextFilteredLength: number,
+  nextFilteredLength: number
 ): ChangeKind {
   if (prevVerbose === undefined || prevFilteredLength === undefined) return 'none';
   if (prevVerbose !== nextVerbose) return 'filter';
@@ -312,7 +306,7 @@ export function applyObservation(
   prev: Observation | undefined,
   next: Observation,
   state: CollapseState,
-  historyReplaced: boolean = false,
+  historyReplaced: boolean = false
 ): ObservationResult {
   // #22: an authoritative /history replacement (historyRevision bumped) is
   // the highest-priority transition — it resets the window regardless of
@@ -321,12 +315,7 @@ export function applyObservation(
   if (historyReplaced) {
     return { state: onHistoryReplace(), shouldScrollToTail: true };
   }
-  const kind = classifyChange(
-    prev?.verbose,
-    next.verbose,
-    prev?.filteredLength,
-    next.filteredLength,
-  );
+  const kind = classifyChange(prev?.verbose, next.verbose, prev?.filteredLength, next.filteredLength);
   if (kind === 'append') {
     // delta is computed from the PREVIOUS observation (passed in), not from a
     // manually-advanced ref — so a 10→11 append yields delta=1, not 0 (#19).

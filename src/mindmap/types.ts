@@ -26,7 +26,7 @@ export interface Link {
  * Node - a single node in the mindmap tree
  */
 export interface Node {
-  /** 
+  /**
    * The slash-separated "logic path" to a node, starting from root ('/')
    * e.g. "/skill/example/anti-pattern"
    */

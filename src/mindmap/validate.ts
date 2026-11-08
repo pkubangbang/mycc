@@ -57,9 +57,7 @@ export function validate_mindmap(json: MindmapJSON, mdPath: string): boolean {
 
       if (resolvedSource !== resolvedPath) {
         // Source mismatch - but still check hash for the given file
-        console.warn(
-          `Source mismatch: mindmap.source_file=${json.source_file}, validating against ${mdPath}`
-        );
+        console.warn(`Source mismatch: mindmap.source_file=${json.source_file}, validating against ${mdPath}`);
       }
     }
 
@@ -107,9 +105,9 @@ function validate_node_structure(node: unknown): boolean {
   if (typeof node !== 'object' || node === null) {
     return false;
   }
-  
+
   const obj = node as Record<string, unknown>;
-  
+
   // Check required node fields
   if (typeof obj.id !== 'string') return false;
   if (typeof obj.text !== 'string') return false;
@@ -118,17 +116,17 @@ function validate_node_structure(node: unknown): boolean {
   if (typeof obj.level !== 'number') return false;
   if (!Array.isArray(obj.children)) return false;
   if (!Array.isArray(obj.links)) return false;
-  
+
   // Validate children recursively
   for (const child of obj.children) {
     if (!validate_node_structure(child)) return false;
   }
-  
+
   // Validate links
   for (const link of obj.links) {
     if (!validate_link_structure(link)) return false;
   }
-  
+
   return true;
 }
 
@@ -141,22 +139,27 @@ function validate_link_structure(link: unknown): boolean {
   if (typeof link !== 'object' || link === null) {
     return false;
   }
-  
+
   const obj = link as Record<string, unknown>;
-  
+
   // Check required fields
-  if (obj.target_type !== 'node' && obj.target_type !== 'file' && obj.target_type !== 'url' && obj.target_type !== 'term') {
+  if (
+    obj.target_type !== 'node' &&
+    obj.target_type !== 'file' &&
+    obj.target_type !== 'url' &&
+    obj.target_type !== 'term'
+  ) {
     return false;
   }
-  
+
   if (typeof obj.comment !== 'string') return false;
-  
+
   // Check target-specific fields
   if (obj.target_type === 'node' && typeof obj.node_id !== 'string') return false;
   if (obj.target_type === 'file' && typeof obj.file_path !== 'string') return false;
   if (obj.target_type === 'url' && typeof obj.url !== 'string') return false;
   if (obj.target_type === 'term' && typeof obj.term_name !== 'string') return false;
-  
+
   return true;
 }
 
@@ -169,11 +172,11 @@ export function parse_mindmap_json(jsonPath: string): MindmapJSON | null {
   try {
     const content = fs.readFileSync(jsonPath, 'utf-8');
     const parsed: unknown = JSON.parse(content);
-    
+
     if (!validate_mindmap_structure(parsed)) {
       return null;
     }
-    
+
     return parsed;
   } catch {
     return null;

@@ -58,8 +58,7 @@ export function parseEnvFile(filePath: string): Record<string, string> {
     let value = trimmed.slice(eqIndex + 1).trim();
 
     // Remove quotes if present
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) {
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1);
     }
 
@@ -84,7 +83,7 @@ function getSettingDisplay(
       name,
       value: projectConfig[name],
       source: 'project',
-      sensitive: isSensitive(name),
+      sensitive: isSensitive(name)
     };
   }
 
@@ -94,7 +93,7 @@ function getSettingDisplay(
       name,
       value: userConfig[name],
       source: 'user',
-      sensitive: isSensitive(name),
+      sensitive: isSensitive(name)
     };
   }
 
@@ -104,7 +103,7 @@ function getSettingDisplay(
       name,
       value: defaultValue,
       source: 'default',
-      sensitive: false,
+      sensitive: false
     };
   }
 
@@ -112,7 +111,7 @@ function getSettingDisplay(
     name,
     value: '',
     source: 'not-set',
-    sensitive: isSensitive(name),
+    sensitive: isSensitive(name)
   };
 }
 
@@ -120,15 +119,13 @@ function getSettingDisplay(
  * Print a single setting line
  */
 function printSetting(setting: SettingDisplay): void {
-  const displayValue = setting.sensitive
-    ? redactSensitive(setting.value)
-    : setting.value || '(not set)';
+  const displayValue = setting.sensitive ? redactSensitive(setting.value) : setting.value || '(not set)';
 
   const sourceLabel = {
     user: chalk.dim(' [user]'),
     project: chalk.dim(' [project]'),
     default: chalk.dim(' [default]'),
-    'not-set': chalk.yellow(' (not set)'),
+    'not-set': chalk.yellow(' (not set)')
   }[setting.source];
 
   console.log(`  ${chalk.white(setting.name)}: ${chalk.green(displayValue)}${sourceLabel}`);

@@ -76,5 +76,5 @@ export const planCommand: SlashCommand = {
       console.log(chalk.gray('  /plan on <file>  - Plan mode with one allowed file'));
       console.log(chalk.gray('  /plan off        - Return to normal mode'));
     }
-  },
+  }
 };

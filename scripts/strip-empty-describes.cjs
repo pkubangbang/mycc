@@ -27,17 +27,40 @@ function makeScanner() {
 
 /** Process char c (with next char nx) against scanner state; returns nothing (mutates). */
 function stepScan(s, c, nx) {
-  if (s.lc) { if (c === '\n') s.lc = false; return; }
-  if (s.bc) { if (c === '*' && nx === '/') { s.bc = false; } return; }
+  if (s.lc) {
+    if (c === '\n') s.lc = false;
+    return;
+  }
+  if (s.bc) {
+    if (c === '*' && nx === '/') {
+      s.bc = false;
+    }
+    return;
+  }
   if (s.inStr) {
-    if (s.esc) { s.esc = false; return; }
-    if (c === '\\') { s.esc = true; return; }
+    if (s.esc) {
+      s.esc = false;
+      return;
+    }
+    if (c === '\\') {
+      s.esc = true;
+      return;
+    }
     if (c === s.inStr) s.inStr = null;
     return;
   }
-  if (c === '/' && nx === '/') { s.lc = true; return; }
-  if (c === '/' && nx === '*') { s.bc = true; return; }
-  if (c === "'" || c === '"' || c === '`') { s.inStr = c; return; }
+  if (c === '/' && nx === '/') {
+    s.lc = true;
+    return;
+  }
+  if (c === '/' && nx === '*') {
+    s.bc = true;
+    return;
+  }
+  if (c === "'" || c === '"' || c === '`') {
+    s.inStr = c;
+    return;
+  }
 }
 
 /**
@@ -49,12 +72,12 @@ function findEmptyDescribe(src) {
   const re = /\bdescribe\s*\(/g;
   let m;
   while ((m = re.exec(src)) !== null) {
-    const callStart = m.index;            // index of 'd' in describe
+    const callStart = m.index; // index of 'd' in describe
     const argOpen = m.index + m[0].length - 1; // position of '('
     const scan = makeScanner();
     let parenDepth = 0;
     let braceDepth = 0;
-    let bodyBraceOpen = -1;  // position of the callback body '{'
+    let bodyBraceOpen = -1; // position of the callback body '{'
     let bodyBraceClose = -1; // position just past the callback body '}'
     let sawArrowOrFn = false;
     let i = argOpen;
@@ -79,7 +102,10 @@ function findEmptyDescribe(src) {
       }
       if (c === ')') {
         parenDepth--;
-        if (parenDepth === 0) { i++; break; } // i now just past the describe's ')'
+        if (parenDepth === 0) {
+          i++;
+          break;
+        } // i now just past the describe's ')'
         continue;
       }
       // Detect arrow `=>` (only when not in string/comment).
@@ -132,9 +158,15 @@ function findEmptyDescribe(src) {
         const nx = src[end + 1];
         stepScan(scan2, c, nx);
         if (scan2.lc || scan2.bc || scan2.inStr) continue;
-        if (c === '(') { pdepth++; continue; }
+        if (c === '(') {
+          pdepth++;
+          continue;
+        }
         if (c === ')') {
-          if (pdepth === 0) { end++; break; } // just past the describe's ')'
+          if (pdepth === 0) {
+            end++;
+            break;
+          } // just past the describe's ')'
           pdepth--;
           continue;
         }

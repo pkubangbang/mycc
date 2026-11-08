@@ -39,10 +39,10 @@ export function createIssue(title: string, content: string, blockedBy: number[])
       {
         poster: 'system',
         content: `Created issue "${title}"`,
-        timestamp: now,
-      },
+        timestamp: now
+      }
     ],
-    createdAt: now,
+    createdAt: now
   };
 
   issues.set(id, issue);
@@ -119,7 +119,7 @@ export function createTeammate(name: string, role: string, prompt: string): void
     role,
     status: 'working',
     prompt,
-    createdAt: new Date(),
+    createdAt: new Date()
   });
 }
 

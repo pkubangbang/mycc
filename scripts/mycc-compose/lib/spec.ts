@@ -18,7 +18,13 @@
 
 import fs from 'fs';
 import path from 'path';
-import { parseArgString, LAUNCHER_FLAGS, BOOLEAN_FLAGS, STRING_FLAGS, canonicalFlagName as canonicalFlagNameInSpec } from '../../../src/utils/arg-canonical.js';
+import {
+  parseArgString,
+  LAUNCHER_FLAGS,
+  BOOLEAN_FLAGS,
+  STRING_FLAGS,
+  canonicalFlagName as canonicalFlagNameInSpec
+} from '../../../src/utils/arg-canonical.js';
 import { sanitizeId, validatePeerName as validatePeerNameValue } from '../../../src/utils/id-guard.js';
 
 // validatePeerName lives in src/utils/id-guard.ts (the single implementation
@@ -149,7 +155,7 @@ function remoteUrlKey(raw: string): string {
 function normalizeRemotes(
   p: Record<string, unknown>,
   at: string,
-  parsedArgs: Record<string, unknown>,
+  parsedArgs: Record<string, unknown>
 ): string[] | undefined {
   if (p.remotes === undefined || p.remotes === null) return undefined;
   if (!Array.isArray(p.remotes)) {
@@ -164,8 +170,12 @@ function normalizeRemotes(
   // matches a remote port precisely — only an EXPLICIT --serve <port> is a
   // reliable self-dial signal. (config.ts getServePort applies the same rule.)
   const ownServe = parsedArgs.serve;
-  const ownPort = typeof ownServe === 'number' ? ownServe
-    : (typeof ownServe === 'string' && /^\d+$/.test(ownServe) ? Number(ownServe) : null);
+  const ownPort =
+    typeof ownServe === 'number'
+      ? ownServe
+      : typeof ownServe === 'string' && /^\d+$/.test(ownServe)
+        ? Number(ownServe)
+        : null;
   for (let j = 0; j < p.remotes.length; j++) {
     const rAt = `${at}.remotes[${j}]`;
     const raw = p.remotes[j];
@@ -227,12 +237,14 @@ function normalizeRemotes(
     const portHost = portRest.split('/')[0].split('?')[0].split('#')[0];
     // IPv6 literal `[::1]:port` — the port is after the closing bracket.
     const portColon = portHost.startsWith('[')
-      ? portHost.lastIndexOf(']:') >= 0 ? portHost.lastIndexOf(']:') + 1 : -1
+      ? portHost.lastIndexOf(']:') >= 0
+        ? portHost.lastIndexOf(']:') + 1
+        : -1
       : portHost.lastIndexOf(':');
     if (portColon < 0 || !/^\d+$/.test(portHost.slice(portColon + 1))) {
       throw new Error(
         `${rAt} must be a host:port endpoint with an explicit numeric port (got "${raw}"); ` +
-        `the peer wire connects to host:port only.`,
+          `the peer wire connects to host:port only.`
       );
     }
     // Runtime peer-wire targets are host:port endpoints; URL suffixes are
@@ -253,12 +265,13 @@ function normalizeRemotes(
     // Self-dial: loopback host + port == this peer's explicit --serve port.
     if (ownPort !== null) {
       const hostLower = u.hostname.toLowerCase();
-      const isLoopback = hostLower === 'localhost' || hostLower === '127.0.0.1' || hostLower === '::1' || hostLower === '[::1]';
-      const rPort = u.port ? Number(u.port) : (u.protocol === 'https:' ? 443 : 80);
+      const isLoopback =
+        hostLower === 'localhost' || hostLower === '127.0.0.1' || hostLower === '::1' || hostLower === '[::1]';
+      const rPort = u.port ? Number(u.port) : u.protocol === 'https:' ? 443 : 80;
       if (isLoopback && rPort === ownPort) {
         throw new Error(
           `${rAt} is a self-dial: ${hostLower}:${rPort} is this peer's own --serve port ` +
-          `(${ownPort}). Declare the dialer on exactly ONE side; the NAT'd peer dials out.`,
+            `(${ownPort}). Declare the dialer on exactly ONE side; the NAT'd peer dials out.`
         );
       }
     }
@@ -323,7 +336,13 @@ export function validateSpec(spec: unknown): NormalizedSpec {
     try {
       validatePeerNameValue(identityName);
     } catch (err) {
-      throw new Error(at + '.name cannot form a valid durable identity (' + JSON.stringify(identityName) + '): ' + (err instanceof Error ? err.message : String(err)));
+      throw new Error(
+        at +
+          '.name cannot form a valid durable identity (' +
+          JSON.stringify(identityName) +
+          '): ' +
+          (err instanceof Error ? err.message : String(err))
+      );
     }
     if (typeof p.workdir !== 'string' || (p.workdir as string).trim() === '') {
       throw new Error(`${at}.workdir must be a non-empty absolute path`);
@@ -358,7 +377,7 @@ export function validateSpec(spec: unknown): NormalizedSpec {
     if (Array.isArray(positionals) && positionals.length > 0) {
       throw new Error(
         `${at}.args must contain ONLY flags: positional argument(s) ` +
-        `${JSON.stringify(positionals)} would be dropped at spawn. Got: "${p.args}"`,
+          `${JSON.stringify(positionals)} would be dropped at spawn. Got: "${p.args}"`
       );
     }
 
@@ -381,8 +400,8 @@ export function validateSpec(spec: unknown): NormalizedSpec {
       if (key === 'session-id') continue; // reported by its own explicit check below
       throw new Error(
         `${at}.args contains unknown flag --${rawKey}: refusing to pass through a flag ` +
-        `the launch parser may interpret differently. Known flags are ` +
-        `--${[...knownBool, ...knownString].sort().join(', --')}. Got: "${p.args}"`,
+          `the launch parser may interpret differently. Known flags are ` +
+          `--${[...knownBool, ...knownString].sort().join(', --')}. Got: "${p.args}"`
       );
     }
 
@@ -403,8 +422,8 @@ export function validateSpec(spec: unknown): NormalizedSpec {
       if (value === true || value === '') {
         throw new Error(
           `${at}.args has --${key} without a value: a bare string flag is not reproducible ` +
-          `across the spec parser and the launch parser (it would match-forever-false). ` +
-          `Write --${key} <value>. Got: "${p.args}"`,
+            `across the spec parser and the launch parser (it would match-forever-false). ` +
+            `Write --${key} <value>. Got: "${p.args}"`
         );
       }
     }
@@ -418,7 +437,7 @@ export function validateSpec(spec: unknown): NormalizedSpec {
       if (launcherFlag in parsedArgs) {
         throw new Error(
           `${at}.args must not set --${launcherFlag}: it is injected by the ` +
-          `launcher at spawn time. Got: "${p.args}"`,
+            `launcher at spawn time. Got: "${p.args}"`
         );
       }
     }
@@ -430,8 +449,8 @@ export function validateSpec(spec: unknown): NormalizedSpec {
     if ('session-id' in parsedArgs) {
       throw new Error(
         `${at}.args must not set --session-id: the flag is no longer supported — ` +
-        `sessions are never reused; a peer mints a fresh session id each run and is ` +
-        `addressed by --name <group>:<peer> (injected by the launcher). Got: "${p.args}"`,
+          `sessions are never reused; a peer mints a fresh session id each run and is ` +
+          `addressed by --name <group>:<peer> (injected by the launcher). Got: "${p.args}"`
       );
     }
     // --daemon: bare is CORRECT, `--daemon=` (empty string) is NOT.
@@ -449,19 +468,19 @@ export function validateSpec(spec: unknown): NormalizedSpec {
       const v = parsedArgs.daemon;
       if (v === '') {
         throw new Error(
-          `${at}.args has --daemon= (empty value): write bare --daemon or --daemon <skill>. Got: "${p.args}"`,
+          `${at}.args has --daemon= (empty value): write bare --daemon or --daemon <skill>. Got: "${p.args}"`
         );
       }
       if (typeof v === 'string' && v.startsWith('-')) {
         throw new Error(
-          `${at}.args has --daemon with a flag-looking value "${v}": write --daemon <skill>. Got: "${p.args}"`,
+          `${at}.args has --daemon with a flag-looking value "${v}": write --daemon <skill>. Got: "${p.args}"`
         );
       }
     }
     if (parsedArgs.auto !== true && !('daemon' in parsedArgs)) {
       throw new Error(
         `${at}.args MUST include --auto or --daemon: without it cleanupEmptySessions() ` +
-        `can garbage-collect the re-pinned session dir. Got: "${p.args}"`,
+          `can garbage-collect the re-pinned session dir. Got: "${p.args}"`
       );
     }
     // NO TOLERANCE for a spec-authored session id: peer identity is `--name`,
@@ -470,8 +489,8 @@ export function validateSpec(spec: unknown): NormalizedSpec {
     if (p.sessionId !== undefined) {
       throw new Error(
         `${at}.sessionId is no longer supported — peer identity is --name <group>:<peer>, ` +
-        `injected by the launcher; session ids are minted fresh per run and resolved from ` +
-        `identity.json at runtime. Remove the field from the spec.`,
+          `injected by the launcher; session ids are minted fresh per run and resolved from ` +
+          `identity.json at runtime. Remove the field from the spec.`
       );
     }
     const renew = (p.renew === undefined ? 'onMismatch' : p.renew) as 'always' | 'onMismatch';
@@ -494,7 +513,7 @@ export function validateSpec(spec: unknown): NormalizedSpec {
       args: p.args as string,
       renew,
       remotes: remotes as string[] | undefined,
-      parsedArgs,
+      parsedArgs
     };
   });
 
@@ -518,8 +537,8 @@ export function validateSpec(spec: unknown): NormalizedSpec {
       if (firstOwner) {
         throw new Error(
           `mutual dial rejected: remote URL "${raw}" is declared by both ` +
-          `peer "${firstOwner}" and peer "${peer.name}". Declare the dialer on ` +
-          `exactly ONE side (the NAT'd peer that cannot accept).`,
+            `peer "${firstOwner}" and peer "${peer.name}". Declare the dialer on ` +
+            `exactly ONE side (the NAT'd peer that cannot accept).`
         );
       }
       urlOwners.set(key, peer.name);

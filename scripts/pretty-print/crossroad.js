@@ -49,9 +49,7 @@ export function format(filePath) {
     !Array.isArray(record.candidates) ||
     typeof record.continuation !== 'string'
   ) {
-    throw new Error(
-      `File is not a crossroad record (missing prefix/candidates/continuation): ${filePath}`
-    );
+    throw new Error(`File is not a crossroad record (missing prefix/candidates/continuation): ${filePath}`);
   }
 
   const prefix = record.prefix;

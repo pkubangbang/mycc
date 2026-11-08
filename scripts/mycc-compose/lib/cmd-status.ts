@@ -24,19 +24,22 @@ export function cmdStatus(file: string, asJson: boolean): void {
     // The human-readable form below still prints a timestamp (it is for a human).
     peers: spec.peers.map((peer) => {
       const p = peerStatus(peer);
-      const lastBrief: { time: number; content: string; confidence: number } | null =
-        p.lastBrief
-          ? { time: (p.lastBrief as BriefEntry).time, content: (p.lastBrief as BriefEntry).content, confidence: (p.lastBrief as BriefEntry).confidence }
-          : null;
+      const lastBrief: { time: number; content: string; confidence: number } | null = p.lastBrief
+        ? {
+            time: (p.lastBrief as BriefEntry).time,
+            content: (p.lastBrief as BriefEntry).content,
+            confidence: (p.lastBrief as BriefEntry).confidence
+          }
+        : null;
       return {
         name: p.name,
         sessionId: p.sessionId,
         live: p.live,
         matching: p.matching,
-        lastBrief,
+        lastBrief
       };
     }),
-    channels: channelStatus(spec),
+    channels: channelStatus(spec)
   };
   if (asJson) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
@@ -48,7 +51,9 @@ export function cmdStatus(file: string, asJson: boolean): void {
     // The session id is the LIVE instance's sid, resolved from identity.json by
     // the peer's durable NAME at report time (not a spec-authored id — specs
     // never carry one). `(none)` means no live instance was found for the name.
-    out(`  - ${p.name}: ${p.live ? 'live' : 'down'}${p.live && !p.matching ? ' (args/workdir mismatch)' : ''} [sid=${p.sessionId ?? '(none)'}]`);
+    out(
+      `  - ${p.name}: ${p.live ? 'live' : 'down'}${p.live && !p.matching ? ' (args/workdir mismatch)' : ''} [sid=${p.sessionId ?? '(none)'}]`
+    );
     if (p.lastBrief) {
       const when = new Date(p.lastBrief.time).toISOString().replace('T', ' ').slice(0, 19);
       out(`      last brief (${when}, conf=${p.lastBrief.confidence}): ${p.lastBrief.content}`);

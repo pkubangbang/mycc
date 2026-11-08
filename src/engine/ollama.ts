@@ -30,7 +30,7 @@ import {
   DEFAULT_THINKING_LIVENESS_TIMEOUT_MS,
   type RetryConfig,
   type RetryChatRequest,
-  type RetryChatConfig,
+  type RetryChatConfig
 } from './chat-helpers.js';
 import { estimateTextTokens } from '../utils/token.js';
 import { createOllamaWebClient } from './ollama-web.js';
@@ -43,7 +43,7 @@ const OLLAMA_API_KEY = getOllamaApiKey();
 
 const ollama = new OllamaHttpClient({
   host: OLLAMA_HOST,
-  apiKey: OLLAMA_API_KEY,
+  apiKey: OLLAMA_API_KEY
 });
 const ollamaWeb = createOllamaWebClient({ host: OLLAMA_HOST, apiKey: OLLAMA_API_KEY });
 
@@ -113,7 +113,7 @@ function stripInlineThinking(content: string): { content: string; thinking: stri
   // the recovered text is the reasoning; content becomes empty.
   return {
     content: trimmed,
-    thinking: recovered.trim() || undefined,
+    thinking: recovered.trim() || undefined
   };
 }
 
@@ -164,7 +164,7 @@ function reconstructResponse(chunks: ChatResponse[], model: string): ChatRespons
       role: 'assistant' as const,
       content,
       ...(toolCalls ? { tool_calls: toolCalls } : {}),
-      ...(thinking ? { thinking } : {}),
+      ...(thinking ? { thinking } : {})
     },
     done: true,
     done_reason: doneReason,
@@ -173,16 +173,13 @@ function reconstructResponse(chunks: ChatResponse[], model: string): ChatRespons
     prompt_eval_count: promptEvalCount,
     prompt_eval_duration: 0,
     eval_count: evalCount,
-    eval_duration: 0,
+    eval_duration: 0
   };
 }
 
 // ─── retryChat ──────────────────────────────────────────────────────────
 
-export async function retryChat(
-  request: RetryChatRequest,
-  config?: RetryChatConfig,
-): Promise<ChatResponse> {
+export async function retryChat(request: RetryChatRequest, config?: RetryChatConfig): Promise<ChatResponse> {
   const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
   const signal = config?.signal;
   const neglected = config?.neglected ?? false;
@@ -213,7 +210,7 @@ export async function retryChat(
         cfg.firstTokenTimeoutMs ?? 20000,
         attempt,
         cfg.responseTimeoutMs ?? 120000,
-        previousWasTimeout,
+        previousWasTimeout
       );
       // Escalate BOTH liveness windows (response + thinking) on the same
       // previousWasTimeout trigger. The thinking window is wider than the
@@ -226,16 +223,19 @@ export async function retryChat(
         cfg.tokenLivenessTimeoutMs ?? DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS,
         attempt,
         cfg.responseTimeoutMs ?? 120000,
-        previousWasTimeout,
+        previousWasTimeout
       );
       const attemptThinkingLivenessMs = escalateFirstTokenTimeout(
         cfg.thinkingLivenessTimeoutMs ?? DEFAULT_THINKING_LIVENESS_TIMEOUT_MS,
         attempt,
         cfg.responseTimeoutMs ?? 120000,
-        previousWasTimeout,
+        previousWasTimeout
       );
       if (previousWasTimeout && attempt > 1) {
-        agentIO.verbose('ollama', `Escalating first-token timeout to ${attemptTimeoutMs}ms, liveness (response) to ${attemptLivenessMs}ms, liveness (thinking) to ${attemptThinkingLivenessMs}ms for attempt ${attempt}`);
+        agentIO.verbose(
+          'ollama',
+          `Escalating first-token timeout to ${attemptTimeoutMs}ms, liveness (response) to ${attemptLivenessMs}ms, liveness (thinking) to ${attemptThinkingLivenessMs}ms for attempt ${attempt}`
+        );
       }
 
       try {
@@ -244,10 +244,13 @@ export async function retryChat(
         const chatController = new AbortController();
         const abortChat = () => chatController.abort(signal?.reason);
         if (signal) signal.addEventListener('abort', abortChat);
-        const chatPromise = ollama.chat({
-          ...request,
-          stream: true,
-        } as ChatRequest & { stream: true }, chatController.signal);
+        const chatPromise = ollama.chat(
+          {
+            ...request,
+            stream: true
+          } as ChatRequest & { stream: true },
+          chatController.signal
+        );
 
         const postTimeoutMs = attemptTimeoutMs;
         let postTimeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -259,10 +262,9 @@ export async function retryChat(
         const postRacePromise = new Promise<never>((_, reject) => {
           postTimeoutId = setTimeout(() => {
             chatController.abort();
-            reject(new StreamTimeoutError(
-              `Ollama POST timed out after ${postTimeoutMs}ms (connection hang)`,
-              'first-token',
-            ));
+            reject(
+              new StreamTimeoutError(`Ollama POST timed out after ${postTimeoutMs}ms (connection hang)`, 'first-token')
+            );
           }, postTimeoutMs);
           if (signal) {
             postAbortListener = () => {
@@ -288,52 +290,48 @@ export async function retryChat(
           if (signal) signal.removeEventListener('abort', abortChat);
         }
 
-        const chunks = await collectStream<ChatResponse>(
-          stream,
-          () => stream.abort(),
-          {
-            // Stall observability: tag every PROGRESS/STALL/TTFT line with the
-            // model and attempt so a cloud-model silent hang (e.g.
-            // mimo-v2.6-pro:cloud sitting >300s with no token) is identifiable
-            // in the log and attributable to a specific attempt.
-            obs: { attempt, model: request.model ?? MODEL },
-            firstTokenTimeoutMs: attemptTimeoutMs,
-            tokenLivenessTimeoutMs: attemptLivenessMs,
-            signal,
-            // Phase-aware liveness: thinking chunks (message.thinking only)
-            // get a wider window than response chunks (message.content).
-            // The thinking process is slower with longer intermissions, so a
-            // normal server-side scheduling pause during reasoning should not
-            // kill the stream. A chunk carrying response content (with or
-            // without thinking) uses the tighter response window — the model
-            // is producing visible output and should keep flowing. A chunk
-            // carrying neither (e.g. a done-only terminator) returns undefined
-            // so the current window is preserved.
-            livenessMsForChunk: (chunk) => {
-              const msg = chunk.message;
-              if (!msg) return undefined;
-              const hasResponse = !!msg.content;
-              const hasThinking = !!(msg.thinking as string | undefined);
-              if (hasResponse) return attemptLivenessMs;
-              if (hasThinking) return attemptThinkingLivenessMs;
-              return undefined;
-            },
-            // Feed each chunk's content + thinking text into the spinner's
-            // live token counter so the "thinking... (Xs, Y tokens)" suffix
-            // updates every frame. The inter-token liveness window is applied
-            // by collectStream itself (phase-aware via livenessMsForChunk
-            // above); responseTimeoutMs is no longer a total cap — it remains
-            // only as the first-token escalation ceiling.
-            onChunk: (chunk) => {
-              const msg = chunk.message;
-              if (!msg) return;
-              let delta = 0;
-              if (msg.content) delta += estimateTextTokens(msg.content);
-              if (msg.thinking) delta += estimateTextTokens(msg.thinking as string);
-              if (delta > 0) updateSpinnerTokens(delta);
-            },
+        const chunks = await collectStream<ChatResponse>(stream, () => stream.abort(), {
+          // Stall observability: tag every PROGRESS/STALL/TTFT line with the
+          // model and attempt so a cloud-model silent hang (e.g.
+          // mimo-v2.6-pro:cloud sitting >300s with no token) is identifiable
+          // in the log and attributable to a specific attempt.
+          obs: { attempt, model: request.model ?? MODEL },
+          firstTokenTimeoutMs: attemptTimeoutMs,
+          tokenLivenessTimeoutMs: attemptLivenessMs,
+          signal,
+          // Phase-aware liveness: thinking chunks (message.thinking only)
+          // get a wider window than response chunks (message.content).
+          // The thinking process is slower with longer intermissions, so a
+          // normal server-side scheduling pause during reasoning should not
+          // kill the stream. A chunk carrying response content (with or
+          // without thinking) uses the tighter response window — the model
+          // is producing visible output and should keep flowing. A chunk
+          // carrying neither (e.g. a done-only terminator) returns undefined
+          // so the current window is preserved.
+          livenessMsForChunk: (chunk) => {
+            const msg = chunk.message;
+            if (!msg) return undefined;
+            const hasResponse = !!msg.content;
+            const hasThinking = !!(msg.thinking as string | undefined);
+            if (hasResponse) return attemptLivenessMs;
+            if (hasThinking) return attemptThinkingLivenessMs;
+            return undefined;
           },
-        );
+          // Feed each chunk's content + thinking text into the spinner's
+          // live token counter so the "thinking... (Xs, Y tokens)" suffix
+          // updates every frame. The inter-token liveness window is applied
+          // by collectStream itself (phase-aware via livenessMsForChunk
+          // above); responseTimeoutMs is no longer a total cap — it remains
+          // only as the first-token escalation ceiling.
+          onChunk: (chunk) => {
+            const msg = chunk.message;
+            if (!msg) return;
+            let delta = 0;
+            if (msg.content) delta += estimateTextTokens(msg.content);
+            if (msg.thinking) delta += estimateTextTokens(msg.thinking as string);
+            if (delta > 0) updateSpinnerTokens(delta);
+          }
+        });
 
         const response = reconstructResponse(chunks, request.model);
         return response;
@@ -355,7 +353,10 @@ export async function retryChat(
         const isLastAttempt = attempt > cfg.maxRetries;
         if (!isLastAttempt) {
           const delay = calculateDelay(attempt, cfg);
-          agentIO.verbose('ollama', `Attempt ${attempt}/${cfg.maxRetries + 1} failed: ${lastError.message}. Retrying in ${delay}ms...`);
+          agentIO.verbose(
+            'ollama',
+            `Attempt ${attempt}/${cfg.maxRetries + 1} failed: ${lastError.message}. Retrying in ${delay}ms...`
+          );
           await sleep(delay, signal);
         }
       }
@@ -372,10 +373,10 @@ export async function retryChat(
 export async function retryMultipleChoice(
   request: Omit<ChatRequest, 'stream'>,
   choices: string[],
-  config?: Partial<RetryConfig> & { signal?: AbortSignal },
+  config?: Partial<RetryConfig> & { signal?: AbortSignal }
 ): Promise<string | null> {
   const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
-  const validChoices = choices.map(c => c.toUpperCase());
+  const validChoices = choices.map((c) => c.toUpperCase());
 
   for (let attempt = 1; attempt <= cfg.maxRetries + 1; attempt++) {
     if (config?.signal?.aborted) {
@@ -419,19 +420,25 @@ export async function retryMultipleChoice(
  * Web search through the host-aware Ollama web client.
  */
 export async function webSearch(query: string, signal?: AbortSignal): Promise<WebSearchResult[]> {
-  return retryWithBackoff(async () => {
-    const response = await ollamaWeb.webSearch({ query }, signal);
-    return response.results || [];
-  }, { maxRetries: 2, signal });
+  return retryWithBackoff(
+    async () => {
+      const response = await ollamaWeb.webSearch({ query }, signal);
+      return response.results || [];
+    },
+    { maxRetries: 2, signal }
+  );
 }
 
 /**
  * Web fetch through the host-aware Ollama web client.
  */
 export async function webFetch(url: string, signal?: AbortSignal): Promise<WebFetchResponse> {
-  return retryWithBackoff(async () => {
-    return ollamaWeb.webFetch({ url }, signal);
-  }, { maxRetries: 2, signal });
+  return retryWithBackoff(
+    async () => {
+      return ollamaWeb.webFetch({ url }, signal);
+    },
+    { maxRetries: 2, signal }
+  );
 }
 
 /**
@@ -464,11 +471,11 @@ export async function imgDescribe(image: string, prompt?: string, signal?: Abort
         {
           role: 'user',
           content: prompt || 'Describe this image in detail.',
-          images: [image],
-        },
-      ],
+          images: [image]
+        }
+      ]
     },
-    { signal, noSpinner: true },
+    { signal, noSpinner: true }
   );
 
   return response.message?.content || 'No description returned from vision model.';
@@ -479,13 +486,13 @@ export async function imgDescribe(image: string, prompt?: string, signal?: Abort
  */
 export async function structuredChat(
   messages: { role: string; content: string }[],
-  format: object,
+  format: object
 ): Promise<ChatResponse> {
   return ollama.chat({
     model: MODEL,
     messages: messages as ChatRequest['messages'],
     format,
-    options: { temperature: 0 },
+    options: { temperature: 0 }
   });
 }
 
@@ -498,7 +505,7 @@ export async function healthCheck(tokenThreshold: number): Promise<HealthCheckRe
     const msg = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
-      error: `Cannot connect to Ollama at ${OLLAMA_HOST}. ${msg}. Make sure Ollama is running.`,
+      error: `Cannot connect to Ollama at ${OLLAMA_HOST}. ${msg}. Make sure Ollama is running.`
     };
   }
 
@@ -514,7 +521,7 @@ export async function healthCheck(tokenThreshold: number): Promise<HealthCheckRe
     const { contextLength, motd } = await probeModel(
       retryChat,
       MODEL,
-      modelInfo.model_info as unknown as Record<string, unknown> | undefined,
+      modelInfo.model_info as unknown as Record<string, unknown> | undefined
     );
 
     stopSpinner();
@@ -526,7 +533,7 @@ export async function healthCheck(tokenThreshold: number): Promise<HealthCheckRe
     if (tokenThreshold > maxThreshold) {
       return {
         ok: false,
-        error: `TOKEN_THRESHOLD (${tokenThreshold}) exceeds 80% of model context length (${contextLength}). Reduce TOKEN_THRESHOLD to ${maxThreshold} or less.`,
+        error: `TOKEN_THRESHOLD (${tokenThreshold}) exceeds 80% of model context length (${contextLength}). Reduce TOKEN_THRESHOLD to ${maxThreshold} or less.`
       };
     }
 
@@ -543,7 +550,7 @@ export async function healthCheck(tokenThreshold: number): Promise<HealthCheckRe
     if (!isVisionEnabled()) {
       warnings.push(
         'OLLAMA_VISION_MODEL is not set. Vision features (screen/read_picture tools) are disabled.',
-        'Set it to a vision model (e.g., OLLAMA_VISION_MODEL=gemma4:31b-cloud) or "none" to dismiss this warning.',
+        'Set it to a vision model (e.g., OLLAMA_VISION_MODEL=gemma4:31b-cloud) or "none" to dismiss this warning.'
       );
     }
     if (embeddingWarning) {
@@ -557,15 +564,15 @@ export async function healthCheck(tokenThreshold: number): Promise<HealthCheckRe
         name: MODEL,
         contextLength,
         family: modelInfo.details?.family,
-        parameterSize: modelInfo.details?.parameter_size,
-      },
+        parameterSize: modelInfo.details?.parameter_size
+      }
     };
   } catch (err) {
     stopSpinner();
     const msg = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
-      error: `Model '${MODEL}' not found or unavailable. ${msg}. Run 'ollama list' to see available models.`,
+      error: `Model '${MODEL}' not found or unavailable. ${msg}. Run 'ollama list' to see available models.`
     };
   }
 }

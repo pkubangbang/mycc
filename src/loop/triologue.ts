@@ -39,8 +39,7 @@ import { abortWrapUpCapsule } from './wrap-up-state.js';
  * was a symptom of merging, and merging no longer exists).
  */
 type DeferredInput =
-  | { kind: 'user'; text: string }
-  | { kind: 'note'; category: NoteCategory; hookName?: string; text: string };
+  { kind: 'user'; text: string } | { kind: 'note'; category: NoteCategory; hookName?: string; text: string };
 
 export class Triologue {
   private store: MessageStore = new MessageStore();
@@ -111,7 +110,7 @@ export class Triologue {
     onCompact: (p) => this.options.onCompact(p),
     enqueueCompaction: (run) => this.enqueueCompaction(run),
     compactionEpoch: () => this.compactionEpoch,
-    installCompacted: (compacted, tailFrom) => this.installCompacted(compacted, tailFrom),
+    installCompacted: (compacted, tailFrom) => this.installCompacted(compacted, tailFrom)
   });
 
   /**
@@ -138,7 +137,7 @@ export class Triologue {
     // the facade's private flushDeferredInputs, bound lazily).
     flushDeferredInputs: (): void => {
       this.flushDeferredInputs();
-    },
+    }
   });
 
   /**
@@ -175,10 +174,7 @@ export class Triologue {
    * the durable collated history stays intact).
    */
   private emitControl(event: 'clear' | 'compact' | 'rollback' | 'segment-archive'): void {
-    this.options.onMessage(
-      { kind: event } as unknown as Message,
-      () => this.store.getRaw(),
-    );
+    this.options.onMessage({ kind: event } as unknown as Message, () => this.store.getRaw());
   }
 
   constructor(options: TriologueOptions = {}) {
@@ -193,7 +189,7 @@ export class Triologue {
       onMisorder: options.onMisorder ?? this.defaultOnMisorder,
       onToolMisalign: options.onToolMisalign ?? this.defaultOnToolMisalign,
       onCompact: options.onCompact ?? this.defaultOnCompact,
-      onMessage: options.onMessage ?? (() => {}),
+      onMessage: options.onMessage ?? (() => {})
     };
   }
 
@@ -354,7 +350,7 @@ export class Triologue {
     this.deferredInputs.push(input);
     agentIO.verbose(
       'tp',
-      `Deferred ${input.kind}() while ${this.ledger.size} tool call(s) outstanding — will replay after they settle`,
+      `Deferred ${input.kind}() while ${this.ledger.size} tool call(s) outstanding — will replay after they settle`
     );
   }
 
@@ -469,7 +465,11 @@ export class Triologue {
       const fixResult = this.tpFix.handle('note_after_tool', lastRole, 'cannot add note after tool role');
       if (fixResult === 'allowed') {
         // Provider supports tool → note natively — skip bridge, just append
-        this.addMessage({ role: 'user', content: `[${category}] ${message}`, ...(hookName ? { hook_name: hookName } : {}) });
+        this.addMessage({
+          role: 'user',
+          content: `[${category}] ${message}`,
+          ...(hookName ? { hook_name: hookName } : {})
+        });
         return;
       }
       // 'recovered': bridge was injected, now lastRole is 'assistant'
@@ -484,7 +484,6 @@ export class Triologue {
     this.addMessage({ role: 'user', content: noteContent, ...(hookName ? { hook_name: hookName } : {}) });
   }
 
-
   /**
    * Add a tool response message
    * @param functionName - The name of the tool that was called (becomes tool_name)
@@ -498,7 +497,11 @@ export class Triologue {
     // Check for missing assistant with tool_calls
     const lastRole = this.getLastRole();
     if (lastRole !== 'assistant' && lastRole !== 'tool') {
-      this.tpFix.handle('tool_no_assistant', lastRole, `cannot add tool message after ${lastRole} role (gap: missing_assistant)`);
+      this.tpFix.handle(
+        'tool_no_assistant',
+        lastRole,
+        `cannot add tool message after ${lastRole} role (gap: missing_assistant)`
+      );
       // Recovered: a synthetic assistant with tool_calls was injected.
       // After injection, the pending tool call map has an entry, but it's empty-named.
       // We need to update it so pending-ledger name resolution works for this functionName.
@@ -516,7 +519,8 @@ export class Triologue {
       const filepath = path.join(getLongtextDir(), filename);
 
       // Add header explaining why this file was created
-      const header = `[DUMPED TOOL RESULT]\n` +
+      const header =
+        `[DUMPED TOOL RESULT]\n` +
         `Tool: ${functionName}\n` +
         `Reason: Result exceeded ${threshold} char threshold (${result.length} chars)\n` +
         `Time: ${new Date(timestamp).toISOString()}\n` +
@@ -530,7 +534,7 @@ export class Triologue {
         filepath,
         result.length,
         threshold,
-        result.slice(0, 1000)  // First 1000 chars as preview
+        result.slice(0, 1000) // First 1000 chars as preview
       );
     }
 
@@ -545,7 +549,10 @@ export class Triologue {
       if (!resolvedId) {
         resolvedId = this.ledger.getOrder()[0];
         if (resolvedId) {
-          agentIO.verbose('tp', `No pending call matched "${functionName}"; resolving oldest pending call ${resolvedId}`);
+          agentIO.verbose(
+            'tp',
+            `No pending call matched "${functionName}"; resolving oldest pending call ${resolvedId}`
+          );
         }
       }
     }
@@ -558,7 +565,7 @@ export class Triologue {
       role: 'tool',
       tool_name: functionName,
       content: result,
-      tool_call_id: resolvedId,
+      tool_call_id: resolvedId
     });
 
     // Remove from pending after adding result
@@ -595,17 +602,17 @@ export class Triologue {
    *   provider payload (MessageStore.toProviderMessage), so it can neither
    *   reach the LLM nor be echoed back.
    */
-  agent(
-    content: string,
-    toolCalls?: ToolCall[],
-    opts?: { reasoningContent?: string; synthetic?: boolean },
-  ): void {
+  agent(content: string, toolCalls?: ToolCall[], opts?: { reasoningContent?: string; synthetic?: boolean }): void {
     const reasoningContent = opts?.reasoningContent;
     const lastRole = this.getLastRole();
 
     // Reject invalid transitions
     if (lastRole === 'assistant') {
-      this.tpFix.handle('duplicate_assistant', lastRole, 'cannot add assistant message after assistant role (duplicate)');
+      this.tpFix.handle(
+        'duplicate_assistant',
+        lastRole,
+        'cannot add assistant message after assistant role (duplicate)'
+      );
       // Recovered: pending tool calls cleared, fall through to add new assistant message
     }
     if (lastRole === 'system') {
@@ -620,7 +627,7 @@ export class Triologue {
       content: content || '',
       tool_calls: toolCalls,
       ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
-      ...(opts?.synthetic ? { synthetic: true } : {}),
+      ...(opts?.synthetic ? { synthetic: true } : {})
     });
 
     // Track pending tool calls in order
@@ -644,12 +651,12 @@ export class Triologue {
     for (const id of this.ledger.getOrder()) {
       const tc = this.ledger.getById(id);
       if (tc) {
-        const msg = isFirst ? firstMessage : (subsequentMessage || firstMessage);
+        const msg = isFirst ? firstMessage : subsequentMessage || firstMessage;
         this.addMessage({
           role: 'tool',
           tool_name: tc.function.name,
           content: msg,
-          tool_call_id: id,
+          tool_call_id: id
         });
         isFirst = false;
       }
@@ -691,7 +698,12 @@ export class Triologue {
    *   the wiki module) so the Triologue facade stays free of the RAG layer.
    *   Omitted/empty → the instruction section is dropped.
    */
-  async compact(focus?: string, signal?: AbortSignal, tools?: Tool[], domains: Array<{ domain_name: string; description?: string }> = []): Promise<void> {
+  async compact(
+    focus?: string,
+    signal?: AbortSignal,
+    tools?: Tool[],
+    domains: Array<{ domain_name: string; description?: string }> = []
+  ): Promise<void> {
     // Enqueue on the compaction chain so a concurrent segment archive can never
     // interleave its replaceAll with this full swap.
     const run = async (): Promise<void> => {
@@ -703,11 +715,11 @@ export class Triologue {
           getFullMessages: () => this.store.getFullMessages(),
           lastUserQuery: () => this.store.lastUserQuery,
           onCompact: (p) => this.options.onCompact(p),
-          domains,
+          domains
         },
         focus,
         signal,
-        tools,
+        tools
       );
       this.installCompacted(compacted);
       // Bump AFTER the swap: any archive that summarized across this point
@@ -737,7 +749,10 @@ export class Triologue {
     // succeeded — so its link is always settled, never rejected. The caller gets
     // `run()` itself, so its own rejection reaches it untouched.
     const result = run();
-    this.compactChain = result.then(() => undefined, () => undefined);
+    this.compactChain = result.then(
+      () => undefined,
+      () => undefined
+    );
     return result;
   }
 
@@ -759,7 +774,7 @@ export class Triologue {
   async compactSegment(
     currentTitleAssistantIndex: number,
     signal?: AbortSignal,
-    domains: Array<{ domain_name: string; description?: string }> = [],
+    domains: Array<{ domain_name: string; description?: string }> = []
   ): Promise<Message[] | undefined> {
     return this.segmentArchiver.run(currentTitleAssistantIndex, signal, domains);
   }
@@ -805,11 +820,13 @@ export class Triologue {
     const next = isSegment ? [...compacted, ...tail] : compacted;
     // Head pre-check (segment) / whole-array parity (full). Both are OBSERVABLE
     // (warn log) and leave the store as-is — never a half-swapped context.
-    const violations = isSegment
-      ? MessageStore.headViolations(compacted)
-      : MessageStore.parityViolations(next);
+    const violations = isSegment ? MessageStore.headViolations(compacted) : MessageStore.parityViolations(next);
     if (violations.length > 0) {
-      agentIO.brief('warn', 'triologue', `installCompacted refused: ${isSegment ? 'summary head' : 'candidate array'} violates role parity (tailFrom=${tailFrom ?? 'none'}): ${violations.join('; ')}`);
+      agentIO.brief(
+        'warn',
+        'triologue',
+        `installCompacted refused: ${isSegment ? 'summary head' : 'candidate array'} violates role parity (tailFrom=${tailFrom ?? 'none'}): ${violations.join('; ')}`
+      );
       return false;
     }
     const wrapUpMarkBefore = this.wrapUp.value;
@@ -879,16 +896,13 @@ export class Triologue {
     // execution before skipPendingTools resolved them), flush them now to
     // maintain TP parity before adding the WRAP_UP user message.
     if (this.ledger.size > 0) {
-      this.skipPendingTools(
-        'Tool use interrupted - user pressed ESC.',
-        'Tool use skipped due to ESC interruption.',
-      );
+      this.skipPendingTools('Tool use interrupted - user pressed ESC.', 'Tool use skipped due to ESC interruption.');
     }
     this.wrapUp.begin(this.store.length);
     // Always add as SEPARATE message (never combine with last user)
     this.addMessage({
       role: 'user',
-      content: `[WRAP_UP] LLM call interrupted. Please wrap up quickly and ask user for next steps.`,
+      content: `[WRAP_UP] LLM call interrupted. Please wrap up quickly and ask user for next steps.`
     });
   }
 
@@ -918,7 +932,7 @@ export class Triologue {
     if (this.ledger.size > 0) {
       this.skipPendingTools(
         'Tool use interrupted - wrap-up began before the call resolved.',
-        'Tool use skipped to close the block before wrap-up.',
+        'Tool use skipped to close the block before wrap-up.'
       );
     }
     // Route through addMessage (the single append chokepoint) instead of a raw
@@ -1024,7 +1038,6 @@ export class Triologue {
     return -1;
   }
 
-
   /**
    * Get last message role, or null if empty.
    * Defensive: skip any trailing undefined / sparse-hole entries so a
@@ -1089,7 +1102,7 @@ export class Triologue {
    */
   getContextBudget(
     tools: Tool[] = [],
-    systemPromptOverride?: string,
+    systemPromptOverride?: string
   ): {
     total: number;
     system: number;
@@ -1120,11 +1133,22 @@ export class Triologue {
    * rollbackWrapUp().
    */
   private truncateAndRecount(startIndex: number, event: 'rollback' = 'rollback'): void {
-    truncateAndRecount(this.store, {
-      clearPendingToolCalls: (): void => { this.ledger.clear(); },
-      dropDeferredInputs: (reason: string): void => { this.dropDeferredInputs(reason); },
-      emitControl: (e: 'rollback'): void => { this.emitControl(e); },
-    }, startIndex, event);
+    truncateAndRecount(
+      this.store,
+      {
+        clearPendingToolCalls: (): void => {
+          this.ledger.clear();
+        },
+        dropDeferredInputs: (reason: string): void => {
+          this.dropDeferredInputs(reason);
+        },
+        emitControl: (e: 'rollback'): void => {
+          this.emitControl(e);
+        }
+      },
+      startIndex,
+      event
+    );
   }
 
   // === Private Helpers ===
@@ -1145,10 +1169,7 @@ export class Triologue {
    * Note: Auto-compact is NOT called here to avoid race conditions.
    * Overflow checking is done in the LLM stage (llm.ts) before each call.
    */
-  private addMessage(
-    message: Message,
-    opts?: { isUserOrigin?: boolean },
-  ): void {
+  private addMessage(message: Message, opts?: { isUserOrigin?: boolean }): void {
     this.store.push(message);
     this.store.incrementTokenCount(message);
 
@@ -1157,7 +1178,7 @@ export class Triologue {
     // TP-bridge injections via injectBypass, and standalone notes — each is
     // a real livelog message, so each gets its own line (parity).
     this.emit(message, 'new', {
-      userOrigin: opts?.isUserOrigin,
+      userOrigin: opts?.isUserOrigin
     });
   }
 
@@ -1167,7 +1188,7 @@ export class Triologue {
     // Observability: emit triologue_event (silent when no listeners)
     loopEvents.emit('triologue_event', {
       kind: 'misorder',
-      detail: `${warning.from} → ${warning.to} (gap: ${warning.gap})`,
+      detail: `${warning.from} → ${warning.to} (gap: ${warning.gap})`
     });
     agentIO.brief('warn', 'triologue', `Misordered transition: ${warning.from} → ${warning.to}`, `gap: ${warning.gap}`);
   }
@@ -1176,7 +1197,7 @@ export class Triologue {
     // Observability: emit triologue_event (silent when no listeners)
     loopEvents.emit('triologue_event', {
       kind: 'tool_misalign',
-      detail: `${warning.functionName} (issue: ${warning.issue})`,
+      detail: `${warning.functionName} (issue: ${warning.issue})`
     });
     agentIO.brief('warn', 'triologue', `Tool alignment issue: ${warning.functionName}`, `issue: ${warning.issue}`);
   }
@@ -1185,7 +1206,7 @@ export class Triologue {
     // Observability: emit triologue_event (silent when no listeners)
     loopEvents.emit('triologue_event', {
       kind: 'compact',
-      detail: `Transcript saved: ${transcriptPath}`,
+      detail: `Transcript saved: ${transcriptPath}`
     });
     agentIO.brief('info', 'autoCompact', `Transcript saved: ${transcriptPath}`);
   }

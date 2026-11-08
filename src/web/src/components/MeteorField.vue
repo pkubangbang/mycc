@@ -113,7 +113,7 @@ watch(
       detachListener();
     }
   },
-  { immediate: true },
+  { immediate: true }
 );
 </script>
 
@@ -181,7 +181,9 @@ watch(
   /* EXIT timing: scale runs 0.5s from t=0; opacity is trailing-aligned —
      delayed 0.3s then runs 0.2s, finishing at t=0.5s alongside scale. The
      static left offset is NOT transitioned. */
-  transition: transform 0.5s ease, opacity 0.2s ease 0.3s;
+  transition:
+    transform 0.5s ease,
+    opacity 0.2s ease 0.3s;
 }
 /* ENTER / warping state: zoomed OUT to natural size (scale 1) + shown.
    The left: -20px offset is inherited from the base rule (unchanged here).
@@ -190,7 +192,9 @@ watch(
 .warp-field.is-warping {
   opacity: 1;
   transform: scale(1);
-  transition: transform 0.5s ease, opacity 0.2s ease 0s;
+  transition:
+    transform 0.5s ease,
+    opacity 0.2s ease 0s;
 }
 
 /* Each meteor is a short streak flying top-right → bottom-left (the rocket
@@ -211,11 +215,7 @@ watch(
      meteor flies right-top → left-bottom). Tail (faint) at the RIGHT edge
      → top-right, pointing back where the meteor came from (trailing).
      rotate(-45deg) maps local-left → bottom-left, local-right → top-right. */
-  background: linear-gradient(
-    to right,
-    rgba(255, 255, 255, 0.76),
-    rgba(180, 230, 255, 0.12)
-  );
+  background: linear-gradient(to right, rgba(255, 255, 255, 0.76), rgba(180, 230, 255, 0.12));
   transform: translate(0, 0) rotate(-45deg);
   opacity: 0;
   /* PERFORMANCE: pause the flight animation unless warping. Without this the

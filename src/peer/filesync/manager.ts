@@ -12,12 +12,8 @@
  */
 
 import path from 'path';
-import {
-  FilesEngine, type EngineHooks, type PeerPort,
-} from '@pkubangbang/filesync-manager';
-import {
-  type SyncControlFrame, type SyncDataFrame,
-} from './frames.js';
+import { FilesEngine, type EngineHooks, type PeerPort } from '@pkubangbang/filesync-manager';
+import { type SyncControlFrame, type SyncDataFrame } from './frames.js';
 import { controlToMessage, dataToMessage, type SyncDispatchTarget } from './wire-codec.js';
 import { announcedSharePeers, challengePeerShares } from '../wire-registry.js';
 
@@ -52,7 +48,7 @@ export interface ManagerHooks extends EngineHooks {
 export function sharePaths(workDir: string, share: string): { rootDir: string; stateDir: string } {
   return {
     rootDir: path.join(workDir, '.mycc', 'filesync', share),
-    stateDir: path.join(workDir, '.mycc', 'filesync', '.sync', share),
+    stateDir: path.join(workDir, '.mycc', 'filesync', '.sync', share)
   };
 }
 
@@ -62,8 +58,12 @@ export const SHARE_NOTICE_DEBOUNCE_MS = 2_000;
 
 let manager: FilesyncManager | null = null;
 
-export function setFilesyncManager(m: FilesyncManager | null): void { manager = m; }
-export function getFilesyncManager(): FilesyncManager | null { return manager; }
+export function setFilesyncManager(m: FilesyncManager | null): void {
+  manager = m;
+}
+export function getFilesyncManager(): FilesyncManager | null {
+  return manager;
+}
 
 export class FilesyncManager {
   private readonly engines = new Map<string, FilesEngine>();
@@ -79,9 +79,13 @@ export class FilesyncManager {
 
   /** Bound share ids (for announce.shares membership gossip and the challenge
    *  the peer must answer before it becomes a partner). */
-  shares(): string[] { return [...this.engines.keys()]; }
+  shares(): string[] {
+    return [...this.engines.keys()];
+  }
 
-  has(share: string): boolean { return this.engines.has(share); }
+  has(share: string): boolean {
+    return this.engines.has(share);
+  }
 
   /** Bind a share: create `.mycc/filesync/<id>/`, start its engine, and make
    *  it visible to the LLM (pinned todo + the change-note channel). */
@@ -95,12 +99,16 @@ export class FilesyncManager {
       stateDir,
       hooks: this.hooks,
       port: this.port,
-      debugFilesync: this.hooks.debugFilesync(),
+      debugFilesync: this.hooks.debugFilesync()
     });
     this.engines.set(share, e);
     e.start();
     this.hooks.verbose('filesync', `bound share ${share} at ${e.root}`);
-    try { this.hooks.pinShareTodo?.(share, e.root); } catch { /* best-effort */ }
+    try {
+      this.hooks.pinShareTodo?.(share, e.root);
+    } catch {
+      /* best-effort */
+    }
     // LATE BIND (`/share <id>` after the wires are already up): membership is
     // discovered from a peer's ANNOUNCE, and an announce happened long ago —
     // so nothing would ever challenge for this new share and the engines would
@@ -113,7 +121,9 @@ export class FilesyncManager {
         if (challengePeerShares(peer, this.localShares())) challenged++;
       }
       this.hooks.verbose('filesync', `late bind ${share}: re-challenged ${challenged} announced peer(s)`);
-    } catch (err) { this.hooks.verbose('filesync', `late bind ${share}: reconciliation failed: ${String(err)}`); }
+    } catch (err) {
+      this.hooks.verbose('filesync', `late bind ${share}: reconciliation failed: ${String(err)}`);
+    }
     return e;
   }
 
@@ -123,12 +133,21 @@ export class FilesyncManager {
     e.close();
     this.engines.delete(share);
     const pending = this.changeBatch.get(share);
-    if (pending) { clearTimeout(pending.timer); this.changeBatch.delete(share); }
-    try { this.hooks.unpinShareTodo?.(share); } catch { /* best-effort */ }
+    if (pending) {
+      clearTimeout(pending.timer);
+      this.changeBatch.delete(share);
+    }
+    try {
+      this.hooks.unpinShareTodo?.(share);
+    } catch {
+      /* best-effort */
+    }
     return true;
   }
 
-  get(share: string): FilesEngine | undefined { return this.engines.get(share); }
+  get(share: string): FilesEngine | undefined {
+    return this.engines.get(share);
+  }
 
   closeAll(): void {
     for (const e of this.engines.values()) e.close();
@@ -151,7 +170,11 @@ export class FilesyncManager {
       const created = { changes: new Set<string>(), timer: null as unknown as NodeJS.Timeout };
       created.timer = setTimeout(() => {
         this.changeBatch.delete(share);
-        try { this.hooks.notifyShareChange?.(share, e.root, [...created.changes]); } catch { /* best-effort */ }
+        try {
+          this.hooks.notifyShareChange?.(share, e.root, [...created.changes]);
+        } catch {
+          /* best-effort */
+        }
       }, SHARE_NOTICE_DEBOUNCE_MS);
       created.timer.unref?.();
       batch = created;
@@ -174,14 +197,19 @@ export class FilesyncManager {
     try {
       const msg = controlToMessage(frame);
       if (msg) e.onMessage(peer, msg);
-    } catch (err) { this.hooks.verbose('filesync', `dropped frame from ${peer}: ${String(err)}`); }
+    } catch (err) {
+      this.hooks.verbose('filesync', `dropped frame from ${peer}: ${String(err)}`);
+    }
   }
 
   onDataFrame(peer: string, frame: SyncDataFrame): void {
     const e = this.engines.get(frame.share);
     if (!e) return;
-    try { e.onData(peer, dataToMessage(frame)); }
-    catch (err) { this.hooks.verbose('filesync', `dropped data from ${peer}: ${String(err)}`); }
+    try {
+      e.onData(peer, dataToMessage(frame));
+    } catch (err) {
+      this.hooks.verbose('filesync', `dropped data from ${peer}: ${String(err)}`);
+    }
   }
 
   /** A partner PROVED membership of these share ids — membership gossip
@@ -210,11 +238,18 @@ export class FilesyncManager {
 
   /** Share ids this instance binds — the membership challenge is computed
    *  from these, so nothing else can be claimed on our behalf. */
-  localShares(): string[] { return this.shares(); }
+  localShares(): string[] {
+    return this.shares();
+  }
 
   /** Engine → host bridge: a partner's file landed (or was removed) in a
    *  share. Batched by the host into one "[Note] … check the folder" mail. */
-  noteFileChange(share: string, relPath: string, origin: 'local' | 'remote', change: 'added' | 'updated' | 'deleted'): void {
+  noteFileChange(
+    share: string,
+    relPath: string,
+    origin: 'local' | 'remote',
+    change: 'added' | 'updated' | 'deleted'
+  ): void {
     if (origin !== 'remote') return; // our own edits need no note
     this.noteShareChange(share, relPath, change);
   }

@@ -59,7 +59,13 @@ class SlashCommandRegistryImpl {
     const command = this.get(name);
     if (!command) {
       console.log(chalk.yellow(`Unknown command: /${name}`));
-      console.log(chalk.gray(`Available commands: ${this.list().map((c) => `/${c}`).join(', ')}`));
+      console.log(
+        chalk.gray(
+          `Available commands: ${this.list()
+            .map((c) => `/${c}`)
+            .join(', ')}`
+        )
+      );
       return false;
     }
 

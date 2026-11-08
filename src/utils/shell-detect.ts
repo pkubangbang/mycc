@@ -124,10 +124,7 @@ function detectPwsh7(): string | null {
   if (pwshOnPath) {
     return pwshOnPath;
   }
-  const knownPwsh = join(
-    process.env.ProgramFiles || 'C:\\Program Files',
-    'PowerShell', '7', 'pwsh.exe',
-  );
+  const knownPwsh = join(process.env.ProgramFiles || 'C:\\Program Files', 'PowerShell', '7', 'pwsh.exe');
   if (fileExists(knownPwsh)) {
     return knownPwsh;
   }
@@ -176,7 +173,13 @@ export function detectShell(reset = false): ShellInfo {
       // 5.1 is always present on supported Windows; if somehow not found we
       // still commit to powershell5 (exec() will throw a clear spawn error
       // rather than silently picking a different shell).
-      cached = { isWin: true, platform: 'Windows', shell: 'powershell5', shell_cmd: 'powershell', path: ps5Path ?? 'powershell.exe' };
+      cached = {
+        isWin: true,
+        platform: 'Windows',
+        shell: 'powershell5',
+        shell_cmd: 'powershell',
+        path: ps5Path ?? 'powershell.exe'
+      };
     }
     return cached;
   }

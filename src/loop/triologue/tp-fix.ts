@@ -97,11 +97,7 @@ function supportsToolToUser(): boolean {
  * @param lastRole - The last role before the violation (for context in warning)
  * @returns 'allowed' if transition is valid for provider, 'recovered' if fix applied, 'debug_throw' if caller should throw
  */
-export function attemptAutoFix(
-  ctx: TpFixContext,
-  violation: TpViolationType,
-  lastRole: string | null,
-): AutoFixResult {
+export function attemptAutoFix(ctx: TpFixContext, violation: TpViolationType, lastRole: string | null): AutoFixResult {
   // ── Debug mode: preserve old throw+stacktrace behavior ──
   if (isDebuggingTp()) {
     return 'debug_throw';
@@ -135,7 +131,7 @@ export function attemptAutoFix(
       // result landed on a provider with no native bridge).
       ctx.injectBypass({
         role: 'assistant',
-        content: '',
+        content: ''
       });
       break;
 
@@ -151,13 +147,13 @@ export function attemptAutoFix(
         id: syntheticId,
         function: {
           name: '',
-          arguments: {},
-        },
+          arguments: {}
+        }
       };
       ctx.injectBypass({
         role: 'assistant',
         content: '',
-        tool_calls: [syntheticCall],
+        tool_calls: [syntheticCall]
       } as Message);
       // Register the synthetic tool_call to the pending ledger so the
       // subsequent tool() call can resolve the tool_call_id and alignment
@@ -188,7 +184,7 @@ export function attemptAutoFix(
             role: 'tool',
             tool_name: toolName,
             content: '[TP_RECOVERY] Tool call skipped due to consecutive assistant messages.',
-            tool_call_id: id,
+            tool_call_id: id
           });
         }
       }
@@ -211,7 +207,7 @@ export function attemptAutoFix(
       // as an internal system action, not user input.
       ctx.injectBypass({
         role: 'user',
-        content: '[TP_RECOVERY] Continue.',
+        content: '[TP_RECOVERY] Continue.'
       });
       break;
 
@@ -219,7 +215,7 @@ export function attemptAutoFix(
       // Generic: bridge with a neutral empty assistant message
       ctx.injectBypass({
         role: 'assistant',
-        content: '',
+        content: ''
       });
       break;
   }
@@ -237,7 +233,7 @@ function formatViolationLabel(violation: TpViolationType): string {
     tool_no_assistant: 'tool() without preceding assistant (no pending calls)',
     duplicate_assistant: 'agent() after assistant()',
     agent_after_system: 'agent() after system()',
-    invalid_sequence: 'invalid role transition',
+    invalid_sequence: 'invalid role transition'
   };
   return labels[violation];
 }
@@ -274,7 +270,11 @@ export class TpAutoFixer {
    * @returns 'allowed' if transition is valid for provider, 'recovered' if fix applied.
    *   Throws in --debug-tp mode (never returns 'debug_throw').
    */
-  handle(violation: TpViolationType, lastRole: string | null, violationMessage: string): Exclude<AutoFixResult, 'debug_throw'> {
+  handle(
+    violation: TpViolationType,
+    lastRole: string | null,
+    violationMessage: string
+  ): Exclude<AutoFixResult, 'debug_throw'> {
     const result = attemptAutoFix(this.ctx, violation, lastRole);
     if (result === 'debug_throw') {
       this.throwViolation(violationMessage);

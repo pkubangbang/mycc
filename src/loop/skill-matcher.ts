@@ -130,9 +130,7 @@ function buildQualifiedTitleIndex(skills: Skill[]): Map<string, string> {
  * scope identity is preserved end-to-end and cross-project same-named skills
  * do not collide.
  */
-function buildSimilarityByTitle(
-  semanticResults: SearchResult[],
-): Map<string, number> {
+function buildSimilarityByTitle(semanticResults: SearchResult[]): Map<string, number> {
   const byTitle = new Map<string, number>();
   for (const r of semanticResults) {
     const title = r.document.title.toLowerCase();
@@ -253,10 +251,7 @@ export function scoreSkills(args: {
   const ranked: RankedSkill[] = [];
   for (const { skill, points } of scoreboard.values()) {
     const qualifiedTitle = qualifiedTitleByName.get(skill.name.toLowerCase());
-    const sim =
-      qualifiedTitle !== undefined
-        ? similarityByTitle.get(qualifiedTitle.toLowerCase())
-        : undefined;
+    const sim = qualifiedTitle !== undefined ? similarityByTitle.get(qualifiedTitle.toLowerCase()) : undefined;
     let boost = 1.0;
     if (sim !== undefined && sim > threshold) {
       boost = 1 + (sim - threshold);
@@ -266,13 +261,13 @@ export function scoreSkills(args: {
       points,
       boost,
       score: points * boost,
-      similarity: sim,
+      similarity: sim
     });
   }
 
   // Phase 3: gate (strict > floor) + order (desc) + top-N.
   ranked.sort((a, b) => b.score - a.score);
-  return ranked.filter(r => r.score > SKILL_SCORE_FLOOR).slice(0, SKILL_TOP_N);
+  return ranked.filter((r) => r.score > SKILL_SCORE_FLOOR).slice(0, SKILL_TOP_N);
 }
 
 /**

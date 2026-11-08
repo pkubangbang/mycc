@@ -9,7 +9,7 @@
     "noUnusedParameters": true,
     "skipLibCheck": true,
     "outDir": "dist",
-        "declaration": true,
+    "declaration": true,
     "resolveJsonModule": true,
     "types": ["node"]
   },

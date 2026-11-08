@@ -36,11 +36,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getSessionContext, getSessionDir, isCrossroadDisabled } from '../../config.js';
 
-export async function handleLlm(
-  env: MachineEnv,
-  turn: TurnVars,
-  chat: ChatData,
-): Promise<HandlerResult> {
+export async function handleLlm(env: MachineEnv, turn: TurnVars, chat: ChatData): Promise<HandlerResult> {
   const { triologue, ctx, scope, inputProvider } = env;
 
   // =====================================================================
@@ -90,7 +86,7 @@ export async function handleLlm(
   // Build system prompt based on mode
   const workDir = ctx.core.getWorkDir();
   const hasTeam = ctx.team.printTeam() !== 'No teammates.';
-  
+
   let systemPrompt: string;
   if (isInPlanMode(ctx)) {
     systemPrompt = buildPlanModePrompt(workDir, hasTeam);
@@ -135,9 +131,9 @@ export async function handleLlm(
               model: MODEL,
               messages: triologue.getMessages(),
               tools,
-              think: agentIO.isNeglectedMode() || isInPlanMode(ctx),
+              think: agentIO.isNeglectedMode() || isInPlanMode(ctx)
             },
-            { signal: abortController.signal, neglected: agentIO.isNeglectedMode() },
+            { signal: abortController.signal, neglected: agentIO.isNeglectedMode() }
           );
         },
         () => {
@@ -160,9 +156,7 @@ export async function handleLlm(
 
       // Store response data on pass for downstream states
       const assistantMessage = response.message;
-      chat.rawToolCalls = assistantMessage.tool_calls
-        ? [...(assistantMessage.tool_calls as ToolCall[])]
-        : [];
+      chat.rawToolCalls = assistantMessage.tool_calls ? [...(assistantMessage.tool_calls as ToolCall[])] : [];
       chat.assistantContent = assistantMessage.content || '';
       // Read the assistant's reasoning/thinking. Ollama exposes it as the
       // `thinking` field; DeepSeek exposes it as `reasoning_content`. Read
@@ -193,8 +187,7 @@ export async function handleLlm(
       //
       // Wrapped in escAware so ESC during crossroad processing returns null
       // (transparent skip), using the original LLM output as-is.
-      const isBriefOnly = chat.rawToolCalls.length > 0
-        && chat.rawToolCalls.every(tc => tc.function.name === 'brief');
+      const isBriefOnly = chat.rawToolCalls.length > 0 && chat.rawToolCalls.every((tc) => tc.function.name === 'brief');
       // The entire crossroad block is skipped when --disable-crossroad is set.
       // This is an escape hatch for when crossroad fires false positives — e.g.
       // when the LLM's output legitimately mentions a word matching a turning
@@ -220,19 +213,20 @@ export async function handleLlm(
                 triologue.getMessages(),
                 chat.assistantContent,
                 tools,
-                abortController.signal,
+                abortController.signal
               );
             },
-            () => null,
+            () => null
           );
           // ESC pressed during crossroad processing - return STOP for wrap-up
           if (agentIO.isNeglectedMode()) {
             return AgentState.STOP;
           }
           if (crossroadResult) {
-            ctx.core.verbose('llm',
+            ctx.core.verbose(
+              'llm',
               `Crossroad: truncated at "${crossroadResult.truncated.slice(0, 80)}..."`,
-              `Continuation: "${crossroadResult.continuation.slice(0, 80)}..."`,
+              `Continuation: "${crossroadResult.continuation.slice(0, 80)}..."`
             );
             // Replace content with truncated prefix + continuation will be injected in hook.ts
             chat.assistantContent = crossroadResult.truncated;
@@ -269,7 +263,7 @@ export async function handleLlm(
                 timestamp,
                 prefix: crossroadResult.truncated,
                 candidates: crossroadResult.candidates,
-                continuation: crossroadResult.continuation,
+                continuation: crossroadResult.continuation
               };
               fs.writeFileSync(crossroadFilePath, JSON.stringify(crossroadData, null, 2), 'utf-8');
               chat.crossroadFilePath = crossroadFilePath;
@@ -284,7 +278,7 @@ export async function handleLlm(
             // but cooldown makes consecutive fires impossible — so the +2 is now
             // unconditional to keep the hint escape valve functional.
             ctx.core.increaseConfusionIndex(2);
-            env.crossroadOccurred = true;   // arm cooldown for next pass
+            env.crossroadOccurred = true; // arm cooldown for next pass
           } else {
             // No crossroad this pass — reset the flag
             env.crossroadOccurred = false;
@@ -319,7 +313,10 @@ export async function handleLlm(
         emptyRetries++;
         // Observability: emit llm_empty (silent when no listeners)
         loopEvents.emit('llm_empty', { retry: emptyRetries, maxRetries: MAX_EMPTY_RETRIES });
-        ctx.core.verbose('llm', `LLM returned empty response (no content, no tool calls). Injecting synthetic brief() to prompt re-engagement. (empty retry ${emptyRetries}/${MAX_EMPTY_RETRIES})`);
+        ctx.core.verbose(
+          'llm',
+          `LLM returned empty response (no content, no tool calls). Injecting synthetic brief() to prompt re-engagement. (empty retry ${emptyRetries}/${MAX_EMPTY_RETRIES})`
+        );
 
         // Stale-continuation leak guard: crossroad may have set
         // chat.crossroadContinuation this pass (when the turning word was at
@@ -339,7 +336,10 @@ export async function handleLlm(
           // Context is likely unrecoverable on its own — give control back to
           // the user. A subsequent COLLECT/PROMPT may also drain any queued
           // steering note that was stuck while the loop was spinning.
-          ctx.core.verbose('llm', `Empty-output retries exhausted (${MAX_EMPTY_RETRIES}). Returning to PROMPT to avoid infinite loop.`);
+          ctx.core.verbose(
+            'llm',
+            `Empty-output retries exhausted (${MAX_EMPTY_RETRIES}). Returning to PROMPT to avoid infinite loop.`
+          );
           stopSpinner();
           return AgentState.PROMPT;
         }

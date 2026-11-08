@@ -35,13 +35,12 @@ export const mailCommand: SlashCommand = {
     }
 
     // 2. Read mails — scan triologue for [MAIL] notes (last 10)
-    const triologue: { getMessagesRaw(): Array<{ role: string; content?: string }> } =
-      context.triologue as unknown as { getMessagesRaw(): Array<{ role: string; content?: string }> };
+    const triologue: { getMessagesRaw(): Array<{ role: string; content?: string }> } = context.triologue as unknown as {
+      getMessagesRaw(): Array<{ role: string; content?: string }>;
+    };
     const messages = triologue.getMessagesRaw();
 
-    const mailNotes = messages
-      .filter(m => m.role === 'user' && m.content?.startsWith('[MAIL]'))
-      .slice(-10);
+    const mailNotes = messages.filter((m) => m.role === 'user' && m.content?.startsWith('[MAIL]')).slice(-10);
 
     console.log(chalk.cyan.bold('=== Recent Read Mails'));
     if (mailNotes.length === 0) {
@@ -59,5 +58,5 @@ export const mailCommand: SlashCommand = {
       }
     }
     console.log();
-  },
+  }
 };

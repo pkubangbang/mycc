@@ -56,10 +56,7 @@ export interface MyccDebug {
  * The `state` param is the Pinia store instance (satisfies `DispatchState` for
  * `applyServerMessage` and `ChatState` for component prop typing).
  */
-export function registerDebugSeam(
-  state: DispatchState & ChatState,
-  ctx: DispatchContext,
-): void {
+export function registerDebugSeam(state: DispatchState & ChatState, ctx: DispatchContext): void {
   if (typeof window === 'undefined') return;
   if (!import.meta.env.DEV) return;
   if (window.__myccDebug) return; // already registered (e.g. HMR re-run)
@@ -84,7 +81,7 @@ export function registerDebugSeam(
         pendingSteeringReview: [...state.pendingSteeringReview],
         messageCount: state.messages.length,
         teammateMessageCount: state.teammateMessages.length,
-        lastServerMsg: state.lastServerMsg ? { ...state.lastServerMsg } : undefined,
+        lastServerMsg: state.lastServerMsg ? { ...state.lastServerMsg } : undefined
       };
     },
     inject(msg: ChatMessage): void {
@@ -105,7 +102,7 @@ export function registerDebugSeam(
       state.setAutoMode(false);
       state.showRetry = false;
       state.debugMode = false;
-    },
+    }
   };
 
   window.__myccDebug = seam;

@@ -22,7 +22,7 @@ import { getOllamaHost, getOllamaApiKey } from '../config.js';
 
 const ollama = new OllamaHttpClient({
   host: getOllamaHost(),
-  apiKey: getOllamaApiKey(),
+  apiKey: getOllamaApiKey()
 });
 
 export const EMBEDDING_MODEL = process.env.OLLAMA_EMBEDDING_MODEL || 'embeddinggemma';
@@ -50,13 +50,11 @@ export const NAMESPACE = EMBEDDING_MODEL;
  * @returns Embedding vector (768-dim)
  */
 export async function getEmbedding(text: string, mode: 'query' | 'document' = 'document'): Promise<number[]> {
-  const input = mode === 'query'
-    ? `task: search result | query: ${text}`
-    : `title: none | text: ${text}`;
+  const input = mode === 'query' ? `task: search result | query: ${text}` : `title: none | text: ${text}`;
 
   const response = await ollama.embed({
     model: EMBEDDING_MODEL,
-    input,
+    input
   });
 
   if (!response.embeddings || response.embeddings.length === 0) {
@@ -82,14 +80,12 @@ export async function getEmbeddings(texts: string[], mode: 'query' | 'document' 
   if (texts.length === 0) return [];
 
   const prefixed = texts.map((text) =>
-    mode === 'query'
-      ? `task: search result | query: ${text}`
-      : `title: none | text: ${text}`,
+    mode === 'query' ? `task: search result | query: ${text}` : `title: none | text: ${text}`
   );
 
   const response = await ollama.embed({
     model: EMBEDDING_MODEL,
-    input: prefixed,
+    input: prefixed
   });
 
   if (!response.embeddings || response.embeddings.length === 0) {

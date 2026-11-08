@@ -9,5 +9,5 @@ export const teamCommand: SlashCommand = {
   description: 'Print team information',
   handler: (context) => {
     console.log(context.ctx.team.printTeam());
-  },
+  }
 };

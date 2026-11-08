@@ -41,9 +41,28 @@ const WINDOWS_RESERVED = [':', '*', '?', '"', '<', '>', '|'];
  * as an exploit fix.
  */
 const WINDOWS_DEVICE_NAMES = [
-  'CON', 'PRN', 'AUX', 'NUL',
-  'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
-  'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+  'CON',
+  'PRN',
+  'AUX',
+  'NUL',
+  'COM1',
+  'COM2',
+  'COM3',
+  'COM4',
+  'COM5',
+  'COM6',
+  'COM7',
+  'COM8',
+  'COM9',
+  'LPT1',
+  'LPT2',
+  'LPT3',
+  'LPT4',
+  'LPT5',
+  'LPT6',
+  'LPT7',
+  'LPT8',
+  'LPT9'
 ];
 
 /**
@@ -102,37 +121,30 @@ export function sanitizeId(id: unknown, label: string): string {
     throw new Error(`Invalid ${label}: must be a non-empty string`);
   }
   if (id.includes('/') || id.includes('\\') || id.includes('..')) {
-    throw new Error(
-      `Invalid ${label}: contains path separators or "..": ${JSON.stringify(id)}`,
-    );
+    throw new Error(`Invalid ${label}: contains path separators or "..": ${JSON.stringify(id)}`);
   }
   if ([...id].some((c) => c.codePointAt(0)! < 0x20)) {
-    throw new Error(
-      `Invalid ${label}: contains control characters: ${JSON.stringify(id)}`,
-    );
+    throw new Error(`Invalid ${label}: contains control characters: ${JSON.stringify(id)}`);
   }
   const reserved = WINDOWS_RESERVED.filter((c) => id.includes(c));
   if (reserved.length > 0) {
     throw new Error(
-      `Invalid ${label}: contains characters illegal in a filename ` +
-      `(${reserved.join(' ')}): ${JSON.stringify(id)}`,
+      `Invalid ${label}: contains characters illegal in a filename ` + `(${reserved.join(' ')}): ${JSON.stringify(id)}`
     );
   }
   if (hasWindowsUnsafeTrailing(id)) {
     throw new Error(
       `Invalid ${label}: must not end with a dot or a space (Windows strips it, ` +
-      `so the name is not stable across platforms): ${JSON.stringify(id)}`,
+        `so the name is not stable across platforms): ${JSON.stringify(id)}`
     );
   }
   if (isWindowsDeviceName(id)) {
-    throw new Error(
-      `Invalid ${label}: is a reserved Windows device name: ${JSON.stringify(id)}`,
-    );
+    throw new Error(`Invalid ${label}: is a reserved Windows device name: ${JSON.stringify(id)}`);
   }
   if (id.length > MAX_ID_LENGTH) {
     throw new Error(
       `Invalid ${label}: too long (${id.length} > ${MAX_ID_LENGTH} chars); it would ` +
-      `fail late with ENOENT as a filename component: ${JSON.stringify(id.slice(0, 40))}…`,
+        `fail late with ENOENT as a filename component: ${JSON.stringify(id.slice(0, 40))}…`
     );
   }
   return id;

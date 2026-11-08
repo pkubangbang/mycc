@@ -13,23 +13,23 @@ export const wikiPrepareTool: ToolDefinition = {
     properties: {
       domain: {
         type: 'string',
-        description: 'Category tag for the knowledge (e.g., "project", "architecture", "api")',
+        description: 'Category tag for the knowledge (e.g., "project", "architecture", "api")'
       },
       title: {
         type: 'string',
-        description: 'Document title - a brief summary of the knowledge',
+        description: 'Document title - a brief summary of the knowledge'
       },
       content: {
         type: 'string',
-        description: `Document content - facts, rules, or information to store (${WIKI_CONTENT_TOKEN_LIMITS.min}-${WIKI_CONTENT_TOKEN_LIMITS.max} tokens; ~4 chars per token for Western text). Should describe facts/rules, not opinions.`,
+        description: `Document content - facts, rules, or information to store (${WIKI_CONTENT_TOKEN_LIMITS.min}-${WIKI_CONTENT_TOKEN_LIMITS.max} tokens; ~4 chars per token for Western text). Should describe facts/rules, not opinions.`
       },
       references: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Optional list of reference URLs or file paths for this knowledge',
-      },
+        description: 'Optional list of reference URLs or file paths for this knowledge'
+      }
     },
-    required: ['domain', 'title', 'content'],
+    required: ['domain', 'title', 'content']
   },
   scope: ['main', 'child'],
   handler: async (ctx, args): Promise<string> => {
@@ -37,11 +37,15 @@ export const wikiPrepareTool: ToolDefinition = {
       domain: args.domain as string,
       title: args.title as string,
       content: args.content as string,
-      references: (args.references as string[]) || [],
+      references: (args.references as string[]) || []
     };
 
     const result = await ctx.wiki.prepare(document);
-    ctx.core.brief('info', 'wiki_prepare', `Document "${document.title}" (${document.domain}): ${result.accepted ? 'accepted' : 'rejected'}`);
+    ctx.core.brief(
+      'info',
+      'wiki_prepare',
+      `Document "${document.title}" (${document.domain}): ${result.accepted ? 'accepted' : 'rejected'}`
+    );
     return JSON.stringify(result, null, 2);
-  },
+  }
 };

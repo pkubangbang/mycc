@@ -114,11 +114,7 @@ export interface DispatchContext {
  * steering surfaces are only ever produced by the store's adoption rule
  * (`adoptSteering`) and its PROMPT projection (`populateSteeringReview`).
  */
-export function applyServerMessage(
-  state: DispatchState,
-  msg: ChatMessage,
-  ctx: DispatchContext,
-): void {
+export function applyServerMessage(state: DispatchState, msg: ChatMessage, ctx: DispatchContext): void {
   // Ensure every live message has a stable id for v-for keys.
   if (msg.id === undefined) msg.id = ctx.nextId();
 
@@ -165,7 +161,7 @@ export function applyServerMessage(
       kind,
       options: msg.options,
       initialContent: msg.initialContent,
-      placeholder: msg.placeholder,
+      placeholder: msg.placeholder
     };
     state.messages.push({ type: 'card', content: query, id: ctx.nextId(), card: cardPayload });
     return;
@@ -262,9 +258,7 @@ export function applyServerMessage(
   // turn — display-only: NO phase flip. Under auto mode (the agent is
   // autonomous; a result means the next stage is running) and from
   // working/submitted (genuine work output) the flip behavior is preserved.
-  const isWrapUpLetterboxResult = state.phase !== 'working'
-    && state.phase !== 'submitted'
-    && !state.isAutoMode;
+  const isWrapUpLetterboxResult = state.phase !== 'working' && state.phase !== 'submitted' && !state.isAutoMode;
   if (!isWrapUpLetterboxResult) {
     if (state.phase === 'prompt' || state.phase === 'card') {
       state.setPhase('working');

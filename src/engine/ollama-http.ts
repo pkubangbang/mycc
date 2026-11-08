@@ -20,8 +20,13 @@
  */
 
 import type {
-  ChatRequest, ChatResponse, EmbedRequest, EmbedResponse,
-  ModelInfo, ModelListResponse, ProviderMessage,
+  ChatRequest,
+  ChatResponse,
+  EmbedRequest,
+  EmbedResponse,
+  ModelInfo,
+  ModelListResponse,
+  ProviderMessage
 } from './provider-types.js';
 
 /**
@@ -48,7 +53,7 @@ export class OllamaHttpError extends Error {
     message: string,
     readonly status: number,
     readonly retryAfterMs?: number,
-    readonly signinUrl?: string,
+    readonly signinUrl?: string
   ) {
     const auth = status === 401 ? ' Unauthorized' : status === 403 ? ' Forbidden' : '';
     super(`HTTP ${status}${auth}: ${message}`);
@@ -76,7 +81,9 @@ export function normalizeHost(host: string): string {
   const value = host.trim();
   const withProtocol = value.startsWith(':')
     ? `http://127.0.0.1${value}`
-    : value.includes('://') ? value : `http://${value}`;
+    : value.includes('://')
+      ? value
+      : `http://${value}`;
   const url = new URL(withProtocol);
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error(`Unsupported OLLAMA_HOST protocol "${url.protocol}": only http:// and https:// are supported`);
@@ -86,9 +93,7 @@ export function normalizeHost(host: string): string {
   }
   if (url.hostname.endsWith('.')) url.hostname = url.hostname.slice(0, -1);
   if (!url.port) {
-    url.port = value.includes('://')
-      ? url.protocol === 'https:' ? '443' : '80'
-      : '11434';
+    url.port = value.includes('://') ? (url.protocol === 'https:' ? '443' : '80') : '11434';
   }
   return url.toString().replace(/\/$/, '');
 }
@@ -115,13 +120,16 @@ export function parseRetryAfter(value: string | null): number | undefined {
  * one silently diverged from the other.
  */
 export function encodeImages(messages: ProviderMessage[] | undefined): ProviderMessage[] | undefined {
-  return messages?.map((message) => (message.images
-    ? {
-        ...message,
-        images: message.images.map((image) =>
-          typeof image === 'string' ? image : Buffer.from(image).toString('base64')),
-      }
-    : message));
+  return messages?.map((message) =>
+    message.images
+      ? {
+          ...message,
+          images: message.images.map((image) =>
+            typeof image === 'string' ? image : Buffer.from(image).toString('base64')
+          )
+        }
+      : message
+  );
 }
 
 /**
@@ -144,7 +152,7 @@ export async function httpError(response: Response): Promise<OllamaHttpError> {
     detail || response.statusText,
     response.status,
     parseRetryAfter(response.headers.get('retry-after')),
-    signinUrl,
+    signinUrl
   );
 }
 
@@ -168,16 +176,16 @@ export interface PostOptions {
 export async function postJson(
   endpoint: string,
   body: unknown,
-  { apiKey, signal }: PostOptions = {},
+  { apiKey, signal }: PostOptions = {}
 ): Promise<Record<string, unknown>> {
   const response = await fetch(endpoint, {
     method: 'POST',
     ...(signal ? { signal } : {}),
     headers: {
       'Content-Type': 'application/json',
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(body)
   });
   if (!response.ok) throw await httpError(response);
   const text = await response.text();
@@ -204,7 +212,7 @@ export async function postJson(
       detail,
       authLike ? 401 : 200,
       undefined,
-      'signin_url' in data && typeof data.signin_url === 'string' ? data.signin_url : undefined,
+      'signin_url' in data && typeof data.signin_url === 'string' ? data.signin_url : undefined
     );
   }
   return data as Record<string, unknown>;
@@ -242,26 +250,32 @@ export class OllamaHttpClient {
   private async request(path: string, init: RequestInit = {}): Promise<Response> {
     const response = await fetch(`${this.host}${path}`, {
       ...init,
-      headers: { 'Content-Type': 'application/json', ...this.headers, ...init.headers },
+      headers: { 'Content-Type': 'application/json', ...this.headers, ...init.headers }
     });
     if (!response.ok) throw await httpError(response);
     return response;
   }
 
   async list(): Promise<ModelListResponse> {
-    return await (await this.request('/api/tags')).json() as ModelListResponse;
+    return (await (await this.request('/api/tags')).json()) as ModelListResponse;
   }
 
   async show(model: string): Promise<ModelInfo> {
-    return await (await this.request('/api/show', {
-      method: 'POST', body: JSON.stringify({ model }),
-    })).json() as ModelInfo;
+    return (await (
+      await this.request('/api/show', {
+        method: 'POST',
+        body: JSON.stringify({ model })
+      })
+    ).json()) as ModelInfo;
   }
 
   async embed(request: EmbedRequest): Promise<EmbedResponse> {
-    return await (await this.request('/api/embed', {
-      method: 'POST', body: JSON.stringify(request),
-    })).json() as EmbedResponse;
+    return (await (
+      await this.request('/api/embed', {
+        method: 'POST',
+        body: JSON.stringify(request)
+      })
+    ).json()) as EmbedResponse;
   }
 
   async chat(request: ChatRequest & { stream: true }, signal?: AbortSignal): Promise<OllamaChatStream>;
@@ -271,9 +285,10 @@ export class OllamaHttpClient {
       return OllamaChatStream.connect(this.host, this.headers, request, signal);
     }
     const response = await this.request('/api/chat', {
-      method: 'POST', body: JSON.stringify({ ...request, messages: encodeImages(request.messages), stream: false }),
+      method: 'POST',
+      body: JSON.stringify({ ...request, messages: encodeImages(request.messages), stream: false })
     });
-    const data = await response.json() as ChatResponse;
+    const data = (await response.json()) as ChatResponse;
     return { ...data, created_at: new Date(data.created_at) };
   }
 }
@@ -284,14 +299,14 @@ export class OllamaChatStream implements AsyncIterable<ChatResponse> {
 
   private constructor(
     private readonly reader: ReadableStreamDefaultReader<Uint8Array>,
-    private readonly controller: AbortController,
+    private readonly controller: AbortController
   ) {}
 
   static async connect(
     host: string,
     headers: Record<string, string>,
     request: ChatRequest,
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<OllamaChatStream> {
     const controller = new AbortController();
     const abort = () => controller.abort(signal?.reason);
@@ -304,7 +319,7 @@ export class OllamaChatStream implements AsyncIterable<ChatResponse> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headers },
         body,
-        signal: controller.signal,
+        signal: controller.signal
       });
     } catch (error) {
       signal?.removeEventListener('abort', abort);
@@ -343,7 +358,9 @@ export class OllamaChatStream implements AsyncIterable<ChatResponse> {
     if (this.closed) return;
     this.closed = true;
     this.controller.abort(reason);
-    void this.reader.cancel(reason).catch(() => { /* already closed */ });
+    void this.reader.cancel(reason).catch(() => {
+      /* already closed */
+    });
     this.releaseLock();
   }
 

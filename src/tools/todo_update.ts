@@ -8,32 +8,33 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const todoUpdateTool: ToolDefinition = {
   name: 'todo_update',
-  description: 'Update an existing todo item by id. You MUST provide the item\'s current hash — the update is rejected if the hash doesn\'t match (prevents stale updates). Get the hash from todo_create output or the todo list.',
+  description:
+    "Update an existing todo item by id. You MUST provide the item's current hash — the update is rejected if the hash doesn't match (prevents stale updates). Get the hash from todo_create output or the todo list.",
   input_schema: {
     type: 'object',
     properties: {
       id: {
         type: 'integer',
-        description: 'Item ID to update',
+        description: 'Item ID to update'
       },
       hash: {
         type: 'string',
-        description: 'Current hash of the item (from todo_create output or the todo list). Must match the stored hash.',
+        description: 'Current hash of the item (from todo_create output or the todo list). Must match the stored hash.'
       },
       name: {
         type: 'string',
-        description: 'Todo item name/description',
+        description: 'Todo item name/description'
       },
       done: {
         type: 'boolean',
-        description: 'Whether the item is completed',
+        description: 'Whether the item is completed'
       },
       note: {
         type: 'string',
-        description: 'Optional note for the item',
-      },
+        description: 'Optional note for the item'
+      }
     },
-    required: ['id', 'hash', 'name', 'done'],
+    required: ['id', 'hash', 'name', 'done']
   },
   scope: ['main', 'child'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
@@ -89,5 +90,5 @@ export const todoUpdateTool: ToolDefinition = {
   name: ${updated.name}
   done: ${updated.done}${updated.note ? `\n  note: ${updated.note}` : ''}
   hash: ${updated.hash}`;
-  },
+  }
 };

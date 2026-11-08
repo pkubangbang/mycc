@@ -42,13 +42,19 @@ function detectFileType(filePath: string, buffer: Buffer): { isText: boolean; mi
     const info = magicInfo[0];
     // Known binary types
     const binaryMimes = [
-      'application/pdf', 'application/zip', 'application/x-tar',
-      'application/x-gzip', 'application/x-rar',
-      'image/', 'video/', 'audio/',
-      'application/vnd.', 'application/octet-stream'
+      'application/pdf',
+      'application/zip',
+      'application/x-tar',
+      'application/x-gzip',
+      'application/x-rar',
+      'image/',
+      'video/',
+      'audio/',
+      'application/vnd.',
+      'application/octet-stream'
     ];
 
-    const isBinary = binaryMimes.some(m => info.mime?.startsWith(m));
+    const isBinary = binaryMimes.some((m) => info.mime?.startsWith(m));
     if (isBinary) {
       return { isText: false, mime: info.mime, extension: info.extension };
     }
@@ -57,11 +63,31 @@ function detectFileType(filePath: string, buffer: Buffer): { isText: boolean; mi
   // Check extension for common binary formats
   const ext = path.extname(filePath).toLowerCase();
   const binaryExtensions = [
-    '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp',
-    '.pdf', '.zip', '.tar', '.gz', '.rar', '.7z',
-    '.mp3', '.mp4', '.wav', '.avi', '.mov', '.mkv',
-    '.exe', '.dll', '.so', '.dylib',
-    '.sqlite', '.db'
+    '.png',
+    '.jpg',
+    '.jpeg',
+    '.gif',
+    '.bmp',
+    '.ico',
+    '.webp',
+    '.pdf',
+    '.zip',
+    '.tar',
+    '.gz',
+    '.rar',
+    '.7z',
+    '.mp3',
+    '.mp4',
+    '.wav',
+    '.avi',
+    '.mov',
+    '.mkv',
+    '.exe',
+    '.dll',
+    '.so',
+    '.dylib',
+    '.sqlite',
+    '.db'
   ];
 
   if (binaryExtensions.includes(ext)) {
@@ -86,23 +112,23 @@ export const readTool: ToolDefinition = {
     properties: {
       path: {
         type: 'string',
-        description: 'File path (forward slashes), relative to workspace root (e.g. "src/tools/bash.ts").',
+        description: 'File path (forward slashes), relative to workspace root (e.g. "src/tools/bash.ts").'
       },
       limit: {
         type: 'number',
-        description: 'Optional maximum number of lines to return (default and hard cap: 1000). The header reports how many lines were shown and how many remain.',
-      },
+        description:
+          'Optional maximum number of lines to return (default and hard cap: 1000). The header reports how many lines were shown and how many remain.'
+      }
     },
-    required: ['path'],
+    required: ['path']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const filePath = args.path as string;
     // Optional caller limit, clamped to the hard-coded cap. Non-positive /
     // non-numeric values fall back to the default (LINE_LIMIT).
-    const requestedLimit = typeof args.limit === 'number' && Number.isFinite(args.limit)
-      ? Math.floor(args.limit)
-      : LINE_LIMIT;
+    const requestedLimit =
+      typeof args.limit === 'number' && Number.isFinite(args.limit) ? Math.floor(args.limit) : LINE_LIMIT;
     const lineLimit = requestedLimit > 0 ? Math.min(requestedLimit, LINE_LIMIT) : LINE_LIMIT;
 
     try {
@@ -141,9 +167,15 @@ export const readTool: ToolDefinition = {
 Size: ${sizeKB} KB
 
 This file cannot be displayed as text.
-${typeInfo.extension === '.png' || typeInfo.extension === '.jpg' || typeInfo.extension === '.jpeg' || typeInfo.extension === '.gif' || typeInfo.extension === '.webp'
-  ? 'Use read_picture tool to analyze this image.'
-  : 'Use bash tool with appropriate program to process this file.'}`;
+${
+  typeInfo.extension === '.png' ||
+  typeInfo.extension === '.jpg' ||
+  typeInfo.extension === '.jpeg' ||
+  typeInfo.extension === '.gif' ||
+  typeInfo.extension === '.webp'
+    ? 'Use read_picture tool to analyze this image.'
+    : 'Use bash tool with appropriate program to process this file.'
+}`;
       }
 
       // Handle text files
@@ -159,9 +191,10 @@ ${typeInfo.extension === '.png' || typeInfo.extension === '.jpg' || typeInfo.ext
       // codepage (e.g. GBK/ANSI). Warn the LLM so it uses ASCII-only anchors
       // for edit_file, since old_text matching fails on corrupted lines.
       const replacementCount = countReplacementChars(content);
-      const encodingWarning = replacementCount > 0
-        ? `\n⚠ Encoding: ${replacementCount} replacement character${replacementCount > 1 ? 's' : ''} (U+FFFD) detected — this file has encoding corruption.\n  edit_file old_text matching may fail on lines containing these characters.\n  Use ASCII-only anchors for edits, or verify exact bytes with: [System.IO.File]::ReadAllBytes(...)`
-        : '';
+      const encodingWarning =
+        replacementCount > 0
+          ? `\n⚠ Encoding: ${replacementCount} replacement character${replacementCount > 1 ? 's' : ''} (U+FFFD) detected — this file has encoding corruption.\n  edit_file old_text matching may fail on lines containing these characters.\n  Use ASCII-only anchors for edits, or verify exact bytes with: [System.IO.File]::ReadAllBytes(...)`
+          : '';
 
       // Detect minified / single-long-line files (e.g., minified JS).
       // A single enormous line passes LINE_LIMIT trivially, then gets brutally
@@ -171,7 +204,10 @@ ${typeInfo.extension === '.png' || typeInfo.extension === '.jpg' || typeInfo.ext
       const PREVIEW_CHARS = 2000; // chars to show from start + end of each long line
       let hasLongLines = false;
       for (const line of lines) {
-        if (line.length > MAX_LINE_LENGTH) { hasLongLines = true; break; }
+        if (line.length > MAX_LINE_LENGTH) {
+          hasLongLines = true;
+          break;
+        }
       }
 
       // Build the result string. There are four mutually exclusive text paths:
@@ -188,7 +224,7 @@ ${typeInfo.extension === '.png' || typeInfo.extension === '.jpg' || typeInfo.ext
             const tail = line.slice(-PREVIEW_CHARS);
             previewParts.push(
               `--- Line ${i + 1} (${line.length.toLocaleString()} chars, showing first + last ${PREVIEW_CHARS}) ---\n` +
-              `${head}\n... [${(line.length - PREVIEW_CHARS * 2).toLocaleString()} chars omitted] ...\n${tail}`
+                `${head}\n... [${(line.length - PREVIEW_CHARS * 2).toLocaleString()} chars omitted] ...\n${tail}`
             );
           } else {
             previewParts.push(line);
@@ -242,11 +278,10 @@ ${remainingLines} more lines not shown. To continue:
       }
 
       return result;
-
     } catch (error: unknown) {
       const err = error as Error;
       ctx.core.brief('error', 'read', err.message);
       return `Error: ${err.message}`;
     }
-  },
+  }
 };

@@ -54,7 +54,7 @@ export const HEADLESS_FIRST_QUERY_MARKER = '[auto mode] awaiting first query';
  * marker is a lifecycle sentinel, not a query).
  */
 export const HEADLESS_STANDBY_QUERY =
-  "Summarize the content of the previous session so we share its context, then stop and stand by for further instructions.";
+  'Summarize the content of the previous session so we share its context, then stop and stand by for further instructions.';
 
 /**
  * Absolute freshness window for treating a session as still live during
@@ -121,7 +121,10 @@ export class SessionNotFoundError extends Error {
  * Error thrown when multiple sessions match a partial ID
  */
 export class AmbiguousSessionError extends Error {
-  constructor(public readonly sessionId: string, public readonly matches: SessionMatch[]) {
+  constructor(
+    public readonly sessionId: string,
+    public readonly matches: SessionMatch[]
+  ) {
     super(`Ambiguous session ID: ${sessionId}. Multiple matches found.`);
     this.name = 'AmbiguousSessionError';
   }
@@ -148,7 +151,7 @@ export class AmbiguousSessionError extends Error {
 export class SessionExistsError extends Error {
   constructor(
     public readonly sessionId: string,
-    public readonly filePath: string,
+    public readonly filePath: string
   ) {
     super(`Session file already exists: ${filePath}`);
     this.name = 'SessionExistsError';
@@ -215,7 +218,7 @@ export function createSessionFile(lead_triologue: string, id?: string): string {
       lead_triologue,
       child_triologues: [],
       teammates: [],
-      first_query: '',
+      first_query: ''
     };
 
     const filePath = path.join(sessionDir, filename);
@@ -283,7 +286,7 @@ export function readSession(filePath: string): Session | null {
 export function writeSession(filePath: string, session: Session): void {
   const sessionFile: Session = {
     ...session,
-    version: '2.0',
+    version: '2.0'
   };
   const content = JSON.stringify(sessionFile, null, 2);
 
@@ -508,7 +511,7 @@ export function listSessions(): SessionDisplay[] {
           project_dir: session.project_dir,
           teammates: session.teammates,
           first_query: session.first_query,
-          source: 'project',
+          source: 'project'
         });
       }
     }
@@ -538,7 +541,7 @@ export function listSessions(): SessionDisplay[] {
           project_dir: session.project_dir,
           teammates: session.teammates,
           first_query: session.first_query,
-          source: 'user',
+          source: 'user'
         });
       }
     }
@@ -609,7 +612,7 @@ export function validateSession(session: Session): { valid: boolean; missingFile
 
   return {
     valid: missingFiles.length === 0,
-    missingFiles,
+    missingFiles
   };
 }
 
@@ -683,7 +686,13 @@ export function cleanupEmptySessions(currentSessionId: string): number {
     for (const dir of dirs) {
       const sessionPath = path.join(projectDir, dir, `session-${dir}.json`);
       const session = readSession(sessionPath);
-      if (session && !session.first_query && session.id !== currentSessionId && !isRecent(session) && !isLive(session)) {
+      if (
+        session &&
+        !session.first_query &&
+        session.id !== currentSessionId &&
+        !isRecent(session) &&
+        !isLive(session)
+      ) {
         // Remove the entire session directory
         const sessionDir = path.join(projectDir, dir);
         const files = fs.readdirSync(sessionDir);
@@ -707,7 +716,13 @@ export function cleanupEmptySessions(currentSessionId: string): number {
     for (const dir of dirs) {
       const sessionPath = path.join(userDir, dir, `session-${dir}.json`);
       const session = readSession(sessionPath);
-      if (session && !session.first_query && session.id !== currentSessionId && !isRecent(session) && !isLive(session)) {
+      if (
+        session &&
+        !session.first_query &&
+        session.id !== currentSessionId &&
+        !isRecent(session) &&
+        !isLive(session)
+      ) {
         // Remove the entire session directory
         const sessionDir = path.join(userDir, dir);
         const files = fs.readdirSync(sessionDir);
@@ -724,11 +739,7 @@ export function cleanupEmptySessions(currentSessionId: string): number {
   // Deletion without names is unauditable: a whole session directory (session
   // json + transcript + mailbox) is gone, so name every one of them.
   if (removedIds.length > 0) {
-    agentIO.brief(
-      'info',
-      'session',
-      `Cleanup removed ${removedIds.length} empty session(s): ${removedIds.join(', ')}`
-    );
+    agentIO.brief('info', 'session', `Cleanup removed ${removedIds.length} empty session(s): ${removedIds.join(', ')}`);
   }
   return removed;
 }
@@ -801,13 +812,14 @@ export async function restoreSession(sessionArg: string): Promise<SessionInit> {
   // degrades gracefully (missing lead → empty-context pair; missing children
   // → placeholder narratives via the READY-event scan). Hard-exiting here
   // would prevent the user from continuing a partially-recorded session.
-  const missingFiles = [
-    sourceSession.lead_triologue,
-    ...sourceSession.child_triologues,
-  ].filter(p => !fs.existsSync(p));
+  const missingFiles = [sourceSession.lead_triologue, ...sourceSession.child_triologues].filter(
+    (p) => !fs.existsSync(p)
+  );
 
   if (missingFiles.length > 0) {
-    console.warn(chalk.yellow(`[restore] Source session files missing (will degrade gracefully): ${missingFiles.join(', ')}`));
+    console.warn(
+      chalk.yellow(`[restore] Source session files missing (will degrade gracefully): ${missingFiles.join(', ')}`)
+    );
   }
 
   console.log(chalk.cyan('Re-understanding source transcript (LLM summarization)...'));
@@ -849,10 +861,12 @@ export async function restoreSession(sessionArg: string): Promise<SessionInit> {
     // (NO useless text input) — the user edits the DOSQ file in their editor,
     // then clicks OK to continue. onEnter:'' makes Enter-on-empty (terminal) /
     // OK (webui) resolve to ''.
-    await agentIO.ask(
-      chalk.cyan('Edit the DOSQ file if needed, save and close, then click OK to continue'),
-      { useAsPrompt: true, onEsc: '', onEnter: '', notice: true },
-    );
+    await agentIO.ask(chalk.cyan('Edit the DOSQ file if needed, save and close, then click OK to continue'), {
+      useAsPrompt: true,
+      onEsc: '',
+      onEnter: '',
+      notice: true
+    });
 
     initialQuery = extractFirstQuery(readDosq(dosqPath));
   }
@@ -861,7 +875,11 @@ export async function restoreSession(sessionArg: string): Promise<SessionInit> {
   // The old session's files are never written to again — they are sealed.
   const { sessionFilePath, triologuePath } = writeFreshSessionFiles();
 
-  console.log(chalk.gray(`Branched new session ${getSessionId(sessionFilePath).slice(0, 7)} (from ${sourceSession.id.slice(0, 7)})`));
+  console.log(
+    chalk.gray(
+      `Branched new session ${getSessionId(sessionFilePath).slice(0, 7)} (from ${sourceSession.id.slice(0, 7)})`
+    )
+  );
 
   return { sessionFilePath, triologuePath, restoredPair: pair, initialQuery, sourceSessionId: sourceSession.id };
 }
@@ -957,7 +975,9 @@ function writeFreshSessionFiles(): { sessionFilePath: string; triologuePath: str
       throw err;
     }
   }
-  throw new Error(`could not create a unique session pair after ${MAX_PAIR_ATTEMPTS} attempts`, { cause: lastCollision });
+  throw new Error(`could not create a unique session pair after ${MAX_PAIR_ATTEMPTS} attempts`, {
+    cause: lastCollision
+  });
 }
 
 /**

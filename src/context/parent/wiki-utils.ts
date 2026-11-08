@@ -11,12 +11,7 @@
 import * as fs from 'fs';
 import * as crypto from 'crypto';
 import type { WikiDocument, WikiDomain, WALEntry } from '../../types.js';
-import {
-  getWikiDomainsFile,
-  getWikiReindexLockFile,
-  getHeartbeatFile,
-  ensureDirs,
-} from '../../config.js';
+import { getWikiDomainsFile, getWikiReindexLockFile, getHeartbeatFile, ensureDirs } from '../../config.js';
 
 /** Hash is first 16 chars of SHA-256 hex digest. */
 export const HASH_PATTERN = /^[a-f0-9]{16}$/;
@@ -77,7 +72,11 @@ export function sameDocument(stored: Record<string, unknown>, incoming: WikiDocu
     if (raw === null || raw === undefined) return [];
     if (Array.isArray(raw)) return raw as string[];
     if (typeof raw === 'string') {
-      try { return JSON.parse(raw || '[]') as string[]; } catch { return []; }
+      try {
+        return JSON.parse(raw || '[]') as string[];
+      } catch {
+        return [];
+      }
     }
     return [];
   };
@@ -178,11 +177,11 @@ export function parseASCIIBlock(block: string): WALEntry | null {
       domain,
       title,
       content: contentLines.join('\n'),
-      references,
+      references
     },
     approved,
     persistent,
-    ...(id ? { id } : {}),
+    ...(id ? { id } : {})
   };
 }
 
@@ -281,9 +280,11 @@ export function isReindexLockStale(holder: { sessionId?: string; pid?: number })
     if (fs.existsSync(hbFile)) {
       try {
         const parsed = JSON.parse(fs.readFileSync(hbFile, 'utf-8')) as Record<string, unknown>;
-        const ts = Array.isArray(parsed.timestamps) ? parsed.timestamps
-          : Array.isArray(parsed.heartbeats) ? parsed.heartbeats
-          : [];
+        const ts = Array.isArray(parsed.timestamps)
+          ? parsed.timestamps
+          : Array.isArray(parsed.heartbeats)
+            ? parsed.heartbeats
+            : [];
         if (ts.length > 0) {
           const latest = ts[ts.length - 1] as number;
           return Date.now() - latest > REINDEX_FRESHNESS_MS;

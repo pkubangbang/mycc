@@ -32,12 +32,7 @@ const DEFAULT_TIMEOUT_SECONDS = 30;
  */
 function buildTimeoutWarning(rawTimeout: unknown, usedTimeout: number): string | null {
   // Valid: an integer already in range — no warning.
-  if (
-    typeof rawTimeout === 'number' &&
-    Number.isInteger(rawTimeout) &&
-    rawTimeout >= 1 &&
-    rawTimeout <= 60
-  ) {
+  if (typeof rawTimeout === 'number' && Number.isInteger(rawTimeout) && rawTimeout >= 1 && rawTimeout <= 60) {
     return null;
   }
 
@@ -85,25 +80,26 @@ export const bashTool: ToolDefinition = {
     properties: {
       command: {
         type: 'string',
-        description: 'The shell command to execute. Paths are relative to the workspace directory.',
+        description: 'The shell command to execute. Paths are relative to the workspace directory.'
       },
       intent: {
         type: 'string',
-        description: 'REQUIRED: Explain why this command is needed (use intent language).',
+        description: 'REQUIRED: Explain why this command is needed (use intent language).'
       },
       timeout: {
         type: 'number',
-        description: 'REQUIRED: Seconds before killing the process (SIGKILL). Integer 1-60. Examples: 10 for a quick read; 30 for builds/tests/install; 60 for long builds. Defaults to 30 if omitted.',
+        description:
+          'REQUIRED: Seconds before killing the process (SIGKILL). Integer 1-60. Examples: 10 for a quick read; 30 for builds/tests/install; 60 for long builds. Defaults to 30 if omitted.',
         minimum: 1,
         maximum: 60,
-        default: 30,
+        default: 30
       },
       display: {
         type: 'boolean',
-        description: 'If true, also display the command stdout to the terminal user via brief. Default: false.',
-      },
+        description: 'If true, also display the command stdout to the terminal user via brief. Default: false.'
+      }
     },
-    required: ['command', 'intent'],
+    required: ['command', 'intent']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -157,7 +153,7 @@ export const bashTool: ToolDefinition = {
       const result = await agentIO.exec({
         cwd: ctx.core.getWorkDir(),
         command,
-        timeout: timeoutSeconds,
+        timeout: timeoutSeconds
       });
       stdout = result.stdout;
       stderr = result.stderr;
@@ -230,6 +226,5 @@ export const bashTool: ToolDefinition = {
     const tail = output.slice(outputChars - halfLimit);
     const truncated = `${head}\n\n... [${outputChars - OUTPUT_CHAR_LIMIT} chars truncated] ...\n\n${tail}`;
     return truncated;
-  },
+  }
 };
-

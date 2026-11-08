@@ -22,11 +22,7 @@ import { applyServerMessage } from './message-dispatch';
 import { registerDebugSeam } from './debug';
 import { ensureHighlighterReady } from './highlight';
 import { useChatStore } from './stores/chat-store';
-import {
-  readCachedChatlog,
-  writeCachedChatlog,
-  buildCacheKey,
-} from './chatlog-cache';
+import { readCachedChatlog, writeCachedChatlog, buildCacheKey } from './chatlog-cache';
 import type { ChatlogCacheRecord } from './chatlog-cache';
 import './style.css';
 
@@ -144,9 +140,7 @@ function persistChatlog(): void {
   // predecessor guarantees a prior failure can never reject this chain.
   // The chained write still resolves void on any internal failure
   // (writeCachedChatlog never rejects), so the chain stays healthy.
-  lastCacheWrite = lastCacheWrite
-    .catch(() => {})
-    .then(() => writeCachedChatlog(key, messages, teammateMessages));
+  lastCacheWrite = lastCacheWrite.catch(() => {}).then(() => writeCachedChatlog(key, messages, teammateMessages));
 }
 
 /**
@@ -254,7 +248,7 @@ async function fetchHistory(): Promise<boolean> {
     // applied (which would make the next If-None-Match 304 and freeze a stale
     // store until another history change).
     const etag = res.headers.get('ETag');
-    const data = await res.json() as {
+    const data = (await res.json()) as {
       messages: ChatMessage[];
       steeringBuffer?: SteeringNote[];
       steeringRevision?: number;
@@ -268,11 +262,12 @@ async function fetchHistory(): Promise<boolean> {
     // evaluator) are dropped too — the live WS path
     // filters them in applyServerMessage; this mirrors that for /history.
     const visible = data.messages.filter(
-      m => !(m.type === 'prompt' && !m.content)
-        && m.type !== 'steer-state'
-        && m.type !== 'file-upload'
-        && m.type !== 'file-flush'
-        && !m.synthetic,
+      (m) =>
+        !(m.type === 'prompt' && !m.content) &&
+        m.type !== 'steer-state' &&
+        m.type !== 'file-upload' &&
+        m.type !== 'file-flush' &&
+        !m.synthetic
     );
     // Assign a stable id to any history-loaded message that lacks one (older
     // transcripts predate the id scheme). This MUST happen before the
@@ -289,8 +284,8 @@ async function fetchHistory(): Promise<boolean> {
     // convention. Teammate messages (@name/tool) go to teammateMessages for
     // the accordion UI; everything else stays in messages. See the
     // "@-prefix teammate label convention" section in MYCC.md.
-    const teammateMsgs = visible.filter(m => m.label?.startsWith('@'));
-    const mainMsgs = visible.filter(m => !m.label?.startsWith('@'));
+    const teammateMsgs = visible.filter((m) => m.label?.startsWith('@'));
+    const mainMsgs = visible.filter((m) => !m.label?.startsWith('@'));
     // Replace, not append — on reconnect we want a clean, authoritative snapshot.
     store.messages.splice(0, store.messages.length, ...mainMsgs);
     store.teammateMessages.splice(0, store.teammateMessages.length, ...teammateMsgs);
@@ -365,7 +360,7 @@ async function fetchConfig(): Promise<boolean> {
   try {
     const res = await fetch('/config');
     if (!res.ok) return false;
-    const data = await res.json() as { maxUploadMb?: number; persistent?: boolean; sessionId?: string | null };
+    const data = (await res.json()) as { maxUploadMb?: number; persistent?: boolean; sessionId?: string | null };
     if (Number.isFinite(data.maxUploadMb) && (data.maxUploadMb as number) > 0) {
       store.maxUploadMb = data.maxUploadMb as number;
     }
@@ -576,7 +571,9 @@ window.addEventListener('beforeunload', () => {
 // fire on lock-screen — beforeunload is unreliable there. pagehide covers
 // older browsers / the bfcache path. Both are cheap (the write is async and
 // failure-tolerant) and idempotent, so registering both is safe.
-window.addEventListener('pagehide', () => { persistChatlog(); });
+window.addEventListener('pagehide', () => {
+  persistChatlog();
+});
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') persistChatlog();
 });
@@ -809,7 +806,7 @@ export const chatApi = {
     store.darkMode = !store.darkMode;
     document.documentElement.classList.toggle('dark', store.darkMode);
     localStorage.setItem('mycc-theme', store.darkMode ? 'dark' : 'light');
-  },
+  }
 };
 
 // Install the debug seam so reproducible tests (and the debug panel) can

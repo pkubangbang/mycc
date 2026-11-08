@@ -74,7 +74,7 @@ watch(
     if (isOpen) lockPage();
     else unlockPage();
   },
-  { immediate: true },
+  { immediate: true }
 );
 
 // Never leak the listener / the scroll lock if we unmount while open.
@@ -85,11 +85,7 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <div
-      v-if="props.open"
-      class="modal-overlay"
-      @click.self="emit('close')"
-    >
+    <div v-if="props.open" class="modal-overlay" @click.self="emit('close')">
       <div
         ref="panel"
         class="modal-panel"

@@ -92,9 +92,7 @@ const lastTodo = computed(() => {
 });
 
 /** Whether there is anything to show (a real todo list, not "No todos."). */
-const hasTodos = computed(
-  () => latestTodoMsg.value !== null && todos.value.length > 0,
-);
+const hasTodos = computed(() => latestTodoMsg.value !== null && todos.value.length > 0);
 
 /** Collapse state: collapsed (true) shows only the last item; expanded
  *  (false) shows the full list. Defaults to collapsed. */
@@ -107,7 +105,12 @@ function toggle(): void {
 
 <template>
   <div v-if="hasTodos" class="todo-card" :class="{ collapsed }">
-    <button class="todo-card-header" type="button" @click="toggle" :title="collapsed ? '点击展开全部 todo' : '点击折叠'">
+    <button
+      class="todo-card-header"
+      type="button"
+      @click="toggle"
+      :title="collapsed ? '点击展开全部 todo' : '点击折叠'"
+    >
       <span class="todo-icon" :class="{ done: lastTodo?.done }">{{ lastTodo?.done ? '☑' : '☐' }}</span>
       <span v-if="lastTodo?.pinned" class="todo-pin" aria-hidden="true">📌</span>
       <span class="todo-summary">{{ lastTodo?.text ?? 'Todo' }}</span>

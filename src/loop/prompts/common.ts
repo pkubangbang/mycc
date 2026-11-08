@@ -10,7 +10,6 @@
  * intent-language section lives in intent-lang.ts.
  */
 
-
 import { getLaunchArgs } from '../../config.js';
 import { buildIntentLanguageSection } from './intent-lang.js';
 
@@ -25,8 +24,8 @@ export function buildOutputBehaviorSection(): string {
     '- When you detect dilemma, use the brief tool to state it clearly with a low confidence (1~5).',
     '- Avoid repeating the content that has been output by the brief tool.',
     '- Do NOT explain, comment on, or narrate your response to hook/skill [REMINDER] or [Hook] notifications. ' +
-    'If a reminder tells you to do something, do it silently. ' +
-    'If it is informational, acknowledge it implicitly by continuing your task.',
+      'If a reminder tells you to do something, do it silently. ' +
+      'If it is informational, acknowledge it implicitly by continuing your task.',
     '',
     '### High-Quality Explanations',
     '**Before output**, double check the resources you used to ensure they exist.',
@@ -36,9 +35,9 @@ export function buildOutputBehaviorSection(): string {
     '2. Provide your evidence - Each argument should cover a distinct aspect, and together they should fully support your conclusion.',
     '3. Outline the difference - Use "BEFORE / AFTER" to say it clearly.',
     '4. Avoid filler narration - "Let me take a look...", "I can see that...", "What this does is..." → delete these. ' +
-    'Just say what the result is.',
+      'Just say what the result is.',
     '5. Cite your sources - For non-trivial explorations (multiple files, web searches), briefly list key resources you consulted at the end, ' +
-    'marked: IN USE / NOT RELEVANT / NOT FOUND.',
+      'marked: IN USE / NOT RELEVANT / NOT FOUND.'
   ].join('\n');
 }
 
@@ -53,7 +52,7 @@ export function buildVerificationSection(): string {
     '```',
     'skill_load(name="environment-detection")',
     '```',
-    'It identifies repo type, project shape, and available executables.',
+    'It identifies repo type, project shape, and available executables.'
   ].join('\n');
 }
 
@@ -68,21 +67,21 @@ export function buildPinnedTodoSection(): string {
     '- Use `todo_pinning(id, hash, pinned=true)` to pin a todo after creating it with `todo_create`.',
     '- Pinned todos are NOT removed when all todos are completed.',
     '- Use pinned todos for persistent reminders (e.g., schema definitions, invariant rules, ' +
-    'materialized view refresh tasks).',
+      'materialized view refresh tasks).',
     '',
     '### Prevent-Stop Guards',
     'A pinned todo can carry a `preventStop` guard — a statement about the state the work must ' +
-    'reach before you may finish your turn:',
+      'reach before you may finish your turn:',
     '- Set it with `todo_pinning(id, hash, pinned=true, preventStop="<condition>")`.',
     '- At every STOP, the system evaluates ALL guards in one batched LLM call against the conversation.',
     '- While a guard holds, you CANNOT end the turn: you get a `[STOP BLOCKED]` SYSTEM note and are ' +
-    'sent back to work with what is still missing.',
+      'sent back to work with what is still missing.',
     '- Repeated holds escalate, naming the hold count and the release call.',
     '- Release a guard you no longer need (or once it is satisfied) with ' +
-    '`todo_pinning(id, hash, pinned=false)` — the system never releases it for you.',
+      '`todo_pinning(id, hash, pinned=false)` — the system never releases it for you.',
     '- Judge-proof wording matters: state a verifiable outcome, not an intention. Example: ' +
-    '`todo_pinning(id=2, hash="abc12345", pinned=true, ' +
-    'preventStop="the failing test in todo.test.ts passes and pnpm lint is clean")`',
+      '`todo_pinning(id=2, hash="abc12345", pinned=true, ' +
+      'preventStop="the failing test in todo.test.ts passes and pnpm lint is clean")`'
   ].join('\n');
 }
 
@@ -122,7 +121,7 @@ export function buildProjectIgnoreSection(): string {
     'It must NOT be committed to version control.',
     '- If `.mycc/` is not already ignored (check `.gitignore`) and you are doing version-control work, add `/.mycc/*` to `.gitignore`.',
     '- Prefer `/.mycc/*` (contents-only) over `/.mycc/` (whole-dir): the former still lets a negation pattern (e.g. `!.mycc/skills/`) track a specific subfolder later.',
-    '- Don\'t create or edit `.gitignore` unless the task requires it — just keep `.mycc/` out of commits.',
+    "- Don't create or edit `.gitignore` unless the task requires it — just keep `.mycc/` out of commits."
   ].join('\n');
 }
 
@@ -140,7 +139,7 @@ export function buildCommonSections(): string {
     '',
     buildIntentLanguageSection(),
     '',
-    buildOutputBehaviorSection(),
+    buildOutputBehaviorSection()
   ].join('\n');
 }
 
@@ -170,7 +169,7 @@ export function buildCommonSections(): string {
 const commonAxes = [
   'Knowledge is layered by priority — check local sources FIRST, web LAST: recall(path="/") explores the mindmap knowledge tree (START HERE for project context); skill_search discovers on-demand specialist skills; wiki_get queries the persistent RAG store; web_search/web_fetch are the last resort, not the first.',
   'Work happens at three scopes: solo (direct file/command tools), team (in-process teammates via messaging), and cross-instance (separate mycc processes).',
-  'State is either ephemeral (working tracking, background tasks) or persisted (tasks, knowledge base, skills) — persisted state survives across turns.',
+  'State is either ephemeral (working tracking, background tasks) or persisted (tasks, knowledge base, skills) — persisted state survives across turns.'
 ];
 
 /**
@@ -186,7 +185,7 @@ export function buildLeadAgentMemorySection(): string {
     'You also coordinate: spawn/await teammates, broadcast, and discover peer instances.',
     'Communication is async (mail_to), status (brief), or topic-shift (mycc_title).',
     '',
-    buildBriefSection(),
+    buildBriefSection()
   ].join('\n');
 }
 
@@ -205,7 +204,7 @@ export function buildLeadAgentMemorySection(): string {
 export function buildBriefSection(): string {
   return [
     '## Briefs',
-    'A `brief` is a checkpoint the user reads AND the durable record of where an exploration stands. Emit it as the SOLE tool call of its turn (conclusion first, then evidence), then keep working.',
+    'A `brief` is a checkpoint the user reads AND the durable record of where an exploration stands. Emit it as the SOLE tool call of its turn (conclusion first, then evidence), then keep working.'
   ].join('\n');
 }
 
@@ -220,9 +219,6 @@ export function buildTeammateAgentMemorySection(): string {
     '## Agent Memory',
     'You have structured capability modules beyond basic file I/O. They organize along a few conceptual axes:',
     ...commonAxes,
-    'You can interrupt and ask the user directly via question; you do not coordinate teammates or peers.',
+    'You can interrupt and ask the user directly via question; you do not coordinate teammates or peers.'
   ].join('\n');
 }
-
-
-

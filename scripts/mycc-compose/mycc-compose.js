@@ -26,16 +26,7 @@ import { register } from 'tsx/esm/api';
 
 register();
 
-const {
-  parseCliArgs,
-  HELP,
-  dieUsage,
-  dieError,
-  cmdCheck,
-  cmdUp,
-  cmdDown,
-  cmdStatus,
-} = await import('./lib/index.ts');
+const { parseCliArgs, HELP, dieUsage, dieError, cmdCheck, cmdUp, cmdDown, cmdStatus } = await import('./lib/index.ts');
 
 async function main() {
   let args;

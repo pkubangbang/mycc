@@ -8,13 +8,14 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const tmPrintTool: ToolDefinition = {
   name: 'tm_print',
-  description: 'List all teammates with roles and status (working/idle/shutdown), with deadline and remaining time for working teammates. Use to check availability before assigning work via mail_to.',
+  description:
+    'List all teammates with roles and status (working/idle/shutdown), with deadline and remaining time for working teammates. Use to check availability before assigning work via mail_to.',
   input_schema: {
     type: 'object',
-    properties: {},
+    properties: {}
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext): Promise<string> => {
     return await ctx.team.printTeam();
-  },
+  }
 };

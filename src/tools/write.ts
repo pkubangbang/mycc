@@ -33,25 +33,25 @@ export const writeTool: ToolDefinition = {
     properties: {
       path: {
         type: 'string',
-        description: 'File path relative to workspace root. Parent directories are created automatically if needed.',
+        description: 'File path relative to workspace root. Parent directories are created automatically if needed.'
       },
       content: {
         type: 'string',
-        description: 'Complete content to write to the file. This will replace any existing content entirely.',
+        description: 'Complete content to write to the file. This will replace any existing content entirely.'
       },
       newline: {
         type: 'string',
         enum: ['auto', 'lf', 'crlf'],
         description:
-          "Line-ending style. 'auto' (default) follows the platform convention: CRLF on Windows, LF elsewhere. Use 'crlf' for .ps1 scripts run by PowerShell 5.1, 'lf' for shell scripts and cross-platform source.",
+          "Line-ending style. 'auto' (default) follows the platform convention: CRLF on Windows, LF elsewhere. Use 'crlf' for .ps1 scripts run by PowerShell 5.1, 'lf' for shell scripts and cross-platform source."
       },
       bom: {
         type: 'boolean',
         description:
-          'If true, prepend a UTF-8 BOM. Default false — a BOM breaks jar/MANIFEST, javac, git, and shells, so only enable it for formats that require one.',
-      },
+          'If true, prepend a UTF-8 BOM. Default false — a BOM breaks jar/MANIFEST, javac, git, and shells, so only enable it for formats that require one.'
+      }
     },
-    required: ['path', 'content'],
+    required: ['path', 'content']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -62,7 +62,7 @@ export const writeTool: ToolDefinition = {
 
     // Resolve path first (tilde expansion, relative → absolute)
     const resolvedPath = resolvePath(filePath, ctx.core.getWorkDir());
-    args.path = resolvedPath;  // Update args for requestGrant
+    args.path = resolvedPath; // Update args for requestGrant
 
     // Check permission (respects plan mode, worktree ownership)
     const grant = await ctx.core.requestGrant('write_file', args);
@@ -89,8 +89,7 @@ export const writeTool: ToolDefinition = {
     // Resolve the target line-ending style. 'auto' follows the platform
     // convention so that, e.g., .ps1 scripts generated on Windows use CRLF
     // and parse correctly under PowerShell 5.1.
-    const style: 'lf' | 'crlf' =
-      newline === 'auto' ? (process.platform === 'win32' ? 'crlf' : 'lf') : newline;
+    const style: 'lf' | 'crlf' = newline === 'auto' ? (process.platform === 'win32' ? 'crlf' : 'lf') : newline;
 
     // Strip any BOM the LLM may have copied from a previously-read file, then
     // (optionally) re-add one only when the caller explicitly requested it.
@@ -118,5 +117,5 @@ export const writeTool: ToolDefinition = {
     } catch (error: unknown) {
       return `Error: ${(error as Error).message}`;
     }
-  },
+  }
 };

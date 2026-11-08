@@ -26,7 +26,7 @@ import {
   isPidAlive,
   getProcessStartTime,
   didPidStartAfter,
-  isOriginalHolderAlive,
+  isOriginalHolderAlive
 } from '../../../src/utils/process-liveness.js';
 
 export { isPidAlive, getProcessStartTime, didPidStartAfter, isOriginalHolderAlive };
@@ -51,7 +51,9 @@ export function waitForPidDeath(pid: number, timeoutMs = 1_000): boolean {
   // same way. Sleep in ~10ms slices to stay gentle on the CPU.
   const sleepSlice = (ms: number): void => {
     const end = Date.now() + ms;
-    while (Date.now() < end) { /* spin */ }
+    while (Date.now() < end) {
+      /* spin */
+    }
   };
   while (Date.now() <= deadline) {
     if (!isPidAlive(pid)) return true;
@@ -157,7 +159,7 @@ export function readHeartbeatData(sessionId: string): ParsedHeartbeat {
       heartbeats: Array.isArray(parsed.heartbeats) ? parsed.heartbeats : [],
       briefs: Array.isArray(parsed.briefs) ? parsed.briefs : [],
       pid,
-      tombstone,
+      tombstone
     };
   } catch {
     return empty;
@@ -188,7 +190,7 @@ export function writeTombstone(sessionId: string, when: number = Date.now()): bo
     const existing = readHeartbeatData(sessionId);
     const data: Record<string, unknown> = {
       heartbeats: existing.heartbeats,
-      briefs: existing.briefs,
+      briefs: existing.briefs
     };
     if (existing.pid !== undefined) data.pid = existing.pid;
     data.tombstone = when;
@@ -327,11 +329,12 @@ export function isSessionHolderDead(sessionId: string): boolean {
   if (typeof pid !== 'number') return false;
   if (!isPidAlive(pid)) return true;
 
-  const evidenceTime = beatPid !== undefined
-    ? heartbeatFileMtimeMs(sessionId)
-    : typeof entry?.startedAt === 'number'
-      ? entry.startedAt
-      : 0;
+  const evidenceTime =
+    beatPid !== undefined
+      ? heartbeatFileMtimeMs(sessionId)
+      : typeof entry?.startedAt === 'number'
+        ? entry.startedAt
+        : 0;
   return !isOriginalHolderAlive(pid, evidenceTime);
 }
 
@@ -381,11 +384,11 @@ export function resolveLivePeer(peer: PeerRef | null | undefined): string | null
   if (matches.length === 0) return null;
   if (matches.length === 1) return matches[0].sid;
   // Deterministic tiebreak: newest startedAt wins; stable by sid on a tie.
-  matches.sort((a, b) => (b.startedAt - a.startedAt) || a.sid.localeCompare(b.sid));
+  matches.sort((a, b) => b.startedAt - a.startedAt || a.sid.localeCompare(b.sid));
   console.warn(
     `[mycc-compose] WARNING: ${matches.length} live identity entries match peer ` +
-    `name "${peer.name}" — resolving to the newest (${matches[0].sid}). This should ` +
-    `be impossible (name uniqueness is enforced at register); investigate stale entries.`,
+      `name "${peer.name}" — resolving to the newest (${matches[0].sid}). This should ` +
+      `be impossible (name uniqueness is enforced at register); investigate stale entries.`
   );
   return matches[0].sid;
 }
@@ -417,10 +420,11 @@ export function resolvePeerForStop(peer: PeerRef | null | undefined): string | n
   const name = peer.identityName ?? peer.name;
   if (typeof name !== 'string' || name.length === 0) return null;
   const normalizedName = normalizePeerName(name);
-  const matches = Object.entries(readIdentityMap()).filter(([_, entry]) =>
-    typeof entry?.name === 'string' &&
-    normalizePeerName(entry.name) === normalizedName &&
-    sameWorkdirRef(entry.workDir ?? entry.workdir, peer.workdir),
+  const matches = Object.entries(readIdentityMap()).filter(
+    ([_, entry]) =>
+      typeof entry?.name === 'string' &&
+      normalizePeerName(entry.name) === normalizedName &&
+      sameWorkdirRef(entry.workDir ?? entry.workdir, peer.workdir)
   );
   if (matches.length <= 1) return matches[0]?.[0] ?? null;
 
@@ -434,13 +438,13 @@ export function resolvePeerForStop(peer: PeerRef | null | undefined): string | n
     const sids = matches.map(([sid]) => sid).join(', ');
     throw new Error(
       `[mycc-compose] refusing to guess which session owns peer "${name}" in ${peer.workdir}: ` +
-      `${sids} (all recorded holders are gone, so there is no live owner to pick)`,
+        `${sids} (all recorded holders are gone, so there is no live owner to pick)`
     );
   }
   const sids = liveOwners.map(([sid]) => sid).join(', ');
   throw new Error(
     `[mycc-compose] refusing to guess which session owns peer "${name}" in ${peer.workdir}: ` +
-    `${sids} (more than one entry has a live or unprovable holder)`,
+      `${sids} (more than one entry has a live or unprovable holder)`
   );
 }
 
@@ -452,7 +456,11 @@ export function resolvePeerForStop(peer: PeerRef | null | undefined): string | n
  */
 function sameWorkdirRef(a: unknown, b: unknown): boolean {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
-  const norm = (p: string) => path.resolve(p).replace(/[\\/]+$/, '').toLowerCase();
+  const norm = (p: string) =>
+    path
+      .resolve(p)
+      .replace(/[\\/]+$/, '')
+      .toLowerCase();
   return norm(a) === norm(b);
 }
 

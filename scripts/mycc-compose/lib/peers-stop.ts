@@ -45,7 +45,7 @@ import {
   heartbeatPid,
   isSessionHolderDead,
   isPidAlive,
-  writeTombstone,
+  writeTombstone
 } from './discovery.js';
 import { isMyccProcess } from './peers-lifecycle.js';
 import { sleep } from './peers-types.js';
@@ -155,10 +155,7 @@ export interface StopOptions {
  * launched process records its `--name` in that exact wire form. It is never a
  * lookup key.
  */
-export async function stopPeerByAddress(
-  address: PeerAddress,
-  opts: StopOptions = {},
-): Promise<StopResult> {
+export async function stopPeerByAddress(address: PeerAddress, opts: StopOptions = {}): Promise<StopResult> {
   const { cwd, group, name } = address;
   const confirmTimeoutMs = opts.confirmTimeoutMs ?? STOP_CONFIRM_TIMEOUT_MS;
   const pollMs = opts.pollMs ?? STOP_CONFIRM_POLL_MS;
@@ -203,10 +200,7 @@ export async function stopPeerByAddress(
  * malformed `--session-id` before calling this). This function treats the sid as
  * opaque and simply looks it up.
  */
-export async function stopPeerBySid(
-  sessionId: string,
-  opts: StopOptions = {},
-): Promise<StopResult> {
+export async function stopPeerBySid(sessionId: string, opts: StopOptions = {}): Promise<StopResult> {
   const confirmTimeoutMs = opts.confirmTimeoutMs ?? STOP_CONFIRM_TIMEOUT_MS;
   const pollMs = opts.pollMs ?? STOP_CONFIRM_POLL_MS;
 
@@ -226,12 +220,7 @@ export async function stopPeerBySid(
  * by {@link stopPeerByAddress} (which resolves first) and {@link stopPeerBySid}
  * (which is handed the sid). Fail-closed at every step.
  */
-function stopResolvedSid(
-  sid: string,
-  wireName: string,
-  confirmTimeoutMs: number,
-  pollMs: number,
-): Promise<StopResult> {
+function stopResolvedSid(sid: string, wireName: string, confirmTimeoutMs: number, pollMs: number): Promise<StopResult> {
   // ── 2. LOCATE ─────────────────────────────────────────────────────────────
   const hbPid = heartbeatPid(sid);
   const entry = readIdentityMap()[sid];
@@ -250,7 +239,7 @@ function stopResolvedSid(
   if (isSessionHolderDead(sid)) {
     return Promise.resolve({
       verdict: isPidAlive(pid) ? 'refused-recycled-pid' : 'already-stopped',
-      sessionId: sid,
+      sessionId: sid
     });
   }
   // A still-plausible PID is not enough by itself; its argv must claim this

@@ -30,12 +30,26 @@ interface IpcResponse {
 /**
  * Response types that resolve pending requests
  */
-const RESPONSE_TYPES = new Set(['db_result', 'wt_result', 'team_result', 'question_result', 'grant_result', 'core_result', 'wiki_result']);
+const RESPONSE_TYPES = new Set([
+  'db_result',
+  'wt_result',
+  'team_result',
+  'question_result',
+  'grant_result',
+  'core_result',
+  'wiki_result'
+]);
 
 /**
  * Type guard to check if a message is an IPC response
  */
-function isResponse(msg: { type: string; reqId?: unknown; success?: unknown; data?: unknown; error?: unknown }): msg is IpcResponse {
+function isResponse(msg: {
+  type: string;
+  reqId?: unknown;
+  success?: unknown;
+  data?: unknown;
+  error?: unknown;
+}): msg is IpcResponse {
   return RESPONSE_TYPES.has(msg.type) && typeof msg.reqId === 'number';
 }
 
@@ -65,7 +79,7 @@ export class IpcClient {
       const reqId = ++this.reqIdCounter;
       this.pendingRequests.set(reqId, {
         resolve: (data) => resolve(data as T),
-        reject,
+        reject
       });
 
       process.send?.({ type, reqId, ...args });
@@ -121,4 +135,3 @@ export const ipc = new IpcClient();
 export function sendStatus(status: TeammateStatus): void {
   ipc.sendNotification('status', { status });
 }
-

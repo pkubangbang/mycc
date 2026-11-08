@@ -66,7 +66,7 @@ async function currentBranch(cwd: string): Promise<string | null> {
     const { stdout } = await agentIO.exec({
       cwd,
       command: 'git rev-parse --abbrev-ref HEAD',
-      timeout: 5,
+      timeout: 5
     });
     const branch = stdout.trim();
     if (!branch || branch === 'HEAD') return null;
@@ -77,9 +77,7 @@ async function currentBranch(cwd: string): Promise<string | null> {
 }
 
 /** Print the live list plus the verdict for the current branch. */
-async function report(ctx: {
-  core: { getWorkDir(): string; getAuto(): boolean; getMode(): string };
-}): Promise<void> {
+async function report(ctx: { core: { getWorkDir(): string; getAuto(): boolean; getMode(): string } }): Promise<void> {
   const entries = autoState.getAutoCommitBranches();
   const autoMode = autoState.getAuto();
   const planMode = ctx.core.getMode() === 'plan';
@@ -88,9 +86,7 @@ async function report(ctx: {
 
   // Provenance + seed state, so "why is this empty?" is answerable from here.
   console.log(
-    chalk.gray(
-      `Launch seed (--allow-auto-commit): ${autoState.isAutoCommitSeeded() ? 'applied' : 'NOT applied'}`
-    )
+    chalk.gray(`Launch seed (--allow-auto-commit): ${autoState.isAutoCommitSeeded() ? 'applied' : 'NOT applied'}`)
   );
   console.log(
     chalk.gray(
@@ -118,38 +114,22 @@ async function report(ctx: {
     return;
   }
 
-  const authorized = entries
-    .map(parseAutoCommitEntry)
-    .find((e) => e.branch === branch && (e.autoAdd || autoMode));
+  const authorized = entries.map(parseAutoCommitEntry).find((e) => e.branch === branch && (e.autoAdd || autoMode));
 
   console.log(chalk.white(`Current branch: ${branch}`));
   if (planMode) {
-    console.log(
-      chalk.yellow('  Verdict: plan mode is ON — every grant is overridden; the commit would ask.')
-    );
+    console.log(chalk.yellow('  Verdict: plan mode is ON — every grant is overridden; the commit would ask.'));
   } else if (authorized) {
-    const why = authorized.autoAdd
-      ? `allow-listed with ${AUTO_ADD_SUFFIX}`
-      : 'allow-listed and auto mode is on';
+    const why = authorized.autoAdd ? `allow-listed with ${AUTO_ADD_SUFFIX}` : 'allow-listed and auto mode is on';
     console.log(chalk.green(`  Verdict: auto-approved (${why}) — git_commit skips the prompt.`));
   } else if (entries.some((e) => parseAutoCommitEntry(e).branch === branch)) {
+    console.log(chalk.yellow('  Verdict: listed, but only a plain entry and auto mode is off — git_commit would ask.'));
     console.log(
-      chalk.yellow(
-        '  Verdict: listed, but only a plain entry and auto mode is off — git_commit would ask.'
-      )
-    );
-    console.log(
-      chalk.gray(
-        `           Add it with autoAdd to skip the prompt now: /auto-commit on ${branch}:${AUTO_ADD_SUFFIX}`
-      )
+      chalk.gray(`           Add it with autoAdd to skip the prompt now: /auto-commit on ${branch}:${AUTO_ADD_SUFFIX}`)
     );
   } else {
     console.log(chalk.yellow('  Verdict: not listed — git_commit would ask.'));
-    console.log(
-      chalk.gray(
-        `           Grant it with: /auto-commit on ${branch} (or ${branch}:${AUTO_ADD_SUFFIX})`
-      )
-    );
+    console.log(chalk.gray(`           Grant it with: /auto-commit on ${branch} (or ${branch}:${AUTO_ADD_SUFFIX})`));
   }
 
   console.log();
@@ -196,11 +176,7 @@ export const autoCommitCommand: SlashCommand = {
         console.log(chalk.gray('Nothing changed — those branches were already in the list.'));
       } else {
         for (const e of added) {
-          console.log(
-            chalk.green(
-              `Added: ${e.branch}${e.autoAdd ? ` (${AUTO_ADD_SUFFIX})` : ' (auto mode only)'}`
-            )
-          );
+          console.log(chalk.green(`Added: ${e.branch}${e.autoAdd ? ` (${AUTO_ADD_SUFFIX})` : ' (auto mode only)'}`));
         }
       }
       await report(ctx);
@@ -213,9 +189,7 @@ export const autoCommitCommand: SlashCommand = {
         if (cleared.length === 0) {
           console.log(chalk.gray('The allow-list was already empty.'));
         } else {
-          console.log(
-            chalk.yellow(`Cleared ${cleared.length} entr${cleared.length === 1 ? 'y' : 'ies'}:`)
-          );
+          console.log(chalk.yellow(`Cleared ${cleared.length} entr${cleared.length === 1 ? 'y' : 'ies'}:`));
           for (const e of cleared) console.log(chalk.gray(`  - ${e}`));
           console.log(
             chalk.gray(
@@ -227,9 +201,7 @@ export const autoCommitCommand: SlashCommand = {
       }
       const branches = parseBranchArgs(rest.slice(1));
       if (branches.length === 0) {
-        console.log(
-          chalk.red('Usage: /auto-commit off <branch[,branch...]> | /auto-commit off --all')
-        );
+        console.log(chalk.red('Usage: /auto-commit off <branch[,branch...]> | /auto-commit off --all'));
         return;
       }
       const removed = ctx.core.removeAutoCommitBranches(branches);
@@ -248,5 +220,5 @@ export const autoCommitCommand: SlashCommand = {
         'Usage: /auto-commit | /auto-commit on <b[,b...]>[:autoAdd] | /auto-commit off <b[,b...]> | /auto-commit off --all'
       )
     );
-  },
+  }
 };

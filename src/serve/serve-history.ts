@@ -76,7 +76,7 @@ export function computeHistoryVersion(
   transcriptPath: string | null,
   messageLog: LogEntry[],
   steeringRevision: number,
-  isRunning: boolean,
+  isRunning: boolean
 ): string {
   const parts: string[] = [];
   // Durable file fingerprint — mtimeMs + size. A missing file contributes
@@ -95,9 +95,7 @@ export function computeHistoryVersion(
   // In-memory messageLog tail: length + last timestamp (order-independent
   // in the middle, but the tail timestamp catches appends). When the log is
   // empty, emit a stable "0" so an empty log never varies.
-  const lastTs = messageLog.length > 0
-    ? (messageLog[messageLog.length - 1].timestamp ?? 0)
-    : 0;
+  const lastTs = messageLog.length > 0 ? (messageLog[messageLog.length - 1].timestamp ?? 0) : 0;
   parts.push(`log:${messageLog.length}:${lastTs}`);
   // Transient fields that live in the body but NOT in the durable files.
   // The steering queue is folded in by REVISION, not by length: a drain that
@@ -174,11 +172,16 @@ export function etagMatchesIfNoneMatch(headerValue: string | undefined | null, c
 /** Map a triologue Message role to a WebUI LogEntry type. */
 export function roleToType(role: string | undefined): string {
   switch (role) {
-    case 'user': return 'user';
-    case 'assistant': return 'result';
-    case 'tool': return 'log';
-    case 'system': return 'system';
-    default: return 'log';
+    case 'user':
+      return 'user';
+    case 'assistant':
+      return 'result';
+    case 'tool':
+      return 'log';
+    case 'system':
+      return 'system';
+    default:
+      return 'log';
   }
 }
 
@@ -188,9 +191,12 @@ export function roleToType(role: string | undefined): string {
  */
 export function roleToLabel(role: string | undefined): string | undefined {
   switch (role) {
-    case 'assistant': return 'assistant';
-    case 'user': return undefined;   // user bubbles already align right
-    default: return undefined;       // tool/system logs: no special label
+    case 'assistant':
+      return 'assistant';
+    case 'user':
+      return undefined; // user bubbles already align right
+    default:
+      return undefined; // tool/system logs: no special label
   }
 }
 
@@ -205,10 +211,7 @@ export function roleToLabel(role: string | undefined): string | undefined {
  * Falls back to messageLog alone when no transcript is available (e.g. serve
  * started before session init).
  */
-export function readHistory(
-  transcriptPath: string | null,
-  messageLog: LogEntry[],
-): LogEntry[] {
+export function readHistory(transcriptPath: string | null, messageLog: LogEntry[]): LogEntry[] {
   if (transcriptPath) {
     try {
       // Read the transcript through the shared collation core (the {A, AB}
@@ -269,9 +272,7 @@ export function readHistory(
       // Entries keep a numeric timestamp throughout: journal/legacy records
       // carry 0 (or the writer's clock), and the normalisation above assigns a
       // positive value where one is available, so the filter is defensive only.
-      const combined = entries
-        .concat(messageLog)
-        .filter((e) => typeof e.timestamp === 'number');
+      const combined = entries.concat(messageLog).filter((e) => typeof e.timestamp === 'number');
       combined.sort((a, b) => (a.timestamp as number) - (b.timestamp as number));
 
       // Cap at MAX_LOG_SIZE (keep the most recent entries)

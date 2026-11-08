@@ -30,11 +30,7 @@ import { loader } from '../../context/shared/loader.js';
 import { stopSpinner } from '../../engine/chat-helpers.js';
 import { checkPreventStop } from './stop-prevent-stop.js';
 
-export async function handleStop(
-  env: MachineEnv,
-  turn: TurnVars,
-  _chat: ChatData,
-): Promise<HandlerResult> {
+export async function handleStop(env: MachineEnv, turn: TurnVars, _chat: ChatData): Promise<HandlerResult> {
   const { triologue, ctx } = env;
 
   // ── Turn boundary (STOP→PROMPT) ──
@@ -158,11 +154,11 @@ export async function handleStop(
             'The user is not available to answer preference/confirmation questions in auto mode. ' +
               'Proceed with the most reasonable action toward the goal and state your assumption explicitly, ' +
               'or — if you are genuinely blocked by a hard blocker (missing credential, destructive ambiguity, ' +
-              'an irreversible decision) — declare the blocker as a STATEMENT and call brief with low confidence.',
+              'an irreversible decision) — declare the blocker as a STATEMENT and call brief with low confidence.'
           ]
         : [
             `[STOP BLOCKED] Pinned todo #${held.id} "${held.name}" prevents finishing this turn.`,
-            `Guard: "${held.condition}"`,
+            `Guard: "${held.condition}"`
           ];
       if (guardResult.reason) lines.push(`Evaluator's grounds: ${guardResult.reason}`);
       if (nth >= 2) {
@@ -173,20 +169,20 @@ export async function handleStop(
             `This is stall #${nth} in a row for this guard — the previous attempt still ended in a question.`,
             `Stop asking and ACT on a stated assumption toward the goal, or declare a hard blocker as a ` +
               `statement. If the goal genuinely no longer applies, release the guard with ` +
-              `todo_pinning(id=${held.id}, hash=<current hash>, pinned=false).`,
+              `todo_pinning(id=${held.id}, hash=<current hash>, pinned=false).`
           );
         } else {
           lines.push(
             `This is hold #${nth} in a row for this guard — the previous attempt did not satisfy it.`,
             `Either satisfy the guard with concrete, verifiable evidence, or release it with ` +
-              `todo_pinning(id=${held.id}, hash=<current hash>, pinned=false) once it no longer applies.`,
+              `todo_pinning(id=${held.id}, hash=<current hash>, pinned=false) once it no longer applies.`
           );
         }
       } else {
         lines.push(
           stall
             ? 'Act toward the goal on a stated assumption, or declare a hard blocker — do not end with a question.'
-            : 'Satisfy the guard before finishing, or release it if it no longer applies.',
+            : 'Satisfy the guard before finishing, or release it if it no longer applies.'
         );
       }
       triologue.note('SYSTEM', lines.join('\n'));
@@ -195,7 +191,7 @@ export async function handleStop(
         'stop',
         stall
           ? `Stall prevented (#${held.id}, hold ${nth}) — backward-ask deflected`
-          : `Stop guard held (#${held.id}, hold ${nth})`,
+          : `Stop guard held (#${held.id}, hold ${nth})`
       );
       return AgentState.COLLECT;
     }
@@ -211,9 +207,7 @@ export async function handleStop(
 
     const teammates = ctx.team.listTeammates();
     if (teammates.some((t) => t.status === 'working')) {
-      agentIO.log(
-        chalk.yellow('awaiting teammate(s) — use ESC to interrupt'),
-      );
+      agentIO.log(chalk.yellow('awaiting teammate(s) — use ESC to interrupt'));
     }
 
     // ── Mode-aware teammate wait ─────────────────────────────────────────────
@@ -252,7 +246,7 @@ export async function handleStop(
 
     const reason = await ctx.team.awaitTeammates({
       reasons: ['all done', 'failed', 'holding', 'mail', 'steering', 'timeout'],
-      timeoutMs: 60_000,
+      timeoutMs: 60_000
     });
     switch (reason) {
       // Teammate events that need the lead to ACT — continue the turn.

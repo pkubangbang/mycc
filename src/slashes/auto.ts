@@ -41,5 +41,5 @@ export const autoCommand: SlashCommand = {
     autoState.resetStreak();
     autoState.setAuto(true);
     console.log(chalk.cyan('auto mode is on. Mails will be auto-replied. Press esc to exit.'));
-  },
+  }
 };

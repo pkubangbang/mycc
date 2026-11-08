@@ -94,7 +94,10 @@ function clean(text: string): string {
 /** Collapse the newlines INSIDE one check's value into single spaces — a
  *  check is one row; its answer may have been wrapped in the terminal block. */
 function flatten(text: string): string {
-  return text.replace(/\s*\n\s*/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  return text
+    .replace(/\s*\n\s*/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 /**
@@ -118,7 +121,7 @@ export function parsePlanScope(content: string): ParsedPlanScope {
     marks.push({
       label: m[1].toUpperCase().replace(/\s+/g, ' ') as PlanScopeLabel,
       at,
-      end: (m.index ?? 0) + m[0].length,
+      end: (m.index ?? 0) + m[0].length
     });
   }
   if (marks.length === 0) return { leadIn: '', checks: [], prose: raw };
@@ -145,7 +148,7 @@ export const PLAN_SCOPE_HINTS: Record<PlanScopeLabel, string> = {
   TUNNEL: '打破哪条规则能让工作更简单',
   SUBLATE: '两个要求能否归并为一个不变量',
   'WRONG PRB': '如果这个任务从未被提出，还会做吗',
-  REVERSIBLE: '这一步是否单向门',
+  REVERSIBLE: '这一步是否单向门'
 };
 
 /**

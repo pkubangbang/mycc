@@ -11,7 +11,7 @@ import { getOllamaHost, getOllamaApiKey } from '../config.js';
 
 const ollama = new OllamaHttpClient({
   host: getOllamaHost(),
-  apiKey: getOllamaApiKey(),
+  apiKey: getOllamaApiKey()
 });
 
 export const EMBEDDING_MODEL = process.env.OLLAMA_EMBEDDING_MODEL || 'nomic-embed-text';
@@ -42,7 +42,7 @@ export const NAMESPACE = EMBEDDING_MODEL;
 export async function getEmbedding(text: string, _mode?: 'query' | 'document'): Promise<number[]> {
   const response = await ollama.embed({
     model: EMBEDDING_MODEL,
-    input: text,
+    input: text
   });
 
   if (!response.embeddings || response.embeddings.length === 0) {
@@ -69,7 +69,7 @@ export async function getEmbeddings(texts: string[], _mode?: 'query' | 'document
 
   const response = await ollama.embed({
     model: EMBEDDING_MODEL,
-    input: texts,
+    input: texts
   });
 
   if (!response.embeddings || response.embeddings.length === 0) {

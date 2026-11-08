@@ -2,7 +2,19 @@
  * wiki.ts - ChildWiki implementation for IPC-based wiki operations
  */
 
-import type { WikiModule, WikiDocument, WikiDomain, PrepareResult, PutResult, GetOptions, SearchResult, WALEntry, RebuildResult, RebuildProgress, SkillIndexEntry } from '../../types.js';
+import type {
+  WikiModule,
+  WikiDocument,
+  WikiDomain,
+  PrepareResult,
+  PutResult,
+  GetOptions,
+  SearchResult,
+  WALEntry,
+  RebuildResult,
+  RebuildProgress,
+  SkillIndexEntry
+} from '../../types.js';
 import { ipc } from './ipc-helpers.js';
 
 /**
@@ -83,5 +95,4 @@ export class ChildWiki implements WikiModule {
   async indexSkills(_entries: SkillIndexEntry[], _options?: { skipOrphanSweep?: boolean }): Promise<void> {
     // Parent-only — no IPC delegation, no-op in the child.
   }
-
 }

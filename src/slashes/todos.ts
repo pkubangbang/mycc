@@ -73,13 +73,7 @@ export const todosCommand: SlashCommand = {
         return;
       }
 
-      const updated = context.ctx.todo.updateTodo(
-        id,
-        item.hash,
-        item.name,
-        done,
-        note ?? item.note,
-      );
+      const updated = context.ctx.todo.updateTodo(id, item.hash, item.name, done, note ?? item.note);
 
       if (updated) {
         const status = done ? 'done' : 'undone';
@@ -99,5 +93,5 @@ export const todosCommand: SlashCommand = {
       console.log(chalk.yellow(`Unknown subcommand: ${subCommand}`));
       console.log(chalk.gray('Available: add, clear, done, undone'));
     }
-  },
+  }
 };

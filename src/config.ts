@@ -21,7 +21,7 @@ import {
   STRING_FLAGS as SHARED_STRING_FLAGS,
   DEFAULTS as SHARED_ARG_DEFAULTS,
   formatLaunchArgs,
-  buildCmdArgsEnv,
+  buildCmdArgsEnv
 } from './utils/arg-canonical.js';
 
 // ============================================================================
@@ -102,10 +102,8 @@ export function parseEnvFile(filePath: string): Record<string, string> {
  * into process.env) — not at the getters.
  */
 export function loadEnv(): void {
-  const userConfig = fs.existsSync(getUserConfigPath())
-    ? parseEnvFile(getUserConfigPath()) : {};
-  const projConfig = fs.existsSync(getProjectConfigPath())
-    ? parseEnvFile(getProjectConfigPath()) : {};
+  const userConfig = fs.existsSync(getUserConfigPath()) ? parseEnvFile(getUserConfigPath()) : {};
+  const projConfig = fs.existsSync(getProjectConfigPath()) ? parseEnvFile(getProjectConfigPath()) : {};
 
   // Later arguments override earlier ones
   const result = Object.assign({}, userConfig, projConfig, process.env, cmdArgsEnv);
@@ -130,7 +128,7 @@ const args = minimist(process.argv.slice(2), {
   boolean: SHARED_BOOLEAN_FLAGS,
   string: SHARED_STRING_FLAGS,
   alias: { v: 'verbose' },
-  default: SHARED_ARG_DEFAULTS,
+  default: SHARED_ARG_DEFAULTS
 });
 
 // `--session-id` was REMOVED: sessions are NEVER reused — a launch always mints
@@ -325,7 +323,7 @@ export function shouldAuto(): boolean {
  */
 export function getDaemonSkill(): string | undefined {
   const d = args.daemon;
-  return (typeof d === 'string' && d.length > 0) ? d : undefined;
+  return typeof d === 'string' && d.length > 0 ? d : undefined;
 }
 
 /**
@@ -514,8 +512,11 @@ export function getAutoflyThresholdArg(): number | null {
  * serve mode; only an absent flag (undefined) or an empty value disables it.
  */
 export function shouldServe(): boolean {
-  return args.serve === true || (typeof args.serve === 'number' && Number.isFinite(args.serve))
-    || (typeof args.serve === 'string' && args.serve.length > 0);
+  return (
+    args.serve === true ||
+    (typeof args.serve === 'number' && Number.isFinite(args.serve)) ||
+    (typeof args.serve === 'string' && args.serve.length > 0)
+  );
 }
 
 /**
@@ -590,7 +591,9 @@ export function isWireDebugLocal(): boolean {
  */
 export function getFilesyncShareIds(): string[] {
   const fromEnv = (process.env.MYCC_SHARES ?? '')
-    .split(',').map((s) => s.trim()).filter(Boolean);
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   const args = process.argv;
   const fromFlags: string[] = [];
   for (let i = 0; i < args.length; i++) {
@@ -649,15 +652,30 @@ export function describeEffectiveConfig(keys?: string[]): EffectiveConfigEntry[]
   const systemEnv = process.env as Record<string, string | undefined>;
 
   const known = keys ?? [
-    'API_PROVIDER', 'OLLAMA_HOST', 'OLLAMA_MODEL', 'OLLAMA_VISION_MODEL',
-    'OLLAMA_EMBEDDING_MODEL', 'DEEPSEEK_HOST', 'DEEPSEEK_MODEL', 'TOKEN_THRESHOLD',
-    'SKILL_MATCH_THRESHOLD', 'MYCC_MAX_UPLOAD_MB', 'EDITOR', 'MYCC_ALLOW_PLAN_OFF',
-    'MYCC_ALLOW_AUTO_COMMIT', 'MYCC_DISCOVERY_DIR', 'MYCC_DEBUG_TP', 'MYCC_DEBUG_EVAL',
+    'API_PROVIDER',
+    'OLLAMA_HOST',
+    'OLLAMA_MODEL',
+    'OLLAMA_VISION_MODEL',
+    'OLLAMA_EMBEDDING_MODEL',
+    'DEEPSEEK_HOST',
+    'DEEPSEEK_MODEL',
+    'TOKEN_THRESHOLD',
+    'SKILL_MATCH_THRESHOLD',
+    'MYCC_MAX_UPLOAD_MB',
+    'EDITOR',
+    'MYCC_ALLOW_PLAN_OFF',
+    'MYCC_ALLOW_AUTO_COMMIT',
+    'MYCC_DISCOVERY_DIR',
+    'MYCC_DEBUG_TP',
+    'MYCC_DEBUG_EVAL'
   ];
 
   const out: EffectiveConfigEntry[] = [];
   for (const key of known) {
-    if (key in cli) { out.push({ key, value: cli[key], source: 'cli' }); continue; }
+    if (key in cli) {
+      out.push({ key, value: cli[key], source: 'cli' });
+      continue;
+    }
     // A value in process.env that no .env layer supplied came from the shell.
     if (key in projConfig && systemEnv[key] === projConfig[key]) {
       out.push({ key, value: projConfig[key], source: 'project-env' });
@@ -818,7 +836,9 @@ export function getVisionModel(): string {
   if (getApiProvider() === 'deepseek') {
     const model = process.env.DEEPSEEK_VISION_MODEL ?? DEFAULT_DEEPSEEK_VISION_MODEL;
     if (model === 'none') {
-      throw new Error('Vision features are disabled (DEEPSEEK_VISION_MODEL=none). Set a vision model to enable screen and read_picture tools.');
+      throw new Error(
+        'Vision features are disabled (DEEPSEEK_VISION_MODEL=none). Set a vision model to enable screen and read_picture tools.'
+      );
     }
     return model;
   }
@@ -827,7 +847,9 @@ export function getVisionModel(): string {
     throw new Error('OLLAMA_VISION_MODEL is not set. Set it to a vision model or "none" to disable vision features.');
   }
   if (model === 'none') {
-    throw new Error('Vision features are disabled (OLLAMA_VISION_MODEL=none). Set a vision model to enable screen and read_picture tools.');
+    throw new Error(
+      'Vision features are disabled (OLLAMA_VISION_MODEL=none). Set a vision model to enable screen and read_picture tools.'
+    );
   }
   return model;
 }
@@ -860,14 +882,14 @@ export function validateEnv(): EnvValidationResult {
     warnings.push({
       var: 'EDITOR',
       instruction:
-        'Neither EDITOR nor VISUAL is set. The open-editor tool will fail. Add to ~/.mycc-store/.env:\n  export EDITOR=code   # VS Code\n  export EDITOR=vim    # Vim',
+        'Neither EDITOR nor VISUAL is set. The open-editor tool will fail. Add to ~/.mycc-store/.env:\n  export EDITOR=code   # VS Code\n  export EDITOR=vim    # Vim'
     });
   }
 
   return {
     valid: missing.length === 0,
     missing,
-    warnings,
+    warnings
   };
 }
 
@@ -938,10 +960,7 @@ export function getImgCacheDir(): string {
  * transient tool output.
  */
 export function getPlanModeWritableDirs(): string[] {
-  return [
-    getLongtextDir(),
-    getImgCacheDir(),
-  ];
+  return [getLongtextDir(), getImgCacheDir()];
 }
 
 export function getUserToolsDir(): string {
@@ -1029,14 +1048,7 @@ export function getChannelFile(sessionId: string, channelId: string): string {
 // ============================================================================
 
 export function ensureDirs(): void {
-  const dirs = [
-    MYCC_DIR,
-    getToolsDir(),
-    getSkillsDir(),
-    getSessionsDir(),
-    getLongtextDir(),
-    getImgCacheDir(),
-  ];
+  const dirs = [MYCC_DIR, getToolsDir(), getSkillsDir(), getSessionsDir(), getLongtextDir(), getImgCacheDir()];
   for (const dir of dirs) {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });

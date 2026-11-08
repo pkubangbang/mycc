@@ -15,7 +15,7 @@ export class ChildIssue implements IssueModule {
     const result = await ipc.sendRequest<{ id: number }>('db_issue_create', {
       title,
       content,
-      blockedBy,
+      blockedBy
     });
     return result.id;
   }
@@ -46,14 +46,14 @@ export class ChildIssue implements IssueModule {
   async claimIssue(id: number, owner: string): Promise<boolean> {
     const result = await ipc.sendRequest<{ claimed: boolean }>('db_issue_claim', {
       id,
-      owner,
+      owner
     });
     return result.claimed;
   }
 
   async publishIssue(id: number): Promise<boolean> {
     const result = await ipc.sendRequest<{ published: boolean }>('db_issue_publish', {
-      id,
+      id
     });
     return result.published;
   }
@@ -73,7 +73,8 @@ export class ChildIssue implements IssueModule {
     return [];
   }
 
-  async addComment(id: number, comment: string, poster?: string): Promise<void> {    await ipc.sendRequest<void>('db_issue_comment', { id, comment, poster });
+  async addComment(id: number, comment: string, poster?: string): Promise<void> {
+    await ipc.sendRequest<void>('db_issue_comment', { id, comment, poster });
   }
 
   async createBlockage(blocker: number, blocked: number): Promise<void> {

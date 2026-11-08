@@ -116,7 +116,12 @@ export function deriveDisposableController(): { controller: AbortController; dis
   const controller = new AbortController();
   if (token.signal.aborted) {
     controller.abort(token.signal.reason);
-    return { controller, dispose: () => { /* never subscribed */ } };
+    return {
+      controller,
+      dispose: () => {
+        /* never subscribed */
+      }
+    };
   }
   const unsubscribe = onProcessCancel(() => controller.abort(token.signal.reason));
   return { controller, dispose: unsubscribe };

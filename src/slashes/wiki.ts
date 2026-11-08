@@ -29,7 +29,8 @@ function formatDate(date: Date): string {
 
 export const wikiCommand: SlashCommand = {
   name: 'wiki',
-  description: 'Manage knowledge base: show WAL, edit [date], rebuild, delete <hash>, domains [add|remove|list], export [--domain d] [file], import <file>',
+  description:
+    'Manage knowledge base: show WAL, edit [date], rebuild, delete <hash>, domains [add|remove|list], export [--domain d] [file], import <file>',
   handler: async (context) => {
     const args = context.args.slice(1); // First arg is 'wiki'
 
@@ -57,7 +58,7 @@ export const wikiCommand: SlashCommand = {
       const today = formatDate(new Date());
       await handleShow(context.ctx.wiki, today);
     }
-  },
+  }
 };
 
 async function handleShow(wiki: WikiModule, date: string): Promise<void> {
@@ -104,7 +105,7 @@ async function handleEdit(wiki: WikiModule, date: string): Promise<void> {
 
     // Write back to WAL file as JSON lines
     const jsonLines = newEntries.map((e: WALEntry) => JSON.stringify(e)).join('\n');
-    fs.writeFileSync(walPath, `${jsonLines  }\n`, 'utf-8');
+    fs.writeFileSync(walPath, `${jsonLines}\n`, 'utf-8');
 
     console.log(chalk.green(`WAL updated: ${newEntries.length} entries`));
   } finally {
@@ -282,7 +283,7 @@ async function addDomain(name: string, description: string): Promise<void> {
   }
 
   // Check if domain already exists
-  if (domains.find(d => d.domain_name === name)) {
+  if (domains.find((d) => d.domain_name === name)) {
     console.log(chalk.yellow(`Domain "${name}" already exists.`));
     return;
   }
@@ -292,7 +293,7 @@ async function addDomain(name: string, description: string): Promise<void> {
     domain_name: name,
     description,
     created_at: new Date().toISOString(),
-    project_folder: process.cwd(),
+    project_folder: process.cwd()
   });
 
   // Save
@@ -315,7 +316,7 @@ async function removeDomain(name: string): Promise<void> {
   }
 
   // Find and remove domain
-  const index = domains.findIndex(d => d.domain_name === name);
+  const index = domains.findIndex((d) => d.domain_name === name);
   if (index === -1) {
     console.log(chalk.yellow(`Domain "${name}" not found.`));
     return;
@@ -411,7 +412,7 @@ function toExportEntry(entry: WALEntry): WALEntry {
     approved: entry.approved,
     ...(entry.persistent ? { persistent: true } : {}),
     ...(entry.deleted ? { deleted: true } : {}),
-    ...(entry.namespace ? { namespace: entry.namespace } : {}),
+    ...(entry.namespace ? { namespace: entry.namespace } : {})
   };
 }
 
@@ -478,8 +479,9 @@ async function handleExport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
   const folded = new Map<string, WALEntry>();
 
   if (fs.existsSync(walDir)) {
-    const walFiles = fs.readdirSync(walDir)
-      .filter(f => f.endsWith('.wal'))
+    const walFiles = fs
+      .readdirSync(walDir)
+      .filter((f) => f.endsWith('.wal'))
       .sort();
 
     for (const walFile of walFiles) {
@@ -528,14 +530,12 @@ async function handleExport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
     entries: allEntries,
     manifest: {
       entry_count: allEntries.length,
-      content_sha256: computeManifestHash(domains, allEntries),
-    },
+      content_sha256: computeManifestHash(domains, allEntries)
+    }
   };
 
   // Resolve file path (relative to cwd)
-  const resolvedPath = path.isAbsolute(exportFile)
-    ? exportFile
-    : path.resolve(process.cwd(), exportFile);
+  const resolvedPath = path.isAbsolute(exportFile) ? exportFile : path.resolve(process.cwd(), exportFile);
 
   // Ensure parent directory exists
   const parentDir = path.dirname(resolvedPath);
@@ -550,9 +550,7 @@ async function handleExport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
   const domainInfo = domain ? `domain "${domain}"` : `${domains.length} domains`;
   const fileLabel = path.relative(process.cwd(), resolvedPath);
 
-  console.log(
-    chalk.green(`Exported ${entryCount} entries from ${domainInfo} to ${fileLabel}`),
-  );
+  console.log(chalk.green(`Exported ${entryCount} entries from ${domainInfo} to ${fileLabel}`));
 }
 
 async function handleImport(wiki: WikiModule, rawArgs: string[]): Promise<void> {
@@ -563,9 +561,7 @@ async function handleImport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
     return;
   }
 
-  const resolvedPath = path.isAbsolute(file)
-    ? file
-    : path.resolve(process.cwd(), file);
+  const resolvedPath = path.isAbsolute(file) ? file : path.resolve(process.cwd(), file);
 
   if (!fs.existsSync(resolvedPath)) {
     console.log(chalk.red(`File not found: ${resolvedPath}`));
@@ -612,7 +608,11 @@ async function handleImport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
       return;
     }
     if (data.manifest.entry_count !== data.entries.length) {
-      console.log(chalk.red(`Manifest entry_count mismatch: manifest claims ${data.manifest.entry_count} but file has ${data.entries.length}.`));
+      console.log(
+        chalk.red(
+          `Manifest entry_count mismatch: manifest claims ${data.manifest.entry_count} but file has ${data.entries.length}.`
+        )
+      );
       console.log(chalk.gray('Refusing to import — no entries were written to the wiki.'));
       return;
     }
@@ -621,7 +621,11 @@ async function handleImport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
     // v1.0 file (pre-manifest): import proceeds, but warn that integrity is
     // unverified. Per-entry hash verification (Layer B) still runs and will
     // skip tampered entries, but file-level corruption is undetectable.
-    console.log(chalk.yellow(`Warning: importing v${data.version} file without manifest — file-level integrity cannot be verified.`));
+    console.log(
+      chalk.yellow(
+        `Warning: importing v${data.version} file without manifest — file-level integrity cannot be verified.`
+      )
+    );
   }
 
   // Register domains
@@ -659,8 +663,14 @@ async function handleImport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
 
     // Skip deleted entries — importing them would revive documents the user
     // explicitly removed. Also skip entries marked !approved (never stored).
-    if (entry.deleted) { deletedSkipped++; continue; }
-    if (entry.approved === false) { skipped++; continue; }
+    if (entry.deleted) {
+      deletedSkipped++;
+      continue;
+    }
+    if (entry.approved === false) {
+      skipped++;
+      continue;
+    }
 
     // Layer B: verify the entry's hash matches its content. A mismatch means
     // the document was altered after export (or the hash field was corrupted)
@@ -712,12 +722,8 @@ async function handleImport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
   if (hashMismatch > 0) parts.push(chalk.yellow(`${hashMismatch} hash mismatch (skipped)`));
   if (putFailed > 0) parts.push(chalk.red(`${putFailed} put failed`));
   if (domainsAdded > 0) parts.push(`${domainsAdded} domains added`);
-  const integrityNote = manifestVerified
-    ? ' (integrity verified)'
-    : ' (integrity UNVERIFIED — v1.0 file)';
-  console.log(
-    chalk.green(`Import complete${integrityNote}: ${parts.join(', ')}`),
-  );
+  const integrityNote = manifestVerified ? ' (integrity verified)' : ' (integrity UNVERIFIED — v1.0 file)';
+  console.log(chalk.green(`Import complete${integrityNote}: ${parts.join(', ')}`));
 
   if (hashMismatchHashes.length > 0) {
     console.log(chalk.yellow('\nHash mismatch entries (skipped — content did not match its hash):'));

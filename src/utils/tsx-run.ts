@@ -48,7 +48,7 @@ function findProjectRoot(): string {
   // Start from this file's directory and go up until we find mycc's package.json
   const thisFileDir = dirname(fileURLToPath(import.meta.url));
   let currentDir = thisFileDir;
-  
+
   while (currentDir !== '/') {
     const packageJsonPath = resolve(currentDir, 'package.json');
     if (existsSync(packageJsonPath)) {
@@ -73,7 +73,7 @@ function findProjectRoot(): string {
     if (parent === currentDir) break;
     currentDir = parent;
   }
-  
+
   // Fallback: go up from src/utils to project root
   return resolve(thisFileDir, '..', '..');
 }
@@ -151,7 +151,7 @@ function getTsxCommand(script: string): TsxCommand {
     const loaderPath = getTsxLoaderPath();
     return {
       command: process.execPath,
-      baseArgs: ['--import', loaderPath, script],
+      baseArgs: ['--import', loaderPath, script]
     };
   }
 
@@ -159,7 +159,7 @@ function getTsxCommand(script: string): TsxCommand {
   const tsxPath = getTsxBinaryPath();
   return {
     command: tsxPath,
-    baseArgs: [script],
+    baseArgs: [script]
   };
 }
 
@@ -232,7 +232,7 @@ export function spawnTsx(options: TsxSpawnOptions): ChildProcess {
     cwd: options.cwd,
     env: options.env ?? process.env,
     stdio: options.stdio ?? 'inherit',
-    detached: options.detached ?? false,
+    detached: options.detached ?? false
   };
 
   return spawn(command, args, spawnOptions);

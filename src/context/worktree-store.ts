@@ -55,18 +55,14 @@ function parseGitWorktreeList(output: string): GitWorktreeInfo[] {
  */
 function execGitWorktreeList(workDir: string): Promise<string> {
   return new Promise((resolve) => {
-    exec(
-      'git worktree list --porcelain',
-      { cwd: workDir, encoding: 'utf-8' },
-      (err, stdout) => {
-        if (err) {
-          // Git not available, not a repo, or no worktrees — return empty
-          resolve('');
-        } else {
-          resolve(stdout || '');
-        }
-      },
-    );
+    exec('git worktree list --porcelain', { cwd: workDir, encoding: 'utf-8' }, (err, stdout) => {
+      if (err) {
+        // Git not available, not a repo, or no worktrees — return empty
+        resolve('');
+      } else {
+        resolve(stdout || '');
+      }
+    });
   });
 }
 
@@ -104,7 +100,7 @@ export async function listWorktrees(workDir?: string): Promise<WorkTree[]> {
     result.push({
       name,
       path: wt.path,
-      branch,
+      branch
     });
   }
 
@@ -119,10 +115,7 @@ export async function listWorktrees(workDir?: string): Promise<WorkTree[]> {
  * @param workDir - The project working directory (defaults to process.cwd())
  * @returns The matching worktree, or undefined if not found
  */
-export async function findWorktreeByName(
-  name: string,
-  workDir?: string,
-): Promise<WorkTree | undefined> {
+export async function findWorktreeByName(name: string, workDir?: string): Promise<WorkTree | undefined> {
   const worktrees = await listWorktrees(workDir);
   return worktrees.find((wt) => wt.name === name);
 }
@@ -137,13 +130,7 @@ export async function findWorktreeByName(
  * @param workDir - The project working directory (defaults to process.cwd())
  * @returns The matching worktree, or undefined if not found
  */
-export async function findWorktreeByPath(
-  targetPath: string,
-  workDir?: string,
-): Promise<WorkTree | undefined> {
+export async function findWorktreeByPath(targetPath: string, workDir?: string): Promise<WorkTree | undefined> {
   const worktrees = await listWorktrees(workDir);
-  return worktrees.find(
-    (wt) =>
-      targetPath === wt.path || targetPath.startsWith(wt.path + path.sep),
-  );
+  return worktrees.find((wt) => targetPath === wt.path || targetPath.startsWith(wt.path + path.sep));
 }

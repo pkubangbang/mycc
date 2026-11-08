@@ -14,14 +14,14 @@ export const helpCommand: SlashCommand = {
   description: 'Show all slash commands and their usage',
   handler: () => {
     // Get all commands from the registry
-    const commands = slashRegistry.list().map(name => slashRegistry.get(name)!);
+    const commands = slashRegistry.list().map((name) => slashRegistry.get(name)!);
 
     // Commands that take arguments (based on their descriptions/usage)
     const withArgs = ['issues', 'load', 'wiki', 'domain'];
-    
+
     // Split into two categories
-    const simpleCommands = commands.filter(c => !withArgs.includes(c.name));
-    const argCommands = commands.filter(c => withArgs.includes(c.name));
+    const simpleCommands = commands.filter((c) => !withArgs.includes(c.name));
+    const argCommands = commands.filter((c) => withArgs.includes(c.name));
 
     console.log(chalk.cyan('\n=== Slash Commands ===\n'));
 
@@ -53,5 +53,5 @@ export const helpCommand: SlashCommand = {
     console.log(chalk.white('  q, exit, quit') + chalk.gray(' - Exit the agent'));
     console.log(chalk.gray('  (or just press Enter)'));
     console.log();
-  },
+  }
 };

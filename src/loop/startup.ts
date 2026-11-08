@@ -8,7 +8,14 @@
 import chalk from 'chalk';
 import { MODEL } from '../engine/chat-provider.js';
 import { healthCheck } from '../engine/chat-provider.js';
-import { getOllamaHost, getApiProvider, getEmbeddingModel, getTokenThreshold, shouldSkipHealthCheck, isDebuggingEval } from '../config.js';
+import {
+  getOllamaHost,
+  getApiProvider,
+  getEmbeddingModel,
+  getTokenThreshold,
+  shouldSkipHealthCheck,
+  isDebuggingEval
+} from '../config.js';
 import { agentIO } from './agent-io.js';
 
 /** Model info surfaced by a successful health check (for the banner). */
@@ -66,7 +73,9 @@ export async function runHealthCheck(): Promise<ModelInfo | null> {
     }
     console.log();
 
-    const answer = agentIO.getAuto() ? 'y' : await agentIO.ask(chalk.cyan('Retry health check? [Y/n] > '), { useAsPrompt: true, onEsc: 'n', onEnter: 'y' });
+    const answer = agentIO.getAuto()
+      ? 'y'
+      : await agentIO.ask(chalk.cyan('Retry health check? [Y/n] > '), { useAsPrompt: true, onEsc: 'n', onEnter: 'y' });
     if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
       console.log(chalk.yellow('Exiting at user request.'));
       process.exit(1);
@@ -89,9 +98,8 @@ export function displayStartupBanner(version: string, modelInfo: ModelInfo | nul
 
   const apiProvider = getApiProvider();
   const providerLabel = apiProvider === 'deepseek' ? 'DeepSeek' : 'Ollama';
-  const hostUrl = apiProvider === 'deepseek'
-    ? process.env.DEEPSEEK_HOST || 'https://api.deepseek.com'
-    : getOllamaHost();
+  const hostUrl =
+    apiProvider === 'deepseek' ? process.env.DEEPSEEK_HOST || 'https://api.deepseek.com' : getOllamaHost();
 
   console.log();
   console.log(chalk.cyan.bold(`Coding Agent v${version}`));

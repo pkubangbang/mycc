@@ -215,9 +215,7 @@ export class AutoState {
       const parsed = parseAutoCommitEntry(raw);
       if (!parsed.branch) continue;
       const wantAutoAdd = autoAdd || parsed.autoAdd;
-      const existingIdx = this.autoCommitBranches.findIndex(
-        (e) => parseAutoCommitEntry(e).branch === parsed.branch
-      );
+      const existingIdx = this.autoCommitBranches.findIndex((e) => parseAutoCommitEntry(e).branch === parsed.branch);
       if (existingIdx === -1) {
         this.autoCommitBranches.push(formatAutoCommitEntry(parsed.branch, wantAutoAdd));
         changed.push({ branch: parsed.branch, autoAdd: wantAutoAdd });
@@ -247,9 +245,7 @@ export class AutoState {
       const { branch } = parseAutoCommitEntry(raw);
       if (!branch) continue;
       const before = this.autoCommitBranches.length;
-      this.autoCommitBranches = this.autoCommitBranches.filter(
-        (e) => parseAutoCommitEntry(e).branch !== branch
-      );
+      this.autoCommitBranches = this.autoCommitBranches.filter((e) => parseAutoCommitEntry(e).branch !== branch);
       if (this.autoCommitBranches.length < before) removed.push(branch);
     }
     return removed;

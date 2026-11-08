@@ -47,5 +47,5 @@ export const clearCommand: SlashCommand = {
     // COLLECT re-reports the live state once.
     reconcileServeStateAfterClear();
     console.log(chalk.green('Conversation, todos, and issues cleared. Starting fresh.'));
-  },
+  }
 };

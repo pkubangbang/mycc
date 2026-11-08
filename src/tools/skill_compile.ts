@@ -25,14 +25,14 @@ export const skillCompileTool: ToolDefinition = {
     properties: {
       name: {
         type: 'string',
-        description: 'Skill name to compile',
+        description: 'Skill name to compile'
       },
       feedback: {
         type: 'string',
-        description: 'Optional user feedback for refining the condition (use when the hook misbehaves).',
-      },
+        description: 'Optional user feedback for refining the condition (use when the hook misbehaves).'
+      }
     },
-    required: ['name'],
+    required: ['name']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -60,11 +60,13 @@ export const skillCompileTool: ToolDefinition = {
       const existing = conditions.get(skillName);
 
       if (existing) {
-        return `Skill '${skillName}' has no "when" field but has a compiled condition:\n` +
+        return (
+          `Skill '${skillName}' has no "when" field but has a compiled condition:\n` +
           `Trigger: ${existing.trigger}\n` +
           `Condition: ${existing.condition}\n` +
           `Action: ${JSON.stringify(existing.action)}\n` +
-          `Version: ${existing.version}`;
+          `Version: ${existing.version}`
+        );
       }
 
       return `Error: Skill '${skillName}' has no "when" field. Only skills with "when" conditions can be compiled.`;
@@ -97,8 +99,11 @@ export const skillCompileTool: ToolDefinition = {
     const condition = result.condition!;
 
     // Brief output — always visible summary of compilation
-    ctx.core.brief('info', 'skill_compile',
-      `${skillName} (v${condition.version})\nTrigger: ${condition.trigger}\nCondition: ${condition.condition}\nAction Type: ${condition.action.type}\nAction: ${JSON.stringify(condition.action)}`);
+    ctx.core.brief(
+      'info',
+      'skill_compile',
+      `${skillName} (v${condition.version})\nTrigger: ${condition.trigger}\nCondition: ${condition.condition}\nAction Type: ${condition.action.type}\nAction: ${JSON.stringify(condition.action)}`
+    );
 
     // Build response
     const lines = [
@@ -108,7 +113,7 @@ export const skillCompileTool: ToolDefinition = {
       `Trigger: ${condition.trigger}`,
       `Condition: ${condition.condition}`,
       `Action Type: ${condition.action.type}`,
-      `Action: ${JSON.stringify(condition.action, null, 2)}`,
+      `Action: ${JSON.stringify(condition.action, null, 2)}`
     ];
 
     // Include validation warnings if any
@@ -134,5 +139,5 @@ export const skillCompileTool: ToolDefinition = {
     }
 
     return lines.join('\n');
-  },
+  }
 };

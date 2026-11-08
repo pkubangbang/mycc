@@ -31,7 +31,7 @@ import { format as formatChannel } from './channel.js';
  */
 const FORMATTERS = {
   crossroad: formatCrossroad,
-  channel: formatChannel,
+  channel: formatChannel
 };
 
 const HELP = `mycc-pretty-print — Pretty-print files for terminal display
@@ -86,9 +86,7 @@ function main() {
 
   const formatter = FORMATTERS[args.type];
   if (!formatter) {
-    console.error(
-      `Error: unknown type "${args.type}". Available types: ${Object.keys(FORMATTERS).join(', ')}`
-    );
+    console.error(`Error: unknown type "${args.type}". Available types: ${Object.keys(FORMATTERS).join(', ')}`);
     process.exit(1);
   }
 

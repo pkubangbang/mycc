@@ -30,22 +30,27 @@ const configs = [
   ['main', tscBin, ['--noEmit']],
   ['test', tscBin, ['--noEmit', '-p', 'tsconfig.test.json']],
   ['scripts', tscBin, ['--noEmit', '-p', 'tsconfig.scripts.json']],
-  ['web', vueTscBin, ['--noEmit', '-p', 'src/web/tsconfig.json']],
+  ['web', vueTscBin, ['--noEmit', '-p', 'src/web/tsconfig.json']]
 ];
 
-const runs = configs.map(([label, cmd, args]) =>
-  new Promise((resolve) => {
-    const child = spawn(process.execPath, [cmd, ...args], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-    const prefix = `[${label}] `;
-    const tag = (s) => s.split('\n').map((l) => (l ? prefix + l : l)).join('\n');
-    child.stdout.on('data', (d) => process.stdout.write(tag(d.toString())));
-    child.stderr.on('data', (d) => process.stderr.write(tag(d.toString())));
-    child.on('exit', (code) => resolve({ label, code: code ?? 1 }));
-    child.on('error', (err) => {
-      process.stderr.write(`${prefix}${err.message}\n`);
-      resolve({ label, code: 1 });
-    });
-  }),
+const runs = configs.map(
+  ([label, cmd, args]) =>
+    new Promise((resolve) => {
+      const child = spawn(process.execPath, [cmd, ...args], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      const prefix = `[${label}] `;
+      const tag = (s) =>
+        s
+          .split('\n')
+          .map((l) => (l ? prefix + l : l))
+          .join('\n');
+      child.stdout.on('data', (d) => process.stdout.write(tag(d.toString())));
+      child.stderr.on('data', (d) => process.stderr.write(tag(d.toString())));
+      child.on('exit', (code) => resolve({ label, code: code ?? 1 }));
+      child.on('error', (err) => {
+        process.stderr.write(`${prefix}${err.message}\n`);
+        resolve({ label, code: 1 });
+      });
+    })
 );
 
 const results = await Promise.all(runs);

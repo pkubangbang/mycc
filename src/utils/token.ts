@@ -29,14 +29,15 @@ export function estimateTextTokens(text: string): number {
 
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
-    const isCJKChar = code >= 0x4e00 && code <= 0x9fff || // Most common CJK
-      code >= 0x3400 && code <= 0x4dbf || // Extension A
-      code >= 0x3040 && code <= 0x309f || // Hiragana
-      code >= 0x30a0 && code <= 0x30ff || // Katakana
-      code >= 0xac00 && code <= 0xd7af || // Hangul
-      code >= 0x1100 && code <= 0x11ff || // Hangul Jamo
-      code >= 0x3000 && code <= 0x303f || // CJK punctuation
-      code >= 0xff00 && code <= 0xffef; // Half/Fullwidth
+    const isCJKChar =
+      (code >= 0x4e00 && code <= 0x9fff) || // Most common CJK
+      (code >= 0x3400 && code <= 0x4dbf) || // Extension A
+      (code >= 0x3040 && code <= 0x309f) || // Hiragana
+      (code >= 0x30a0 && code <= 0x30ff) || // Katakana
+      (code >= 0xac00 && code <= 0xd7af) || // Hangul
+      (code >= 0x1100 && code <= 0x11ff) || // Hangul Jamo
+      (code >= 0x3000 && code <= 0x303f) || // CJK punctuation
+      (code >= 0xff00 && code <= 0xffef); // Half/Fullwidth
 
     if (isCJKChar) {
       // Flush pending western word

@@ -33,10 +33,10 @@ function printBanner(title: string): void {
     // Build title char by char to respect fullwidth characters
     let built = '';
     for (const ch of title) {
-      if (stringWidth(`${built + ch  }...`) > maxTitleLen) break;
+      if (stringWidth(`${built + ch}...`) > maxTitleLen) break;
       built += ch;
     }
-    displayTitle = `${built  }...`;
+    displayTitle = `${built}...`;
   }
 
   // Center the title text within the full-width bar
@@ -55,13 +55,7 @@ function printBanner(title: string): void {
   const bar = chalk.bgYellow.black;
   const text = chalk.bgYellow.black.bold;
 
-  process.stdout.write(
-    `\n${ 
-    bar(' '.repeat(width))  }\n${ 
-    text(centered)  }\n${ 
-    bar(' '.repeat(width))  }\n` +
-    `\n`
-  );
+  process.stdout.write(`\n${bar(' '.repeat(width))}\n${text(centered)}\n${bar(' '.repeat(width))}\n` + `\n`);
 }
 
 /**
@@ -79,7 +73,10 @@ function normalizeTitle(raw: string): string {
   // Strip leading "mycc" prefix (case-insensitive) with optional separator.
   // The alternation |\s*mycc\s+ is NOT anchored — it would match "mycc" mid-title
   // and corrupt content like "fix mycc bug" → "fixbug".
-  const stripped = raw.trim().replace(/^\s*mycc\s*(?:[-:]\s*)?/i, '').trim();
+  const stripped = raw
+    .trim()
+    .replace(/^\s*mycc\s*(?:[-:]\s*)?/i, '')
+    .trim();
   return stripped ? `mycc: ${stripped}` : 'mycc';
 }
 
@@ -98,7 +95,7 @@ export const myccTitleTool: ToolDefinition = {
     '',
     'The same title twice is a no-op for the reader. The "mycc:" prefix is added for',
     'you. Returns "OK". See the `set-title` skill for when to place a title and how to',
-    'phrase it.',
+    'phrase it.'
   ].join('\n'),
   input_schema: {
     type: 'object',
@@ -106,10 +103,10 @@ export const myccTitleTool: ToolDefinition = {
       title: {
         type: 'string',
         description:
-          'The heading for the paragraph you are closing — under 40 chars, e.g. "fixing the bash timeout" or "peer wire reconnect". The "mycc: " prefix is added automatically.',
-      },
+          'The heading for the paragraph you are closing — under 40 chars, e.g. "fixing the bash timeout" or "peer wire reconnect". The "mycc: " prefix is added automatically.'
+      }
     },
-    required: ['title'],
+    required: ['title']
   },
   // MAIN-ONLY: every side effect of this tool lands on the terminal channel
   // (OSC title sequence on process.stdout, process.title on win32, printBanner).
@@ -155,5 +152,5 @@ export const myccTitleTool: ToolDefinition = {
     }
 
     return 'OK';
-  },
+  }
 };

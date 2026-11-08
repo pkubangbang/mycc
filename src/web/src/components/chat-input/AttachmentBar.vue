@@ -30,33 +30,18 @@ const visible = computed(() => props.files.slice(0, INLINE_MAX));
 const overflowCount = computed(() => Math.max(0, props.files.length - INLINE_MAX));
 
 /** Human label for the pill: the count alone reads better than the filenames. */
-const pillLabel = computed(() =>
-  overflowCount.value > 0 ? `+${overflowCount.value} 个附件` : '',
-);
+const pillLabel = computed(() => (overflowCount.value > 0 ? `+${overflowCount.value} 个附件` : ''));
 </script>
 
 <template>
   <div v-if="props.files.length > 0" class="attachment-bar">
-    <span
-      v-for="(f, i) in visible"
-      :key="f.filename + i"
-      class="file-chip"
-      :title="f.filename"
-    >
+    <span v-for="(f, i) in visible" :key="f.filename + i" class="file-chip" :title="f.filename">
       <span class="file-chip-name">{{ f.filename }}</span>
-      <button
-        class="file-chip-remove"
-        :aria-label="`移除 ${f.filename}`"
-        @click="emit('remove', i)"
-      >&times;</button>
+      <button class="file-chip-remove" :aria-label="`移除 ${f.filename}`" @click="emit('remove', i)">&times;</button>
     </span>
     <!-- Overflow pill: a single button that always opens the manager, so the
          user has one place to see and prune the whole queue. -->
-    <button
-      class="attachment-pill"
-      :title="`共 ${props.files.length} 个附件，点击管理`"
-      @click="emit('manage')"
-    >
+    <button class="attachment-pill" :title="`共 ${props.files.length} 个附件，点击管理`" @click="emit('manage')">
       <template v-if="overflowCount > 0">{{ pillLabel }}</template>
       <template v-else>管理附件</template>
     </button>
@@ -66,10 +51,10 @@ const pillLabel = computed(() =>
 <style scoped>
 .attachment-bar {
   display: flex;
-  flex-wrap: nowrap;   /* ← one line, always */
+  flex-wrap: nowrap; /* ← one line, always */
   align-items: center;
   gap: 6px;
-  height: 32px;        /* ← fixed: extra chips can never push the row taller */
+  height: 32px; /* ← fixed: extra chips can never push the row taller */
   overflow: hidden;
   /* The bar owns its own inset (the shell has no horizontal padding), and it
      sits right under the textarea — no top gap beyond the composer row's own

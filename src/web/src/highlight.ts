@@ -56,7 +56,7 @@ const LANGS = [
   'py',
   'sql',
   'markdown',
-  'diff',
+  'diff'
 ] as const;
 
 // A GitHub-style light + dark pair — neutral and readable on both the
@@ -77,7 +77,7 @@ function getHighlighter(): Promise<Highlighter> {
   if (!initPromise) {
     initPromise = createHighlighter({
       themes: [LIGHT_THEME, DARK_THEME],
-      langs: [...LANGS],
+      langs: [...LANGS]
     }).then((hl) => {
       highlighter = hl;
       return hl;
@@ -111,7 +111,7 @@ function resolveLang(lang: string): string {
     shell: 'bash',
     'shell-script': 'bash',
     yml: 'yaml',
-    md: 'markdown',
+    md: 'markdown'
   };
   const canonical = aliases[lower] ?? lower;
   return (LANGS as readonly string[]).includes(canonical) ? canonical : '';
@@ -136,7 +136,7 @@ export function highlightCode(code: string, lang: string): string {
     return hl.codeToHtml(code, {
       lang: resolved,
       themes: { light: LIGHT_THEME, dark: DARK_THEME },
-      defaultColor: false,
+      defaultColor: false
     });
   } catch {
     return fallbackPre(code);
@@ -167,11 +167,7 @@ export function highlightBash(command: string): string {
 
 /** Escape HTML special characters for safe insertion into a `<pre><code>`. */
 function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 /** A plain, escaped `<pre><code>` block — the no-highlight fallback. */

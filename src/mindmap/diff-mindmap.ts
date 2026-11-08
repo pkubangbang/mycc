@@ -9,7 +9,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { Node, MindmapJSON } from './types.js';
 import { compute_hash } from './validate.js';
-import { parse_markdown, build_node, extract_links, collect_nodes_bottom_up, ProgressTracker, beginProgressDisplay, endProgressDisplay } from './compile-utils.js';
+import {
+  parse_markdown,
+  build_node,
+  extract_links,
+  collect_nodes_bottom_up,
+  ProgressTracker,
+  beginProgressDisplay,
+  endProgressDisplay
+} from './compile-utils.js';
 import { get_node, get_ancestors } from './get-node.js';
 import { remove_node } from './patch.js';
 import { summarizeWithExplorer } from './explorer-agent.js';
@@ -47,7 +55,7 @@ export function diff_nodes(oldRoot: Node, newRoot: Node): DiffResult {
   const result: DiffResult = {
     added: new Map(),
     removed: new Set(),
-    textChanged: new Map(),
+    textChanged: new Map()
   };
 
   const oldMap = new Map<string, Node>();
@@ -113,7 +121,7 @@ function build_root_node(sections: ReturnType<typeof parse_markdown>, preamble: 
     summary: '',
     level: 0,
     children: sections.map((s) => build_node(s, '/', 1)),
-    links: extract_links(preamble),
+    links: extract_links(preamble)
   };
 }
 
@@ -152,9 +160,7 @@ export async function incremental_compile(
   // 1. Parse new markdown
   const sections = parse_markdown(content);
   const firstHeadingMatch = content.match(/^#{1,6}\s+/m);
-  const preamble = firstHeadingMatch
-    ? content.slice(0, content.indexOf(firstHeadingMatch[0])).trim()
-    : content.trim();
+  const preamble = firstHeadingMatch ? content.slice(0, content.indexOf(firstHeadingMatch[0])).trim() : content.trim();
   const fileName = path.basename(absolutePath, path.extname(absolutePath));
   const newRoot = build_root_node(sections, preamble, fileName);
 
@@ -195,9 +201,8 @@ export async function incremental_compile(
   for (const node of allNodes) {
     // Check if text changed or added, or if any child was removed
     const textChanged = diff.textChanged.has(node.id) || diff.added.has(node.id);
-    const childRemoved = Array.from(diff.removed).some(removedId => {
-      return removedId.startsWith(`${node.id}/`) && 
-             (removedId.split('/').length === node.id.split('/').length + 1);
+    const childRemoved = Array.from(diff.removed).some((removedId) => {
+      return removedId.startsWith(`${node.id}/`) && removedId.split('/').length === node.id.split('/').length + 1;
     });
 
     // Check if any child needs update
@@ -212,7 +217,9 @@ export async function incremental_compile(
   const nodesToUpdate = allNodes.filter((n) => needsUpdate.has(n.id));
   const totalNodes = nodesToUpdate.length;
 
-  console.log(`[mindmap] Incremental: ${totalNodes} nodes need update (${diff.textChanged.size} changed, ${diff.added.size} added, ${diff.removed.size} removed)`);
+  console.log(
+    `[mindmap] Incremental: ${totalNodes} nodes need update (${diff.textChanged.size} changed, ${diff.added.size} added, ${diff.removed.size} removed)`
+  );
 
   // Progress tracking
   const tracker = new ProgressTracker(totalNodes, 3);
@@ -245,21 +252,21 @@ export async function incremental_compile(
         node.links.push({
           target_type: 'file',
           file_path: item.path,
-          comment: item.reason || 'Discovered during exploration',
+          comment: item.reason || 'Discovered during exploration'
         });
       }
       for (const item of result.markedUrls) {
         node.links.push({
           target_type: 'url',
           url: item.path,
-          comment: item.reason || 'Discovered during exploration',
+          comment: item.reason || 'Discovered during exploration'
         });
       }
       for (const item of result.markedTerms) {
         node.links.push({
           target_type: 'term',
           term_name: item.term,
-          comment: item.context || 'Project-specific term',
+          comment: item.context || 'Project-specific term'
         });
       }
 

@@ -54,8 +54,7 @@ export type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } fr
  * drift.
  */
 type DeferredInput =
-  | { kind: 'user'; text: string }
-  | { kind: 'note'; category: NoteCategory; hookName?: string; text: string };
+  { kind: 'user'; text: string } | { kind: 'note'; category: NoteCategory; hookName?: string; text: string };
 
 export class TriologueLite {
   private store: MessageStore = new MessageStore();
@@ -99,10 +98,7 @@ export class TriologueLite {
    * here (the event name IS the kind — conflated, no 'control' pseudo-kind).
    */
   private emitControl(event: 'compact'): void {
-    this.options.onMessage(
-      { kind: event } as unknown as Message,
-      () => this.store.getRaw(),
-    );
+    this.options.onMessage({ kind: event } as unknown as Message, () => this.store.getRaw());
   }
 
   /**
@@ -128,7 +124,7 @@ export class TriologueLite {
     // lead facade).
     flushDeferredInputs: (): void => {
       this.flushDeferredInputs();
-    },
+    }
   });
 
   constructor(options: TriologueOptions = {}) {
@@ -138,7 +134,7 @@ export class TriologueLite {
       onMisorder: options.onMisorder ?? this.defaultOnMisorder,
       onToolMisalign: options.onToolMisalign ?? this.defaultOnToolMisalign,
       onCompact: options.onCompact ?? this.defaultOnCompact,
-      onMessage: options.onMessage ?? (() => {}),
+      onMessage: options.onMessage ?? (() => {})
     };
   }
 
@@ -312,7 +308,11 @@ export class TriologueLite {
       const fixResult = this.tpFix.handle('note_after_tool', lastRole, 'cannot add note after tool role');
       if (fixResult === 'allowed') {
         // Provider supports tool → note natively — skip bridge, just append
-        this.addMessage({ role: 'user', content: `[${category}] ${message}`, ...(hookName ? { hook_name: hookName } : {}) });
+        this.addMessage({
+          role: 'user',
+          content: `[${category}] ${message}`,
+          ...(hookName ? { hook_name: hookName } : {})
+        });
         return;
       }
       // 'recovered': bridge was injected, now lastRole is 'assistant'
@@ -337,7 +337,11 @@ export class TriologueLite {
     // Check for missing assistant with tool_calls
     const lastRole = this.getLastRole();
     if (lastRole !== 'assistant' && lastRole !== 'tool') {
-      this.tpFix.handle('tool_no_assistant', lastRole, `cannot add tool message after ${lastRole} role (gap: missing_assistant)`);
+      this.tpFix.handle(
+        'tool_no_assistant',
+        lastRole,
+        `cannot add tool message after ${lastRole} role (gap: missing_assistant)`
+      );
       // Recovered: a synthetic assistant with tool_calls was injected.
       // After injection, the pending tool call map has an entry, but it's empty-named.
       // We need to update it so pending-ledger name resolution works for this functionName.
@@ -369,7 +373,7 @@ export class TriologueLite {
       role: 'tool',
       tool_name: functionName,
       content: result,
-      tool_call_id: resolvedId,
+      tool_call_id: resolvedId
     });
 
     // Remove from pending after adding result
@@ -395,17 +399,17 @@ export class TriologueLite {
    * message itself is positional, all optional metadata travels in `opts`, so
    * the two classes stay interchangeable at their shared call sites.
    */
-  agent(
-    content: string,
-    toolCalls?: ToolCall[],
-    opts?: { reasoningContent?: string; synthetic?: boolean },
-  ): void {
+  agent(content: string, toolCalls?: ToolCall[], opts?: { reasoningContent?: string; synthetic?: boolean }): void {
     const reasoningContent = opts?.reasoningContent;
     const lastRole = this.getLastRole();
 
     // Reject invalid transitions
     if (lastRole === 'assistant') {
-      this.tpFix.handle('duplicate_assistant', lastRole, 'cannot add assistant message after assistant role (duplicate)');
+      this.tpFix.handle(
+        'duplicate_assistant',
+        lastRole,
+        'cannot add assistant message after assistant role (duplicate)'
+      );
       // Recovered: pending tool calls cleared, fall through to add new assistant message
     }
     if (lastRole === 'system') {
@@ -420,7 +424,7 @@ export class TriologueLite {
       content: content || '',
       tool_calls: toolCalls,
       ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
-      ...(opts?.synthetic ? { synthetic: true } : {}),
+      ...(opts?.synthetic ? { synthetic: true } : {})
     });
 
     // Track pending tool calls in order
@@ -454,7 +458,12 @@ export class TriologueLite {
    *   knowledge-persistence instruction, supplied by the caller (which holds
    *   the wiki module) so this facade stays free of the RAG layer.
    */
-  async compact(focus?: string, signal?: AbortSignal, tools?: Tool[], domains: Array<{ domain_name: string; description?: string }> = []): Promise<void> {
+  async compact(
+    focus?: string,
+    signal?: AbortSignal,
+    tools?: Tool[],
+    domains: Array<{ domain_name: string; description?: string }> = []
+  ): Promise<void> {
     // Inline delegation to the compaction layer (triologue/compact.ts) via a
     // CompactDeps adapter over this facade's own state (single caller).
     const compacted = await doRunAutoCompact(
@@ -463,11 +472,11 @@ export class TriologueLite {
         getFullMessages: () => this.store.getFullMessages(),
         lastUserQuery: () => this.store.lastUserQuery,
         onCompact: (p) => this.options.onCompact(p),
-        domains,
+        domains
       },
       focus,
       signal,
-      tools,
+      tools
     );
     this.store.replaceAll(compacted);
     this.store.recomputeTokenCount();
@@ -563,15 +572,12 @@ export class TriologueLite {
    * Emits ONE 'new' piece per appended message (per-piece contract).
    * Replay is purely positional — no turn identity is needed.
    */
-  private addMessage(
-    message: Message,
-    opts?: { isUserOrigin?: boolean },
-  ): void {
+  private addMessage(message: Message, opts?: { isUserOrigin?: boolean }): void {
     this.store.push(message);
     this.store.incrementTokenCount(message);
 
     this.emit(message, 'new', {
-      userOrigin: opts?.isUserOrigin,
+      userOrigin: opts?.isUserOrigin
     });
   }
 
@@ -585,17 +591,15 @@ export class TriologueLite {
   private defaultOnMisorder(warning: MisorderWarning): void {
     // Best-effort stderr write: child processes have no terminal UI of their
     // own; stderr is captured by the parent's pipe and shown under -v.
-     
+
     console.error(`[triologue-lite] Misordered transition: ${warning.from} → ${warning.to} (gap: ${warning.gap})`);
   }
 
   private defaultOnToolMisalign(warning: ToolAlignmentWarning): void {
-     
     console.error(`[triologue-lite] Tool alignment issue: ${warning.functionName} (issue: ${warning.issue})`);
   }
 
   private defaultOnCompact(transcriptPath: string): void {
-     
     console.error(`[triologue-lite] Auto-compact transcript saved: ${transcriptPath}`);
   }
 }

@@ -25,10 +25,10 @@ export const skillLoadTool: ToolDefinition = {
     properties: {
       name: {
         type: 'string',
-        description: 'The skill name to load.',
-      },
+        description: 'The skill name to load.'
+      }
     },
-    required: ['name'],
+    required: ['name']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -36,19 +36,24 @@ export const skillLoadTool: ToolDefinition = {
 
     // Validate that name is provided
     if (!skillName || typeof skillName !== 'string' || skillName.trim() === '') {
-      ctx.core.brief('error', 'skill_load', 'Missing or empty name parameter', 'Use skill_load(name="<exact_skill_name>")');
+      ctx.core.brief(
+        'error',
+        'skill_load',
+        'Missing or empty name parameter',
+        'Use skill_load(name="<exact_skill_name>")'
+      );
       return 'ERROR: The "name" parameter is required and must be a non-empty string.\n\nUsage: skill_load(name="<exact_skill_name>")\nFor fuzzy search, use: skill_search(search="<keywords>")';
     }
 
     // Attempt exact name match (case-sensitive)
     let skill = ctx.skill.getSkill(skillName);
-    
+
     // If exact match fails, try fuzzy matching (normalize case, hyphens, underscores)
     if (!skill) {
       const normalize = (s: string) => s.toLowerCase().replace(/[_-]/g, '');
       const targetKey = normalize(skillName);
       const allSkills = ctx.skill.listSkills();
-      const fuzzyMatch = allSkills.find(s => normalize(s.name) === targetKey);
+      const fuzzyMatch = allSkills.find((s) => normalize(s.name) === targetKey);
       if (fuzzyMatch) {
         skill = ctx.skill.getSkill(fuzzyMatch.name);
         if (skill) {
@@ -70,9 +75,7 @@ Once you find the correct name, load it with:
     // Retrospect: show the skill's location and level
     const layer = loader.getSkillLayer(skillName) || 'project';
     const levelLabel = layer.toUpperCase();
-    const absPath = skill.sourceFile
-      ? getSkillAbsolutePath(skill.sourceFile) || skill.sourceFile
-      : 'unknown';
+    const absPath = skill.sourceFile ? getSkillAbsolutePath(skill.sourceFile) || skill.sourceFile : 'unknown';
     ctx.core.brief('info', 'skill_load', `Loaded: ${skillName} (${levelLabel} — ${absPath})`);
 
     // Re-index the loaded skill to wiki (best effort, may fail if no embedding
@@ -116,5 +119,5 @@ Once you find the correct name, load it with:
       : '';
     const location = skillDir ? `Location: ${skillDir}\n\n` : '';
     return `${header}${description}${keywords}${when}${service}${location}---\n\n${skill.content}`;
-  },
+  }
 };

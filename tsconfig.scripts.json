@@ -6,6 +6,11 @@
     "rootDir": ".",
     "types": ["node"]
   },
-  "include": ["scripts/mycc-compose/lib/**/*.ts", "src/utils/arg-canonical.ts", "src/utils/id-guard.ts", "src/types.ts"],
+  "include": [
+    "scripts/mycc-compose/lib/**/*.ts",
+    "src/utils/arg-canonical.ts",
+    "src/utils/id-guard.ts",
+    "src/types.ts"
+  ],
   "exclude": ["node_modules"]
 }

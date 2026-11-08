@@ -76,7 +76,7 @@ export class MailBox implements MailModule {
       title,
       content,
       issueId,
-      timestamp: new Date(),
+      timestamp: new Date()
     };
 
     // Append to file (atomic append)
@@ -165,7 +165,11 @@ export class MailBox implements MailModule {
       content = fs.readFileSync(tempPath, 'utf-8');
     } finally {
       // Clean up the temp file regardless of read success
-      try { fs.unlinkSync(tempPath); } catch { /* best-effort */ }
+      try {
+        fs.unlinkSync(tempPath);
+      } catch {
+        /* best-effort */
+      }
     }
 
     if (!content.trim()) {

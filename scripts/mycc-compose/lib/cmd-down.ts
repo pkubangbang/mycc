@@ -136,8 +136,8 @@ export async function cmdDown(file: string): Promise<void> {
   if (incomplete) {
     out(
       `  INCOMPLETE: expected ${expected} channel file(s) from the spec, ` +
-      `could account for ${actual}${failed.length > 0 ? ` (${failed.length} unlink failure(s))` : ''}. ` +
-      `Some peers did not resolve to a session, so their files were left in place.`,
+        `could account for ${actual}${failed.length > 0 ? ` (${failed.length} unlink failure(s))` : ''}. ` +
+        `Some peers did not resolve to a session, so their files were left in place.`
     );
   }
 

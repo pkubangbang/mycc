@@ -23,7 +23,7 @@ const execAsync = promisify(exec);
 function createRL(): readline.ReadLine {
   return readline.createInterface({
     input: process.stdin,
-    output: process.stdout,
+    output: process.stdout
   });
 }
 
@@ -59,9 +59,7 @@ async function prompt(
 
     // Show default or existing value
     if (existingValue && existingValue.trim() !== '') {
-      const displayValue = config.sensitive
-        ? redactSensitive(existingValue)
-        : existingValue;
+      const displayValue = config.sensitive ? redactSensitive(existingValue) : existingValue;
       promptText += chalk.dim(` [current: ${displayValue}]`);
     } else if (config.default !== undefined) {
       promptText += chalk.dim(` [default: ${config.default}]`);
@@ -123,7 +121,9 @@ async function promptChatProvider(
 
     console.log(chalk.cyan('\nChat Provider Selection'));
     console.log(chalk.dim('  Choose your chat model provider:'));
-    console.log('  [1] Ollama   - Local or cloud LLM (direct cloud needs an API key; local cloud routing uses ollama signin)');
+    console.log(
+      '  [1] Ollama   - Local or cloud LLM (direct cloud needs an API key; local cloud routing uses ollama signin)'
+    );
     console.log('  [2] DeepSeek - DeepSeek Cloud API (API key required)');
     console.log();
 
@@ -273,13 +273,19 @@ export function displaySetupHelp(): void {
   console.log(chalk.dim('  User-level:   ~/.mycc-store/.env (global)'));
   console.log(chalk.dim('  Project-level: ./.mycc/.env (local)\n'));
   console.log(chalk.cyan('Providers:'));
-  console.log(chalk.dim('  [1] Ollama   - Local or cloud LLM (direct cloud needs an API key; local cloud routing uses ollama signin)'));
+  console.log(
+    chalk.dim(
+      '  [1] Ollama   - Local or cloud LLM (direct cloud needs an API key; local cloud routing uses ollama signin)'
+    )
+  );
   console.log(chalk.dim('  [2] DeepSeek - DeepSeek Cloud API (requires API key)\n'));
   console.log(chalk.cyan('Environment variables (Ollama connection - always required):'));
   console.log(chalk.dim('  OLLAMA_HOST            - Ollama server URL (for embeddings)'));
   console.log(chalk.dim('  OLLAMA_EMBEDDING_MODEL - Embedding model name\n'));
   console.log(chalk.cyan('Environment variables (Ollama):'));
-  console.log(chalk.dim('  OLLAMA_API_KEY      - API key for direct Ollama Cloud; local cloud routing uses ollama signin'));
+  console.log(
+    chalk.dim('  OLLAMA_API_KEY      - API key for direct Ollama Cloud; local cloud routing uses ollama signin')
+  );
   console.log(chalk.dim('  OLLAMA_MODEL        - Chat model name'));
   console.log(chalk.dim('  OLLAMA_VISION_MODEL - Vision model (or "none")\n'));
   console.log(chalk.cyan('Environment variables (DeepSeek):'));

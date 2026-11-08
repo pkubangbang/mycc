@@ -52,7 +52,7 @@ export function truncateAndRecount(
   store: MessageStore,
   deps: TruncateDeps,
   startIndex: number,
-  event: 'rollback' = 'rollback',
+  event: 'rollback' = 'rollback'
 ): void {
   store.truncateTo(startIndex);
   store.recomputeTokenCount();

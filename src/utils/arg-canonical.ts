@@ -38,17 +38,41 @@
  * → true, `--serve 9000` → the port). See src/config.ts for the full rationale.
  */
 export const BOOLEAN_FLAGS: string[] = [
-  'v', 'verbose', 'skip-healthcheck', 'setup',
-  'debug-eval', 'debug-tp', 'disable-crossroad', 'auto',
-  'debug-autofly', 'allow-plan-off', 'debug-wire', 'debug-ansi',
+  'v',
+  'verbose',
+  'skip-healthcheck',
+  'setup',
+  'debug-eval',
+  'debug-tp',
+  'disable-crossroad',
+  'auto',
+  'debug-autofly',
+  'allow-plan-off',
+  'debug-wire',
+  'debug-ansi'
 ];
 
 /** Flags that always take a value. */
 export const STRING_FLAGS: string[] = [
-  'from', 'port', 'host', 'max-upload-mb', 'autofly', 'daemon',
-  'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
-  'deepseek-host', 'deepseek-api-key', 'deepseek-model', 'deepseek-vision-model',
-  'api-provider', 'token-threshold', 'editor', 'skill-match-threshold',
+  'from',
+  'port',
+  'host',
+  'max-upload-mb',
+  'autofly',
+  'daemon',
+  'ollama-host',
+  'ollama-api-key',
+  'ollama-model',
+  'ollama-vision-model',
+  'ollama-embedding-model',
+  'deepseek-host',
+  'deepseek-api-key',
+  'deepseek-model',
+  'deepseek-vision-model',
+  'api-provider',
+  'token-threshold',
+  'editor',
+  'skill-match-threshold',
   'wire-token',
   // Peer name (compose): the launcher injects `--name <group>:<peer>` so a
   // compose-managed peer carries a DURABLE, human-readable identity that
@@ -59,7 +83,7 @@ export const STRING_FLAGS: string[] = [
   // names. STRING (carries a value), not boolean. Absent from DEFAULTS like
   // 'allow-plan-off' — absence means "off", and the parser/argsMatch treat
   // unset uniformly. See config.ts's getAllowAutoCommitBranches().
-  'allow-auto-commit',
+  'allow-auto-commit'
 ];
 
 /** Default values passed to minimist so unset flags normalize deterministically. */
@@ -73,7 +97,7 @@ export const DEFAULTS: Record<string, boolean | null> = {
   'debug-tp': false,
   'disable-crossroad': false,
   'debug-autofly': false,
-  'allow-plan-off': false,
+  'allow-plan-off': false
 };
 
 /**
@@ -128,10 +152,10 @@ export function canonicalFlagName(name: string): string {
  * being split between the flag table and a second map in config.ts.
  */
 export const ARG_ENV_MAP: Record<string, string> = {
-  'verbose': 'MYCC_VERBOSE',
-  'from': 'MYCC_FROM_SESSION',
+  verbose: 'MYCC_VERBOSE',
+  from: 'MYCC_FROM_SESSION',
   'skip-healthcheck': 'MYCC_SKIP_HEALTHCHECK',
-  'setup': 'MYCC_SETUP',
+  setup: 'MYCC_SETUP',
   'debug-eval': 'MYCC_DEBUG_EVAL',
   'debug-tp': 'MYCC_DEBUG_TP',
   'disable-crossroad': 'MYCC_DISABLE_CROSSROAD',
@@ -163,14 +187,14 @@ export const ARG_ENV_MAP: Record<string, string> = {
   'deepseek-vision-model': 'DEEPSEEK_VISION_MODEL',
   'api-provider': 'API_PROVIDER',
   'token-threshold': 'TOKEN_THRESHOLD',
-  'editor': 'EDITOR',
+  editor: 'EDITOR',
   'skill-match-threshold': 'SKILL_MATCH_THRESHOLD',
   // Remote peer wire: --wire-token mirrors the MYCC_WIRE_TOKEN env var
   // (OPTIONAL shared secret); --debug-wire mirrors the
   // MYCC_WIRE_ALLOW_LOCAL=1 escape hatch (test-only; allows same-store /
   // self wire connects). Neither is part of the --setup wizard.
   'wire-token': 'MYCC_WIRE_TOKEN',
-  'debug-wire': 'MYCC_WIRE_ALLOW_LOCAL',
+  'debug-wire': 'MYCC_WIRE_ALLOW_LOCAL'
 };
 
 /**
@@ -425,7 +449,7 @@ export function buildReloadArgs(
   originalArgv: string[],
   serveActive: boolean,
   servePort: number,
-  serveHost: string | null,
+  serveHost: string | null
 ): string[] {
   const out: string[] = [];
   for (let i = 0; i < originalArgv.length; i++) {
@@ -435,7 +459,7 @@ export function buildReloadArgs(
     // flag. Value is attached, so nothing to consume.
     if (tok.startsWith('--') && tok.includes('=')) {
       const name = tok.slice(2, tok.indexOf('='));
-      if (name === 'from') continue;              // fresh session — never replay
+      if (name === 'from') continue; // fresh session — never replay
       if (name === 'serve' || name === 'port' || name === 'host') continue; // live state merged below
       out.push(tok);
       continue;
@@ -456,10 +480,9 @@ export function buildReloadArgs(
     // Does this flag consume the NEXT token as its value? Boolean flags never;
     // known string flags always (when the next token is not another flag,
     // mirroring the parser); unknown flags auto-detect like minimist.
-    const consumesValue = !BOOLEAN_FLAGS.includes(name) && (
-      STRING_FLAGS.includes(name) ||
-      (i + 1 < originalArgv.length && !originalArgv[i + 1].startsWith('-'))
-    );
+    const consumesValue =
+      !BOOLEAN_FLAGS.includes(name) &&
+      (STRING_FLAGS.includes(name) || (i + 1 < originalArgv.length && !originalArgv[i + 1].startsWith('-')));
     const hasValue = consumesValue && i + 1 < originalArgv.length && !originalArgv[i + 1].startsWith('-');
 
     if (name === 'from') {
@@ -518,10 +541,7 @@ export function canonicalArgs(parsed: Record<string, unknown>): string {
  * wildcard for that flag's value, so a spec that omits a secret still matches a
  * peer that was launched with one (and vice versa).
  */
-export function argsMatch(
-  publishedArgs: string | null | undefined,
-  specArgs: string | null | undefined,
-): boolean {
+export function argsMatch(publishedArgs: string | null | undefined, specArgs: string | null | undefined): boolean {
   const a = canonicalGroupMap(parseArgString(publishedArgs));
   const b = canonicalGroupMap(parseArgString(specArgs));
   const keys = new Set([...a.keys(), ...b.keys()]);

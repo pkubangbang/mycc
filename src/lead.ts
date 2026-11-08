@@ -61,8 +61,11 @@ if (isVerbose()) {
 // shell-detect.ts and the windows-shell-strategy skill.
 const shellInfo = detectShell();
 if (shellInfo.isWin && shellInfo.shell === 'powershell5') {
-  agentIO.brief('warn', 'config',
-    'pwsh 7 not found (using Windows PowerShell 5.1). Install for best bash-tool reliability: winget install --id Microsoft.PowerShell --scope user');
+  agentIO.brief(
+    'warn',
+    'config',
+    'pwsh 7 not found (using Windows PowerShell 5.1). Install for best bash-tool reliability: winget install --id Microsoft.PowerShell --scope user'
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -70,10 +73,10 @@ if (shellInfo.isWin && shellInfo.shell === 'powershell5') {
 // ---------------------------------------------------------------------------
 
 const envResult = validateEnv();
-envResult.warnings.forEach(w => agentIO.brief('warn', 'config', w.instruction));
+envResult.warnings.forEach((w) => agentIO.brief('warn', 'config', w.instruction));
 
 if (!envResult.valid) {
-  envResult.missing.forEach(m => agentIO.brief('error', 'config', m.instruction));
+  envResult.missing.forEach((m) => agentIO.brief('error', 'config', m.instruction));
   process.exit(1);
 }
 
@@ -83,6 +86,10 @@ if (!envResult.valid) {
 
 main().catch(async (err: Error) => {
   console.error('Fatal error:', err);
-  try { await tryGetServeHub()?.stop(); } catch { /* best effort */ }
+  try {
+    await tryGetServeHub()?.stop();
+  } catch {
+    /* best effort */
+  }
   process.exit(1);
 });

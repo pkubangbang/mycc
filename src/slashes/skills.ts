@@ -56,7 +56,11 @@ export const skillsCommand: SlashCommand = {
     }
 
     console.log(chalk.dim('─'.repeat(50)));
-    console.log(chalk.dim('Skills are auto-indexed at startup. Use ') + chalk.green('/skill build') + chalk.dim(' to reload and re-index after adding new skills.'));
+    console.log(
+      chalk.dim('Skills are auto-indexed at startup. Use ') +
+        chalk.green('/skill build') +
+        chalk.dim(' to reload and re-index after adding new skills.')
+    );
     console.log('');
-  },
+  }
 };

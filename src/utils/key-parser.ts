@@ -41,29 +41,29 @@ const ESCAPE_SEQUENCES_HEX: Record<string, string> = {
   '1b5b32307e': 'f9',
   '1b5b32317e': 'f10',
   '1b5b32337e': 'f11',
-  '1b5b32347e': 'f12',
+  '1b5b32347e': 'f12'
 };
 
 // Final bytes for modifier-extended arrow/home/end sequences (ESC[1;N<final>)
 const MODIFIER_FINAL_BYTES: Record<number, string> = {
-  0x41: 'up',     // A
-  0x42: 'down',   // B
-  0x43: 'right',  // C
-  0x44: 'left',   // D
-  0x48: 'home',   // H
-  0x46: 'end',    // F
+  0x41: 'up', // A
+  0x42: 'down', // B
+  0x43: 'right', // C
+  0x44: 'left', // D
+  0x48: 'home', // H
+  0x46: 'end' // F
 };
 
 // Modifier codes in the ;N portion of ESC[1;N<final>
 // (xterm modifier encoding: bit 1 = Shift, bit 2 = Alt, bit 3 = Ctrl)
 const MODIFIER_CODES: Record<number, { shift: boolean; ctrl: boolean }> = {
-  2: { shift: true,  ctrl: false },  // Shift
-  3: { shift: false, ctrl: false },  // Alt (not tracked as a flag)
-  4: { shift: true,  ctrl: false },  // Shift+Alt
-  5: { shift: false, ctrl: true  },  // Ctrl
-  6: { shift: true,  ctrl: true  },  // Shift+Ctrl
-  7: { shift: false, ctrl: true  },  // Ctrl+Alt
-  8: { shift: true,  ctrl: true  },  // Shift+Ctrl+Alt
+  2: { shift: true, ctrl: false }, // Shift
+  3: { shift: false, ctrl: false }, // Alt (not tracked as a flag)
+  4: { shift: true, ctrl: false }, // Shift+Alt
+  5: { shift: false, ctrl: true }, // Ctrl
+  6: { shift: true, ctrl: true }, // Shift+Ctrl
+  7: { shift: false, ctrl: true }, // Ctrl+Alt
+  8: { shift: true, ctrl: true } // Shift+Ctrl+Alt
 };
 
 // Ctrl key mappings (Ctrl+A = 1, Ctrl+B = 2, etc.)
@@ -113,9 +113,9 @@ function parseNextKey(data: Buffer, offset: number): { keyInfo: KeyInfo; consume
             ctrl: false,
             meta: true,
             shift: false,
-            sequence: data.toString('utf8', offset, offset + consumed),
+            sequence: data.toString('utf8', offset, offset + consumed)
           },
-          consumed,
+          consumed
         };
       }
     }
@@ -123,11 +123,14 @@ function parseNextKey(data: Buffer, offset: number): { keyInfo: KeyInfo; consume
     // Modifier-extended escape sequences: ESC[1;N<final>
     // e.g., ESC[1;2D = Shift+Left, ESC[1;5C = Ctrl+Right, ESC[1;2H = Shift+Home
     // Format: 0x1b 0x5b 0x31 0x3b <mod-digit> <final-byte>  (6 bytes total)
-    if (remaining >= 6 &&
-        data[offset + 1] === 0x5b &&  // [
-        data[offset + 2] === 0x31 &&  // 1
-        data[offset + 3] === 0x3b) {   // ;
-      const modCode = data[offset + 4] - 0x30;  // ASCII digit -> number
+    if (
+      remaining >= 6 &&
+      data[offset + 1] === 0x5b && // [
+      data[offset + 2] === 0x31 && // 1
+      data[offset + 3] === 0x3b
+    ) {
+      // ;
+      const modCode = data[offset + 4] - 0x30; // ASCII digit -> number
       const finalByte = data[offset + 5];
       const baseName = MODIFIER_FINAL_BYTES[finalByte];
       const mod = MODIFIER_CODES[modCode];
@@ -139,9 +142,9 @@ function parseNextKey(data: Buffer, offset: number): { keyInfo: KeyInfo; consume
             ctrl: mod.ctrl,
             meta: true,
             shift: mod.shift,
-            sequence: data.toString('utf8', offset, offset + consumed),
+            sequence: data.toString('utf8', offset, offset + consumed)
           },
-          consumed,
+          consumed
         };
       }
     }
@@ -150,14 +153,14 @@ function parseNextKey(data: Buffer, offset: number): { keyInfo: KeyInfo; consume
     if (remaining === 1 || (remaining >= 2 && data[offset + 1] !== 0x5b && data[offset + 1] !== 0x4f)) {
       return {
         keyInfo: { name: 'escape', ctrl: false, meta: false, shift: false, sequence: '\x1b' },
-        consumed: 1,
+        consumed: 1
       };
     }
 
     // Unknown escape sequence - consume just the ESC
     return {
       keyInfo: { name: 'escape', ctrl: false, meta: false, shift: false, sequence: '\x1b' },
-      consumed: 1,
+      consumed: 1
     };
   }
 
@@ -168,7 +171,7 @@ function parseNextKey(data: Buffer, offset: number): { keyInfo: KeyInfo; consume
   if (code === 0x0d || code === 0x0a) {
     return {
       keyInfo: { name: 'return', ctrl: false, meta: false, shift: false, sequence: '\r' },
-      consumed: 1,
+      consumed: 1
     };
   }
 
@@ -176,7 +179,7 @@ function parseNextKey(data: Buffer, offset: number): { keyInfo: KeyInfo; consume
   if (code === 0x7f || code === 0x08) {
     return {
       keyInfo: { name: 'backspace', ctrl: false, meta: false, shift: false, sequence: '\x7f' },
-      consumed: 1,
+      consumed: 1
     };
   }
 
@@ -188,9 +191,9 @@ function parseNextKey(data: Buffer, offset: number): { keyInfo: KeyInfo; consume
         ctrl: true,
         meta: false,
         shift: false,
-        sequence: String.fromCharCode(code + 96), // Ctrl+A -> 'a'
+        sequence: String.fromCharCode(code + 96) // Ctrl+A -> 'a'
       },
-      consumed: 1,
+      consumed: 1
     };
   }
 
@@ -201,13 +204,13 @@ function parseNextKey(data: Buffer, offset: number): { keyInfo: KeyInfo; consume
     const isLower = char >= 'a' && char <= 'z';
     return {
       keyInfo: {
-        name: isLower ? char : (isUpper ? char.toLowerCase() : ''),
+        name: isLower ? char : isUpper ? char.toLowerCase() : '',
         ctrl: false,
         meta: false,
         shift: isUpper,
-        sequence: char,
+        sequence: char
       },
-      consumed: 1,
+      consumed: 1
     };
   }
 
@@ -225,14 +228,14 @@ function parseNextKey(data: Buffer, offset: number): { keyInfo: KeyInfo; consume
       const str = decoder.decode(data.subarray(offset, end));
       return {
         keyInfo: { name: '', ctrl: false, meta: false, shift: false, sequence: str },
-        consumed: end - offset,
+        consumed: end - offset
       };
     } catch {
       // Invalid UTF-8, consume single byte
       const hexByte = code.toString(16).padStart(2, '0');
       return {
-        keyInfo: { name: '', ctrl: false, meta: false, shift: false, sequence: `\\x${  hexByte}` },
-        consumed: 1,
+        keyInfo: { name: '', ctrl: false, meta: false, shift: false, sequence: `\\x${hexByte}` },
+        consumed: 1
       };
     }
   }
@@ -240,8 +243,8 @@ function parseNextKey(data: Buffer, offset: number): { keyInfo: KeyInfo; consume
   // Unknown byte
   const hexByte = code.toString(16).padStart(2, '0');
   return {
-    keyInfo: { name: '', ctrl: false, meta: false, shift: false, sequence: `\\x${  hexByte}` },
-    consumed: 1,
+    keyInfo: { name: '', ctrl: false, meta: false, shift: false, sequence: `\\x${hexByte}` },
+    consumed: 1
   };
 }
 

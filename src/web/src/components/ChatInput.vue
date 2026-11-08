@@ -50,12 +50,13 @@ const managerOpen = ref(false);
 // pendingFiles, plus the two error banners (超限 / 文件夹拒绝). `files` is the
 // single local mirror of `state.pendingFiles`, so send()/canSend can read it
 // synchronously. The cap (state.maxUploadMb) is passed as a live getter.
-const { files, uploadError, addFiles, onPaste, removeFile, clearFiles } =
-  useAttachmentQueue({
-    getMaxMb: () => props.state.maxUploadMb,
-    getPending: () => props.state.pendingFiles,
-    setPending: (next) => { props.state.pendingFiles = next; },
-  });
+const { files, uploadError, addFiles, onPaste, removeFile, clearFiles } = useAttachmentQueue({
+  getMaxMb: () => props.state.maxUploadMb,
+  getPending: () => props.state.pendingFiles,
+  setPending: (next) => {
+    props.state.pendingFiles = next;
+  }
+});
 
 // Mirror state.inputText ↔ the textarea (two watchers, so an external reset
 // of state.inputText reaches the DOM and typing flows the other way).
@@ -63,7 +64,7 @@ watch(
   () => props.state.inputText,
   (val) => {
     if (val !== text.value) text.value = val;
-  },
+  }
 );
 
 watch(text, (val) => {
@@ -81,7 +82,9 @@ function onAutoClick(): void {
   if (props.state.isAutoMode) {
     autoToast.value = '已经是自动模式了';
     if (autoToastTimer) clearTimeout(autoToastTimer);
-    autoToastTimer = setTimeout(() => { autoToast.value = ''; }, 2500);
+    autoToastTimer = setTimeout(() => {
+      autoToast.value = '';
+    }, 2500);
     return;
   }
   chatApi.sendAuto();
@@ -92,11 +95,12 @@ function onAutoClick(): void {
 // slash-command pipeline (no new WS type, no backend change). Enabled only
 // when ALL hold: not in auto mode; at PROMPT (isWaiting); no pending card;
 // connected.
-const canCompact = computed(() =>
-  !props.state.isAutoMode &&
-  props.state.isWaiting &&
-  !props.state.hasPendingCard &&
-  props.state.connectionStatus === 'connected',
+const canCompact = computed(
+  () =>
+    !props.state.isAutoMode &&
+    props.state.isWaiting &&
+    !props.state.hasPendingCard &&
+    props.state.connectionStatus === 'connected'
 );
 
 function onCompactClick(): void {
@@ -116,21 +120,18 @@ function onCompactClick(): void {
 // pending user action at PROMPT. While it shows, sending is blocked — the
 // user must first send those notes as a query or discard them. Treated as a
 // card interruption, the same category as hasPendingCard.
-const showSteeringReview = computed(() =>
-  props.state.isWaiting && props.state.pendingSteeringReview.length > 0,
+const showSteeringReview = computed(() => props.state.isWaiting && props.state.pendingSteeringReview.length > 0);
+
+const canSend = computed(
+  () =>
+    !props.state.hasPendingCard &&
+    !showSteeringReview.value &&
+    (text.value.trim() !== '' || files.value.length > 0) &&
+    props.state.connectionStatus === 'connected'
 );
 
-const canSend = computed(() =>
-  !props.state.hasPendingCard &&
-  !showSteeringReview.value &&
-  (text.value.trim() !== '' || files.value.length > 0) &&
-  props.state.connectionStatus === 'connected',
-);
-
-const showInputWarning = computed(() =>
-  props.state.hasPendingCard ||
-  showSteeringReview.value ||
-  props.state.connectionStatus !== 'connected',
+const showInputWarning = computed(
+  () => props.state.hasPendingCard || showSteeringReview.value || props.state.connectionStatus !== 'connected'
 );
 
 const inputWarningText = computed(() => {
@@ -345,7 +346,10 @@ function latchSubmitted(): void {
 }
 function clearSubmitLatch(): void {
   justSubmitted.value = false;
-  if (submitLatchTimer) { clearTimeout(submitLatchTimer); submitLatchTimer = null; }
+  if (submitLatchTimer) {
+    clearTimeout(submitLatchTimer);
+    submitLatchTimer = null;
+  }
 }
 watch(
   () => [props.state.phase, props.state.connectionStatus] as const,
@@ -353,7 +357,7 @@ watch(
     if (justSubmitted.value && (newPhase !== 'submitted' || conn !== 'connected')) {
       clearSubmitLatch();
     }
-  },
+  }
 );
 
 // ── Last-server-message timestamp (tag row) ──
@@ -374,21 +378,13 @@ function fmtTime(at: number): string {
   >
     <!-- State-machine stage tag row (diagnostic) — visible ONLY in
          detailed-logs (详细日志) mode. -->
-    <div
-      v-if="state.verboseLogs"
-      class="stage-row"
-      :class="{ 'stage-row--vacuum': isVacuumStage }"
-    >
-      <span
-        class="stage-chip stage-chip--phase"
-        :class="{ 'stage-chip--warn': isVacuumStage }"
-      >{{ stage }}</span>
+    <div v-if="state.verboseLogs" class="stage-row" :class="{ 'stage-row--vacuum': isVacuumStage }">
+      <span class="stage-chip stage-chip--phase" :class="{ 'stage-chip--warn': isVacuumStage }">{{ stage }}</span>
       <span class="stage-chip stage-chip--steer">steerBuffer={{ state.steeringBuffer.length }}</span>
       <span class="stage-chip stage-chip--review">review={{ state.pendingSteeringReview.length }}</span>
-      <span
-        v-if="state.lastServerMsg"
-        class="stage-chip stage-chip--msg"
-      >最后消息: {{ state.lastServerMsg.type }} @{{ fmtTime(state.lastServerMsg.at) }}</span>
+      <span v-if="state.lastServerMsg" class="stage-chip stage-chip--msg"
+        >最后消息: {{ state.lastServerMsg.type }} @{{ fmtTime(state.lastServerMsg.at) }}</span
+      >
     </div>
 
     <!-- textarea + floating action strip + 发送. ComposerBox owns the grid and
@@ -429,23 +425,10 @@ function fmtTime(at: number): string {
     </transition>
 
     <!-- Hidden picker for 附加文件 (the shell owns it; the button emits). -->
-    <input
-      ref="fileInput"
-      type="file"
-      multiple
-      class="file-input-hidden"
-      @change="onFilesPicked"
-    />
+    <input ref="fileInput" type="file" multiple class="file-input-hidden" @change="onFilesPicked" />
 
-    <InputNoticeBar
-      :warning="showInputWarning ? inputWarningText : null"
-      :error="uploadError || null"
-    />
-    <AttachmentBar
-      :files="files"
-      @manage="openManager"
-      @remove="removeFile"
-    />
+    <InputNoticeBar :warning="showInputWarning ? inputWarningText : null" :error="uploadError || null" />
+    <AttachmentBar :files="files" @manage="openManager" @remove="removeFile" />
     <!-- Teleported to <body> by ModalShell; sits here only for prop wiring. -->
     <AttachmentManager
       :open="managerOpen"
@@ -602,7 +585,9 @@ function fmtTime(at: number): string {
 }
 .auto-toast-enter-active,
 .auto-toast-leave-active {
-  transition: opacity 0.2s, transform 0.2s;
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
 }
 .auto-toast-enter-from,
 .auto-toast-leave-to {

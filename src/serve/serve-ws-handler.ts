@@ -78,9 +78,8 @@ export function handleWsMessage(hub: HubHandler, ws: WebSocket, data: string): v
       // upload — the placeholder only needs to be non-empty to drive the
       // loop. A real comment (non-empty text) is submitted verbatim.
       const hasFiles = msg.files !== undefined && msg.files.length > 0;
-      const textToSend = msg.text !== undefined && msg.text.trim() !== ''
-        ? msg.text
-        : (hasFiles ? '(uploaded files)' : undefined);
+      const textToSend =
+        msg.text !== undefined && msg.text.trim() !== '' ? msg.text : hasFiles ? '(uploaded files)' : undefined;
       if (textToSend !== undefined) {
         hub.submitInput(textToSend);
         // Multi-browser sync: echo the user bubble to all OTHER clients so a

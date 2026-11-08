@@ -83,13 +83,7 @@ export function peerIdentityArgs(peer: Peer): string {
  * (the G3 root cause).
  */
 export function peerMailboxPath(peer: Peer): string {
-  return path.resolve(
-    peer.workdir as string,
-    '.mycc',
-    'sessions',
-    peer.sessionId as string,
-    'unread-lead.jsonl',
-  );
+  return path.resolve(peer.workdir as string, '.mycc', 'sessions', peer.sessionId as string, 'unread-lead.jsonl');
 }
 
 /** True when `key` is one of the flags the launcher owns (never spec-authored). */

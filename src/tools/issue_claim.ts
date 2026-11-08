@@ -8,20 +8,21 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issueClaimTool: ToolDefinition = {
   name: 'issue_claim',
-  description: 'Claim a pending shared team issue to start work. Sets status to in_progress and assigns owner so all agents can see who is working on what. Returns the full issue list.',
+  description:
+    'Claim a pending shared team issue to start work. Sets status to in_progress and assigns owner so all agents can see who is working on what. Returns the full issue list.',
   input_schema: {
     type: 'object',
     properties: {
       id: {
         type: 'integer',
-        description: 'Issue ID to claim (see issue_list for available pending issues).',
+        description: 'Issue ID to claim (see issue_list for available pending issues).'
       },
       owner: {
         type: 'string',
-        description: 'Name or identifier of who is claiming the issue.',
-      },
+        description: 'Name or identifier of who is claiming the issue.'
+      }
     },
-    required: ['id', 'owner'],
+    required: ['id', 'owner']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -50,8 +51,8 @@ export const issueClaimTool: ToolDefinition = {
     }
 
     ctx.core.brief('info', 'issue_claim', `Claimed issue #${id}: "${issue.title}"`, `@${owner}`);
-    
+
     // Return full issue list for visibility
     return await ctx.issue.printIssues();
-  },
+  }
 };

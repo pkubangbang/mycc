@@ -16,7 +16,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
       include: ['src/**/*.ts'],
-      exclude: ['src/tests/**', 'src/index.ts', 'src/lead.ts'],
+      exclude: ['src/tests/**', 'src/index.ts', 'src/lead.ts']
       // Ratchet: these floors only guard against a test deletion that
       // silently drops coverage. They are deliberately set below the
       // measured baseline and must be raised (never lowered) once a higher
@@ -26,6 +26,6 @@ export default defineConfig({
       // thresholds: { lines: 0, branches: 0, functions: 0 },
     },
     testTimeout: 10000,
-    hookTimeout: 10000,
-  },
+    hookTimeout: 10000
+  }
 });

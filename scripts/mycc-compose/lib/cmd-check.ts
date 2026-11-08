@@ -13,10 +13,7 @@ export function cmdCheck(file: string): void {
   for (const peer of spec.peers) {
     const st = peerStatus(peer);
     const verdict = st.matching ? 'match' : st.live ? 'mismatch' : 'stale';
-    out(
-      `  - ${peer.name}: ${verdict}` +
-      ` [sid=${st.sessionId ?? '(none)'}, live=${st.live}, args="${peer.args}"]`,
-    );
+    out(`  - ${peer.name}: ${verdict}` + ` [sid=${st.sessionId ?? '(none)'}, live=${st.live}, args="${peer.args}"]`);
   }
   if (spec.channels.length > 0) {
     for (const ch of channelStatus(spec)) {

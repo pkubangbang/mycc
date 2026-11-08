@@ -29,10 +29,11 @@ export const planOnTool: ToolDefinition = {
     properties: {
       allowed_file: {
         type: 'string',
-        description: 'Optional path to a file that can be edited during plan mode (e.g., README.md, docs/plan.md). User permission is required.',
-      },
+        description:
+          'Optional path to a file that can be edited during plan mode (e.g., README.md, docs/plan.md). User permission is required.'
+      }
     },
-    required: [],
+    required: []
   },
   scope: ['main'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -61,11 +62,13 @@ However, you may want to allow edits to this file:
 
       // Parse response
       let normalized = response.trim().toLowerCase();
-      if ((normalized.startsWith('"') && normalized.endsWith('"')) ||
-          (normalized.startsWith("'") && normalized.endsWith("'"))) {
+      if (
+        (normalized.startsWith('"') && normalized.endsWith('"')) ||
+        (normalized.startsWith("'") && normalized.endsWith("'"))
+      ) {
         normalized = normalized.slice(1, -1).trim();
       }
-      
+
       // Default is deny (strict plan mode): [y/N] convention means Enter = No
       const approved = normalized === 'y' || normalized === 'yes';
       const denied = normalized === '' || normalized === 'n' || normalized === 'no';
@@ -110,9 +113,18 @@ However, you may want to allow edits to this file:
 
         // Factor 2: Known extensionless filenames (dotfiles and conventional names)
         const knownFiles = new Set([
-          'makefile', 'dockerfile', 'gemfile', 'procfile',
-          '.gitignore', '.gitattributes', '.env', '.editorconfig',
-          '.prettierrc', '.eslintrc', '.npmrc', '.nvmrc',
+          'makefile',
+          'dockerfile',
+          'gemfile',
+          'procfile',
+          '.gitignore',
+          '.gitattributes',
+          '.env',
+          '.editorconfig',
+          '.prettierrc',
+          '.eslintrc',
+          '.npmrc',
+          '.nvmrc'
         ]);
         if (knownFiles.has(lastSegment.toLowerCase())) return true;
 
@@ -124,11 +136,11 @@ However, you may want to allow edits to this file:
           // Reject if no alphanumeric characters (catches "+-*/")
           if (!/[a-zA-Z0-9]/.test(trimmed)) return false;
           // Reject single-character segments on both sides (catches "y/n", "a/b", "n/m")
-          const segments = trimmed.split(/[/\\]+/).filter(s => s.length > 0);
-          if (segments.length >= 2 && segments.every(s => s.length <= 2)) {
+          const segments = trimmed.split(/[/\\]+/).filter((s) => s.length > 0);
+          if (segments.length >= 2 && segments.every((s) => s.length <= 2)) {
             // All segments are very short — likely a binary choice like "y/n", "on/off"
             // Only allow if at least one segment has a dot (extension) or is >2 chars
-            if (!segments.some(s => s.length > 2 || s.includes('.'))) return false;
+            if (!segments.some((s) => s.length > 2 || s.includes('.'))) return false;
           }
           return true;
         }
@@ -147,9 +159,7 @@ However, you may want to allow edits to this file:
         return `Plan mode activated (strict - no files allowed for editing).\n\nThe user responded with "${userFile}" which does not look like a file path, so strict plan mode was applied. All code changes are prohibited.`;
       }
 
-      const resolvedUserPath = path.isAbsolute(userFile)
-        ? userFile
-        : path.resolve(ctx.core.getWorkDir(), userFile);
+      const resolvedUserPath = path.isAbsolute(userFile) ? userFile : path.resolve(ctx.core.getWorkDir(), userFile);
 
       const core = ctx.core as Core;
       core.setMode('plan', resolvedUserPath);
@@ -166,5 +176,5 @@ However, you may want to allow edits to this file:
     team.broadcastModeChange('plan');
     ctx.core.brief('info', 'plan_on', 'Plan mode activated (strict)');
     return `Plan mode activated.\n\nAll code changes are prohibited. You can still:\n- Read files\n- Search the web\n- Use other read-only tools`;
-  },
+  }
 };

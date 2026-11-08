@@ -37,7 +37,7 @@ const entries = computed(() =>
     const padding = f.data.endsWith('==') ? 2 : f.data.endsWith('=') ? 1 : 0;
     const bytes = Math.max(0, Math.floor((chars * 3) / 4) - padding);
     return { ...f, index, size: formatBytes(bytes) };
-  }),
+  })
 );
 </script>
 
@@ -47,20 +47,12 @@ const entries = computed(() =>
       <li v-for="e in entries" :key="e.filename + e.index" class="att-row">
         <span class="att-name" :title="e.filename">{{ e.filename }}</span>
         <span class="att-meta">{{ e.mimeType }} · {{ e.size }}</span>
-        <button
-          class="att-remove"
-          :aria-label="`移除 ${e.filename}`"
-          @click="emit('remove', e.index)"
-        >&times;</button>
+        <button class="att-remove" :aria-label="`移除 ${e.filename}`" @click="emit('remove', e.index)">&times;</button>
       </li>
     </ul>
     <p v-else class="att-empty">没有待上传的附件</p>
     <template #footer>
-      <button
-        class="att-clear"
-        :disabled="entries.length === 0"
-        @click="emit('remove-all')"
-      >全部移除</button>
+      <button class="att-clear" :disabled="entries.length === 0" @click="emit('remove-all')">全部移除</button>
       <button class="att-done" @click="emit('close')">完成</button>
     </template>
   </ModalShell>

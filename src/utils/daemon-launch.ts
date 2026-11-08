@@ -75,10 +75,7 @@ export interface DaemonSpawnResult {
  * @param env - environment for the spawned child
  * @returns the Lead's real PID, or an error/warning if spawning failed
  */
-export function spawnDaemonLead(
-  forwardedArgs: string[],
-  env: NodeJS.ProcessEnv,
-): Promise<DaemonSpawnResult> {
+export function spawnDaemonLead(forwardedArgs: string[], env: NodeJS.ProcessEnv): Promise<DaemonSpawnResult> {
   const tsxScript = resolve(PROJECT_ROOT, 'src', 'lead.ts');
 
   // ── Decide wrapper vs fallback ──
@@ -97,22 +94,26 @@ export function spawnDaemonLead(
   let child: ChildProcess;
   if (useWrapper) {
     const loaderPath = getTsxLoaderPath();
-    child = spawn(wrapperPath, [
-      process.execPath,           // node.exe path
-      loaderPath,                 // tsx ESM loader (file:// URL)
-      tsxScript,                  // src/lead.ts
-      ...forwardedArgs,           // --daemon, --skip-healthcheck, etc.
-    ], {
-      cwd: process.cwd(),
-      // stdio: no IPC channel — the Go wrapper can't do Node.js IPC, and the
-      // daemon Lead's IPC is fire-and-forget anyway (Coordinator exits
-      // immediately). The Lead's IPC guard is relaxed for daemon mode
-      // (agent-repl.ts) so it boots without process.send.
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env,
-      // detached: true so the wrapper survives the Coordinator's exit.
-      detached: true,
-    });
+    child = spawn(
+      wrapperPath,
+      [
+        process.execPath, // node.exe path
+        loaderPath, // tsx ESM loader (file:// URL)
+        tsxScript, // src/lead.ts
+        ...forwardedArgs // --daemon, --skip-healthcheck, etc.
+      ],
+      {
+        cwd: process.cwd(),
+        // stdio: no IPC channel — the Go wrapper can't do Node.js IPC, and the
+        // daemon Lead's IPC is fire-and-forget anyway (Coordinator exits
+        // immediately). The Lead's IPC guard is relaxed for daemon mode
+        // (agent-repl.ts) so it boots without process.send.
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env,
+        // detached: true so the wrapper survives the Coordinator's exit.
+        detached: true
+      }
+    );
   } else {
     child = spawnTsx({
       script: tsxScript,
@@ -125,7 +126,7 @@ export function spawnDaemonLead(
       // Detach into its own process group so the daemon survives the
       // Coordinator's exit. Without this, Windows sends CTRL_CLOSE_EVENT
       // to the whole console group on Coordinator exit, killing the Lead.
-      detached: true,
+      detached: true
     });
   }
 
@@ -134,7 +135,9 @@ export function spawnDaemonLead(
   // this, only events arriving in the brief window before exit are captured.
   // The durable record is the Lead's own verbose-lead-<ts>.log.
   if (isVerbose()) {
-    console.log(`[verbose] spawning daemon lead: script=${tsxScript} args=${JSON.stringify(forwardedArgs)} pid=${child.pid}`);
+    console.log(
+      `[verbose] spawning daemon lead: script=${tsxScript} args=${JSON.stringify(forwardedArgs)} pid=${child.pid}`
+    );
     child.on('exit', (code, signal) => {
       console.log(`[verbose] daemon lead exited: code=${code} signal=${signal}`);
     });
@@ -199,7 +202,7 @@ function resolveWrapperLeadPid(child: ChildProcess): Promise<DaemonSpawnResult> 
           finish({
             pid: leadPid,
             child,
-            warning: `wrapper exited with code ${wrapperCode}, but the Lead was spawned (pid: ${leadPid}).`,
+            warning: `wrapper exited with code ${wrapperCode}, but the Lead was spawned (pid: ${leadPid}).`
           });
         } else {
           finish({ pid: leadPid, child });
@@ -211,7 +214,7 @@ function resolveWrapperLeadPid(child: ChildProcess): Promise<DaemonSpawnResult> 
         finish({
           pid: child.pid ?? null,
           child,
-          warning: `could not determine lead PID from wrapper output. The wrapper may have failed.`,
+          warning: `could not determine lead PID from wrapper output. The wrapper may have failed.`
         });
       }
     });
@@ -271,11 +274,15 @@ export function drainedExit(code = 0): void {
 export function finishDaemonExit(child: ChildProcess): void {
   if (isVerbose()) {
     let exited = false;
-    child.on('exit', () => { exited = true; });
+    child.on('exit', () => {
+      exited = true;
+    });
     const graceMs = 2000;
     setTimeout(() => {
       if (!exited) {
-        console.log(`[verbose] daemon still alive after ${graceMs}ms — coordinator exiting, daemon continues (pid=${child.pid})`);
+        console.log(
+          `[verbose] daemon still alive after ${graceMs}ms — coordinator exiting, daemon continues (pid=${child.pid})`
+        );
       } else {
         console.log(`[verbose] daemon exited within grace window — see verbose-lead-<ts>.log for the reason`);
       }

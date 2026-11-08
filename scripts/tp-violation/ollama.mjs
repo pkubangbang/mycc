@@ -57,17 +57,21 @@ let inconclusive = 0;
  */
 export async function post(messages, model) {
   try {
-    const resp = await retryChat(
-      { model, messages, tools: [], think: false },
-      { signal: AbortSignal.timeout(120000) },
-    );
-    return { status: 'ACCEPTED', detail: `reply: ${String(resp?.message?.content ?? '').replace(/\s+/g, ' ').slice(0, 60)}` };
+    const resp = await retryChat({ model, messages, tools: [], think: false }, { signal: AbortSignal.timeout(120000) });
+    return {
+      status: 'ACCEPTED',
+      detail: `reply: ${String(resp?.message?.content ?? '')
+        .replace(/\s+/g, ' ')
+        .slice(0, 60)}`
+    };
   } catch (err) {
     const code = err?.status ?? err?.statusCode;
     const msg = String(err?.message ?? err);
     const rejected =
       /40\d/.test(String(code)) ||
-      /API error 4\d\d|invalid_request_error|must be followed by tool messages|must be a response to a preceding message/i.test(msg);
+      /API error 4\d\d|invalid_request_error|must be followed by tool messages|must be a response to a preceding message/i.test(
+        msg
+      );
     if (!rejected) inconclusive++;
     return { status: rejected ? 'REJECTED' : 'TRANSPORT-ERROR', detail: msg.replace(/\s+/g, ' ').slice(0, 170) };
   }
@@ -76,7 +80,10 @@ export async function post(messages, model) {
 /** Run the 55-case matrix once against ONE model; returns its tally. */
 export async function runSequences(model) {
   console.log(`\n── phase 4: sequence matrix vs LIVE ${PROVIDER} model="${model}" (${SEQUENCES.length} cases) ──\n`);
-  let accepted = 0, rejected = 0, mismatches = 0, wrong = 0;
+  let accepted = 0,
+    rejected = 0,
+    mismatches = 0,
+    wrong = 0;
 
   for (const c of SEQUENCES) {
     process.stdout.write(`  ${c.name}... `);
@@ -94,7 +101,9 @@ export async function runSequences(model) {
 
     const tag = !informative ? '???' : providerOk ? 'ok ' : 'BAD';
     if (VERBOSE || tag !== 'ok ' || !agrees) {
-      console.log(`${r.status}  [${tag}]${agrees ? '' : `  ← EXPECTATION MISMATCH (expected ${want}, local checker says ${localVerdict})`}`);
+      console.log(
+        `${r.status}  [${tag}]${agrees ? '' : `  ← EXPECTATION MISMATCH (expected ${want}, local checker says ${localVerdict})`}`
+      );
       console.log(`          ${describe(c.msgs)}`);
       console.log(`          ${r.detail}`);
     } else {
@@ -136,7 +145,9 @@ export async function main() {
   console.log('\n═══ summary ═══');
   console.log(`  provider                    : ${PROVIDER}`);
   for (const r of results) {
-    console.log(`  ${r.model.padEnd(28)}: ${r.accepted} accepted / ${r.rejected} rejected  (expectation mismatches: ${r.wrong})`);
+    console.log(
+      `  ${r.model.padEnd(28)}: ${r.accepted} accepted / ${r.rejected} rejected  (expectation mismatches: ${r.wrong})`
+    );
   }
   console.log(`  transport errors            : ${inconclusive}`);
   const ok = inconclusive === 0 && results.every((r) => r.wrong === 0);

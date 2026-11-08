@@ -62,7 +62,7 @@ export function parse_markdown(content: string): MarkdownSection[] {
         level,
         title,
         text: '', // Will be filled with content below this heading
-        children: [],
+        children: []
       };
 
       // Pop stack until we find the parent level
@@ -110,7 +110,7 @@ export function build_node(section: MarkdownSection, parentId: string, level: nu
     summary: '', // Will be filled during summarization
     level,
     children: section.children.map((child) => build_node(child, id, level + 1)),
-    links,
+    links
   };
 }
 
@@ -135,26 +135,22 @@ export function extract_links(text: string): Link[] {
       links.push({
         target_type: 'url',
         url: target,
-        comment,
+        comment
       });
-    } else if (
-      target.startsWith('/') ||
-      target.startsWith('./') ||
-      target.startsWith('../')
-    ) {
+    } else if (target.startsWith('/') || target.startsWith('./') || target.startsWith('../')) {
       // Could be a file path or node reference
       // For now, treat as file path (stubs only)
       links.push({
         target_type: 'file',
         file_path: target,
-        comment,
+        comment
       });
     } else {
       // Assume it's a node reference
       links.push({
         target_type: 'node',
         node_id: target,
-        comment,
+        comment
       });
     }
   }
@@ -309,7 +305,7 @@ export function create_lock(outFile: string, mdPath: string, hash: string): Lock
     started_at: new Date().toISOString(),
     source_file: mdPath,
     source_hash: hash,
-    output_file: outFile,
+    output_file: outFile
   };
   const lockPath = get_lock_path(outFile);
   // 'wx' atomically fails with EEXIST if the file already exists, closing
@@ -414,7 +410,14 @@ export class ProgressTracker {
    * @param roundTools - Number of tool calls in the current round (batch size).
    *                     Defaults to 1 (single-call round).
    */
-  onProgress(nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>, roundTools: number = 1): void {
+  onProgress(
+    nodeTitle: string,
+    level: number,
+    round: number,
+    tool: string,
+    args: Record<string, unknown>,
+    roundTools: number = 1
+  ): void {
     this.activeOps.set(nodeTitle, { nodeTitle, level, round, tool, args, roundTools });
     this.queueRender();
   }
@@ -564,11 +567,7 @@ export function formatToolArg(tool: string, args: Record<string, unknown>): stri
 /**
  * Render progress bar and active operations
  */
-export function renderProgress(
-  processed: number,
-  total: number,
-  activeOps: ActiveOp[]
-): string {
+export function renderProgress(processed: number, total: number, activeOps: ActiveOp[]): string {
   const percent = Math.round((processed / total) * 100);
   const bar = '█'.repeat(Math.floor(percent / 5)) + '░'.repeat(20 - Math.floor(percent / 5));
 

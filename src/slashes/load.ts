@@ -36,7 +36,7 @@ export const loadCommand: SlashCommand = {
     if (args.length === 1) {
       // List available sessions (excluding current session)
       const currentSessionId = getSessionContext();
-      const sessions = listSessions().filter(s => s.id !== currentSessionId);
+      const sessions = listSessions().filter((s) => s.id !== currentSessionId);
       if (sessions.length === 0) {
         console.log(chalk.yellow('No saved sessions found.'));
       } else {
@@ -117,10 +117,12 @@ export const loadCommand: SlashCommand = {
       // single OK button in the webui (NO useless text input) — the user
       // edits the DOSQ file in their editor, then clicks OK to continue.
       // onEnter:'' makes Enter-on-empty (terminal) / OK (webui) resolve to ''.
-      await agentIO.ask(
-        chalk.cyan('Edit the DOSQ file if needed, save and close, then click OK to continue'),
-        { useAsPrompt: true, onEsc: '', onEnter: '', notice: true },
-      );
+      await agentIO.ask(chalk.cyan('Edit the DOSQ file if needed, save and close, then click OK to continue'), {
+        useAsPrompt: true,
+        onEsc: '',
+        onEnter: '',
+        notice: true
+      });
 
       // Read DOSQ content
       const dosqContent = readDosq(dosqPath);
@@ -148,5 +150,5 @@ export const loadCommand: SlashCommand = {
       }
       console.log(chalk.red(`Failed to load session: ${(err as Error).message}`));
     }
-  },
+  }
 };

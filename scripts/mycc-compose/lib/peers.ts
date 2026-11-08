@@ -24,7 +24,7 @@ export {
   sleep,
   peerIdentityArgs,
   peerMailboxPath,
-  isLauncherFlag,
+  isLauncherFlag
 } from './peers-types.js';
 export type { Peer, PeerStatusRow } from './peers-types.js';
 
@@ -35,7 +35,7 @@ export {
   launchPeer,
   stopPeer,
   isMyccProcess,
-  readProcessCommandLine,
+  readProcessCommandLine
 } from './peers-lifecycle.js';
 export type { LaunchResult } from './peers-lifecycle.js';
 
@@ -46,5 +46,5 @@ export {
   repairIdentity,
   cullStoppedPeers,
   waitForPeerGone,
-  peerStatus,
+  peerStatus
 } from './peers-state.js';

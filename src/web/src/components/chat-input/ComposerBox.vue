@@ -111,61 +111,79 @@ const bandHeight = computed(() => {
     <div class="composer-row" :style="{ '--band-h': `${bandHeight}px` }">
       <div class="input-band" ref="bandEl">
         <textarea
-        :value="props.text"
-        class="composer-box__textarea"
-        :placeholder="props.placeholder"
-        rows="2"
-        @input="emit('update:text', ($event.target as HTMLTextAreaElement).value)"
-        @keydown="onKeydown"
-        @paste="onPaste"
-      ></textarea>
-      <!-- Three action buttons, overlaid INSIDE the textarea's cell at the
+          :value="props.text"
+          class="composer-box__textarea"
+          :placeholder="props.placeholder"
+          rows="2"
+          @input="emit('update:text', ($event.target as HTMLTextAreaElement).value)"
+          @keydown="onKeydown"
+          @paste="onPaste"
+        ></textarea>
+        <!-- Three action buttons, overlaid INSIDE the textarea's cell at the
            bottom-right. Order left→right: compact, auto, attach. -->
-      <div class="composer-box__actions">
-        <button
-          class="tool-btn compact-btn"
-          :disabled="!props.canCompact"
-          title="压缩上下文"
-          @click="emit('compact')"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 5 Q6 12 3 19" />
-            <path d="M21 5 Q18 12 21 19" />
-            <path d="M9 3 L14 3 L16 5 L15 21 L8 21 Z" />
-          </svg>
-        </button>
-        <!-- Lightning bolt: one-way "enter auto mode". If already in auto mode
-             the shell shows a transient "已经是自动模式了" toast. -->
-        <button
-          class="tool-btn auto-btn"
-          :class="{ 'auto-btn--on': props.isAutoMode }"
-          :disabled="!props.connected"
-          :title="props.isAutoMode ? '已经是自动模式了' : '进入自动模式'"
-          @click="emit('auto')"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-          </svg>
-        </button>
-        <button
-          class="tool-btn attach-btn"
-          :disabled="!props.connected"
-          title="附加文件"
-          @click="emit('attach')"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="17 8 12 3 7 8" />
-            <line x1="12" y1="3" x2="12" y2="15" />
-          </svg>
-        </button>
-      </div>
-        <div class="send-wrap">
+        <div class="composer-box__actions">
           <button
-            class="send-btn"
-            :disabled="!props.canSend"
-            @click="emit('send')"
-          >发送</button>
+            class="tool-btn compact-btn"
+            :disabled="!props.canCompact"
+            title="压缩上下文"
+            @click="emit('compact')"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M3 5 Q6 12 3 19" />
+              <path d="M21 5 Q18 12 21 19" />
+              <path d="M9 3 L14 3 L16 5 L15 21 L8 21 Z" />
+            </svg>
+          </button>
+          <!-- Lightning bolt: one-way "enter auto mode". If already in auto mode
+             the shell shows a transient "已经是自动模式了" toast. -->
+          <button
+            class="tool-btn auto-btn"
+            :class="{ 'auto-btn--on': props.isAutoMode }"
+            :disabled="!props.connected"
+            :title="props.isAutoMode ? '已经是自动模式了' : '进入自动模式'"
+            @click="emit('auto')"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            </svg>
+          </button>
+          <button class="tool-btn attach-btn" :disabled="!props.connected" title="附加文件" @click="emit('attach')">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+          </button>
+        </div>
+        <div class="send-wrap">
+          <button class="send-btn" :disabled="!props.canSend" @click="emit('send')">发送</button>
           <!-- Mode text: DIRECTLY below 发送, inside the send column. Plain
                text (no capsule/pill), uppercase, muted, so it reads as state
                rather than an action. Always visible — the band floor (70px)
@@ -174,7 +192,8 @@ const bandHeight = computed(() => {
             class="mode-text"
             :class="{ 'mode-text--plan': props.planMode }"
             :title="props.planMode ? '计划模式：只读探索，不修改代码' : '普通模式'"
-          >{{ props.planMode ? 'PLAN' : 'NORMAL' }}</span>
+            >{{ props.planMode ? 'PLAN' : 'NORMAL' }}</span
+          >
         </div>
       </div>
     </div>
@@ -231,19 +250,39 @@ const bandHeight = computed(() => {
 /* The drag handle is absolutely positioned on the top edge (it takes no grid
    row). Everything else follows in document order: stage strip? → composer
    row → notices → attachment bar. */
-.composer-box > .stage-row { grid-row: 1; grid-column: 1 / 3; margin: 0 var(--composer-gutter, 8px); }
-.composer-box:not(:has(> .stage-row)) > .composer-row { grid-row: 1; }
-.composer-box:has(> .stage-row)    > .composer-row { grid-row: 2; }
-.composer-box > .composer-row { grid-column: 1 / 3; }
+.composer-box > .stage-row {
+  grid-row: 1;
+  grid-column: 1 / 3;
+  margin: 0 var(--composer-gutter, 8px);
+}
+.composer-box:not(:has(> .stage-row)) > .composer-row {
+  grid-row: 1;
+}
+.composer-box:has(> .stage-row) > .composer-row {
+  grid-row: 2;
+}
+.composer-box > .composer-row {
+  grid-column: 1 / 3;
+}
 .composer-box:not(:has(> .stage-row)) > .input-warning,
-.composer-box:not(:has(> .stage-row)) > .upload-error  { grid-row: 2; }
+.composer-box:not(:has(> .stage-row)) > .upload-error {
+  grid-row: 2;
+}
 .composer-box:has(> .stage-row) > .input-warning,
-.composer-box:has(> .stage-row) > .upload-error        { grid-row: 3; }
-.composer-box:not(:has(> .stage-row)) > .attachment-bar { grid-row: 3; }
-.composer-box:has(> .stage-row)    > .attachment-bar { grid-row: 4; }
+.composer-box:has(> .stage-row) > .upload-error {
+  grid-row: 3;
+}
+.composer-box:not(:has(> .stage-row)) > .attachment-bar {
+  grid-row: 3;
+}
+.composer-box:has(> .stage-row) > .attachment-bar {
+  grid-row: 4;
+}
 .composer-box > .input-warning,
 .composer-box > .upload-error,
-.composer-box > .attachment-bar                    { grid-column: 1 / 3; }
+.composer-box > .attachment-bar {
+  grid-column: 1 / 3;
+}
 
 /* The composer row carries the horizontal gutter (the shell pads only the
    box's bottom, so the drag handle can sit ON the container's top edge).
@@ -342,7 +381,9 @@ const bandHeight = computed(() => {
   width: 28px;
   height: 28px;
   cursor: pointer;
-  transition: color 0.15s, background 0.15s;
+  transition:
+    color 0.15s,
+    background 0.15s;
 }
 .tool-btn:disabled {
   opacity: 0.3;

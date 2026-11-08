@@ -8,24 +8,25 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issueCommentTool: ToolDefinition = {
   name: 'issue_comment',
-  description: 'Add a comment to a shared team issue for progress updates or discussion visible to all agents. Use during work to document findings or ask questions.',
+  description:
+    'Add a comment to a shared team issue for progress updates or discussion visible to all agents. Use during work to document findings or ask questions.',
   input_schema: {
     type: 'object',
     properties: {
       id: {
         type: 'integer',
-        description: 'Issue ID to add a comment to.',
+        description: 'Issue ID to add a comment to.'
       },
       comment: {
         type: 'string',
-        description: 'Comment text. Include relevant details, findings, or questions.',
+        description: 'Comment text. Include relevant details, findings, or questions.'
       },
       poster: {
         type: 'string',
-        description: 'Name of the commenter. Defaults to anonymous if omitted.',
-      },
+        description: 'Name of the commenter. Defaults to anonymous if omitted.'
+      }
     },
-    required: ['id', 'comment'],
+    required: ['id', 'comment']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -52,5 +53,5 @@ export const issueCommentTool: ToolDefinition = {
     ctx.core.brief('info', 'issue_comment', `Added comment to #${id}: "${comment}"`);
 
     return 'OK';
-  },
+  }
 };

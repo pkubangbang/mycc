@@ -10,7 +10,7 @@ import {
   loadMore as reduceLoadMore,
   returnToTail as reduceReturnToTail,
   leaveTail as reduceLeaveTail,
-  applyObservation,
+  applyObservation
 } from '../collapse-state';
 import type { CollapseState, Observation } from '../collapse-state';
 import MessageItem from './MessageItem.vue';
@@ -87,15 +87,15 @@ let userScrolledUp = false;
 // reactive refs and applies the reducer results + the DOM/scroll
 // side-effects the pure module can't do.
 const capacity = ref(INITIAL_VISIBLE); // x
-const tailBuffer = ref(0);             // t
-const trackingTail = ref(true);        // pinned to the live tail?
+const tailBuffer = ref(0); // t
+const trackingTail = ref(true); // pinned to the live tail?
 
 // Read the current collapse state as a plain object (for the pure reducer).
 function collapseState(): CollapseState {
   return {
     capacity: capacity.value,
     tailBuffer: tailBuffer.value,
-    trackingTail: trackingTail.value,
+    trackingTail: trackingTail.value
   };
 }
 // Apply a reducer result back onto the reactive refs.
@@ -116,9 +116,7 @@ function applyCollapseState(s: CollapseState): void {
 // Visible messages: filtered by the 详细日志 toggle. When off, only
 // user-facing lines (user/result/assistant/brief/question/prompt) show;
 // when on, all logs are visible.
-const filteredMessages = computed(() =>
-  props.messages.filter(m => isMessageVisible(m, props.state.verboseLogs)),
-);
+const filteredMessages = computed(() => props.messages.filter((m) => isMessageVisible(m, props.state.verboseLogs)));
 
 // The collapse window: the LAST (capacity + tailBuffer) of the filtered
 // list — see the INVARIANT above. Clamped to MAX_VISIBLE and to the list
@@ -132,9 +130,7 @@ const visibleMessages = computed(() => {
 // Whether older messages are collapsed (drives the "加载更多" affordance at
 // the top). True only when there are filtered messages the window does NOT
 // show.
-const hasCollapsedAbove = computed(
-  () => filteredMessages.value.length > visibleMessages.value.length,
-);
+const hasCollapsedAbove = computed(() => filteredMessages.value.length > visibleMessages.value.length);
 
 // v-for key for each visible message: messageKey(msg, index). The helper is
 // a PURE function extracted to ../message-key.ts so the strictly-unique-key
@@ -319,8 +315,8 @@ let jumpCancelTween: (() => void) | null = null;
  */
 function tweenScroll(el: HTMLElement, dest: number): void {
   jumpCancelTween?.();
-  const reduced = typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduced =
+    typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduced) {
     el.scrollTop = dest;
     jumpCancelTween = null;
@@ -375,7 +371,10 @@ function jumpToPrevAwait(fromIndex: number): void {
   let targetMsg: ChatMessage | null = null;
   for (let i = fromIndex - 1; i >= 0; i--) {
     const m = filteredMessages.value[i];
-    if (m && isEntryHint(m)) { targetMsg = m; break; }
+    if (m && isEntryHint(m)) {
+      targetMsg = m;
+      break;
+    }
   }
   if (!targetMsg) {
     flashJumpNotice('上面没有更早的 AWAIT 提示了');
@@ -390,8 +389,7 @@ function jumpToPrevAwait(fromIndex: number): void {
   userScrolledUp = true;
   showScrollButton.value = true;
 
-  const findTarget = (): HTMLElement | null =>
-    el.querySelector<HTMLElement>('.is-prev-await-target');
+  const findTarget = (): HTMLElement | null => el.querySelector<HTMLElement>('.is-prev-await-target');
 
   // Clear the marker + flash ONLY after the jump has finished with it. A fixed
   // timeout used to race the scroll: the class could disappear before
@@ -400,7 +398,9 @@ function jumpToPrevAwait(fromIndex: number): void {
   let finishTimer: ReturnType<typeof setTimeout> | null = null;
   const finish = (): void => {
     if (finishTimer) return;
-    finishTimer = setTimeout(() => { prevAwaitTargetKey.value = null; }, 1200);
+    finishTimer = setTimeout(() => {
+      prevAwaitTargetKey.value = null;
+    }, 1200);
   };
 
   /**
@@ -428,8 +428,7 @@ function jumpToPrevAwait(fromIndex: number): void {
     }
 
     // The row is `display: contents`: it has no box, so measure its first child.
-    const box = (): HTMLElement | null =>
-      row.firstElementChild instanceof HTMLElement ? row.firstElementChild : null;
+    const box = (): HTMLElement | null => (row.firstElementChild instanceof HTMLElement ? row.firstElementChild : null);
 
     let polls = 0;
     const attempt = (): void => {
@@ -466,10 +465,11 @@ function jumpToPrevAwait(fromIndex: number): void {
       // is exact by construction; the easing is purely cosmetic.
       const dest = Math.max(
         0,
-        el.scrollTop + (target.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom) + JUMP_BOTTOM_PAD,
+        el.scrollTop + (target.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom) + JUMP_BOTTOM_PAD
       );
       tweenScroll(el, dest);
-      const hint = row.querySelector<HTMLElement>('[data-await-hint]');      if (hint) {
+      const hint = row.querySelector<HTMLElement>('[data-await-hint]');
+      if (hint) {
         hint.classList.add('await-hint--landed');
         window.setTimeout(() => hint.classList.remove('await-hint--landed'), 1000);
       }
@@ -483,11 +483,16 @@ function jumpToPrevAwait(fromIndex: number): void {
   //    cannot wedge the handler.
   let expansions = 0;
   const step = (): void => {
-    if (findTarget()) { settle(); return; }
+    if (findTarget()) {
+      settle();
+      return;
+    }
 
-    const ceiling =
-      !hasCollapsedAbove.value || capacity.value + tailBuffer.value >= MAX_VISIBLE;
-    if (ceiling || expansions >= JUMP_MAX_EXPANSIONS) { settle(); return; }
+    const ceiling = !hasCollapsedAbove.value || capacity.value + tailBuffer.value >= MAX_VISIBLE;
+    if (ceiling || expansions >= JUMP_MAX_EXPANSIONS) {
+      settle();
+      return;
+    }
 
     expansions++;
     loadMore(); // grows the window; it restores the current anchor itself
@@ -517,7 +522,6 @@ function jumpToPrevAwait(fromIndex: number): void {
  */
 const prevAwaitTargetKey = ref<string | null>(null);
 
-
 /**
  * One transient line for a jump that cannot happen — a silent no-op reads as a
  * dead button, and a modal for a navigation miss is disproportionate. Re-entry
@@ -528,7 +532,9 @@ let jumpNoticeTimer: ReturnType<typeof setTimeout> | null = null;
 function flashJumpNotice(text: string): void {
   jumpNotice.value = text;
   if (jumpNoticeTimer) clearTimeout(jumpNoticeTimer);
-  jumpNoticeTimer = setTimeout(() => { jumpNotice.value = ''; }, 3000);
+  jumpNoticeTimer = setTimeout(() => {
+    jumpNotice.value = '';
+  }, 3000);
 }
 onUnmounted(() => {
   if (jumpNoticeTimer) clearTimeout(jumpNoticeTimer);
@@ -576,9 +582,7 @@ function onScroll(): void {
 // to touch the textarea element directly.
 function onQuote(quotedText: string): void {
   const existing = props.state.inputText;
-  props.state.inputText = existing
-    ? `${existing}\n${quotedText}`
-    : quotedText;
+  props.state.inputText = existing ? `${existing}\n${quotedText}` : quotedText;
 }
 
 // ── Steering review "继续…" card handlers ──
@@ -670,9 +674,7 @@ watch(
     // first change it is the setup-time value (NOT undefined), so the first
     // real append/filter transition is processed (round-8 #20).
     const prevObs: Observation | undefined =
-      prev === undefined
-        ? undefined
-        : { verbose: prev[0], filteredLength: prev[1] };
+      prev === undefined ? undefined : { verbose: prev[0], filteredLength: prev[1] };
     const nextObs: Observation = { verbose: nextVerbose, filteredLength: nextFilteredLen };
     // #22: a history-revision change means the store was authoritatively
     // replaced (a /history 200 or session-clear splice). This is independent
@@ -688,7 +690,7 @@ watch(
     if (shouldScrollToTail) {
       nextTick(() => scrollToBottom());
     }
-  },
+  }
 );
 
 // Re-scroll to bottom when the interrupt/rocket row appears or disappears.
@@ -710,12 +712,18 @@ watch(
 // those to the watched tuple keeps the card in view when it surfaces at
 // PROMPT.
 watch(
-  () => [props.state.isAutoMode, props.state.isRunning, props.state.isWaiting, props.state.pendingSteeringReview.length] as const,
+  () =>
+    [
+      props.state.isAutoMode,
+      props.state.isRunning,
+      props.state.isWaiting,
+      props.state.pendingSteeringReview.length
+    ] as const,
   () => {
     if (trackingTail.value) {
       nextTick(() => scrollToBottom());
     }
-  },
+  }
 );
 
 onMounted(() => {
@@ -734,9 +742,7 @@ onMounted(() => {
          onScroll's isNearTop() check. The count tells the user how many
          collapsed messages remain above. -->
     <div v-if="hasCollapsedAbove" class="load-more-row">
-      <button class="load-more-btn" @click="loadMore" title="向上滚动或点击加载更早的消息">
-        加载更多…
-      </button>
+      <button class="load-more-btn" @click="loadMore" title="向上滚动或点击加载更早的消息">加载更多…</button>
     </div>
     <div
       v-for="(msg, index) in visibleMessages"
@@ -792,7 +798,11 @@ onMounted(() => {
         停止
       </button>
     </div>
-    <div v-else-if="state.isAutoMode" class="interrupt-row interrupt-row--auto" :class="{ 'is-warping': state.isRunning }">
+    <div
+      v-else-if="state.isAutoMode"
+      class="interrupt-row interrupt-row--auto"
+      :class="{ 'is-warping': state.isRunning }"
+    >
       <button
         class="interrupt-btn interrupt-btn--auto"
         :class="{ 'is-warping': state.isRunning }"
@@ -826,14 +836,19 @@ onMounted(() => {
         停止
       </button>
     </div>
-    <button
-      v-if="showScrollButton"
-      class="scroll-bottom-btn"
-      @click="scrollToBottom"
-      title="滚动到底部"
-    >
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <polyline points="6 9 12 15 18 9"/>
+    <button v-if="showScrollButton" class="scroll-bottom-btn" @click="scrollToBottom" title="滚动到底部">
+      <svg
+        viewBox="0 0 24 24"
+        width="18"
+        height="18"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <polyline points="6 9 12 15 18 9" />
       </svg>
     </button>
   </div>
@@ -896,7 +911,9 @@ onMounted(() => {
   padding: 4px 14px;
   border-radius: 12px;
   box-shadow: var(--scroll-shadow);
-  transition: background 0.15s, transform 0.15s;
+  transition:
+    background 0.15s,
+    transform 0.15s;
   backdrop-filter: blur(4px);
 }
 .load-more-btn:hover {
@@ -920,7 +937,9 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   margin: 0 auto;
-  transition: background 0.15s, transform 0.15s;
+  transition:
+    background 0.15s,
+    transform 0.15s;
   backdrop-filter: blur(4px);
 }
 .scroll-bottom-btn:hover {

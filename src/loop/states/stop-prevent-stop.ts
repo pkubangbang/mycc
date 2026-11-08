@@ -112,7 +112,7 @@ const PREVENT_STOP_RETRY_CONFIG: Partial<RetryConfig> = {
   responseTimeoutMs: 30_000,
   maxRetries: 1,
   baseDelayMs: 500,
-  maxDelayMs: 3_000,
+  maxDelayMs: 3_000
 };
 
 /**
@@ -157,9 +157,7 @@ export async function checkPreventStop(env: MachineEnv): Promise<PreventStopResu
 
   // `id` is fixed (echoed back); `hash` is supplied by the LLM from the
   // conversation context so the anti-hallucination check stays active.
-  const guardLines = guards.map(
-    (g) => `- #${g.id} "${g.name}" [hash: ${g.hash}] — Guard: "${g.preventStop}"`,
-  );
+  const guardLines = guards.map((g) => `- #${g.id} "${g.name}" [hash: ${g.hash}] — Guard: "${g.preventStop}"`);
   const prompt = [
     'You are a STOP GUARD evaluator. Each item below is a condition the work MUST reach before the agent may finish its turn.',
     '',
@@ -169,7 +167,7 @@ export async function checkPreventStop(env: MachineEnv): Promise<PreventStopResu
     'Based on the conversation context above, decide for EACH guard whether it is STILL HELD —',
     'i.e. the required state has NOT yet been verifiably reached.',
     '',
-    'ALSO classify the agent\'s FINAL assistant message (the reply that is about to end the turn):',
+    "ALSO classify the agent's FINAL assistant message (the reply that is about to end the turn):",
     '- "complete": a statement of finished work or a result.',
     '- "blocked": a statement of a HARD blocker (missing credential, destructive ambiguity, an irreversible',
     '  decision) that genuinely cannot proceed without the user.',
@@ -187,7 +185,7 @@ export async function checkPreventStop(env: MachineEnv): Promise<PreventStopResu
     '- "held": false only when the conversation contains concrete evidence the state was reached.',
     '- "ending": classify the final assistant message per the definitions above; omit if you cannot tell.',
     '- Judge EVIDENCE, not intent: the agent saying it will do something is not proof it did.',
-    '- Echo exactly one entry per guard above.',
+    '- Echo exactly one entry per guard above.'
   ].join('\n');
 
   const fullMessages = triologue.getMessages();
@@ -212,11 +210,15 @@ export async function checkPreventStop(env: MachineEnv): Promise<PreventStopResu
       result = await ctx.core.escAware(
         async (abortController) => {
           return await forkChat(
-            fullMessages, allTools, prompt, abortController.signal, 'none',
-            PREVENT_STOP_RETRY_CONFIG,
+            fullMessages,
+            allTools,
+            prompt,
+            abortController.signal,
+            'none',
+            PREVENT_STOP_RETRY_CONFIG
           );
         },
-        () => '' as const,
+        () => '' as const
       );
     } finally {
       stopSpinner();
@@ -274,7 +276,7 @@ export async function checkPreventStop(env: MachineEnv): Promise<PreventStopResu
       name: guard.name,
       condition: guard.preventStop,
       reason: typeof v.reason === 'string' ? v.reason : undefined,
-      stall,
+      stall
     });
   }
 
@@ -286,6 +288,6 @@ export async function checkPreventStop(env: MachineEnv): Promise<PreventStopResu
     held: true,
     guard: { id: top.id, name: top.name, condition: top.condition },
     ...(top.reason ? { reason: top.reason } : {}),
-    ...(top.stall ? { stall: true } : {}),
+    ...(top.stall ? { stall: true } : {})
   };
 }

@@ -28,7 +28,7 @@ export const domainCommand: SlashCommand = {
     } else {
       await handleList();
     }
-  },
+  }
 };
 
 async function handleList(): Promise<void> {
@@ -83,7 +83,7 @@ async function handleAdd(question: (query: string, asker: string) => Promise<Ask
   }
 
   // Check if domain already exists
-  if (domains.find(d => d.domain_name === name)) {
+  if (domains.find((d) => d.domain_name === name)) {
     console.log(chalk.yellow(`Domain "${name}" already exists.`));
     return;
   }
@@ -99,7 +99,7 @@ async function handleAdd(question: (query: string, asker: string) => Promise<Ask
     domain_name: name,
     description: description.trim(),
     created_at: new Date().toISOString(),
-    project_folder: process.cwd(),
+    project_folder: process.cwd()
   });
 
   // Save

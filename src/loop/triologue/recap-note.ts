@@ -48,11 +48,7 @@ export const BRIEF_HASH_LENGTH = 8;
  */
 export function briefHash(callId: string | undefined): string {
   if (!callId) return '';
-  return crypto
-    .createHash('sha256')
-    .update(callId)
-    .digest('hex')
-    .slice(0, BRIEF_HASH_LENGTH);
+  return crypto.createHash('sha256').update(callId).digest('hex').slice(0, BRIEF_HASH_LENGTH);
 }
 
 /**

@@ -94,7 +94,7 @@ export class PendingToolLedger {
   resolve(id: string): void {
     if (this.pending.has(id)) {
       this.pending.delete(id);
-      this.order = this.order.filter(x => x !== id);
+      this.order = this.order.filter((x) => x !== id);
     }
   }
 
@@ -105,14 +105,14 @@ export class PendingToolLedger {
   validateAlignment(
     functionName: string,
     toolCallId: string | undefined,
-    onMisalign: (warning: ToolAlignmentWarning) => void,
+    onMisalign: (warning: ToolAlignmentWarning) => void
   ): void {
     // No pending tool calls at all - orphan result
     if (this.pending.size === 0) {
       onMisalign({
         functionName,
         toolCallId,
-        issue: 'no_pending_calls',
+        issue: 'no_pending_calls'
       });
       return;
     }
@@ -122,7 +122,7 @@ export class PendingToolLedger {
       onMisalign({
         functionName,
         toolCallId,
-        issue: 'id_not_found',
+        issue: 'id_not_found'
       });
       return;
     }
@@ -135,7 +135,7 @@ export class PendingToolLedger {
           functionName,
           toolCallId,
           issue: 'name_mismatch',
-          expectedName: tc.function.name,
+          expectedName: tc.function.name
         });
       }
     }

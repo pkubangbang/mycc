@@ -21,7 +21,7 @@ import {
   WAVE_SIZE,
   WAVE_DELAY_MS,
   LAUNCH_TIMEOUT_MS,
-  LAUNCH_POLL_MS,
+  LAUNCH_POLL_MS
 } from './peers.js';
 import { stopPeerByAddress, isRefusal } from './peers-stop.js';
 import { out, warn } from './cli.js';
@@ -45,7 +45,7 @@ const MYCC_MAIL_SCRIPT = path.resolve(
   '..',
   '..',
   'mycc-mail',
-  'mycc-mail.js',
+  'mycc-mail.js'
 );
 
 /**
@@ -58,7 +58,9 @@ const MYCC_MAIL_SCRIPT = path.resolve(
  * docs/peers/remotes-design-decision.md.
  */
 function remotesMailContent(peer: NormalizedPeer): string {
-  const urls = getRemotes(peer).map((u) => `  - ${u}`).join('\n');
+  const urls = getRemotes(peer)
+    .map((u) => `  - ${u}`)
+    .join('\n');
   return (
     `[Remotes] This peer should dial the following remote mycc instance(s) ` +
     `over the WebSocket peer-wire:\n\n${urls}\n\n` +
@@ -88,7 +90,11 @@ function deliverRemotes(spec: NormalizedSpec): Array<{ name: string; ok: boolean
     // heartbeat file that never exists.
     const sid = resolvePeerSid(peer);
     if (!sid) {
-      rows.push({ name: peer.name, ok: false, note: `remotes for ${peer.name} not delivered (peer has no session id)` });
+      rows.push({
+        name: peer.name,
+        ok: false,
+        note: `remotes for ${peer.name} not delivered (peer has no session id)`
+      });
       continue;
     }
     if (!isPeerRunning({ sessionId: sid, workdir: peer.workdir })) {
@@ -101,10 +107,24 @@ function deliverRemotes(spec: NormalizedSpec): Array<{ name: string; ok: boolean
       // the exit code: 0 = delivered, non-zero = liveness gate refused.
       execFileSync(
         process.execPath,
-        [MYCC_MAIL_SCRIPT, sid, '--title', 'remotes', '--content', remotesMailContent(peer), '--from', 'mycc-compose', '--require-online'],
-        { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
+        [
+          MYCC_MAIL_SCRIPT,
+          sid,
+          '--title',
+          'remotes',
+          '--content',
+          remotesMailContent(peer),
+          '--from',
+          'mycc-compose',
+          '--require-online'
+        ],
+        { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }
       );
-      rows.push({ name: peer.name, ok: true, note: `remotes delivered (${peerRemotes.length} URL${peerRemotes.length === 1 ? '' : 's'})` });
+      rows.push({
+        name: peer.name,
+        ok: true,
+        note: `remotes delivered (${peerRemotes.length} URL${peerRemotes.length === 1 ? '' : 's'})`
+      });
     } catch (err) {
       // Non-zero exit = liveness gate refused (peer not live) OR a delivery
       // error. Either way, fail loud per peer and continue.
@@ -150,7 +170,11 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
     // Decision (i): 'refused-not-found' (never started) is not a failure — the
     // peer simply is not running — so it proceeds straight to launch. Every
     // OTHER refusal/still-up aborts the restart (fail loud), never a duplicate.
-    const { verdict: stopResult, sessionId } = await stopPeerByAddress({ cwd: peer.workdir, group: spec.group, name: peer.name });
+    const { verdict: stopResult, sessionId } = await stopPeerByAddress({
+      cwd: peer.workdir,
+      group: spec.group,
+      name: peer.name
+    });
     if (isRefusal(stopResult) && stopResult !== 'refused-not-found') {
       actions.push({ name: peer.name, action: `${reason} → stop=${stopResult}, restart ABORTED (refused)` });
       restartFailures.push(peer.name);
@@ -303,7 +327,9 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
     warn(`Warning: restart aborted for ${restartFailures.length} peer(s): ${restartFailures.join(', ')}`);
   }
   if (safetyBlocked.size > 0) {
-    warn(`Warning: sync did not start ${safetyBlocked.size} peer(s) because a stale identity may still have a live holder: ${[...safetyBlocked].join(', ')}`);
+    warn(
+      `Warning: sync did not start ${safetyBlocked.size} peer(s) because a stale identity may still have a live holder: ${[...safetyBlocked].join(', ')}`
+    );
   }
   // SUCCESS CONTRACT (owner decision): `up` succeeds only when BOTH halves
   // landed — every peer is live AND every declared channel pair was written.
@@ -313,13 +339,17 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
   // as peer failures now.
   const channelsSkipped = channelResults.filter((c) => !c.ok);
   if (channelsSkipped.length > 0) {
-    warn(`Warning: ${channelsSkipped.length} channel(s) not materialized: ${channelsSkipped.map((c) => c.label).join(', ')}`);
+    warn(
+      `Warning: ${channelsSkipped.length} channel(s) not materialized: ${channelsSkipped.map((c) => c.label).join(', ')}`
+    );
   }
   process.exit(
     launchResults.some((r) => !r.ok) ||
-    stillDown.length > 0 ||
-    restartFailures.length > 0 ||
-    safetyBlocked.size > 0 ||
-    channelsSkipped.length > 0 ? 1 : 0,
+      stillDown.length > 0 ||
+      restartFailures.length > 0 ||
+      safetyBlocked.size > 0 ||
+      channelsSkipped.length > 0
+      ? 1
+      : 0
   );
 }

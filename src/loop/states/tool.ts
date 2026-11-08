@@ -26,7 +26,7 @@ const EXPLORATION_TOOLS = new Set([
   'bg_print',
   'tm_print',
   'question',
-  'recall',
+  'recall'
 ]);
 
 /**
@@ -48,11 +48,7 @@ function isErrorResult(result: string): boolean {
   return false;
 }
 
-export async function handleTool(
-  env: MachineEnv,
-  turn: TurnVars,
-  chat: ChatData,
-): Promise<HandlerResult> {
+export async function handleTool(env: MachineEnv, turn: TurnVars, chat: ChatData): Promise<HandlerResult> {
   const { triologue, ctx, sequence } = env;
   const hookResult = chat.hookResult;
   if (!hookResult) return AgentState.COLLECT;
@@ -67,7 +63,7 @@ export async function handleTool(
       // (tool responses must follow assistant tool_calls)
       triologue.skipPendingTools(
         'Tool use interrupted - user pressed ESC.',
-        'Tool use skipped due to ESC interruption.',
+        'Tool use skipped due to ESC interruption.'
       );
       // Return STOP for centralized wrap-up (stop.ts handles startWrapUp +
       // auto-off + setNeglectedMode). Neglected mode is NOT cleared here.
@@ -105,7 +101,7 @@ export async function handleTool(
             toolName,
             ctx,
             toolCall.function.arguments as Record<string, unknown>,
-            abortController.signal,
+            abortController.signal
           );
         },
         () => 'Tool interrupted by user.'
@@ -121,9 +117,7 @@ export async function handleTool(
       // token a reader can cite, so a brief is addressable the moment it lands.
       // Only the pristine "OK…" result is stamped: an error or a plan-scope-less
       // variant is never relabelled as one. See recap-note.ts stampBriefResult.
-      const resultContent = toolName === 'brief'
-        ? stampBriefResult(output, toolCallId)
-        : output;
+      const resultContent = toolName === 'brief' ? stampBriefResult(output, toolCallId) : output;
 
       // Observability: emit tool_executed (silent when no listeners)
       loopEvents.emit('tool_executed', { tool: toolName, outputLength: output.length });
@@ -132,7 +126,7 @@ export async function handleTool(
         tool: toolName,
         args: toolCall.function.arguments as Record<string, unknown>,
         result: resultContent,
-        timestamp: Date.now(),
+        timestamp: Date.now()
       });
 
       triologue.tool(toolName, resultContent, toolCallId);
@@ -193,9 +187,10 @@ export async function handleTool(
         // composes X (this brief) + Y (user query / steering note) + Z
         // (hint round focus_on). See docs/misc/plan-composite-keyword-extraction.md.
         try {
-          const briefArgs = typeof toolCall.function.arguments === 'string'
-            ? JSON.parse(toolCall.function.arguments)
-            : toolCall.function.arguments as Record<string, unknown>;
+          const briefArgs =
+            typeof toolCall.function.arguments === 'string'
+              ? JSON.parse(toolCall.function.arguments)
+              : (toolCall.function.arguments as Record<string, unknown>);
           const briefMessage = briefArgs?.message as string;
           if (briefMessage && typeof briefMessage === 'string') {
             turn.lastBriefMessage = briefMessage;
@@ -204,7 +199,6 @@ export async function handleTool(
           // Swallow — brief message capture is best-effort.
         }
       }
-
     } catch (err) {
       if (err instanceof ResultTooLargeError) {
         const truncatedOutput =
@@ -233,7 +227,7 @@ export async function handleTool(
         loopEvents.emit('esc_interrupt', { state: 'tool' });
         triologue.skipPendingTools(
           'Tool execution cancelled (process shutting down or operation aborted).',
-          'Tool use skipped after cancellation.',
+          'Tool use skipped after cancellation.'
         );
         return AgentState.STOP;
       } else {

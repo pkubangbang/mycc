@@ -104,9 +104,9 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
       'SYSTEM',
       serveNow
         ? `Web UI started — this session is now reachable from a browser. A ` +
-          `user may submit prompts and mid-task steering notes from the WebUI, ` +
-          `so expect direction to arrive asynchronously while you work. ${startDetail}`
-        : `Web UI stopped — browser input is no longer available. ${stopDetail}`,
+            `user may submit prompts and mid-task steering notes from the WebUI, ` +
+            `so expect direction to arrive asynchronously while you work. ${startDetail}`
+        : `Web UI stopped — browser input is no longer available. ${stopDetail}`
     );
   }
 
@@ -128,8 +128,8 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
       const peerTag = isPeer ? ' (peer — cross-instance)' : '';
       parts.push(
         `Mail from ${mail.from}${peerTag}: ${mail.title}\n${mail.content}\n` +
-        `↳ Reply with mail_to(name="${mail.from}", title="${mail.title}: <re>", content="…")` +
-        `${isPeer ? ' — for a peer this session-id IS the name argument.' : ''}`
+          `↳ Reply with mail_to(name="${mail.from}", title="${mail.title}: <re>", content="…")` +
+          `${isPeer ? ' — for a peer this session-id IS the name argument.' : ''}`
       );
     }
     const mailContent = parts.join('\n\n---\n\n');
@@ -138,7 +138,11 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
       // them as two attributed notes. Welding them made the mail wear the
       // [URGENT] category and buried its sender/reply routing under an
       // interrupt notice about the user's own ESC.
-      triologue.note('URGENT', 'User interrupted (ESC). Finish the current step and stop; do NOT start new work.', 'esc');
+      triologue.note(
+        'URGENT',
+        'User interrupted (ESC). Finish the current step and stop; do NOT start new work.',
+        'esc'
+      );
       triologue.note('MAIL', mailContent);
     } else {
       triologue.note('MAIL', mailContent);
@@ -157,7 +161,7 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
   if (teamStatus !== 'No teammates.') {
     triologue.note(
       'SYSTEM',
-      `[team status — snapshot, informational]\n${teamStatus}\n\ntm_print for a fresh read; elapsed ETAs are not actionable.`,
+      `[team status — snapshot, informational]\n${teamStatus}\n\ntm_print for a fresh read; elapsed ETAs are not actionable.`
     );
   }
 
@@ -206,9 +210,8 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
   //     (A marker left by a user who ESC-ed out of a fresh --auto session
   //     and typed interactively is resolved by the PROMPT bookmark capture
   //     in prompt.ts — see the HEADLESS_FIRST_QUERY_MARKER branch there.)
-  const firstEvent = mails.length > 0
-    ? `Mail from ${mails[0].from}: ${mails[0].title}\n${mails[0].content}`
-    : firstSteerNote;
+  const firstEvent =
+    mails.length > 0 ? `Mail from ${mails[0].from}: ${mails[0].title}\n${mails[0].content}` : firstSteerNote;
   if (firstEvent) {
     resolveHeadlessFirstQuery(env.sessionFilePath, firstEvent);
   }
@@ -234,7 +237,9 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
         const filePath = path.join(uploadDir, safeName);
         fs.writeFileSync(filePath, Buffer.from(file.data, 'base64'));
         const relPath = path.relative(process.cwd(), filePath);
-        fileInfos.push(`- ${file.filename} → ${relPath} (${file.mimeType})${file.text ? `\n  Text: "${file.text.slice(0, 200)}${file.text.length > 200 ? '...' : ''}"` : ''}`);
+        fileInfos.push(
+          `- ${file.filename} → ${relPath} (${file.mimeType})${file.text ? `\n  Text: "${file.text.slice(0, 200)}${file.text.length > 200 ? '...' : ''}"` : ''}`
+        );
       }
       triologue.note('REMINDER', `User uploaded file(s):\n${fileInfos.join('\n')}`);
       agentIO.verbose('serve', `Saved ${files.length} uploaded file(s) to ${uploadDir}`);
@@ -257,9 +262,9 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
  */
 async function runTodoNudge(env: MachineEnv, turn: TurnVars): Promise<void> {
   const { triologue, ctx } = env;
-  const activeChannels = ctx.peer.listChannels().filter(
-    ch => ch.joined && ch.peerSessionId && ctx.peer.isFresh(ch.peerSessionId)
-  );
+  const activeChannels = ctx.peer
+    .listChannels()
+    .filter((ch) => ch.joined && ch.peerSessionId && ctx.peer.isFresh(ch.peerSessionId));
   // Look up each peer's workDir from the identity registry (ChannelFile does
   // not carry workDir; it lives on IdentityEntry). Falls back to '?' if the
   // peer unregistered between listChannels() and now (shouldn't happen for a
@@ -269,22 +274,30 @@ async function runTodoNudge(env: MachineEnv, turn: TurnVars): Promise<void> {
   for (const id of ctx.peer.listIdentities()) {
     peerWorkDirs.set(id.sessionId, id.workDir ?? '?');
   }
-  const channelLine = (ch: typeof activeChannels[number]): string => {
+  const channelLine = (ch: (typeof activeChannels)[number]): string => {
     const peerSid = ch.peerSessionId ?? '(unknown)';
     const workDir = peerWorkDirs.get(peerSid) ?? '?';
     // `topic` is the channel's static `title` theme; mail_to routes a peer
     // reply by name="<peerSessionId>/lead". The `title=` value convention is
     // "<topic>:<subject>" so the recipient sees which channel the reply is on.
-    return `- peer=${peerSid}\n` +
+    return (
+      `- peer=${peerSid}\n` +
       `  workdir=${workDir}\n` +
       `  channel=${ch.channelId}, topic=${ch.title ?? '(none)'}\n` +
-      `  use mail_to(name="${peerSid}/lead", title="${ch.title ?? ''}:<subject>") to communicate`;
+      `  use mail_to(name="${peerSid}/lead", title="${ch.title ?? ''}:<subject>") to communicate`
+    );
   };
   if (ctx.todo.hasOpenTodo() || activeChannels.length > 0) {
     const currentTodoState = ctx.todo.printTodoList();
-    const channelState = activeChannels.length > 0
-      ? activeChannels.map(ch => `  [channel ${ch.channelId}] peer=${ch.peerSessionId} fresh=${ctx.peer.isFresh(ch.peerSessionId!)} title="${ch.title}"`).join('\n')
-      : '';
+    const channelState =
+      activeChannels.length > 0
+        ? activeChannels
+            .map(
+              (ch) =>
+                `  [channel ${ch.channelId}] peer=${ch.peerSessionId} fresh=${ctx.peer.isFresh(ch.peerSessionId!)} title="${ch.title}"`
+            )
+            .join('\n')
+        : '';
     const compositeState = `${currentTodoState}\n${channelState}`;
     if (compositeState !== turn.lastTodoState) {
       turn.nextTodoNudge = 3;
@@ -315,7 +328,10 @@ async function runBriefAndWorktreeNudges(env: MachineEnv, turn: TurnVars): Promi
   // 5. Brief nudging - remind agent to use brief tool
   turn.nextBriefNudge--;
   if (turn.nextBriefNudge <= 0) {
-    triologue.note('REMINDER', 'Provide a brief status update using the brief tool: brief("<what you are doing now>", <confidence 0-10>).');
+    triologue.note(
+      'REMINDER',
+      'Provide a brief status update using the brief tool: brief("<what you are doing now>", <confidence 0-10>).'
+    );
     turn.nextBriefNudge = 5;
   }
 
@@ -328,7 +344,7 @@ async function runBriefAndWorktreeNudges(env: MachineEnv, turn: TurnVars): Promi
   if (env.nextWtNudge === 0) {
     const worktrees = await listWorktrees(process.cwd());
     if (worktrees.length > 0) {
-      const lines = worktrees.map(w => `- ${w.name} at ${w.path} (branch: ${w.branch})`);
+      const lines = worktrees.map((w) => `- ${w.name} at ${w.path} (branch: ${w.branch})`);
       triologue.note(
         'REMINDER',
         `Worktrees present. Remove one with bash (git worktree remove <path>) only if you are sure its branch is merged and no teammate is still working in it:\n${lines.join('\n')}`
@@ -352,11 +368,7 @@ function logVerboseStats(env: MachineEnv, messageCount: number): void {
   ctx.core.verbose('collect', `${messageCount} messages, ${tokenCount}/${tokenThreshold} tokens (${utilization}%)`);
 }
 
-export async function handleCollect(
-  env: MachineEnv,
-  turn: TurnVars,
-  _chat: ChatData,
-): Promise<HandlerResult> {
+export async function handleCollect(env: MachineEnv, turn: TurnVars, _chat: ChatData): Promise<HandlerResult> {
   const { triologue, ctx } = env;
 
   try {
@@ -407,7 +419,7 @@ export async function handleCollect(
       'error',
       'collect',
       `COLLECT state error: ${errorMessage}`,
-      `messages(raw)=${rawLen} tokens=${tokLen}\n${errorStack}`,
+      `messages(raw)=${rawLen} tokens=${tokLen}\n${errorStack}`
     );
 
     // If the user interrupted (neglected mode), route to STOP for centralized
@@ -458,13 +470,17 @@ export async function handleCollect(
         }
         if (shouldRetry) {
           turn.collectTransientRetries++;
-          agentIO.verbose('collect',
-            `Transient COLLECT error, retrying turn (${turn.collectTransientRetries}/${MAX_COLLECT_TRANSIENT_RETRIES}): ${errorMessage}`);
+          agentIO.verbose(
+            'collect',
+            `Transient COLLECT error, retrying turn (${turn.collectTransientRetries}/${MAX_COLLECT_TRANSIENT_RETRIES}): ${errorMessage}`
+          );
           return AgentState.COLLECT;
         }
       } else {
-        agentIO.verbose('collect',
-          `Transient COLLECT error, circuit breaker tripped after ${MAX_COLLECT_TRANSIENT_RETRIES} retries: ${errorMessage}`);
+        agentIO.verbose(
+          'collect',
+          `Transient COLLECT error, circuit breaker tripped after ${MAX_COLLECT_TRANSIENT_RETRIES} retries: ${errorMessage}`
+        );
       }
     }
 

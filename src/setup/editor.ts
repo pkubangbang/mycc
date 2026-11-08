@@ -91,9 +91,7 @@ export function validateEditor(rawValue: string): boolean | string {
   const pathDirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
 
   if (isWindows()) {
-    const pathext = (process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM;.VBS;.PS1')
-      .split(';')
-      .filter(Boolean);
+    const pathext = (process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM;.VBS;.PS1').split(';').filter(Boolean);
 
     for (const dir of pathDirs) {
       for (const ext of pathext) {

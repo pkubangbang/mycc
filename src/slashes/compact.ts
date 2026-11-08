@@ -15,7 +15,7 @@ export const compactCommand: SlashCommand = {
   description: 'Manually trigger conversation compaction (/compact [focus])',
   handler: async (context) => {
     const query = context.query;
-    
+
     // Parse optional focus topic: /compact <focus>
     const match = query.match(/^\/compact\s+(.+)$/);
     const focus = match ? match[1].trim() : undefined;
@@ -27,7 +27,14 @@ export const compactCommand: SlashCommand = {
     }
 
     // Cast triologue to access compact method with optional focus
-    const triologue = context.triologue as { compact: (focus?: string, signal?: AbortSignal, tools?: unknown[], domains?: Array<{ domain_name: string; description?: string }>) => Promise<void> };
+    const triologue = context.triologue as {
+      compact: (
+        focus?: string,
+        signal?: AbortSignal,
+        tools?: unknown[],
+        domains?: Array<{ domain_name: string; description?: string }>
+      ) => Promise<void>;
+    };
 
     try {
       // Same tool list the AUTOMATIC compact passes: the forkChat
@@ -59,9 +66,13 @@ export const compactCommand: SlashCommand = {
         console.log(chalk.green('Compaction complete.'));
       }
       console.log(chalk.gray('The conversation has been summarized. Domains were included for knowledge persistence.'));
-      console.log(chalk.gray('Stat counters (confusion index, embedding tracker, crossroad cooldown, session events) have been reset. Turn events and totalTurns are preserved.'));
+      console.log(
+        chalk.gray(
+          'Stat counters (confusion index, embedding tracker, crossroad cooldown, session events) have been reset. Turn events and totalTurns are preserved.'
+        )
+      );
     } catch (err) {
       console.log(chalk.red(`Compaction failed: ${(err as Error).message}`));
     }
-  },
+  }
 };

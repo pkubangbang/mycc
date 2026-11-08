@@ -26,12 +26,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { SkillIndexEntry, WikiDocument, SearchResult, PutResult } from '../../types.js';
 import { NAMESPACE, getEmbeddings } from '../../engine/rag-provider.js';
-import {
-  getWikiReindexLockFile,
-  getMyccDir,
-  getSessionContext,
-  ensureDirs,
-} from '../../config.js';
+import { getWikiReindexLockFile, getMyccDir, getSessionContext, ensureDirs } from '../../config.js';
 import { isReindexLockStale, releaseReindexLock } from './wiki-utils.js';
 
 // ============================================================
@@ -140,10 +135,20 @@ export class ReindexLock {
     if (this.handlersRegistered) return;
     this.handlersRegistered = true;
     const release = () => {
-      try { fs.unlinkSync(getWikiReindexLockFile()); } catch { /* best-effort */ }
+      try {
+        fs.unlinkSync(getWikiReindexLockFile());
+      } catch {
+        /* best-effort */
+      }
     };
-    process.once('SIGINT', () => { release(); process.exit(0); });
-    process.once('SIGTERM', () => { release(); process.exit(0); });
+    process.once('SIGINT', () => {
+      release();
+      process.exit(0);
+    });
+    process.once('SIGTERM', () => {
+      release();
+      process.exit(0);
+    });
   }
 
   /**
@@ -166,7 +171,7 @@ export class ReindexLock {
       sessionId: getSessionContext(),
       pid: process.pid,
       startedAt: Date.now(),
-      namespace: NAMESPACE,
+      namespace: NAMESPACE
     };
 
     // 1. Atomic create-if-not-exists.
@@ -260,7 +265,7 @@ export class SkillIndexer {
 
   constructor(
     private readonly backend: SkillIndexBackend,
-    private readonly log: (message: string) => void,
+    private readonly log: (message: string) => void
   ) {
     this.reindexLock = new ReindexLock(log);
   }
@@ -354,7 +359,7 @@ export class SkillIndexer {
       if (toAdd.length > 0) {
         embeddings = await getEmbeddings(
           toAdd.map((d) => d.content),
-          'document',
+          'document'
         );
       }
 

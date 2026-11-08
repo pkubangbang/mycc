@@ -19,11 +19,11 @@ export interface AugmentedToolCall extends ToolCall {
   metadata?: {
     // File metadata (for file operations)
     filePath?: string;
-    newLoc?: number;       // LOC in the new content
-    existingLoc?: number;  // LOC in existing file (if exists)
+    newLoc?: number; // LOC in the new content
+    existingLoc?: number; // LOC in existing file (if exists)
 
     // Bash metadata
-    isDestructive?: boolean;  // rm, git push --force, etc.
+    isDestructive?: boolean; // rm, git push --force, etc.
 
     // Generic
     [key: string]: unknown;
@@ -38,7 +38,8 @@ function formatArgsPreview(args: Record<string, unknown>, maxLen: number = 50): 
   if (entries.length === 0) return '';
 
   const parts: string[] = [];
-  for (const [key, value] of entries.slice(0, 3)) { // Show max 3 args
+  for (const [key, value] of entries.slice(0, 3)) {
+    // Show max 3 args
     let str: string;
     if (typeof value === 'string') {
       str = value.length > maxLen ? `${value.slice(0, maxLen)}...` : value;
@@ -68,17 +69,17 @@ export interface HookResult {
  * Result of processToolCalls
  */
 export interface ProcessToolCallsResult {
-  calls: AugmentedToolCall[];       // Modified array (blocked calls kept, injections added)
+  calls: AugmentedToolCall[]; // Modified array (blocked calls kept, injections added)
   blockedCalls: Map<string, string>; // toolCall.id → blocking message
   deferredMessages: Array<{ hookName: string; message: string }>; // Messages to inject after tool execution, attributed to their originating hook
-  compactRequested: boolean;         // Hook requested compaction
+  compactRequested: boolean; // Hook requested compaction
 }
 
 /**
  * Internal result for single call processing
  */
 interface CallProcessResult {
-  calls: AugmentedToolCall[];  // Resulting calls (may be multiple due to inject_before)
+  calls: AugmentedToolCall[]; // Resulting calls (may be multiple due to inject_before)
   blocked: boolean;
   blockMessage?: string;
   messages: Array<{ hookName: string; message: string }>;
@@ -95,7 +96,7 @@ const HOOK_PRIORITY: Record<string, number> = {
   replace: 1,
   inject_before: 2,
   inject_after: 2,
-  message: 3,
+  message: 3
 };
 
 /**
@@ -162,10 +163,13 @@ export class HookExecutor {
    * disabled the hook. This adapter is the single place that maps the tool-call
    * shape onto the evaluator's CallContext shape.
    */
-  private toCallContext(call: AugmentedToolCall): { metadata?: Record<string, unknown>; args?: Record<string, unknown> } {
+  private toCallContext(call: AugmentedToolCall): {
+    metadata?: Record<string, unknown>;
+    args?: Record<string, unknown>;
+  } {
     return {
       args: call.function?.arguments ?? {},
-      metadata: call.metadata ?? {},
+      metadata: call.metadata ?? {}
     };
   }
 
@@ -187,7 +191,7 @@ export class HookExecutor {
     if (action.type !== 'block' && this.injectedThisChat.has(skillName)) {
       return {
         action: 'proceed',
-        message: `[Hook: ${skillName}] (already injected this chat)`,
+        message: `[Hook: ${skillName}] (already injected this chat)`
       };
     }
     if (action.type !== 'block') this.injectedThisChat.add(skillName);
@@ -200,7 +204,14 @@ export class HookExecutor {
         return this.injectAfter(skillName, action, ctx, pendingCalls, skillContent, cond);
 
       case 'block':
-        return this.block(skillName, action, ctx, skillContent, cond, pendingCalls[0]?.function.name ?? (pendingCalls.length === 0 ? 'stop' : 'unknown'));
+        return this.block(
+          skillName,
+          action,
+          ctx,
+          skillContent,
+          cond,
+          pendingCalls[0]?.function.name ?? (pendingCalls.length === 0 ? 'stop' : 'unknown')
+        );
 
       case 'replace':
         return this.replace(skillName, action, ctx, pendingCalls, skillContent, cond);
@@ -209,7 +220,9 @@ export class HookExecutor {
         return this.message(skillName, ctx, skillContent, cond);
 
       case 'compact':
-        ctx.core.brief('info', 'hook',
+        ctx.core.brief(
+          'info',
+          'hook',
           `COMPACT requested`,
           `${pendingCalls[0]?.function.name ?? 'stop'} → ${skillName}`,
           { synthetic: true }
@@ -233,8 +246,8 @@ export class HookExecutor {
       id: `hook-${skillName}-${Date.now()}`,
       function: {
         name: action.tool,
-        arguments: action.args,
-      },
+        arguments: action.args
+      }
     };
 
     const triggerTool = pendingCalls[0]?.function.name ?? 'unknown';
@@ -244,23 +257,26 @@ export class HookExecutor {
 
     // Detail (always shown): trigger → hook name
     // Verbose: action description, when, and condition
-    ctx.core.brief('info', 'hook',
+    ctx.core.brief(
+      'info',
+      'hook',
       `${action.tool}${argsPreview} injected BEFORE ${triggerTool}`,
       `${triggerTool} → ${skillName}`,
       { synthetic: true }
     );
-    ctx.core.verbose('hook',
-      `When: "${whenText}"\nExpr: ${conditionExpr}`
-    );
+    ctx.core.verbose('hook', `When: "${whenText}"\nExpr: ${conditionExpr}`);
 
     // Use custom message from compiled condition if available
-    const customMsg = cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
-    const displayMsg = customMsg || `A hookish skill named "${skillName}" has been triggered (action: inject_before on ${triggerTool}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`;
+    const customMsg =
+      cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
+    const displayMsg =
+      customMsg ||
+      `A hookish skill named "${skillName}" has been triggered (action: inject_before on ${triggerTool}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`;
 
     return {
       action: 'injected',
       message: displayMsg,
-      newCalls: [newCall, ...pendingCalls],
+      newCalls: [newCall, ...pendingCalls]
     };
   }
 
@@ -279,8 +295,8 @@ export class HookExecutor {
       id: `hook-${skillName}-${Date.now()}`,
       function: {
         name: action.tool,
-        arguments: action.args,
-      },
+        arguments: action.args
+      }
     };
 
     const triggerTool = pendingCalls[0]?.function.name ?? 'unknown';
@@ -290,25 +306,28 @@ export class HookExecutor {
 
     // Detail (always shown): trigger → hook name
     // Verbose: action description, when, and condition
-    ctx.core.brief('info', 'hook',
+    ctx.core.brief(
+      'info',
+      'hook',
       `${action.tool}${argsPreview} injected AFTER ${triggerTool}`,
       `${triggerTool} → ${skillName}`,
       { synthetic: true }
     );
-    ctx.core.verbose('hook',
-      `When: "${whenText}"\nExpr: ${conditionExpr}`
-    );
+    ctx.core.verbose('hook', `When: "${whenText}"\nExpr: ${conditionExpr}`);
 
     // Use custom message from compiled condition if available
-    const customMsg = cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
-    const displayMsg = customMsg || `A hookish skill named "${skillName}" has been triggered (action: inject_after on ${triggerTool}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`;
+    const customMsg =
+      cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
+    const displayMsg =
+      customMsg ||
+      `A hookish skill named "${skillName}" has been triggered (action: inject_after on ${triggerTool}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`;
 
     // Insert after first call
     const remaining = pendingCalls.slice(1);
     return {
       action: 'injected',
       message: displayMsg,
-      newCalls: [...pendingCalls.slice(0, 1), newCall, ...remaining],
+      newCalls: [...pendingCalls.slice(0, 1), newCall, ...remaining]
     };
   }
 
@@ -330,22 +349,19 @@ export class HookExecutor {
 
     // Detail (always shown): trigger → hook name
     // Verbose: action description, when, and condition
-    ctx.core.brief('info', 'hook',
-      `BLOCKED: ${reason}`,
-      `${trigger} → ${skillName}`,
-      { synthetic: true }
-    );
-    ctx.core.verbose('hook',
-      `When: "${whenText}"\nExpr: ${conditionExpr}`
-    );
+    ctx.core.brief('info', 'hook', `BLOCKED: ${reason}`, `${trigger} → ${skillName}`, { synthetic: true });
+    ctx.core.verbose('hook', `When: "${whenText}"\nExpr: ${conditionExpr}`);
 
     // Use custom message from compiled condition if available
-    const customMsg = cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
-    const blockMsg = customMsg || `[Hook: ${skillName}]\nReason: ${reason}\n\nA hookish skill named "${skillName}" has been triggered (action: block on ${trigger}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`;
+    const customMsg =
+      cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
+    const blockMsg =
+      customMsg ||
+      `[Hook: ${skillName}]\nReason: ${reason}\n\nA hookish skill named "${skillName}" has been triggered (action: block on ${trigger}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`;
 
     return {
       action: 'blocked',
-      message: blockMsg,
+      message: blockMsg
     };
   }
 
@@ -374,26 +390,25 @@ export class HookExecutor {
         id: `hook-${skillName}-${Date.now()}`,
         function: {
           name: action.tool,
-          arguments: action.args,
-        },
+          arguments: action.args
+        }
       };
 
-      ctx.core.brief('info', 'hook',
-        `REPLACED stop → ${action.tool}${argsPreview}`,
-        `stop → ${skillName}`,
-        { synthetic: true }
-      );
-      ctx.core.verbose('hook',
-        `When: "${whenText}"\nExpr: ${conditionExpr}`
-      );
+      ctx.core.brief('info', 'hook', `REPLACED stop → ${action.tool}${argsPreview}`, `stop → ${skillName}`, {
+        synthetic: true
+      });
+      ctx.core.verbose('hook', `When: "${whenText}"\nExpr: ${conditionExpr}`);
 
-      const customMsg = cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
-      const displayMsg = customMsg || `A hookish skill named "${skillName}" has been triggered (action: replace on stop). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`;
+      const customMsg =
+        cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
+      const displayMsg =
+        customMsg ||
+        `A hookish skill named "${skillName}" has been triggered (action: replace on stop). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`;
 
       return {
         action: 'injected',
         message: displayMsg,
-        newCalls: [replacementCall],
+        newCalls: [replacementCall]
       };
     }
 
@@ -406,23 +421,26 @@ export class HookExecutor {
 
     // Detail (always shown): trigger → hook name
     // Verbose: action description, when, and condition
-    ctx.core.brief('info', 'hook',
+    ctx.core.brief(
+      'info',
+      'hook',
       `REPLACED ${originalTool} → ${action.tool}${argsPreview}`,
       `${originalTool} → ${skillName}`,
       { synthetic: true }
     );
-    ctx.core.verbose('hook',
-      `When: "${whenText}"\nExpr: ${conditionExpr}`
-    );
+    ctx.core.verbose('hook', `When: "${whenText}"\nExpr: ${conditionExpr}`);
 
     // Use custom message from compiled condition if available
-    const customMsg = cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
-    const displayMsg = customMsg || `A hookish skill named "${skillName}" has been triggered (action: replace on ${originalTool}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`;
+    const customMsg =
+      cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
+    const displayMsg =
+      customMsg ||
+      `A hookish skill named "${skillName}" has been triggered (action: replace on ${originalTool}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`;
 
     return {
       action: 'injected',
       message: displayMsg,
-      newCalls: pendingCalls,
+      newCalls: pendingCalls
     };
   }
 
@@ -440,25 +458,24 @@ export class HookExecutor {
     const triggerTool = 'any';
 
     // Detail (always shown): trigger → hook name
-    ctx.core.brief('info', 'hook',
-      `MESSAGE: suggested using ${skillName}`,
-      `${triggerTool} → ${skillName}`,
-      { synthetic: true }
-    );
+    ctx.core.brief('info', 'hook', `MESSAGE: suggested using ${skillName}`, `${triggerTool} → ${skillName}`, {
+      synthetic: true
+    });
     if (cond) {
-      ctx.core.verbose('hook',
-        `When: "${cond.when}"\nExpr: ${cond.condition}`
-      );
+      ctx.core.verbose('hook', `When: "${cond.when}"\nExpr: ${cond.condition}`);
     }
 
     // Use custom message from compiled condition if available
-    const customMessage = cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
-    const displayMessage = customMessage || `A skill called "${skillName}" is suitable for your task, ensure it is loaded and used. If not, use "skill_load" tool with name="${skillName}" and search="READ ARTIFACT TO follow suggestion" to load it.`;
+    const customMessage =
+      cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
+    const displayMessage =
+      customMessage ||
+      `A skill called "${skillName}" is suitable for your task, ensure it is loaded and used. If not, use "skill_load" tool with name="${skillName}" and search="READ ARTIFACT TO follow suggestion" to load it.`;
 
     return {
       action: 'proceed',
       // NOTE: this message is critical to encourage the llm to load a skill
-      message: displayMessage,
+      message: displayMessage
     };
   }
 
@@ -490,7 +507,7 @@ export class HookExecutor {
       calls: [],
       blockedCalls: new Map(),
       deferredMessages: [],
-      compactRequested: false,
+      compactRequested: false
     };
 
     // Handle stop trigger (empty calls array)
@@ -529,7 +546,7 @@ export class HookExecutor {
 
   /**
    * Process hooks for stop trigger (no tool calls).
-   * 
+   *
    * Note: 'block' action on stop trigger is treated as 'message' since blocking
    * a stop doesn't make semantic sense. To prevent stopping, use inject_before/after
    * to add tool calls, or use 'message' to provide guidance.
@@ -590,7 +607,7 @@ export class HookExecutor {
           for (const call of result.newCalls) {
             calls.push({
               ...call,
-              metadata: {},
+              metadata: {}
             });
           }
           // For blockers/replacers, return immediately (first wins) so later tool calls are discarded
@@ -676,9 +693,7 @@ export class HookExecutor {
   /**
    * Group hooks by their action priority
    */
-  private groupHooksByPriority(
-    hookNames: string[]
-  ): Map<number, Array<{ name: string; cond: Condition }>> {
+  private groupHooksByPriority(hookNames: string[]): Map<number, Array<{ name: string; cond: Condition }>> {
     const result = new Map<number, Array<{ name: string; cond: Condition }>>();
 
     for (const hookName of hookNames) {
@@ -694,22 +709,17 @@ export class HookExecutor {
 
     return result;
   }
-
 }
 
 /**
  * Create a ToolCall for a hook action
  */
-export function createToolCall(
-  toolName: string,
-  args: Record<string, unknown>,
-  skillName: string
-): ToolCall {
+export function createToolCall(toolName: string, args: Record<string, unknown>, skillName: string): ToolCall {
   return {
     id: `hook-${skillName}-${Date.now()}`,
     function: {
       name: toolName,
-      arguments: args,
-    },
+      arguments: args
+    }
   };
 }

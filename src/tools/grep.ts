@@ -50,26 +50,26 @@ export const grepTool: ToolDefinition = {
     properties: {
       pattern: {
         type: 'string',
-        description: 'The search pattern (regex compatible)',
+        description: 'The search pattern (regex compatible)'
       },
       path: {
         type: 'string',
-        description: 'Directory to search (default: workspace root)',
+        description: 'Directory to search (default: workspace root)'
       },
       include: {
         type: 'string',
-        description: 'File glob to include, e.g. "*.ts"',
+        description: 'File glob to include, e.g. "*.ts"'
       },
       exclude: {
         type: 'string',
-        description: 'File glob to exclude, e.g. "*.min.js"',
+        description: 'File glob to exclude, e.g. "*.min.js"'
       },
       maxResults: {
         type: 'number',
-        description: `Maximum results to return (default: ${DEFAULT_MAX_RESULTS}, max: ${MAX_MAX_RESULTS})`,
-      },
+        description: `Maximum results to return (default: ${DEFAULT_MAX_RESULTS}, max: ${MAX_MAX_RESULTS})`
+      }
     },
-    required: ['pattern'],
+    required: ['pattern']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -122,7 +122,7 @@ export const grepTool: ToolDefinition = {
       ctx.core.brief('error', 'grep', `Failed to summarize output: ${(err as Error).message}`);
       return `[Summarization failed, showing raw output]\n\n${output}`;
     }
-  },
+  }
 };
 
 async function summarizeGrepOutput(
@@ -131,7 +131,11 @@ async function summarizeGrepOutput(
   totalChars: number,
   ctx: AgentContext
 ): Promise<string> {
-  ctx.core.brief('info', 'grep', `Summarizing ${(totalChars / 1000).toFixed(1)}k chars (limit: ${OUTPUT_CHAR_LIMIT / 1000}k)`);
+  ctx.core.brief(
+    'info',
+    'grep',
+    `Summarizing ${(totalChars / 1000).toFixed(1)}k chars (limit: ${OUTPUT_CHAR_LIMIT / 1000}k)`
+  );
 
   const response = await retryChat({
     model: MODEL,
@@ -142,10 +146,10 @@ async function summarizeGrepOutput(
 Search pattern: ${pattern}
 Total characters: ${totalChars}
 Group results by file. Highlight the most relevant matches.
-Keep the summary concise and focused on what's relevant to the search pattern.`,
+Keep the summary concise and focused on what's relevant to the search pattern.`
       },
-      { role: 'user', content: output },
-    ],
+      { role: 'user', content: output }
+    ]
   });
 
   return `Summary of ${(totalChars / 1000).toFixed(1)}k chars (pattern: ${pattern}):\n${response.message.content || 'No summary generated'}`;

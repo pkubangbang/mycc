@@ -154,7 +154,7 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
   eval: chalk.gray,
 
   // Default fallback
-  _default: chalk.white,
+  _default: chalk.white
 };
 
 /**

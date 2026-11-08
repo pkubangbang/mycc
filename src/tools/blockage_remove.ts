@@ -14,14 +14,14 @@ export const blockageRemoveTool: ToolDefinition = {
     properties: {
       blocker: {
         type: 'integer',
-        description: 'ID of the issue that was blocking',
+        description: 'ID of the issue that was blocking'
       },
       blocked: {
         type: 'integer',
-        description: 'ID of the issue that was blocked',
-      },
+        description: 'ID of the issue that was blocked'
+      }
     },
-    required: ['blocker', 'blocked'],
+    required: ['blocker', 'blocked']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -52,5 +52,5 @@ export const blockageRemoveTool: ToolDefinition = {
     ctx.core.brief('info', 'blockage_remove', `Removed blockage: #${blocker} no longer blocks #${blocked}`);
 
     return 'OK';
-  },
+  }
 };

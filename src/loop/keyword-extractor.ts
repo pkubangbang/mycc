@@ -63,9 +63,7 @@ import { startSpinner } from '../engine/chat-helpers.js';
  * status, because SkillSuggester depends on all three.
  */
 export type KeywordExtractionResult =
-  | { status: 'success'; keywords: string[]; freeformQuery: string }
-  | { status: 'skipped' }
-  | { status: 'failed' };
+  { status: 'success'; keywords: string[]; freeformQuery: string } | { status: 'skipped' } | { status: 'failed' };
 
 /** Tool definition for structured keyword extraction (LLM tool-calling). */
 const EXTRACT_KEYWORDS_TOOL: Tool = {
@@ -81,17 +79,17 @@ const EXTRACT_KEYWORDS_TOOL: Tool = {
           type: 'array',
           items: { type: 'string' },
           description:
-            'Extracted English keywords (2-5 words). ORDER MATTERS: list them in DESCENDING order of importance — the most discriminative keyword FIRST, the least important LAST. Downstream scoring weights the 1st keyword highest.',
+            'Extracted English keywords (2-5 words). ORDER MATTERS: list them in DESCENDING order of importance — the most discriminative keyword FIRST, the least important LAST. Downstream scoring weights the 1st keyword highest.'
         },
         freeform_query: {
           type: 'string',
           description:
-            "A concise free-form search query (2-5 words) capturing the user's core intent for semantic skill search",
-        },
+            "A concise free-form search query (2-5 words) capturing the user's core intent for semantic skill search"
+        }
       },
-      required: ['keywords', 'freeform_query'],
-    },
-  },
+      required: ['keywords', 'freeform_query']
+    }
+  }
 };
 
 /** Trivial-query patterns skipped without an LLM call (greetings / acks). */
@@ -131,7 +129,7 @@ const TRIVIAL_QUERY_PATTERN =
 export async function extractKeywords(
   query: string,
   availableKeywords: string[],
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<KeywordExtractionResult> {
   const trimmed = query.trim();
 
@@ -170,17 +168,17 @@ keyword first maximizes the match score for the right skill. Keywords beyond the
 5th are ignored by the scorer.
 Return ONLY via the extract_keywords tool.
 
-Available skill keywords: ${availableKeywords.join(', ')}`,
+Available skill keywords: ${availableKeywords.join(', ')}`
           },
           {
             role: 'user',
-            content: `Conversation context:\n${trimmed}`,
-          },
+            content: `Conversation context:\n${trimmed}`
+          }
         ],
         tools: [EXTRACT_KEYWORDS_TOOL],
-        tool_choice: 'required' as const,
+        tool_choice: 'required' as const
       },
-      { signal, noSpinner: true, maxRetries: 1 },
+      { signal, noSpinner: true, maxRetries: 1 }
     );
 
     stopSpinner();
@@ -219,8 +217,7 @@ Available skill keywords: ${availableKeywords.join(', ')}`,
     // but is trimmed. An empty/whitespace value is preserved as '' so the
     // caller can detect "invalid freeformQuery" and fail fast (SkillSuggester
     // oversize branch) rather than silently degrading.
-    const freeformQuery: string =
-      typeof parsed.freeform_query === 'string' ? parsed.freeform_query.trim() : '';
+    const freeformQuery: string = typeof parsed.freeform_query === 'string' ? parsed.freeform_query.trim() : '';
 
     return { status: 'success', keywords: cleaned, freeformQuery };
   } catch {

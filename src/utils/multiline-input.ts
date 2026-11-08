@@ -27,7 +27,7 @@ function generateMultilineFile(initialContent: string): { content: string; userC
     initialContent,
     '-->',
     '',
-    initialContent, // Pre-fill user's initial content
+    initialContent // Pre-fill user's initial content
   ];
 
   // Join lines to get final content
@@ -75,7 +75,9 @@ function writeMultilineFile(content: string): string {
  *          'reload' means the user typed 'r' + Enter — show content on p0 without submitting.
  *          Empty content in 'submit' means the user cancelled.
  */
-export async function openMultilineEditor(initialContent: string): Promise<{ action: 'submit' | 'reload', content: string }> {
+export async function openMultilineEditor(
+  initialContent: string
+): Promise<{ action: 'submit' | 'reload'; content: string }> {
   // Generate and write temp file
   const { content: fileContent, userContentLine } = generateMultilineFile(initialContent);
   const filePath = writeMultilineFile(fileContent);
@@ -128,8 +130,11 @@ export async function openMultilineEditor(initialContent: string): Promise<{ act
     // Returning an empty submit silently would disguise a real I/O failure as
     // a deliberate user cancel, so the agent would see '' and behave as if the
     // user chose to submit nothing. Surface the failure first.
-    agentIO.brief('warn', 'multiline',
-      `Multi-line temp file read failed, submitting empty: ${readErr instanceof Error ? readErr.message : String(readErr)}`);
+    agentIO.brief(
+      'warn',
+      'multiline',
+      `Multi-line temp file read failed, submitting empty: ${readErr instanceof Error ? readErr.message : String(readErr)}`
+    );
     return { action: 'submit', content: '' };
   }
   const result = extractContent(editedContent);

@@ -65,7 +65,7 @@ export class FileLockTimeoutError extends Error {
   constructor(filePath: string) {
     super(
       `could not acquire the file lock for ${filePath} within ${ACQUIRE_TIMEOUT_MS}ms ` +
-      `(a live holder never released it, or the lock could not be created)`,
+        `(a live holder never released it, or the lock could not be created)`
     );
     this.name = 'FileLockTimeoutError';
   }
@@ -124,7 +124,9 @@ function removeLockDir(dir: string): void {
 /** Synchronous sleep (the acquire loop runs in synchronous callers). */
 function sleep(ms: number): void {
   const end = Date.now() + ms;
-  while (Date.now() < end) { /* busy-wait: synchronous context */ }
+  while (Date.now() < end) {
+    /* busy-wait: synchronous context */
+  }
 }
 
 /**

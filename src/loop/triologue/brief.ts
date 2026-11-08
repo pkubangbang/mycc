@@ -63,13 +63,9 @@ export function newBriefCallId(prefix = 'brief'): string {
  * Build a brief tool call from parts — the single writer for every producer
  * (recovery, crossroad, compact floor), so the shape cannot drift.
  */
-export function briefToolCall(
-  message: string,
-  confidence: number,
-  id: string = newBriefCallId(),
-): ToolCall {
+export function briefToolCall(message: string, confidence: number, id: string = newBriefCallId()): ToolCall {
   return {
     id,
-    function: { name: 'brief', arguments: { message, confidence } },
+    function: { name: 'brief', arguments: { message, confidence } }
   };
 }

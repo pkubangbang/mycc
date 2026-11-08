@@ -10,16 +10,17 @@ import { isCancellation } from '../loop/cancellation.js';
 
 export const webFetchTool: ToolDefinition = {
   name: 'web_fetch',
-  description: 'Fetch and parse content from a URL. Returns page title, main content, and links. Use to read full content from URLs found via web_search.',
+  description:
+    'Fetch and parse content from a URL. Returns page title, main content, and links. Use to read full content from URLs found via web_search.',
   input_schema: {
     type: 'object',
     properties: {
       url: {
         type: 'string',
-        description: 'The URL to fetch content from',
-      },
+        description: 'The URL to fetch content from'
+      }
     },
-    required: ['url'],
+    required: ['url']
   },
   scope: ['main', 'child'],
 
@@ -57,7 +58,7 @@ export const webFetchTool: ToolDefinition = {
         `**URL:** ${response.url}\n`,
         '### Content',
         response.content,
-        '',
+        ''
       ];
 
       if (response.links && response.links.length > 0) {
@@ -82,5 +83,5 @@ export const webFetchTool: ToolDefinition = {
       ctx.core.brief('error', 'web_fetch', `Failed: ${err.message}`);
       return `Error: ${err.message}`;
     }
-  },
+  }
 };

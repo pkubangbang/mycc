@@ -51,27 +51,31 @@ export class BackgroundTasks implements BgModule {
     const preamble = `try { chcp 65001 > $null } catch {}; $ProgressPreference = 'SilentlyContinue'; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${shellInfo.shell === 'powershell5' ? PS51_LAYER2_PATCH : ''}`;
 
     const child = isWin
-      ? spawn(shellInfo.path ?? 'powershell', [
-          '-NoProfile',
-          '-NonInteractive',
-          '-EncodedCommand',
-          Buffer.from(`${preamble}${cmd}`, 'utf16le').toString('base64'),
-        ], {
-          cwd: this.core.getWorkDir(),
-          windowsHide: true,
-          // NOTE: detached:true on Windows creates a new console window,
-          // which breaks stdout/stderr piping (output goes to that console
-          // instead of the pipes). We use unref() instead to allow the
-          // child to outlive the parent while keeping pipes intact.
-          // PYTHONUTF8/PYTHONIOENCODING force Python scripts to use UTF-8
-          // for their stdout/stderr pipes regardless of the system code page
-          // (mirrors agent-exec.ts).
-          env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
-        })
+      ? spawn(
+          shellInfo.path ?? 'powershell',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-EncodedCommand',
+            Buffer.from(`${preamble}${cmd}`, 'utf16le').toString('base64')
+          ],
+          {
+            cwd: this.core.getWorkDir(),
+            windowsHide: true,
+            // NOTE: detached:true on Windows creates a new console window,
+            // which breaks stdout/stderr piping (output goes to that console
+            // instead of the pipes). We use unref() instead to allow the
+            // child to outlive the parent while keeping pipes intact.
+            // PYTHONUTF8/PYTHONIOENCODING force Python scripts to use UTF-8
+            // for their stdout/stderr pipes regardless of the system code page
+            // (mirrors agent-exec.ts).
+            env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' }
+          }
+        )
       : spawn(cmd, [], {
           cwd: this.core.getWorkDir(),
           shell: true,
-          detached: true,
+          detached: true
         });
 
     const pid = child.pid;
@@ -92,7 +96,7 @@ export class BackgroundTasks implements BgModule {
       pid,
       command: cmd,
       startTime: new Date(),
-      status: 'running',
+      status: 'running'
     };
 
     // The bounded-drain handle is tracked per-pid in this.drains so
@@ -204,7 +208,7 @@ export class BackgroundTasks implements BgModule {
         `Background task ${pid}:`,
         `  status: ${statusLabel}`,
         `  command: ${task.command}`,
-        `  started: ${task.startTime.toISOString()}`,
+        `  started: ${task.startTime.toISOString()}`
       ];
       if (task.output && task.output.length > 0) {
         // Show the most recent output (already capped at MAX_OUTPUT_BYTES)
@@ -352,7 +356,9 @@ export class BackgroundTasks implements BgModule {
     // neglection); registered regardless for parity, the timeout still governs.
     let unsubscribe: (() => void) | undefined;
     if (agentIO.isMainProcess()) {
-      unsubscribe = agentIO.onNeglected(() => { interrupted = true; });
+      unsubscribe = agentIO.onNeglected(() => {
+        interrupted = true;
+      });
     }
 
     try {
@@ -384,7 +390,7 @@ export class BackgroundTasks implements BgModule {
               reason: 'completed',
               pid,
               status: task.status,
-              output: task.output,
+              output: task.output
             };
           }
           if (!task) {
@@ -442,7 +448,7 @@ export class BackgroundTasks implements BgModule {
       running: '[running]',
       completed: '[done]',
       failed: '[failed]',
-      killed: '[killed]',
+      killed: '[killed]'
     };
     return labels[status] ?? '[?]';
   }

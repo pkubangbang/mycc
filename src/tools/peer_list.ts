@@ -54,15 +54,14 @@ export const peersTool: ToolDefinition = {
     properties: {
       include_self: {
         type: 'boolean',
-        description:
-          'If true, include this instance itself (marked self=true). Default false.',
+        description: 'If true, include this instance itself (marked self=true). Default false.'
       },
       all: {
         type: 'boolean',
         description:
-          'If true, also list local peers that are offline/stale (each marked fresh=true/false). Default false — only fresh (online) instances are listed.',
-      },
-    },
+          'If true, also list local peers that are offline/stale (each marked fresh=true/false). Default false — only fresh (online) instances are listed.'
+      }
+    }
   },
   scope: ['main'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -98,12 +97,13 @@ export const peersTool: ToolDefinition = {
       const dialTag = pair.dialed ? 'dialed' : 'accepted';
       const remoteNote = pair.sockets[0]?.meta.daemon ? '\n    daemon: true' : '';
       remoteRows.push(
-        `- session=${chalk.bold(pair.sid || '(pending)')} [remote wire]\n    endpoint: ${pair.endpoint}\n    status: ${state}\n    direction: ${dialTag}${remoteNote}${sharesTag(pair.sid)}`,
+        `- session=${chalk.bold(pair.sid || '(pending)')} [remote wire]\n    endpoint: ${pair.endpoint}\n    status: ${state}\n    direction: ${dialTag}${remoteNote}${sharesTag(pair.sid)}`
       );
     }
-    const remoteSection = remoteRows.length > 0
-      ? `\n\n${chalk.magenta(`Remote wire peers (${remoteLive}/${remoteRows.length} connected) — cross-machine, via the peer wire (mail_to("<sessionId>/lead") works the same as for local peers; hang up with peer_disconnect):`)}\n${remoteRows.join('\n')}`
-      : '';
+    const remoteSection =
+      remoteRows.length > 0
+        ? `\n\n${chalk.magenta(`Remote wire peers (${remoteLive}/${remoteRows.length} connected) — cross-machine, via the peer wire (mail_to("<sessionId>/lead") works the same as for local peers; hang up with peer_disconnect):`)}\n${remoteRows.join('\n')}`
+        : '';
 
     if (identities.length === 0) {
       if (remoteRows.length > 0) {
@@ -114,7 +114,9 @@ export const peersTool: ToolDefinition = {
         return `${chalk.cyan(`mycc instances (no local peers registered; ${remoteSummary}):`)}${remoteSection}`;
       }
       ctx.core.brief('info', 'peer_list', 'no peers registered for discovery');
-      return chalk.gray('No other mycc instances registered for peer discovery. (Run `mycc` in another directory on this machine to register an instance; peer discovery is via ~/.mycc-store/discovery/identity.json + heartbeats.)');
+      return chalk.gray(
+        'No other mycc instances registered for peer discovery. (Run `mycc` in another directory on this machine to register an instance; peer discovery is via ~/.mycc-store/discovery/identity.json + heartbeats.)'
+      );
     }
 
     const rows: string[] = [];
@@ -129,7 +131,7 @@ export const peersTool: ToolDefinition = {
       // Hard cutoff: skip peers whose latest heartbeat is older than 1h, even
       // with all=true, so dead instances' briefs don't bloat the listing.
       const latest = ctx.peer.getLatestHeartbeat(id.sessionId);
-      if (latest !== null && (now - latest) > PEER_LISTING_CUTOFF_MS) {
+      if (latest !== null && now - latest > PEER_LISTING_CUTOFF_MS) {
         omitted++;
         continue;
       }
@@ -155,17 +157,23 @@ export const peersTool: ToolDefinition = {
       // `taskkill /PID <pid>`; on Unix `kill <pid>` (SIGTERM lets the Lead
       // run its graceful shutdown; SIGKILL tears it down immediately).
       const peerPid = ctx.peer.getPid(id.sessionId);
-      const pidTag = peerPid !== null ? `\n    pid: ${peerPid} (kill via ${process.platform === 'win32' ? `taskkill /PID ${peerPid}` : `kill ${peerPid}`})` : '';
+      const pidTag =
+        peerPid !== null
+          ? `\n    pid: ${peerPid} (kill via ${process.platform === 'win32' ? `taskkill /PID ${peerPid}` : `kill ${peerPid}`})`
+          : '';
       // Surface recent briefs so the lead can monitor peer progress.
       const briefs = ctx.peer.getBriefs(id.sessionId);
-      const briefLine = briefs.length > 0
-        ? `\n    briefs:\n${briefs.map((b) => {
-            const t = formatLocalDateTime(b.time);
-            return `      - [${t}] (conf ${b.confidence}) ${b.content}`;
-          }).join('\n')}`
-        : '';
+      const briefLine =
+        briefs.length > 0
+          ? `\n    briefs:\n${briefs
+              .map((b) => {
+                const t = formatLocalDateTime(b.time);
+                return `      - [${t}] (conf ${b.confidence}) ${b.content}`;
+              })
+              .join('\n')}`
+          : '';
       rows.push(
-        `- session=${chalk.bold(id.sessionId)}${nameTag}${tag}\n    workDir: ${id.workDir}\n    status: ${state}\n    started: ${started}${roleTag}${daemonTag}${pidTag}${briefLine}`,
+        `- session=${chalk.bold(id.sessionId)}${nameTag}${tag}\n    workDir: ${id.workDir}\n    status: ${state}\n    started: ${started}${roleTag}${daemonTag}${pidTag}${briefLine}`
       );
     }
 
@@ -174,14 +182,18 @@ export const peersTool: ToolDefinition = {
     if (rows.length === 0 && remoteRows.length === 0) {
       if (omitted > 0) {
         ctx.core.brief('info', 'peer_list', `${omitted} peer(s) older than 1h omitted`);
-        return chalk.gray(all
-          ? `No mycc instances listed; ${omitted} registered peer${omitted === 1 ? ' is' : 's are'} older than 1h and omitted.`
-          : `No online mycc instances found; ${omitted} older than 1h omitted. (Use peer_list(all=true) to include recent offline/stale instances.)`);
+        return chalk.gray(
+          all
+            ? `No mycc instances listed; ${omitted} registered peer${omitted === 1 ? ' is' : 's are'} older than 1h and omitted.`
+            : `No online mycc instances found; ${omitted} older than 1h omitted. (Use peer_list(all=true) to include recent offline/stale instances.)`
+        );
       }
       ctx.core.brief('info', 'peer_list', 'no online instances found');
-      return chalk.gray(all
-        ? 'No mycc instances registered for peer discovery, and no remote wire peers connected.'
-        : 'No other online mycc instances found. (Use peer_list(all=true) to include offline/stale instances; use peer_connect to reach a cross-machine instance.)');
+      return chalk.gray(
+        all
+          ? 'No mycc instances registered for peer discovery, and no remote wire peers connected.'
+          : 'No other online mycc instances found. (Use peer_list(all=true) to include offline/stale instances; use peer_connect to reach a cross-machine instance.)'
+      );
     }
 
     if (rows.length === 0) {
@@ -194,5 +206,5 @@ export const peersTool: ToolDefinition = {
     const summary = `${online} local online, ${rows.length} local listed${includeSelf ? ' (incl. self)' : ''}${omitted > 0 ? `, ${omitted} older than 1h omitted` : ''}${remoteRows.length > 0 ? `, ${remoteLive}/${remoteRows.length} remote connected` : ''}`;
     ctx.core.brief('info', 'peer_list', `${summary}`);
     return `${chalk.cyan(`Local mycc instances (${summary}):`)}\n${rows.join('\n')}${remoteSection}`;
-  },
+  }
 };

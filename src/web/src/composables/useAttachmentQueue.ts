@@ -46,9 +46,7 @@ const ERROR_TTL_MS = 4000;
 export function isDirectoryEntry(rawFiles: FileList, index: number): boolean {
   const file = rawFiles[index];
   type FileWithEntry = File & { webkitGetAsEntry?: () => unknown };
-  const item = (rawFiles as FileList & { item?(i: number): FileWithEntry }).item?.(index) as
-    | FileWithEntry
-    | undefined;
+  const item = (rawFiles as FileList & { item?(i: number): FileWithEntry }).item?.(index) as FileWithEntry | undefined;
   const entry = item?.webkitGetAsEntry?.();
   if (entry && typeof entry === 'object' && (entry as { isDirectory?: boolean }).isDirectory) {
     return true;
@@ -133,7 +131,7 @@ export function useAttachmentQueue(opts: AttachmentQueueOptions) {
       const info: FileInfo = {
         filename: file.name,
         data: base64,
-        mimeType: file.type || 'application/octet-stream',
+        mimeType: file.type || 'application/octet-stream'
       };
       commit([...files.value, info]);
     };
@@ -183,7 +181,7 @@ export function useAttachmentQueue(opts: AttachmentQueueOptions) {
     () => opts.getPending(),
     (pending) => {
       if (pending !== files.value) files.value = pending;
-    },
+    }
   );
 
   return {
@@ -193,6 +191,6 @@ export function useAttachmentQueue(opts: AttachmentQueueOptions) {
     onPaste,
     removeFile,
     clearFiles,
-    syncFromPending,
+    syncFromPending
   };
 }

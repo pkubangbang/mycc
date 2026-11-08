@@ -8,20 +8,21 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const blockageCreateTool: ToolDefinition = {
   name: 'blockage_create',
-  description: 'Declare that one issue blocks another. The blocked issue cannot be claimed until the blocker is resolved.',
+  description:
+    'Declare that one issue blocks another. The blocked issue cannot be claimed until the blocker is resolved.',
   input_schema: {
     type: 'object',
     properties: {
       blocker: {
         type: 'integer',
-        description: 'ID of the issue that is blocking',
+        description: 'ID of the issue that is blocking'
       },
       blocked: {
         type: 'integer',
-        description: 'ID of the issue that is being blocked',
-      },
+        description: 'ID of the issue that is being blocked'
+      }
     },
-    required: ['blocker', 'blocked'],
+    required: ['blocker', 'blocked']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -56,5 +57,5 @@ export const blockageCreateTool: ToolDefinition = {
     ctx.core.brief('info', 'blockage_create', `Created blockage: #${blocker} blocks #${blocked}`);
 
     return 'OK';
-  },
+  }
 };

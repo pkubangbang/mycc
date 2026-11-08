@@ -47,15 +47,22 @@ async function post(messages) {
   try {
     const resp = await retryChat(
       { model: MODEL, messages, tools: [], think: false },
-      { signal: AbortSignal.timeout(120000) },
+      { signal: AbortSignal.timeout(120000) }
     );
-    return { status: 'ACCEPTED', detail: `reply: ${String(resp?.message?.content ?? '').replace(/\s+/g, ' ').slice(0, 60)}` };
+    return {
+      status: 'ACCEPTED',
+      detail: `reply: ${String(resp?.message?.content ?? '')
+        .replace(/\s+/g, ' ')
+        .slice(0, 60)}`
+    };
   } catch (err) {
     const code = err?.status ?? err?.statusCode;
     const msg = String(err?.message ?? err);
     const rejected =
       /40\d/.test(String(code)) ||
-      /API error 4\d\d|invalid_request_error|must be followed by tool messages|must be a response to a preceding message/i.test(msg);
+      /API error 4\d\d|invalid_request_error|must be followed by tool messages|must be a response to a preceding message/i.test(
+        msg
+      );
     if (!rejected) inconclusive++;
     return { status: rejected ? 'REJECTED' : 'TRANSPORT-ERROR', detail: msg.replace(/\s+/g, ' ').slice(0, 170) };
   }
@@ -63,7 +70,10 @@ async function post(messages) {
 
 export async function runSequences() {
   console.log(`\n── phase 4: sequence matrix vs LIVE ${PROVIDER} (${SEQUENCES.length} cases) ──\n`);
-  let accepted = 0, rejected = 0, mismatches = 0, wrong = 0;
+  let accepted = 0,
+    rejected = 0,
+    mismatches = 0,
+    wrong = 0;
 
   for (const c of SEQUENCES) {
     process.stdout.write(`  ${c.name}... `);
@@ -81,7 +91,9 @@ export async function runSequences() {
 
     const tag = !informative ? '???' : providerOk ? 'ok ' : 'BAD';
     if (VERBOSE || tag !== 'ok ' || !agrees) {
-      console.log(`${r.status}  [${tag}]${agrees ? '' : `  ← EXPECTATION MISMATCH (expected ${wantDeepseek}, local checker says ${localVerdict})`}`);
+      console.log(
+        `${r.status}  [${tag}]${agrees ? '' : `  ← EXPECTATION MISMATCH (expected ${wantDeepseek}, local checker says ${localVerdict})`}`
+      );
       console.log(`          ${describe(c.msgs)}`);
       console.log(`          ${r.detail}`);
     } else {
@@ -115,7 +127,9 @@ export async function main() {
 
   console.log('\n═══ summary ═══');
   console.log(`  provider                    : ${PROVIDER}`);
-  console.log(`  sequence cases              : ${SEQUENCES.length} (${seq.accepted} accepted / ${seq.rejected} rejected)`);
+  console.log(
+    `  sequence cases              : ${SEQUENCES.length} (${seq.accepted} accepted / ${seq.rejected} rejected)`
+  );
   console.log(`  expectation mismatches      : ${seq.wrong}`);
   console.log(`  checker blind spots         : ${seq.mismatches}`);
   console.log(`  transport errors            : ${inconclusive}`);

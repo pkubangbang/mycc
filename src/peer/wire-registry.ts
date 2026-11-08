@@ -332,7 +332,7 @@ export function recordAnnounce(params: {
       meta,
       announceReceived: true,
       dialedByUs: dialed,
-      announcedAt: Date.now(),
+      announcedAt: Date.now()
     };
     entry.sockets.push(info);
   }
@@ -352,7 +352,9 @@ export function recordAnnounce(params: {
   if (hooks) {
     try {
       hooks.recordRemotePeerTodo({ sid, endpoint, done: false });
-    } catch { /* reminder is best-effort — never break the wire */ }
+    } catch {
+      /* reminder is best-effort — never break the wire */
+    }
   }
 
   const bothAnnounced = entry.sockets.length === 2 && entry.sockets.every((s) => s.announceReceived);
@@ -417,12 +419,18 @@ export function convergePairBySid(sid: string): WireSocketInfo[] | null {
   if (established && !winner.dialedByUs) winner = established;
   const losers = group.filter((s) => s !== winner && s.socket.readyState === s.socket.OPEN);
   for (const loser of losers) {
-    try { loser.socket.close(WIRE_CLOSE_SUPERSEDED, 'superseded'); } catch { /* closing */ }
+    try {
+      loser.socket.close(WIRE_CLOSE_SUPERSEDED, 'superseded');
+    } catch {
+      /* closing */
+    }
   }
   if (losers.length > 0 && hooks) {
     try {
       hooks.verbose('wire', `dual-duplex converged for peer ${sid}: kept initiator ${winner.initiatorSid}`);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
   return losers.length > 0 ? losers : null;
 }
@@ -473,8 +481,16 @@ export function teardownPair(
   // keep injecting mail through onMail while being invisible to peer_list,
   // /health and every count.
   for (const s of [...entry.sockets]) {
-    try { s.socket.close(WIRE_CLOSE_BYE, 'pair torn down'); } catch { /* closing */ }
-    try { s.socket.terminate(); } catch { /* ignore */ }
+    try {
+      s.socket.close(WIRE_CLOSE_BYE, 'pair torn down');
+    } catch {
+      /* closing */
+    }
+    try {
+      s.socket.terminate();
+    } catch {
+      /* ignore */
+    }
   }
   // Sid-index ownership + survivor re-point (review finding 1, CRITICAL):
   // one peer sid can transiently span MULTIPLE endpoint keys (a simultaneous
@@ -531,11 +547,15 @@ export function teardownPair(
   if (hooks && notifyTodo) {
     try {
       hooks.recordRemotePeerTodo({ sid: entry.sid, endpoint: entry.endpoint, done: true });
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   } else if (hooks && reason) {
     try {
       hooks.verbose('wire', `${endpoint} torn down non-terminally: ${reason} (todo left as-is)`);
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
   return entry;
 }
@@ -615,8 +635,16 @@ export function hasLiveWireForEndpoint(endpoint: string): boolean {
 export function closeAllWireSockets(): void {
   for (const entry of pairs.values()) {
     for (const s of [...entry.sockets]) {
-      try { s.socket.close(); } catch { /* already closing */ }
-      try { s.socket.terminate(); } catch { /* ignore */ }
+      try {
+        s.socket.close();
+      } catch {
+        /* already closing */
+      }
+      try {
+        s.socket.terminate();
+      } catch {
+        /* ignore */
+      }
     }
   }
 }
@@ -818,7 +846,10 @@ export function challengePeerShares(sid: string, ourShares: string[]): boolean {
   if (!tags?.size || !ourShares.length) return false;
   peerShareConfirmed.delete(sid);
   const overlap = ourShares.map(shareTag).filter((t) => tags.has(t));
-  if (!overlap.length) { pendingChallenges.delete(sid); return false; }
+  if (!overlap.length) {
+    pendingChallenges.delete(sid);
+    return false;
+  }
   const challenge = randomBytes(16).toString('hex');
   pendingChallenges.set(sid, { challenge, at: Date.now() });
   const socket = findSocketBySid(sid);
@@ -860,7 +891,7 @@ export function answerShareChallenge(peerSid: string, challenge: string, nonces:
 export function confirmShareChallenges(
   peerSid: string,
   challenge: string,
-  proofs: Array<{ tag?: unknown; proof?: unknown }> | undefined,
+  proofs: Array<{ tag?: unknown; proof?: unknown }> | undefined
 ): string[] {
   const pending = pendingChallenges.get(peerSid);
   if (!pending || pending.challenge !== challenge) {
@@ -972,20 +1003,13 @@ export function ensurePendingPair(endpoint: string, sid: string): RemotePairEntr
  * "unknown peer" from "too big", and the permanent one (oversize) is actionable
  * while the transient ones are not.
  */
-export type WireSendFailure =
-  | 'not-wired'
-  | 'unknown-sid'
-  | 'not-open'
-  | 'oversize'
-  | 'send-error';
+export type WireSendFailure = 'not-wired' | 'unknown-sid' | 'not-open' | 'oversize' | 'send-error';
 
 /**
  * `true` when the frame went out, otherwise the reason. Callers that only need a
  * boolean read `.ok`; callers building a user-facing message read `.failure`.
  */
-export type WireSendResult =
-  | { ok: true }
-  | { ok: false; failure: WireSendFailure; detail?: string };
+export type WireSendResult = { ok: true } | { ok: false; failure: WireSendFailure; detail?: string };
 
 /** One sentence per cause, for `mail_to`'s reply. */
 export function describeWireSendFailure(failure: WireSendFailure, targetSid: string): string {
@@ -1010,9 +1034,7 @@ export function sendWireMail(targetSid: string, title: string, content: string):
   if (!entry) return { ok: false, failure: 'unknown-sid' };
   // Resolve by SID, not by 'any OPEN socket': after convergence the entry can
   // hold a socket for a different peer, and sending there misdelivers mail.
-  const socket = entry.sockets.find(
-    (s) => s.sid === targetSid && s.socket.readyState === s.socket.OPEN
-  )?.socket;
+  const socket = entry.sockets.find((s) => s.sid === targetSid && s.socket.readyState === s.socket.OPEN)?.socket;
   if (!socket) return { ok: false, failure: 'not-open' };
   // Construct the ACTUAL frame first (review finding 5: the prior guard
   // measured a PARTIAL frame — {content, title, targetSid} — plus a +256
@@ -1028,7 +1050,7 @@ export function sendWireMail(targetSid: string, title: string, content: string):
     from: `${hooks.getSessionId()}/lead`,
     title,
     content,
-    timestamp: Date.now(),
+    timestamp: Date.now()
   };
   // Sender-side size cap (plan §5, finding G2; review finding: BYTE-aware).
   // Fail fast WITHOUT sending when the frame would exceed the dedicated

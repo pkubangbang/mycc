@@ -136,10 +136,9 @@ function evaluateNodeInner(node: jsep.Expression, ctx: EvalContext): JsepEvaluat
       else if (name === 'call') {
         value = ctx.call ?? {
           metadata: { filePath: '', newLoc: 0, existingLoc: 0, isDestructive: false },
-          args: {},
+          args: {}
         };
-      }
-      else if (name in ctx) {
+      } else if (name in ctx) {
         const resolved = ctx[name as keyof EvalContext];
         // A bare Identifier that resolves to a function is a misuse: the only
         // legal function reference is as a CallExpression callee (e.g.
@@ -148,11 +147,12 @@ function evaluateNodeInner(node: jsep.Expression, ctx: EvalContext): JsepEvaluat
         // silently always-truthy condition. (The validator rejects this too,
         // but defend-in-depth so a stale persisted condition can't slip through.)
         if (typeof resolved === 'function') {
-          throw new Error(`Identifier "${name}" is a function and must be called as ${name}(), not referenced as a value`);
+          throw new Error(
+            `Identifier "${name}" is a function and must be called as ${name}(), not referenced as a value`
+          );
         }
         value = resolved;
-      }
-      else {
+      } else {
         throw new Error(`Unknown identifier: ${name}`);
       }
       return makeEvaluatedNode(node, value);
@@ -161,21 +161,19 @@ function evaluateNodeInner(node: jsep.Expression, ctx: EvalContext): JsepEvaluat
     case 'ArrayExpression': {
       const arrNode = node as jsep.ArrayExpression;
       const elements = arrNode.elements.filter((el): el is jsep.Expression => el !== null);
-      const evaluatedElements = elements.map(el => evaluateNode(el, ctx));
-      const value = evaluatedElements.map(e => e.value);
+      const evaluatedElements = elements.map((el) => evaluateNode(el, ctx));
+      const value = evaluatedElements.map((e) => e.value);
       const result = makeEvaluatedNode(node, value);
       // stitch evaluated children into the result for tree printing
-      (result as any).elements = arrNode.elements.map(el =>
-        el === null ? null : evaluatedElements.shift()!
-      );
+      (result as any).elements = arrNode.elements.map((el) => (el === null ? null : evaluatedElements.shift()!));
       return result;
     }
 
     case 'CallExpression': {
       const callNode = node as jsep.CallExpression;
       const callee = callNode.callee;
-      const evaluatedArgs = callNode.arguments.map(arg => evaluateNode(arg, ctx));
-      const args = evaluatedArgs.map(a => a.value);
+      const evaluatedArgs = callNode.arguments.map((arg) => evaluateNode(arg, ctx));
+      const args = evaluatedArgs.map((a) => a.value);
 
       // Case 1: Direct function call like isPlanMode()
       if (callee.type === 'Identifier') {
@@ -195,9 +193,10 @@ function evaluateNodeInner(node: jsep.Expression, ctx: EvalContext): JsepEvaluat
         const member = callee as jsep.MemberExpression;
 
         // turn.XXX() and session.XXX() calls
-        if (member.object.type === 'Identifier' &&
-            ((member.object as jsep.Identifier).name === 'turn' ||
-             (member.object as jsep.Identifier).name === 'session')) {
+        if (
+          member.object.type === 'Identifier' &&
+          ((member.object as jsep.Identifier).name === 'turn' || (member.object as jsep.Identifier).name === 'session')
+        ) {
           if (member.property.type !== 'Identifier') {
             throw new Error('Dynamic property not supported on turn/session');
           }
@@ -253,7 +252,7 @@ function evaluateNodeInner(node: jsep.Expression, ctx: EvalContext): JsepEvaluat
         // stitch evaluated callee children for tree printing
         const evalCallee = Object.assign({}, member, {
           object: objEval,
-          property: propEval ?? member.property,
+          property: propEval ?? member.property
         });
         (result as any).callee = evalCallee;
         (result as any).arguments = evaluatedArgs;
@@ -303,10 +302,18 @@ function evaluateNodeInner(node: jsep.Expression, ctx: EvalContext): JsepEvaluat
 
       let value: unknown;
       switch (unary.operator) {
-        case '!': value = !arg; break;
-        case '-': value = -(arg as number); break;
-        case '+': value = +(arg as number); break;
-        case '~': value = ~(arg as number); break;
+        case '!':
+          value = !arg;
+          break;
+        case '-':
+          value = -(arg as number);
+          break;
+        case '+':
+          value = +(arg as number);
+          break;
+        case '~':
+          value = ~(arg as number);
+          break;
         default:
           throw new Error(`Unknown unary operator: ${unary.operator}`);
       }
@@ -340,21 +347,55 @@ function evaluateNodeInner(node: jsep.Expression, ctx: EvalContext): JsepEvaluat
 
       let value: unknown;
       switch (binary.operator) {
-        case '==': value = left == right; break; // eslint-disable-line eqeqeq
-        case '===': value = left === right; break;
-        case '!=': value = left != right; break; // eslint-disable-line eqeqeq
-        case '!==': value = left !== right; break;
-        case '<': value = leftNum < rightNum; break;
-        case '<=': value = leftNum <= rightNum; break;
-        case '>': value = leftNum > rightNum; break;
-        case '>=': value = leftNum >= rightNum; break;
-        case '+': value = leftNum + rightNum; break;
-        case '-': value = leftNum - rightNum; break;
-        case '*': value = leftNum * rightNum; break;
-        case '/': value = leftNum / rightNum; break;
-        case '%': value = leftNum % rightNum; break;
-        case '&&': value = left && right; break;
-        case '||': value = left || right; break;
+        case '==':
+          // The loose comparisons ARE the hook operator being evaluated here —
+          // strictness would change the semantics of a user's condition.
+          // eslint-disable-next-line eqeqeq
+          value = left == right;
+          break;
+        case '===':
+          value = left === right;
+          break;
+        case '!=':
+          // eslint-disable-next-line eqeqeq
+          value = left != right;
+          break;
+        case '!==':
+          value = left !== right;
+          break;
+        case '<':
+          value = leftNum < rightNum;
+          break;
+        case '<=':
+          value = leftNum <= rightNum;
+          break;
+        case '>':
+          value = leftNum > rightNum;
+          break;
+        case '>=':
+          value = leftNum >= rightNum;
+          break;
+        case '+':
+          value = leftNum + rightNum;
+          break;
+        case '-':
+          value = leftNum - rightNum;
+          break;
+        case '*':
+          value = leftNum * rightNum;
+          break;
+        case '/':
+          value = leftNum / rightNum;
+          break;
+        case '%':
+          value = leftNum % rightNum;
+          break;
+        case '&&':
+          value = left && right;
+          break;
+        case '||':
+          value = left || right;
+          break;
         default:
           throw new Error(`Unknown binary operator: ${binary.operator}`);
       }
@@ -369,9 +410,7 @@ function evaluateNodeInner(node: jsep.Expression, ctx: EvalContext): JsepEvaluat
       const conditional = node as jsep.ConditionalExpression;
       const testEval = evaluateNode(conditional.test, ctx);
       const test = testEval.value;
-      const branchEval = test
-        ? evaluateNode(conditional.consequent, ctx)
-        : evaluateNode(conditional.alternate, ctx);
+      const branchEval = test ? evaluateNode(conditional.consequent, ctx) : evaluateNode(conditional.alternate, ctx);
       const result = makeEvaluatedNode(node, branchEval.value);
       // stitch evaluated children for tree printing
       (result as any).test = testEval;
@@ -445,7 +484,7 @@ export function evaluateExpression(expression: string, ctx: EvalContext): boolea
       'hook',
       `A hook condition could not be checked and was skipped.`,
       `Expr: ${expression}\n${nodeText ? `Failed at: ${nodeText}\n` : ''}Reason: ${error.message}`,
-      { synthetic: true },
+      { synthetic: true }
     );
     if (isDebuggingEval()) {
       agentIO.verbose('hook', `Evaluator detail: ${expression}`, error.stack ?? String(err));

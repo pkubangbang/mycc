@@ -243,7 +243,7 @@ function appendMailToPath(mailboxPath, from, title, content) {
     from,
     title,
     content,
-    timestamp: new Date().toISOString(),
+    timestamp: new Date().toISOString()
   };
   const line = `${JSON.stringify(mail)}\n`;
   fs.appendFileSync(mailboxPath, line, 'utf-8');
@@ -259,8 +259,8 @@ function cmdList() {
   if (entries.length === 0) {
     process.stdout.write(
       'No mycc instances registered for peer discovery.\n' +
-      '(Run `mycc` to register an instance; discovery is via\n' +
-      `${IDENTITY_FILE}.)\n`,
+        '(Run `mycc` to register an instance; discovery is via\n' +
+        `${IDENTITY_FILE}.)\n`
     );
     process.exit(0);
   }
@@ -288,9 +288,9 @@ function cmdList() {
     const started = new Date(entry.startedAt).toISOString().replace('T', ' ').slice(0, 19);
     rows.push(
       `- session=${entry.sessionId}\n` +
-      `    workDir: ${entry.workDir}\n` +
-      `    status: ${status}\n` +
-      `    started: ${started}`,
+        `    workDir: ${entry.workDir}\n` +
+        `    status: ${status}\n` +
+        `    started: ${started}`
     );
   }
   const summary = `${online} online, ${entries.length} registered`;
@@ -323,13 +323,13 @@ function cmdSend(args) {
     if (args.requireOnline) {
       dieError(
         `liveness gate: session ${sessionId} not found in ${IDENTITY_FILE} ` +
-        `(unregistered). --require-online refuses to deliver to an unregistered lead.`,
+          `(unregistered). --require-online refuses to deliver to an unregistered lead.`
       );
     }
     dieError(
       `session ${sessionId} not found in ${IDENTITY_FILE}.\n` +
-      `Use \`mycc-mail --list\` to see registered instances. ` +
-      `The target mycc must be running (it registers itself at startup).`,
+        `Use \`mycc-mail --list\` to see registered instances. ` +
+        `The target mycc must be running (it registers itself at startup).`
     );
   }
   const mailboxPath = entry.mailbox;
@@ -347,12 +347,10 @@ function cmdSend(args) {
     if (!isPeerRunning(sessionId)) {
       const fresh = isFresh(sessionId);
       const pid = readHeartbeatPid(sessionId);
-      const why = !fresh
-        ? 'stale heartbeat'
-        : (typeof pid !== 'number' ? 'no pid recorded' : `pid ${pid} not alive`);
+      const why = !fresh ? 'stale heartbeat' : typeof pid !== 'number' ? 'no pid recorded' : `pid ${pid} not alive`;
       dieError(
         `liveness gate: session ${sessionId} is not provably live (${why}). ` +
-        `--require-online refuses to deliver to a lead that may not read the mail.`,
+          `--require-online refuses to deliver to a lead that may not read the mail.`
       );
     }
   } else if (!isFresh(sessionId)) {
@@ -361,8 +359,8 @@ function cmdSend(args) {
     // or gets orphaned if the session is abandoned).
     process.stderr.write(
       `Warning: session ${sessionId} appears offline (no fresh heartbeat).\n` +
-      `The mail is still appended to the mailbox; it will be processed when\n` +
-      `the lead next runs COLLECT (or on restart if the session is resumed).\n`,
+        `The mail is still appended to the mailbox; it will be processed when\n` +
+        `the lead next runs COLLECT (or on restart if the session is resumed).\n`
     );
   }
 
@@ -371,9 +369,9 @@ function cmdSend(args) {
 
   process.stdout.write(
     `OK. Mail delivered to session ${sessionId}:\n` +
-    `  from:    ${from}\n` +
-    `  title:   ${title}\n` +
-    `  mailbox: ${mailboxPath}\n`,
+      `  from:    ${from}\n` +
+      `  title:   ${title}\n` +
+      `  mailbox: ${mailboxPath}\n`
   );
   process.exit(0);
 }
@@ -392,12 +390,30 @@ function cmdSend(args) {
  * directory after `npm link` without resolving node_modules.
  */
 function parseArgs(argv) {
-  const args = { sessionId: null, title: null, content: null, contentFile: null, from: null, requireOnline: false, list: false, help: false };
+  const args = {
+    sessionId: null,
+    title: null,
+    content: null,
+    contentFile: null,
+    from: null,
+    requireOnline: false,
+    list: false,
+    help: false
+  };
   for (let i = 0; i < argv.length; i++) {
     const tok = argv[i];
-    if (tok === '--help' || tok === '-h') { args.help = true; continue; }
-    if (tok === '--list') { args.list = true; continue; }
-    if (tok === '--require-online') { args.requireOnline = true; continue; }
+    if (tok === '--help' || tok === '-h') {
+      args.help = true;
+      continue;
+    }
+    if (tok === '--list') {
+      args.list = true;
+      continue;
+    }
+    if (tok === '--require-online') {
+      args.requireOnline = true;
+      continue;
+    }
     // --key value  or  --key=value
     const eqIdx = tok.indexOf('=');
     let key = tok;
@@ -419,7 +435,7 @@ function parseArgs(argv) {
         '--title': 'title',
         '--content': 'content',
         '--content-file': 'contentFile',
-        '--from': 'from',
+        '--from': 'from'
       };
       args[fieldMap[key]] = val;
       continue;

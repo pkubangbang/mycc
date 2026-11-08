@@ -31,7 +31,7 @@ import {
   LockExistsError,
   get_lock_path,
   beginProgressDisplay,
-  endProgressDisplay,
+  endProgressDisplay
 } from './compile-utils.js';
 import { summarizeWithExplorer } from './explorer-agent.js';
 
@@ -86,7 +86,14 @@ class Semaphore {
 async function summarize_with_explorer(
   root: Node,
   workDir: string,
-  onProgress?: (nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>, roundTools?: number) => void,
+  onProgress?: (
+    nodeTitle: string,
+    level: number,
+    round: number,
+    tool: string,
+    args: Record<string, unknown>,
+    roundTools?: number
+  ) => void,
   onNodeStart?: (nodeTitle: string) => void,
   onNodeComplete?: (nodeTitle: string) => void,
   oldNodeMap?: Map<string, Node>
@@ -133,8 +140,12 @@ async function summarize_with_explorer(
         let result;
         try {
           result = await summarizeWithExplorer(
-            node.title, node.text, ancestorContext, workDir,
-            wrappedOnProgress, existingNode
+            node.title,
+            node.text,
+            ancestorContext,
+            workDir,
+            wrappedOnProgress,
+            existingNode
           );
         } catch (err) {
           const wrappedError = new Error(
@@ -151,21 +162,21 @@ async function summarize_with_explorer(
           node.links.push({
             target_type: 'file',
             file_path: item.path,
-            comment: item.reason || 'Discovered during exploration',
+            comment: item.reason || 'Discovered during exploration'
           });
         }
         for (const item of result.markedUrls) {
           node.links.push({
             target_type: 'url',
             url: item.path,
-            comment: item.reason || 'Discovered during exploration',
+            comment: item.reason || 'Discovered during exploration'
           });
         }
         for (const item of result.markedTerms) {
           node.links.push({
             target_type: 'term',
             term_name: item.term,
-            comment: item.context || 'Project-specific term',
+            comment: item.context || 'Project-specific term'
           });
         }
 
@@ -349,7 +360,7 @@ export async function compile_mindmap(
       if (racedLock && is_lock_fresh(racedLock) && racedLock.source_hash === hash) {
         const raceError = new Error(
           `Another process is already compiling ${mdPath} (fresh lock at ${get_lock_path(outFile)}). ` +
-          `Retry later, or run with force=true to override.`,
+            `Retry later, or run with force=true to override.`
         );
         raceError.cause = err;
         throw raceError;
@@ -367,9 +378,7 @@ export async function compile_mindmap(
   const fileName = path.basename(absolutePath, path.extname(absolutePath));
 
   const firstHeadingMatch = content.match(/^#{1,6}\s+/m);
-  const preamble = firstHeadingMatch
-    ? content.slice(0, content.indexOf(firstHeadingMatch[0])).trim()
-    : content.trim();
+  const preamble = firstHeadingMatch ? content.slice(0, content.indexOf(firstHeadingMatch[0])).trim() : content.trim();
 
   const root: Node = {
     id: '/',
@@ -378,7 +387,7 @@ export async function compile_mindmap(
     summary: '',
     level: 0,
     children: sections.map((s) => build_node(s, '/', 1)),
-    links: extract_links(preamble),
+    links: extract_links(preamble)
   };
 
   // Create mindmap
@@ -389,7 +398,7 @@ export async function compile_mindmap(
     hash,
     compiled_at: existingMindmap?.compiled_at || now.toISOString(),
     updated_at: now.toISOString(),
-    root,
+    root
   };
 
   // Count nodes needing processing
@@ -412,7 +421,14 @@ export async function compile_mindmap(
     tracker.onNodeStart(nodeTitle);
   };
 
-  const onProgress = (nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>, roundTools?: number) => {
+  const onProgress = (
+    nodeTitle: string,
+    level: number,
+    round: number,
+    tool: string,
+    args: Record<string, unknown>,
+    roundTools?: number
+  ) => {
     tracker.onProgress(nodeTitle, level, round, tool, args, roundTools);
   };
 
@@ -483,9 +499,7 @@ export async function compile_mindmap_from_content(
   const sections = parse_markdown(content);
 
   const firstHeadingMatch = content.match(/^#{1,6}\s+/m);
-  const preamble = firstHeadingMatch
-    ? content.slice(0, content.indexOf(firstHeadingMatch[0])).trim()
-    : content.trim();
+  const preamble = firstHeadingMatch ? content.slice(0, content.indexOf(firstHeadingMatch[0])).trim() : content.trim();
 
   const root: Node = {
     id: '/',
@@ -494,7 +508,7 @@ export async function compile_mindmap_from_content(
     summary: '',
     level: 0,
     children: sections.map((s) => build_node(s, '/', 1)),
-    links: extract_links(preamble),
+    links: extract_links(preamble)
   };
 
   const hash = crypto.createHash('sha256').update(content).digest('hex');
@@ -506,7 +520,7 @@ export async function compile_mindmap_from_content(
     hash,
     compiled_at: now.toISOString(),
     updated_at: now.toISOString(),
-    root,
+    root
   };
 
   const totalNodes = count_nodes(root);
@@ -516,7 +530,14 @@ export async function compile_mindmap_from_content(
     const onNodeStart = (nodeTitle: string) => {
       tracker.onNodeStart(nodeTitle);
     };
-    const onProgress = (nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>, roundTools?: number) => {
+    const onProgress = (
+      nodeTitle: string,
+      level: number,
+      round: number,
+      tool: string,
+      args: Record<string, unknown>,
+      roundTools?: number
+    ) => {
       tracker.onProgress(nodeTitle, level, round, tool, args, roundTools);
     };
     beginProgressDisplay();

@@ -45,7 +45,7 @@ async function currentBranch(cwd: string): Promise<string | null> {
     const { stdout } = await agentIO.exec({
       cwd,
       command: 'git rev-parse --abbrev-ref HEAD',
-      timeout: 5,
+      timeout: 5
     });
     const branch = stdout.trim();
     if (!branch || branch === 'HEAD') return null;
@@ -63,18 +63,19 @@ export const gitCommitTool: ToolDefinition = {
     properties: {
       message: {
         type: 'string',
-        description: 'The commit message',
+        description: 'The commit message'
       },
       amend: {
         type: 'boolean',
-        description: 'Amend the previous commit (default false).',
+        description: 'Amend the previous commit (default false).'
       },
       cwd: {
         type: 'string',
-        description: 'Working directory for the commit, e.g. a worktree path like ".worktrees/feat". Defaults to the agent\'s current working directory.',
-      },
+        description:
+          'Working directory for the commit, e.g. a worktree path like ".worktrees/feat". Defaults to the agent\'s current working directory.'
+      }
     },
-    required: ['message'],
+    required: ['message']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -106,8 +107,8 @@ export const gitCommitTool: ToolDefinition = {
       const ownedWorktree = await findWorktreeByName(agentName, ctx.core.getWorkDir());
 
       // Check if we're committing inside a worktree owned by this agent
-      const isInOwnedWorktree = ownedWorktree &&
-        (commitCwd === ownedWorktree.path || commitCwd.startsWith(ownedWorktree.path + path.sep));
+      const isInOwnedWorktree =
+        ownedWorktree && (commitCwd === ownedWorktree.path || commitCwd.startsWith(ownedWorktree.path + path.sep));
 
       if (!isInOwnedWorktree) {
         // Not in a worktree - send mail to lead instead of committing
@@ -125,8 +126,10 @@ export const gitCommitTool: ToolDefinition = {
             `Please review and commit on my behalf if appropriate.`,
             ``,
             `To commit for me, you can use:`,
-            amend ? `\`git commit --amend -m "${message}"\`` : `\`git commit -m "${message}"\``,
-          ].filter(Boolean).join('\n')
+            amend ? `\`git commit --amend -m "${message}"\`` : `\`git commit -m "${message}"\``
+          ]
+            .filter(Boolean)
+            .join('\n')
         );
 
         ctx.core.brief('info', 'git_commit', `Commit request sent to lead via mail`);
@@ -139,14 +142,12 @@ export const gitCommitTool: ToolDefinition = {
       const { stdout: statusOutput } = await agentIO.exec({
         cwd: commitCwd,
         command: 'git status --porcelain',
-        timeout: 5,
+        timeout: 5
       });
-      
+
       // Check if anything is staged (lines starting with letters in first column)
-      const hasStaged = statusOutput.split('\n').some(line => 
-        line.length > 0 && line[0] !== ' ' && line[0] !== '?'
-      );
-      
+      const hasStaged = statusOutput.split('\n').some((line) => line.length > 0 && line[0] !== ' ' && line[0] !== '?');
+
       if (!hasStaged && !amend) {
         ctx.core.brief('warn', 'git_commit', 'No staged changes to commit');
         return 'Error: No staged changes to commit. Use `git add` to stage changes first.';
@@ -190,27 +191,22 @@ export const gitCommitTool: ToolDefinition = {
     const allowList = ctx.core.getAutoCommitBranches();
     if (allowList.length > 0 && core.getMode() !== 'plan') {
       const branch = await currentBranch(commitCwd);
-      const authorized = branch !== null
-        ? allowList
-          .map(parseAutoCommitEntry)
-          .find((e) => e.branch === branch && (e.autoAdd || autoMode))
-        : undefined;
+      const authorized =
+        branch !== null
+          ? allowList.map(parseAutoCommitEntry).find((e) => e.branch === branch && (e.autoAdd || autoMode))
+          : undefined;
       if (branch !== null && authorized) {
         autoApproved = true;
         autoCommitBranch = branch;
         autoCommitSource = authorized.autoAdd ? 'autoAdd' : 'auto';
-        ctx.core.brief(
-          'info',
-          'git_commit',
-          `Auto-approved commit on allow-listed branch '${branch}'`,
-        );
+        ctx.core.brief('info', 'git_commit', `Auto-approved commit on allow-listed branch '${branch}'`);
       } else {
         // A list exists but this branch is not (currently) authorized: fall
         // through to the normal path, which auto-denies under auto mode.
         ctx.core.brief(
           'info',
           'git_commit',
-          `Auto-commit: branch '${branch ?? '(detached)'}' is not authorized${autoMode ? '' : ' (and the lead is not in auto mode)'}`,
+          `Auto-commit: branch '${branch ?? '(detached)'}' is not authorized${autoMode ? '' : ' (and the lead is not in auto mode)'}`
         );
       }
     }
@@ -232,8 +228,10 @@ export const gitCommitTool: ToolDefinition = {
       // Parse response - only 'y' or 'yes' (case-insensitive) grants permission
       // Strip surrounding quotes (tmux send-keys may add them)
       let normalized = response.trim().toLowerCase();
-      if ((normalized.startsWith('"') && normalized.endsWith('"')) ||
-          (normalized.startsWith("'") && normalized.endsWith("'"))) {
+      if (
+        (normalized.startsWith('"') && normalized.endsWith('"')) ||
+        (normalized.startsWith("'") && normalized.endsWith("'"))
+      ) {
         normalized = normalized.slice(1, -1).trim();
       }
       const granted = normalized === 'y' || normalized === 'yes';
@@ -252,8 +250,10 @@ export const gitCommitTool: ToolDefinition = {
         // lead in auto mode.
         if (source === 'auto') {
           ctx.core.brief('info', 'git_commit', 'Commit auto-rejected (auto mode is on)');
-          return 'Commit was auto-rejected because auto mode is ON — the user was not asked. '
-            + 'To proceed with the commit, ask the user to exit auto mode (press ESC) and then retry the git_commit.';
+          return (
+            'Commit was auto-rejected because auto mode is ON — the user was not asked. ' +
+            'To proceed with the commit, ask the user to exit auto mode (press ESC) and then retry the git_commit.'
+          );
         }
         ctx.core.brief('info', 'git_commit', 'Commit cancelled by user');
         return 'Commit cancelled by user';
@@ -284,9 +284,7 @@ export const gitCommitTool: ToolDefinition = {
       // message. This eliminates the temp-file leak on SIGKILL (the `finally`
       // cleanup block doesn't run on SIGKILL) and the shell-escaping concerns
       // of a file path — git reads the message directly from stdin.
-      const args = amend
-        ? ['commit', '--amend', '-F', '-']
-        : ['commit', '-F', '-'];
+      const args = amend ? ['commit', '--amend', '-F', '-'] : ['commit', '-F', '-'];
 
       // Use spawn directly to avoid cmd.exe quote issues
       const proc = spawn('git', args, { cwd: commitCwd });
@@ -298,7 +296,9 @@ export const gitCommitTool: ToolDefinition = {
       // the caller even though the exit code path below already reports the
       // real failure ("not a git repository"). Swallow write errors here: the
       // child's exit code and stderr are the authoritative outcome.
-      proc.stdin?.on('error', () => { /* see comment above */ });
+      proc.stdin?.on('error', () => {
+        /* see comment above */
+      });
       proc.stdin?.write(commitMessage, 'utf-8');
       proc.stdin?.end();
 
@@ -320,7 +320,7 @@ export const gitCommitTool: ToolDefinition = {
           resolve({
             code: code ?? 1,
             stdout: Buffer.concat(stdoutBuffer).toString('utf-8'),
-            stderr: Buffer.concat(stderrBuffer).toString('utf-8'),
+            stderr: Buffer.concat(stderrBuffer).toString('utf-8')
           });
         });
 
@@ -334,7 +334,7 @@ export const gitCommitTool: ToolDefinition = {
         stdout: result.stdout,
         stderr: result.stderr,
         exitCode: result.code,
-        timedOut: result.code === 137,
+        timedOut: result.code === 137
       };
 
       if (timedOut) {
@@ -354,7 +354,7 @@ export const gitCommitTool: ToolDefinition = {
           const { stdout: statusAfter } = await agentIO.exec({
             cwd: commitCwd,
             command: 'git status --porcelain',
-            timeout: 5,
+            timeout: 5
           });
           hasRemainingChanges = statusAfter.trim().length > 0;
         } catch {
@@ -365,7 +365,9 @@ export const gitCommitTool: ToolDefinition = {
           // Partial commit — there are still unstaged/uncommitted files
           ctx.core.brief('info', 'git_commit', 'Uncommitted changes remain — continue working');
           parts.push('Commit successful — however, there are still uncommitted changes remaining (partial commit).');
-          parts.push('Continue working: stage and commit the remaining files, or inform the user about what was committed and what still needs attention.');
+          parts.push(
+            'Continue working: stage and commit the remaining files, or inform the user about what was committed and what still needs attention.'
+          );
         } else {
           // Full commit — everything is committed
           parts.push('Commit successful');
@@ -396,5 +398,5 @@ export const gitCommitTool: ToolDefinition = {
     }
     // No finally block needed — git commit -F - reads the message from stdin,
     // so there is no temp file to clean up (eliminates the SIGKILL leak).
-  },
+  }
 };

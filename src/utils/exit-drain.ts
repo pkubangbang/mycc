@@ -75,10 +75,7 @@ export interface ExitDrain {
  * @param graceMs - grace window after exit. Defaults to
  *   {@link DEFAULT_EXIT_DRAIN_GRACE_MS}.
  */
-export function armExitDrain(
-  child: ChildProcess,
-  graceMs: number = DEFAULT_EXIT_DRAIN_GRACE_MS,
-): ExitDrain {
+export function armExitDrain(child: ChildProcess, graceMs: number = DEFAULT_EXIT_DRAIN_GRACE_MS): ExitDrain {
   let settled = false;
   let timer: NodeJS.Timeout | undefined;
   let resolveSettled!: () => void;
@@ -117,6 +114,6 @@ export function armExitDrain(
         clearTimeout(timer);
         timer = undefined;
       }
-    },
+    }
   };
 }

@@ -164,7 +164,7 @@ export class Sequence {
     if (!toolSpec) {
       return this.events.length;
     }
-    return this.events.filter(e => matchesToolSpec(e, toolSpec)).length;
+    return this.events.filter((e) => matchesToolSpec(e, toolSpec)).length;
   }
 
   /**
@@ -190,7 +190,7 @@ export class Sequence {
    *                   Prevents false positives from file content read into results.
    */
   turnCountResult(toolSpec: string, pattern: string, maxChars?: number): number {
-    return this.events.filter(e => {
+    return this.events.filter((e) => {
       if (toolSpec !== '*' && !matchesToolSpec(e, toolSpec)) return false;
       const searchText = maxChars ? e.result.slice(0, maxChars) : e.result;
       return searchText.includes(pattern);
@@ -202,7 +202,7 @@ export class Sequence {
    * @param toolSpec - Optional tool spec (three-class) to filter by. Omit for all tools.
    */
   turnHadError(toolSpec?: string): boolean {
-    return this.events.some(e => {
+    return this.events.some((e) => {
       if (toolSpec && !matchesToolSpec(e, toolSpec)) return false;
       const result = e.result?.toLowerCase() || '';
       return result.includes('error') || result.includes('failed');
@@ -223,7 +223,7 @@ export class Sequence {
     }
     // tool#pattern: session-wide count of calls whose searchable arg matches
     if (toolSpec.includes('#')) {
-      return this.sessionPatternLog.filter(entry => matchesSessionPatternEntry(entry, toolSpec)).length;
+      return this.sessionPatternLog.filter((entry) => matchesSessionPatternEntry(entry, toolSpec)).length;
     }
     return this.toolCallTally.get(toolSpec) || 0;
   }
@@ -251,7 +251,7 @@ export class Sequence {
    * @param maxChars - Optional: only search the first N chars of each result.
    */
   sessionCountResult(toolSpec: string, pattern: string, maxChars?: number): number {
-    return this.sessionResultsLog.filter(e => {
+    return this.sessionResultsLog.filter((e) => {
       if (toolSpec !== '*' && !matchesToolSpec(e, toolSpec)) return false;
       const searchText = maxChars ? e.result.slice(0, maxChars) : e.result;
       return searchText.includes(pattern);
@@ -263,7 +263,7 @@ export class Sequence {
    * @param toolSpec - Optional tool spec (three-class) to filter by. Omit for all tools.
    */
   sessionHadError(toolSpec?: string): boolean {
-    return this.sessionResultsLog.some(e => {
+    return this.sessionResultsLog.some((e) => {
       if (toolSpec && !matchesToolSpec(e, toolSpec)) return false;
       const result = e.result?.toLowerCase() || '';
       return result.includes('error') || result.includes('failed');
@@ -286,9 +286,9 @@ export class Sequence {
     const hookMarker = `[Hook: ${skillName}]`;
     const skillMarker = `[Skill: ${skillName}]`;
 
-    return this.triologue.getMessagesRaw().some(
-      msg => msg.content?.includes(hookMarker) || msg.content?.includes(skillMarker)
-    );
+    return this.triologue
+      .getMessagesRaw()
+      .some((msg) => msg.content?.includes(hookMarker) || msg.content?.includes(skillMarker));
   }
 
   /**
@@ -326,16 +326,18 @@ export class Sequence {
     const ctx: EvalContext = {
       turnCount: (tool?: string) => this.turnCount(tool),
       turnLastIndex: (tool: string) => this.turnLastIndex(tool),
-      turnCountResult: (tool: string, pattern: string, maxChars?: number) => this.turnCountResult(tool, pattern, maxChars),
+      turnCountResult: (tool: string, pattern: string, maxChars?: number) =>
+        this.turnCountResult(tool, pattern, maxChars),
       turnHadError: (tool?: string) => this.turnHadError(tool),
       sessionCount: (tool?: string) => this.sessionCount(tool),
       sessionLastIndex: (tool: string) => this.sessionLastIndex(tool),
-      sessionCountResult: (tool: string, pattern: string, maxChars?: number) => this.sessionCountResult(tool, pattern, maxChars),
+      sessionCountResult: (tool: string, pattern: string, maxChars?: number) =>
+        this.sessionCountResult(tool, pattern, maxChars),
       sessionHadError: (tool?: string) => this.sessionHadError(tool),
       totalTurns: () => this.getTotalTurns(),
       isPlanMode: () => this.isPlanMode(),
       call,
-      onEvalError,
+      onEvalError
     };
 
     return evaluateExpression(expression, ctx);
@@ -379,10 +381,7 @@ export function extractSearchKey(event: { args?: Record<string, unknown> }): str
  *
  * For patterns WITHOUT '#', falls back to exact tool name match.
  */
-export function matchesToolSpec(
-  event: { tool: string; args?: Record<string, unknown> },
-  toolSpec: string
-): boolean {
+export function matchesToolSpec(event: { tool: string; args?: Record<string, unknown> }, toolSpec: string): boolean {
   if (toolSpec.includes('#')) {
     const [tool, pattern] = toolSpec.split('#');
     if (event.tool !== tool) return false;
@@ -392,7 +391,7 @@ export function matchesToolSpec(
       const cmd = event.args?.command;
       if (typeof cmd !== 'string') return false;
       const clauses = splitClauses(cmd);
-      return clauses.some(c => c.startsWith(pattern));
+      return clauses.some((c) => c.startsWith(pattern));
     }
 
     // skill_load or other # patterns: substring match on args.name
@@ -409,10 +408,7 @@ export function matchesToolSpec(
  * Matches a session pattern log entry against a tool#pattern spec.
  * Used by sessionCount() for session-wide pattern counting.
  */
-function matchesSessionPatternEntry(
-  entry: { tool: string; key: string },
-  toolSpec: string
-): boolean {
+function matchesSessionPatternEntry(entry: { tool: string; key: string }, toolSpec: string): boolean {
   if (!toolSpec.includes('#')) return false;
   const [tool, pattern] = toolSpec.split('#');
   if (entry.tool !== tool) return false;
@@ -420,7 +416,7 @@ function matchesSessionPatternEntry(
   if (tool === 'bash') {
     // bash: clause-split + prefix match on the stored key (args.command)
     const clauses = splitClauses(entry.key);
-    return clauses.some(c => c.startsWith(pattern));
+    return clauses.some((c) => c.startsWith(pattern));
   }
 
   // skill_load or other: substring match on key (args.name)
@@ -435,6 +431,6 @@ function matchesSessionPatternEntry(
 export function splitClauses(command: string): string[] {
   return command
     .split(/\s*(?:;|&&|\|\|)\s*/)
-    .map(c => c.trim())
-    .filter(c => c.length > 0);
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0);
 }

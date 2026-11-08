@@ -70,14 +70,14 @@ function getOllamaConnectionPrompts(): PromptConfig[] {
       message: 'Ollama server URL',
       default: 'http://127.0.0.1:11434',
       help: 'URL of Ollama server. Local: http://127.0.0.1:11434 (default). Cloud: https://ollama.com',
-      validate: validateOllamaHost,
+      validate: validateOllamaHost
     },
     {
       name: 'OLLAMA_EMBEDDING_MODEL',
       message: 'Ollama embedding model (for semantic search/RAG)',
       default: 'nomic-embed-text',
-      help: 'Embedding model for wiki/RAG. Options: nomic-embed-text (default), embeddinggemma (needs Ollama v0.11.10+, applies prompt prefixes automatically).',
-    },
+      help: 'Embedding model for wiki/RAG. Options: nomic-embed-text (default), embeddinggemma (needs Ollama v0.11.10+, applies prompt prefixes automatically).'
+    }
   ];
 }
 
@@ -98,20 +98,20 @@ function getOllamaPrompts(): PromptConfig[] {
           return 'Local-only models need no key. For :cloud models routed by local Ollama, use ollama signin. Web backend authentication is server-side.';
         }
         return 'Required for Ollama Cloud. Get your key at https://ollama.com/settings/keys';
-      },
+      }
     },
     {
       name: 'OLLAMA_MODEL',
       message: 'Ollama model name (general/chat)',
       default: 'llama3.1',
-      help: 'Model for chat/coding. Local: llama3.1, qwen2.5-coder. Cloud: glm-5:cloud, gemma4:31b-cloud',
+      help: 'Model for chat/coding. Local: llama3.1, qwen2.5-coder. Cloud: glm-5:cloud, gemma4:31b-cloud'
     },
     {
       name: 'OLLAMA_VISION_MODEL',
       message: 'Ollama vision model (for screen/image tools)',
       default: 'none',
-      help: 'Vision model for screen/image analysis. Set "none" to disable. Requires Ollama Cloud or local vision model.',
-    },
+      help: 'Vision model for screen/image analysis. Set "none" to disable. Requires Ollama Cloud or local vision model.'
+    }
   ];
 }
 
@@ -125,27 +125,27 @@ function getDeepSeekPrompts(): PromptConfig[] {
       message: 'DeepSeek API host URL',
       default: 'https://api.deepseek.com',
       help: 'The DeepSeek API endpoint. Change only if using a proxy or compatible API.',
-      validate: validateDeepSeekHost,
+      validate: validateDeepSeekHost
     },
     {
       name: 'DEEPSEEK_API_KEY',
       message: 'DeepSeek API key',
       default: '',
       help: 'Required. Get yours at https://platform.deepseek.com/api_keys',
-      sensitive: true,
+      sensitive: true
     },
     {
       name: 'DEEPSEEK_MODEL',
       message: 'DeepSeek model name',
       default: 'deepseek-chat',
-      help: 'The DeepSeek model to use (e.g., deepseek-chat, deepseek-reasoner)',
+      help: 'The DeepSeek model to use (e.g., deepseek-chat, deepseek-reasoner)'
     },
     {
       name: 'DEEPSEEK_VISION_MODEL',
       message: 'DeepSeek vision model (for screen/image tools)',
       default: 'deepseek-flash',
-      help: 'Set to "none" to disable vision features, or specify a vision-capable model (default: deepseek-flash).',
-    },
+      help: 'Set to "none" to disable vision features, or specify a vision-capable model (default: deepseek-flash).'
+    }
   ];
 }
 
@@ -159,15 +159,15 @@ function getSharedPrompts(): PromptConfig[] {
       message: 'Token threshold for context management',
       default: '100000',
       help: 'Max conversation tokens before auto-compaction. Higher = longer memory but slower. Default: 100000',
-      validate: validatePositiveNumber,
+      validate: validatePositiveNumber
     },
     {
       name: 'EDITOR',
       message: 'Text editor (for file editing)',
       default: getDefaultEditor(),
       help: getEditorHelpText(),
-      validate: validateEditor,
-    },
+      validate: validateEditor
+    }
   ];
 }
 
@@ -176,11 +176,7 @@ function getSharedPrompts(): PromptConfig[] {
  */
 export function getPrompts(provider?: 'ollama' | 'deepseek'): PromptConfig[] {
   const providerPrompts = provider === 'deepseek' ? getDeepSeekPrompts() : getOllamaPrompts();
-  return [
-    ...getOllamaConnectionPrompts(),
-    ...providerPrompts,
-    ...getSharedPrompts(),
-  ];
+  return [...getOllamaConnectionPrompts(), ...providerPrompts, ...getSharedPrompts()];
 }
 
 /**
@@ -199,71 +195,72 @@ export const ENV_REQUIREMENTS: EnvRequirement[] = [
     name: 'OLLAMA_HOST',
     required: false,
     default: 'http://127.0.0.1:11434',
-    instruction: 'Set OLLAMA_HOST for your Ollama server (used for embeddings)',
+    instruction: 'Set OLLAMA_HOST for your Ollama server (used for embeddings)'
   },
   {
     name: 'OLLAMA_EMBEDDING_MODEL',
     required: false,
-    instruction: 'Set OLLAMA_EMBEDDING_MODEL for semantic search/RAG (always uses Ollama)',
+    instruction: 'Set OLLAMA_EMBEDDING_MODEL for semantic search/RAG (always uses Ollama)'
   },
   // Provider selection
   {
     name: 'API_PROVIDER',
     required: false,
     default: 'ollama',
-    instruction: 'Set API_PROVIDER to "deepseek" to use DeepSeek instead of Ollama',
+    instruction: 'Set API_PROVIDER to "deepseek" to use DeepSeek instead of Ollama'
   },
   // Ollama vars
   {
     name: 'OLLAMA_API_KEY',
     required: false,
-    instruction: 'Set OLLAMA_API_KEY for cloud-backed models (not needed for local-only chat/vision; web backend auth is server-side)',
+    instruction:
+      'Set OLLAMA_API_KEY for cloud-backed models (not needed for local-only chat/vision; web backend auth is server-side)'
   },
   {
     name: 'OLLAMA_MODEL',
     required: false,
     default: 'glm-5:cloud',
-    instruction: 'Set OLLAMA_MODEL for chat model',
+    instruction: 'Set OLLAMA_MODEL for chat model'
   },
   {
     name: 'OLLAMA_VISION_MODEL',
     required: false,
-    instruction: 'Set OLLAMA_VISION_MODEL for vision/multimodal tasks',
+    instruction: 'Set OLLAMA_VISION_MODEL for vision/multimodal tasks'
   },
   // DeepSeek vars
   {
     name: 'DEEPSEEK_HOST',
     required: false,
     default: 'https://api.deepseek.com',
-    instruction: 'Set DEEPSEEK_HOST for your DeepSeek API endpoint',
+    instruction: 'Set DEEPSEEK_HOST for your DeepSeek API endpoint'
   },
   {
     name: 'DEEPSEEK_API_KEY',
     required: false,
-    instruction: 'Set DEEPSEEK_API_KEY for DeepSeek API access',
+    instruction: 'Set DEEPSEEK_API_KEY for DeepSeek API access'
   },
   {
     name: 'DEEPSEEK_MODEL',
     required: false,
     default: 'deepseek-chat',
-    instruction: 'Set DEEPSEEK_MODEL to specify which DeepSeek model to use',
+    instruction: 'Set DEEPSEEK_MODEL to specify which DeepSeek model to use'
   },
   {
     name: 'DEEPSEEK_VISION_MODEL',
     required: false,
     default: 'deepseek-flash',
-    instruction: 'Set DEEPSEEK_VISION_MODEL for vision/multimodal tasks (default: deepseek-flash)',
+    instruction: 'Set DEEPSEEK_VISION_MODEL for vision/multimodal tasks (default: deepseek-flash)'
   },
   // Shared vars
   {
     name: 'TOKEN_THRESHOLD',
     required: false,
     default: '100000',
-    instruction: 'Set TOKEN_THRESHOLD for context limit',
+    instruction: 'Set TOKEN_THRESHOLD for context limit'
   },
   {
     name: 'EDITOR',
     required: false,
-    instruction: 'Set EDITOR for file editing (default varies by platform)',
-  },
+    instruction: 'Set EDITOR for file editing (default varies by platform)'
+  }
 ];

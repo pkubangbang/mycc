@@ -14,14 +14,14 @@ export const broadcastTool: ToolDefinition = {
     properties: {
       title: {
         type: 'string',
-        description: 'Message title/subject',
+        description: 'Message title/subject'
       },
       content: {
         type: 'string',
-        description: 'Message body content',
-      },
+        description: 'Message body content'
+      }
     },
-    required: ['title', 'content'],
+    required: ['title', 'content']
   },
   scope: ['main'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
@@ -54,5 +54,5 @@ export const broadcastTool: ToolDefinition = {
       ctx.core.brief('error', 'broadcast', err.message);
       return `Error: ${err.message}`;
     }
-  },
+  }
 };

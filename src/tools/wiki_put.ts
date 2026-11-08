@@ -7,13 +7,14 @@ import { WIKI_CONTENT_TOKEN_LIMITS } from '../context/parent/wiki.js';
 
 export const wikiPutTool: ToolDefinition = {
   name: 'wiki_put',
-  description: 'Store a validated document in the knowledge base. Requires the hash from wiki_prepare, and the document passed must be the exact same one that was validated.',
+  description:
+    'Store a validated document in the knowledge base. Requires the hash from wiki_prepare, and the document passed must be the exact same one that was validated.',
   input_schema: {
     type: 'object',
     properties: {
       hash: {
         type: 'string',
-        description: 'The hash returned by wiki_prepare - must match the document content',
+        description: 'The hash returned by wiki_prepare - must match the document content'
       },
       document: {
         type: 'object',
@@ -21,12 +22,12 @@ export const wikiPutTool: ToolDefinition = {
           domain: { type: 'string' },
           title: { type: 'string' },
           content: { type: 'string' },
-          references: { type: 'array', items: { type: 'string' } },
+          references: { type: 'array', items: { type: 'string' } }
         },
-        required: ['domain', 'title', 'content'],
-      },
+        required: ['domain', 'title', 'content']
+      }
     },
-    required: ['hash', 'document'],
+    required: ['hash', 'document']
   },
   scope: ['main', 'child'],
   handler: async (ctx, args): Promise<string> => {
@@ -62,7 +63,7 @@ export const wikiPutTool: ToolDefinition = {
       domain: docObj.domain,
       title: docObj.title,
       content: docObj.content,
-      references: (docObj.references as string[]) || [],
+      references: (docObj.references as string[]) || []
     };
 
     const result = await ctx.wiki.put(hash, document);
@@ -70,14 +71,22 @@ export const wikiPutTool: ToolDefinition = {
     if (result.success) {
       if (result.alreadyExisted) {
         // Document already exists (exact match — same hash AND references)
-        ctx.core.brief('info', 'wiki_put', `Document "${document.title}" (${document.domain}) already exists (hash: ${result.hash})`);
+        ctx.core.brief(
+          'info',
+          'wiki_put',
+          `Document "${document.title}" (${document.domain}) already exists (hash: ${result.hash})`
+        );
         return `OK: Document already exists with hash ${result.hash}`;
       }
-      ctx.core.brief('info', 'wiki_put', `Stored document "${document.title}" (${document.domain}) with hash ${result.hash}`);
+      ctx.core.brief(
+        'info',
+        'wiki_put',
+        `Stored document "${document.title}" (${document.domain}) with hash ${result.hash}`
+      );
       return `OK: Document stored successfully with hash ${result.hash}`;
     } else {
       ctx.core.brief('warn', 'wiki_put', `Failed to store document "${document.title}": ${result.error}`);
       return `Error: ${result.error}`;
     }
-  },
+  }
 };

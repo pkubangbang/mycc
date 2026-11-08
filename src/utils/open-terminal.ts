@@ -34,7 +34,8 @@ const MACOS_TERMINALS: TerminalConfig[] = [
     id: 'iterm2',
     binary: 'osascript',
     getArgs: (cmd) => [
-      '-e', `
+      '-e',
+      `
         tell application "iTerm2"
           activate
           create window with default profile
@@ -42,21 +43,22 @@ const MACOS_TERMINALS: TerminalConfig[] = [
             write text "${cmd.replace(/"/g, '\\"')}"
           end tell
         end tell
-      `.trim(),
-    ],
+      `.trim()
+    ]
   },
   {
     id: 'terminal-app',
     binary: 'osascript',
     getArgs: (cmd) => [
-      '-e', `
+      '-e',
+      `
         tell application "Terminal"
           activate
           do script "${cmd.replace(/"/g, '\\"')}"
         end tell
-      `.trim(),
-    ],
-  },
+      `.trim()
+    ]
+  }
 ];
 
 // ─── Linux terminals ────────────────────────────────────────────────────────
@@ -65,48 +67,48 @@ const LINUX_TERMINALS: TerminalConfig[] = [
   {
     id: 'gnome-terminal',
     binary: 'gnome-terminal',
-    getArgs: (cmd) => ['--', 'bash', '-c', cmd],
+    getArgs: (cmd) => ['--', 'bash', '-c', cmd]
   },
   {
     id: 'konsole',
     binary: 'konsole',
-    getArgs: (cmd) => ['-e', 'bash', '-c', cmd],
+    getArgs: (cmd) => ['-e', 'bash', '-c', cmd]
   },
   {
     id: 'xfce4-terminal',
     binary: 'xfce4-terminal',
-    getArgs: (cmd) => ['-x', 'bash', '-c', cmd],
+    getArgs: (cmd) => ['-x', 'bash', '-c', cmd]
   },
   {
     id: 'mate-terminal',
     binary: 'mate-terminal',
-    getArgs: (cmd) => ['-x', 'bash', '-c', cmd],
+    getArgs: (cmd) => ['-x', 'bash', '-c', cmd]
   },
   {
     id: 'alacritty',
     binary: 'alacritty',
-    getArgs: (cmd) => ['-e', 'bash', '-c', cmd],
+    getArgs: (cmd) => ['-e', 'bash', '-c', cmd]
   },
   {
     id: 'kitty',
     binary: 'kitty',
-    getArgs: (cmd) => ['bash', '-c', cmd],
+    getArgs: (cmd) => ['bash', '-c', cmd]
   },
   {
     id: 'foot',
     binary: 'foot',
-    getArgs: (cmd) => ['-e', 'bash', '-c', cmd],
+    getArgs: (cmd) => ['-e', 'bash', '-c', cmd]
   },
   {
     id: 'xterm',
     binary: 'xterm',
-    getArgs: (cmd) => ['-hold', '-e', 'bash', '-c', cmd],
+    getArgs: (cmd) => ['-hold', '-e', 'bash', '-c', cmd]
   },
   {
     id: 'guake',
     binary: 'guake',
-    getArgs: (cmd) => ['-e', cmd],
-  },
+    getArgs: (cmd) => ['-e', cmd]
+  }
 ];
 
 // ─── Windows terminals ──────────────────────────────────────────────────────
@@ -124,21 +126,21 @@ const WINDOWS_TERMINALS: TerminalConfig[] = [
   {
     id: 'windows-terminal',
     binary: 'wt.exe',
-    getArgs: (cmd) => ['powershell', '-NoExit', '-Command', cmd],
+    getArgs: (cmd) => ['powershell', '-NoExit', '-Command', cmd]
   },
   {
     // Direct PowerShell — detached: true gives it a new console window.
     // Simpler than cmd.exe + start and avoids double-window + quoting issues.
     id: 'powershell',
     binary: 'powershell.exe',
-    getArgs: (cmd) => ['-NoExit', '-Command', cmd],
+    getArgs: (cmd) => ['-NoExit', '-Command', cmd]
   },
   {
     // Last resort: cmd.exe /c start.  No shell: true — spawn cmd.exe directly.
     id: 'cmd',
     binary: 'cmd.exe',
-    getArgs: (cmd) => ['/c', 'start', 'powershell', '-NoExit', '-Command', cmd],
-  },
+    getArgs: (cmd) => ['/c', 'start', 'powershell', '-NoExit', '-Command', cmd]
+  }
 ];
 
 // ─── Environment detection ─────────────────────────────────────────────────
@@ -214,7 +216,9 @@ export function wrapCommand(cmd: string): string {
   // Also pass through DISPLAY/WAYLAND_DISPLAY for GUI apps.
   const pathExport = `export PATH='${shellSingleQuote(process.env.PATH ?? '')}'`;
   const displayExport = process.env.DISPLAY ? ` export DISPLAY='${shellSingleQuote(process.env.DISPLAY)}';` : '';
-  const waylandExport = process.env.WAYLAND_DISPLAY ? ` export WAYLAND_DISPLAY='${shellSingleQuote(process.env.WAYLAND_DISPLAY)}';` : '';
+  const waylandExport = process.env.WAYLAND_DISPLAY
+    ? ` export WAYLAND_DISPLAY='${shellSingleQuote(process.env.WAYLAND_DISPLAY)}';`
+    : '';
   const envSetup = `${pathExport};${displayExport}${waylandExport}`;
 
   return `${envSetup} ${cmd}; exec bash`;
@@ -291,7 +295,7 @@ export function findAvailableTerminal(env?: Environment): TerminalConfig {
     macos: 'macOS',
     linux: 'Linux',
     wsl: 'WSL',
-    windows: 'Windows',
+    windows: 'Windows'
   }[detectedEnv];
 
   const triedList = candidates.map((t) => t.binary).join(', ');
@@ -302,7 +306,7 @@ export function findAvailableTerminal(env?: Environment): TerminalConfig {
     '',
     'Possible fixes:',
     '  1. Install a terminal emulator (e.g., gnome-terminal, konsole, xterm on Linux; iTerm2 on macOS)',
-    '  2. Ensure the terminal binary is on your PATH',
+    '  2. Ensure the terminal binary is on your PATH'
   ];
 
   if (detectedEnv === 'linux' && !hasDisplay()) {
@@ -350,7 +354,7 @@ export function openTerminal(cmd: string): void {
 
   const spawnOptions: import('child_process').SpawnOptions = {
     detached: true,
-    stdio: 'ignore',
+    stdio: 'ignore'
   };
 
   if (terminal.shell) {
@@ -361,9 +365,8 @@ export function openTerminal(cmd: string): void {
     const child = spawn(terminal.binary, args, spawnOptions);
     child.unref();
   } catch (err) {
-    throw new Error(
-      `Failed to open terminal "${terminal.id}" (${terminal.binary}): ${(err as Error).message}`,
-      { cause: err }
-    );
+    throw new Error(`Failed to open terminal "${terminal.id}" (${terminal.binary}): ${(err as Error).message}`, {
+      cause: err
+    });
   }
 }

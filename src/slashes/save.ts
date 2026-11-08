@@ -18,5 +18,5 @@ export const saveCommand: SlashCommand = {
     } catch (err) {
       console.log(chalk.red(`Failed to save session: ${(err as Error).message}`));
     }
-  },
+  }
 };

@@ -13,7 +13,8 @@ export const DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/;
 
 export function validateDate(v) {
   if (typeof v !== 'string' || !DATE_RE.test(v)) return false;
-  const d = new Date(v + 'T00:00:00'); return !isNaN(d.getTime());
+  const d = new Date(v + 'T00:00:00');
+  return !isNaN(d.getTime());
 }
 export function validateTime(v) {
   if (typeof v !== 'string' || !TIME_RE.test(v)) return false;
@@ -47,7 +48,9 @@ export function asNum(c, ctx) {
 }
 
 // `true` if the cell is a numeric cell.
-export function isNum(c) { return c && c.type === 'num'; }
+export function isNum(c) {
+  return c && c.type === 'num';
+}
 
 // Require a date/datetime/time cell; returns a JS Date.
 export function dateOf(c) {

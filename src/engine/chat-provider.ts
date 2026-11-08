@@ -40,7 +40,7 @@ export {
   DEFAULT_RETRY_CONFIG,
   calculateDelay,
   sleep,
-  retryWithBackoff,
+  retryWithBackoff
 } from './chat-helpers.js';
 export type { RetryConfig, ErrorType } from './chat-helpers.js';
 
@@ -86,7 +86,7 @@ export async function forkChat(
   prompt: string,
   signal?: AbortSignal,
   toolChoice?: 'none' | 'auto' | 'required',
-  retryConfig?: Partial<RetryConfig>,
+  retryConfig?: Partial<RetryConfig>
 ): Promise<string> {
   const msgs = [...messages];
   const lastIdx = msgs.length - 1;
@@ -101,16 +101,17 @@ export async function forkChat(
   const chatRequest: Record<string, unknown> = {
     model: MODEL,
     messages: msgs,
-    tools,
+    tools
   };
   if (toolChoice) {
     chatRequest.tool_choice = toolChoice;
   }
 
-  const response = await retryChat(
-    chatRequest as Parameters<typeof retryChat>[0],
-    { signal, noSpinner: true, ...retryConfig },
-  );
+  const response = await retryChat(chatRequest as Parameters<typeof retryChat>[0], {
+    signal,
+    noSpinner: true,
+    ...retryConfig
+  });
 
   return response.message.content || '';
 }

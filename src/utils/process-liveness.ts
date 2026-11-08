@@ -37,7 +37,7 @@ const WIN_PROBE_OPTS = {
   encoding: 'utf-8' as const,
   timeout: 5_000,
   windowsHide: true,
-  stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'],
+  stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe']
 };
 
 /**
@@ -59,7 +59,7 @@ export function runPs(args: string[]): string {
   return execFileSync('ps', args, {
     encoding: 'utf-8',
     timeout: 5_000,
-    env: { ...process.env, LC_ALL: 'C', LANG: 'C' },
+    env: { ...process.env, LC_ALL: 'C', LANG: 'C' }
   });
 }
 
@@ -121,7 +121,7 @@ function readStartTimeViaWmic(pid: number): number | null {
     const out = execFileSync(
       'wmic',
       ['process', 'where', `processid=${pid}`, 'get', 'creationdate', '/value'],
-      WIN_PROBE_OPTS,
+      WIN_PROBE_OPTS
     );
     const match = /CreationDate=(\d{14})/.exec(out);
     return match ? compactStampToMs(match[1]) : null;
@@ -144,11 +144,7 @@ function readStartTimeViaPowerShell(pid: number): number | null {
   const script =
     `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
     `if ($p -and $p.StartTime) { $p.StartTime.ToFileTimeUtc() }`;
-  const out = execFileSync(
-    'powershell',
-    ['-NoProfile', '-NonInteractive', '-Command', script],
-    WIN_PROBE_OPTS,
-  );
+  const out = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], WIN_PROBE_OPTS);
   const fileTime = Number(out.trim());
   // FILETIME is 100-ns ticks since 1601-01-01; convert to Unix ms.
   if (!Number.isFinite(fileTime) || fileTime <= 0) return null;

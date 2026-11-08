@@ -18,36 +18,36 @@ interface FileInfo {
  */
 const SIGNATURES: Array<[number[], string, string, string]> = [
   // Images
-  [[0x89, 0x50, 0x4E, 0x47], 'png', 'image/png', '.png'],
-  [[0xFF, 0xD8, 0xFF], 'jpeg', 'image/jpeg', '.jpg'],
+  [[0x89, 0x50, 0x4e, 0x47], 'png', 'image/png', '.png'],
+  [[0xff, 0xd8, 0xff], 'jpeg', 'image/jpeg', '.jpg'],
   [[0x47, 0x49, 0x46, 0x38], 'gif', 'image/gif', '.gif'],
-  [[0x42, 0x4D], 'bmp', 'image/bmp', '.bmp'],
+  [[0x42, 0x4d], 'bmp', 'image/bmp', '.bmp'],
   [[0x00, 0x00, 0x01, 0x00], 'ico', 'image/x-icon', '.ico'],
 
   // Archives
-  [[0x50, 0x4B, 0x03, 0x04], 'zip', 'application/zip', '.zip'],
-  [[0x50, 0x4B, 0x05, 0x06], 'zip', 'application/zip', '.zip'], // Empty zip
-  [[0x1F, 0x8B], 'gzip', 'application/gzip', '.gz'],
+  [[0x50, 0x4b, 0x03, 0x04], 'zip', 'application/zip', '.zip'],
+  [[0x50, 0x4b, 0x05, 0x06], 'zip', 'application/zip', '.zip'], // Empty zip
+  [[0x1f, 0x8b], 'gzip', 'application/gzip', '.gz'],
   [[0x52, 0x61, 0x72, 0x21], 'rar', 'application/x-rar', '.rar'],
-  [[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C], '7z', 'application/x-7z-compressed', '.7z'],
+  [[0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c], '7z', 'application/x-7z-compressed', '.7z'],
 
   // Documents
   [[0x25, 0x50, 0x44, 0x46], 'pdf', 'application/pdf', '.pdf'], // %PDF
 
   // Audio/Video
-  [[0xFF, 0xFB], 'mp3', 'audio/mpeg', '.mp3'],
+  [[0xff, 0xfb], 'mp3', 'audio/mpeg', '.mp3'],
   [[0x49, 0x44, 0x33], 'mp3', 'audio/mpeg', '.mp3'], // ID3
-  [[0x1A, 0x45, 0xDF, 0xA3], 'mkv', 'video/x-matroska', '.mkv'],
-  [[0x4F, 0x67, 0x67, 0x53], 'ogg', 'audio/ogg', '.ogg'],
-  [[0x46, 0x4C, 0x56], 'flv', 'video/x-flv', '.flv'],
+  [[0x1a, 0x45, 0xdf, 0xa3], 'mkv', 'video/x-matroska', '.mkv'],
+  [[0x4f, 0x67, 0x67, 0x53], 'ogg', 'audio/ogg', '.ogg'],
+  [[0x46, 0x4c, 0x56], 'flv', 'video/x-flv', '.flv'],
 
   // Executables
-  [[0x4D, 0x5A], 'exe', 'application/octet-stream', '.exe'], // MZ
-  [[0x7F, 0x45, 0x4C, 0x46], 'elf', 'application/octet-stream', '.elf'], // ELF
-  [[0xCA, 0xFE, 0xBA, 0xBE], 'macho', 'application/octet-stream', '.dylib'],
+  [[0x4d, 0x5a], 'exe', 'application/octet-stream', '.exe'], // MZ
+  [[0x7f, 0x45, 0x4c, 0x46], 'elf', 'application/octet-stream', '.elf'], // ELF
+  [[0xca, 0xfe, 0xba, 0xbe], 'macho', 'application/octet-stream', '.dylib'],
 
   // Database
-  [[0x53, 0x51, 0x4C, 0x69], 'sqlite', 'application/x-sqlite3', '.sqlite'], // SQLi
+  [[0x53, 0x51, 0x4c, 0x69], 'sqlite', 'application/x-sqlite3', '.sqlite'] // SQLi
 ];
 
 /**
@@ -86,7 +86,14 @@ export function filetypeinfo(buffer: Uint8Array): FileInfo[] {
   }
 
   // Special check for tar (ustar at offset 257)
-  if (arr.length > 262 && arr[257] === 0x75 && arr[258] === 0x73 && arr[259] === 0x74 && arr[260] === 0x61 && arr[261] === 0x72) {
+  if (
+    arr.length > 262 &&
+    arr[257] === 0x75 &&
+    arr[258] === 0x73 &&
+    arr[259] === 0x74 &&
+    arr[260] === 0x61 &&
+    arr[261] === 0x72
+  ) {
     return [{ typename: 'tar', mime: 'application/x-tar', extension: '.tar' }];
   }
 

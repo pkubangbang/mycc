@@ -18,20 +18,21 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const bgAwaitTool: ToolDefinition = {
   name: 'bg_await',
-  description: 'Block until background tasks complete. Use after bg_create when you need results before proceeding. Default timeout 60 seconds. Waiting for a specific pid returns its accumulated output on completion; waiting for all returns OK (use bg_print to inspect individual outputs).',
+  description:
+    'Block until background tasks complete. Use after bg_create when you need results before proceeding. Default timeout 60 seconds. Waiting for a specific pid returns its accumulated output on completion; waiting for all returns OK (use bg_print to inspect individual outputs).',
   input_schema: {
     type: 'object',
     properties: {
       pid: {
         type: 'number',
-        description: 'Process ID to wait for a specific task. Omit to wait for ALL background tasks.',
+        description: 'Process ID to wait for a specific task. Omit to wait for ALL background tasks.'
       },
       timeout: {
         type: 'number',
-        description: 'Maximum time to wait in milliseconds (default 60000). Increase for long-running commands.',
-      },
+        description: 'Maximum time to wait in milliseconds (default 60000). Increase for long-running commands.'
+      }
     },
-    required: [],
+    required: []
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -73,9 +74,15 @@ export const bgAwaitTool: ToolDefinition = {
         // COLLECT so the user's mid-task direction is honored now rather than
         // after the task finishes.
         const notes = result.notes ?? [];
-        ctx.core.brief('info', 'bg_await', `Steering note received, returning to process it (${targetDesc} still running)`);
-        return `OK: steering note received while waiting for ${targetDesc} (still running). `
-          + `Pending direction: ${notes.map((n) => `"${n}"`).join(', ')}`;
+        ctx.core.brief(
+          'info',
+          'bg_await',
+          `Steering note received, returning to process it (${targetDesc} still running)`
+        );
+        return (
+          `OK: steering note received while waiting for ${targetDesc} (still running). ` +
+          `Pending direction: ${notes.map((n) => `"${n}"`).join(', ')}`
+        );
       }
 
       case 'timeout':
@@ -83,5 +90,5 @@ export const bgAwaitTool: ToolDefinition = {
         ctx.core.brief('warn', 'bg_await', `Timeout reached, ${targetDesc} still running`);
         return 'Error: Timeout reached';
     }
-  },
+  }
 };

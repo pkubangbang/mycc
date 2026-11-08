@@ -47,7 +47,7 @@ export enum AgentState {
   HOOK = 'hook',
   TOOL = 'tool',
   STOP = 'stop',
-  AWAIT = 'await',
+  AWAIT = 'await'
 }
 
 // ============================================================================
@@ -169,11 +169,7 @@ export interface ChatData {
 /** Returns the next state, or null to signal machine exit */
 export type HandlerResult = AgentState | null;
 
-export type StateHandler = (
-  env: MachineEnv,
-  turn: TurnVars,
-  chat: ChatData,
-) => Promise<HandlerResult>;
+export type StateHandler = (env: MachineEnv, turn: TurnVars, chat: ChatData) => Promise<HandlerResult>;
 
 // ============================================================================
 // Runner
@@ -198,7 +194,7 @@ export class AgentStateMachine {
     inputProvider: InputProvider,
     sessionFilePath: string,
     handlers: Record<AgentState, StateHandler>,
-    requestEmbeddingTracker: RequestEmbeddingTracker,
+    requestEmbeddingTracker: RequestEmbeddingTracker
   ) {
     this.env = {
       triologue,
@@ -212,7 +208,7 @@ export class AgentStateMachine {
       pendingSlashQuery: null,
       crossroadOccurred: false,
       requestEmbeddingTracker,
-      nextWtNudge: 0,
+      nextWtNudge: 0
     };
     // Bind the hint-round singleton to the live env for the main process.
     // Children never run a hint round (they mail the lead), so they stay
@@ -250,10 +246,26 @@ export class AgentStateMachine {
    * Errors propagate to the caller.
    */
   async run(): Promise<void> {
-    let turn: TurnVars = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', lastBriefMessage: '', lastHintFocus: '', collectTransientRetries: 0 };
+    let turn: TurnVars = {
+      isFirstRound: true,
+      nextTodoNudge: 3,
+      lastTodoState: '',
+      nextBriefNudge: 5,
+      lastUserQuery: '',
+      lastBriefMessage: '',
+      lastHintFocus: '',
+      collectTransientRetries: 0
+    };
     this.currentTurn = turn;
     skillSuggester.reset();
-    let chat: ChatData = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null, deferredCompact: false };
+    let chat: ChatData = {
+      abortController: null,
+      rawToolCalls: [],
+      assistantContent: '',
+      augmentedCalls: [],
+      hookResult: null,
+      deferredCompact: false
+    };
     // Initial state is always PROMPT. PROMPT is the single decision point for
     // whether to run autonomously: it redirects to AWAIT when auto mode is on
     // (e.g. started via --auto, which calls autoState.setAuto(true)) or when
@@ -270,7 +282,16 @@ export class AgentStateMachine {
       // AWAIT is also a turn boundary in auto mode: each autonomous cycle starts a
       // fresh turn (fresh nudges, lastUserQuery cleared). AWAIT never follows SLASH.
       if ((state === AgentState.PROMPT || state === AgentState.AWAIT) && prevState !== AgentState.SLASH) {
-        turn = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', lastBriefMessage: '', lastHintFocus: '', collectTransientRetries: 0 };
+        turn = {
+          isFirstRound: true,
+          nextTodoNudge: 3,
+          lastTodoState: '',
+          nextBriefNudge: 5,
+          lastUserQuery: '',
+          lastBriefMessage: '',
+          lastHintFocus: '',
+          collectTransientRetries: 0
+        };
         this.currentTurn = turn;
         // Reset the skill-discovery singleton's throttle state at the turn
         // boundary — the same lifecycle point where lastSkillY /
@@ -286,7 +307,14 @@ export class AgentStateMachine {
       // list is in scope. Resetting it to false here wipes the request before
       // the LLM stage ever sees it, leaving the deferred-compact branch dead.
       if (state === AgentState.COLLECT) {
-        chat = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null, deferredCompact: chat.deferredCompact };
+        chat = {
+          abortController: null,
+          rawToolCalls: [],
+          assistantContent: '',
+          augmentedCalls: [],
+          hookResult: null,
+          deferredCompact: chat.deferredCompact
+        };
       }
 
       // ── Execute ──

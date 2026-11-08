@@ -120,12 +120,8 @@ function isComplexCommandShape(command: string): boolean {
     // truncate, in-place editors, and git commands that write (commit/push/
     // checkout/reset/clean/stash).
     /(^|[^\d\s])>{1,2}\s*[^\s&|]/.test(command) || // > file, >> file (not 2>&1)
-    /(^|[\s;&|])(rm|rmdir|mv|cp|tee|touch|mkdir|truncate|chmod|chown|ln|dd|sed\s+-i|perl\s+-[a-z]*i)\b/.test(
-      command
-    ) ||
-    /\bgit\s+(commit|push|checkout|switch|reset|clean|stash|merge|rebase|cherry-pick|apply|am|add)\b/.test(
-      command
-    ) ||
+    /(^|[\s;&|])(rm|rmdir|mv|cp|tee|touch|mkdir|truncate|chmod|chown|ln|dd|sed\s+-i|perl\s+-[a-z]*i)\b/.test(command) ||
+    /\bgit\s+(commit|push|checkout|switch|reset|clean|stash|merge|rebase|cherry-pick|apply|am|add)\b/.test(command) ||
     /\bnpm\s+(publish|install|i|uninstall|update)\b/.test(command) ||
     /\bnpx?\s+(prettier\s+--write)\b/.test(command) ||
     /\bfind\b.*-delete\b/.test(command)
@@ -155,7 +151,7 @@ async function confirmBatchDeletion(
   const approved = answer.toLowerCase().trim() === 'y' || answer.toLowerCase().trim() === 'yes';
   return {
     decision: approved ? 'allow' : 'block',
-    reason: approved ? undefined : 'User denied the batch deletion',
+    reason: approved ? undefined : 'User denied the batch deletion'
   };
 }
 
@@ -228,7 +224,7 @@ export async function judgeBash(
     if (dangerousMatch.category === 'system') {
       return {
         decision: 'block',
-        reason: `Command blocked: ${dangerousMatch.reason}`,
+        reason: `Command blocked: ${dangerousMatch.reason}`
       };
     }
     // destructive | irreversible — offer the escape hatch.
@@ -246,19 +242,19 @@ export async function judgeBash(
       if (!validation.valid) {
         return {
           decision: 'block',
-          reason: `Error: [Intent] ${validation.error}${validation.hint ? `\nHint: ${validation.hint}` : ''}`,
+          reason: `Error: [Intent] ${validation.error}${validation.hint ? `\nHint: ${validation.hint}` : ''}`
         };
       }
       if (isChildProcess) {
         return {
           decision: 'block',
-          reason: `Dangerous command (${dangerousMatch.reason}) requires user confirmation, which is unavailable in child processes. Ask the lead agent to perform this operation instead.`,
+          reason: `Dangerous command (${dangerousMatch.reason}) requires user confirmation, which is unavailable in child processes. Ask the lead agent to perform this operation instead.`
         };
       }
       if (!askUser) {
         return {
           decision: 'block',
-          reason: `Dangerous command (${dangerousMatch.reason}) requires user confirmation`,
+          reason: `Dangerous command (${dangerousMatch.reason}) requires user confirmation`
         };
       }
       const userResponse = await askUser(
@@ -266,19 +262,16 @@ export async function judgeBash(
         'bash-judge',
         { onEsc: 'n' }
       );
-      const approved =
-        userResponse.toLowerCase().trim() === 'y' || userResponse.toLowerCase().trim() === 'yes';
+      const approved = userResponse.toLowerCase().trim() === 'y' || userResponse.toLowerCase().trim() === 'yes';
       return {
         decision: approved ? 'allow' : 'block',
-        reason: approved
-          ? undefined
-          : `User denied the dangerous command (${dangerousMatch.reason})`,
+        reason: approved ? undefined : `User denied the dangerous command (${dangerousMatch.reason})`
       };
     }
     // No escape param — Socratic hint (names PARAM override existence, withholds key/value).
     return {
       decision: 'block',
-      reason: dangerousSocraticHint(dangerousMatch.reason),
+      reason: dangerousSocraticHint(dangerousMatch.reason)
     };
   }
 
@@ -287,7 +280,7 @@ export async function judgeBash(
     return {
       decision: 'block',
       reason:
-        'Error: [Intent] missing intent parameter. Use format: VERB OBJECT TO PURPOSE. Example: READ SOURCE TO check dependencies',
+        'Error: [Intent] missing intent parameter. Use format: VERB OBJECT TO PURPOSE. Example: READ SOURCE TO check dependencies'
     };
   }
 
@@ -299,7 +292,7 @@ export async function judgeBash(
     // Return error with hint for LLM to retry
     return {
       decision: 'block',
-      reason: `Error: [Intent] ${validation.error}${validation.hint ? `\nHint: ${validation.hint}` : ''}`,
+      reason: `Error: [Intent] ${validation.error}${validation.hint ? `\nHint: ${validation.hint}` : ''}`
     };
   }
 
@@ -312,7 +305,7 @@ export async function judgeBash(
         return {
           decision: 'block',
           reason:
-            'Batch deletion from child process is not allowed. Ask the lead agent to perform this operation instead.',
+            'Batch deletion from child process is not allowed. Ask the lead agent to perform this operation instead.'
         };
       }
 
@@ -330,7 +323,7 @@ export async function judgeBash(
       if (llmResult.decision === 'block') {
         return {
           decision: 'block',
-          reason: llmResult.reason || 'Batch deletion blocked by LLM analysis',
+          reason: llmResult.reason || 'Batch deletion blocked by LLM analysis'
         };
       }
 
@@ -365,7 +358,7 @@ export async function judgeBash(
     // WRITE, EDIT, DELETE, BUILD, INSTALL are blocked in plan mode
     return {
       decision: 'block',
-      reason: `Cannot ${parsed!.verb} in plan mode. Verb "${parsed!.verb}" modifies state. Switch to normal mode first or use a read-only verb like [READ] or [TEST].`,
+      reason: `Cannot ${parsed!.verb} in plan mode. Verb "${parsed!.verb}" modifies state. Switch to normal mode first or use a read-only verb like [READ] or [TEST].`
     };
   }
 
@@ -379,7 +372,7 @@ export async function judgeBash(
   // Unknown verb (shouldn't reach here due to validation)
   return {
     decision: 'block',
-    reason: `Unknown verb: ${parsed!.verb}`,
+    reason: `Unknown verb: ${parsed!.verb}`
   };
 }
 
@@ -417,9 +410,10 @@ async function judgeComplexInPlanMode(
   if (isChildProcess) {
     return {
       decision: 'block',
-      reason: origin === 'run'
-        ? 'Ambiguous intent. Use a specific verb instead of RUN. Examples: [READ] SOURCE, [BUILD] ARTIFACT, [TEST] SOURCE'
-        : 'This command\'s text contains a glob or a write-verb word, so it cannot be classified safely by a local rule. In a child process it cannot be escalated to the safety checker — ask the lead agent to run it, or simplify it to one plain command (no globs, no quoted verbs).',
+      reason:
+        origin === 'run'
+          ? 'Ambiguous intent. Use a specific verb instead of RUN. Examples: [READ] SOURCE, [BUILD] ARTIFACT, [TEST] SOURCE'
+          : "This command's text contains a glob or a write-verb word, so it cannot be classified safely by a local rule. In a child process it cannot be escalated to the safety checker — ask the lead agent to run it, or simplify it to one plain command (no globs, no quoted verbs)."
     };
   }
 
@@ -433,7 +427,7 @@ async function judgeComplexInPlanMode(
   if (llmResult.decision === 'block') {
     return {
       decision: 'block',
-      reason: llmResult.reason || 'Command appears to modify state',
+      reason: llmResult.reason || 'Command appears to modify state'
     };
   }
 
@@ -444,9 +438,10 @@ async function judgeComplexInPlanMode(
     // "the checker failed" must not look like "the command is suspicious".
     return {
       decision: 'block',
-      reason: llmResult.cause === 'llm-error'
-        ? 'The safety checker could not analyse this command (LLM error); retry when the provider is available'
-        : 'Unable to determine command safety',
+      reason:
+        llmResult.cause === 'llm-error'
+          ? 'The safety checker could not analyse this command (LLM error); retry when the provider is available'
+          : 'Unable to determine command safety'
     };
   }
 
@@ -455,13 +450,14 @@ async function judgeComplexInPlanMode(
   // would be a claim about their command (row lead-017). The read-only origin
   // says WHY it got here (a shape match), so the user is not asked to accept a
   // blanket "ambiguous" verdict on a command that may be plain evidence.
-  const headline = llmResult.cause === 'llm-error'
-    ? 'The safety checker could not be reached, so this command was NOT analysed.'
-    : llmResult.cause === 'esc'
-      ? 'Analysis was interrupted (ESC), so this command was not fully analysed.'
-      : origin === 'run'
-        ? 'The command has ambiguous intent.'
-        : 'This command is declared read-only but its text contains a glob or a write-verb word, so it was escalated for a safety check that was inconclusive.';
+  const headline =
+    llmResult.cause === 'llm-error'
+      ? 'The safety checker could not be reached, so this command was NOT analysed.'
+      : llmResult.cause === 'esc'
+        ? 'Analysis was interrupted (ESC), so this command was not fully analysed.'
+        : origin === 'run'
+          ? 'The command has ambiguous intent.'
+          : 'This command is declared read-only but its text contains a glob or a write-verb word, so it was escalated for a safety check that was inconclusive.';
   const userResponse = await askUser(
     `${headline}\n\nCommand: ${command}\nPurpose: ${parsed.purpose}\n\nAllow this command in plan mode? [y/N]`,
     'bash-judge',
@@ -469,12 +465,11 @@ async function judgeComplexInPlanMode(
   );
 
   // If user presses ESC, askUser returns empty string -> treat as "no"
-  const approved =
-    userResponse.toLowerCase().trim() === 'y' || userResponse.toLowerCase().trim() === 'yes';
+  const approved = userResponse.toLowerCase().trim() === 'y' || userResponse.toLowerCase().trim() === 'yes';
 
   return {
     decision: approved ? 'allow' : 'block',
-    reason: approved ? undefined : 'User denied the command',
+    reason: approved ? undefined : 'User denied the command'
   };
 }
 
@@ -534,8 +529,8 @@ Classify this batch deletion command: SAFE, DANGEROUS, or UNCERTAIN?`;
           model: MODEL,
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
+            { role: 'user', content: userPrompt }
+          ]
         },
         ['SAFE', 'DANGEROUS', 'UNCERTAIN'],
         { signal: abortController.signal, maxRetries: 2 }
@@ -602,8 +597,8 @@ Is this command read-only or does it modify state?`;
           model: MODEL,
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
+            { role: 'user', content: userPrompt }
+          ]
         },
         ['READ', 'WRITE', 'UNCERTAIN'],
         { signal: abortController.signal, maxRetries: 2 }

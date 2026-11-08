@@ -68,18 +68,18 @@ type GrantScope = 'file' | 'folder' | 'folder_recursive' | 'folder_recursive_rea
  * A cached [focus, description] pair for an image.
  */
 interface FocusPair {
-  focus: string;        // original prompt string, or "general description" if none given
-  description: string;  // vision model output for this focus
+  focus: string; // original prompt string, or "general description" if none given
+  description: string; // vision model output for this focus
 }
 
 /**
  * On-disk cache entry for a described image, stored at .mycc/imgcache/<hash>.json
  */
 interface PictureCacheEntry {
-  statKey: string;      // `${mtimeMs}|${size}|${format}` — staleness check
-                        // (folding the magic-byte format in means a format change
-                        //  in place invalidates the old entry once; self-healing)
-  pairs: FocusPair[];   // accumulated focus+description pairs
+  statKey: string; // `${mtimeMs}|${size}|${format}` — staleness check
+  // (folding the magic-byte format in means a format change
+  //  in place invalidates the old entry once; self-healing)
+  pairs: FocusPair[]; // accumulated focus+description pairs
 }
 
 /**
@@ -259,7 +259,13 @@ export class Core extends BaseCore implements CoreModule {
    * Thread-safe: console.log is atomic in Node.js
    * @param detail - Optional greyed text to show after tool name (for showing intent)
    */
-  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire }): void {
+  brief(
+    level: 'info' | 'warn' | 'error',
+    tool: string,
+    message: string,
+    detail?: string,
+    opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire }
+  ): void {
     agentIO.brief(level, tool, message, detail, opts);
   }
 
@@ -303,10 +309,11 @@ export class Core extends BaseCore implements CoreModule {
       return {
         question: query,
         answer: onEscValue,
-        reason: onEscValue === ''
-          ? 'Auto mode: no onEsc default provided, answered with empty string'
-          : `Auto mode: answered with onEsc default ('${onEscValue}')`,
-        source: 'auto',
+        reason:
+          onEscValue === ''
+            ? 'Auto mode: no onEsc default provided, answered with empty string'
+            : `Auto mode: answered with onEsc default ('${onEscValue}')`,
+        source: 'auto'
       };
     }
 
@@ -317,9 +324,7 @@ export class Core extends BaseCore implements CoreModule {
     // which reads as "a message with dashes, then a card". So in serve mode
     // we fold the asker into the card query and skip the separator brief.
     if (isWebUiUp()) {
-      const cardQuery = asker && asker !== 'lead'
-        ? `(${asker}) ${query}`
-        : query;
+      const cardQuery = asker && asker !== 'lead' ? `(${asker}) ${query}` : query;
       const answer = await agentIO.ask(cardQuery, { onEsc: options?.onEsc, onEnter: options?.onEnter });
       return { question: query, answer, reason: '', source: 'user' };
     }
@@ -345,7 +350,7 @@ export class Core extends BaseCore implements CoreModule {
       throw new Error(
         getApiProvider() === 'deepseek'
           ? 'Vision features are disabled (DEEPSEEK_VISION_MODEL=none). Set a DeepSeek vision model (e.g., DEEPSEEK_VISION_MODEL=deepseek-flash) to enable screen and read_picture tools.'
-          : 'Vision features are disabled. Set OLLAMA_VISION_MODEL to a vision model (e.g., gemma4:31b-cloud) to enable screen and read_picture tools.',
+          : 'Vision features are disabled. Set OLLAMA_VISION_MODEL to a vision model (e.g., gemma4:31b-cloud) to enable screen and read_picture tools.'
       );
     }
 
@@ -422,7 +427,10 @@ export class Core extends BaseCore implements CoreModule {
    * Returns the base64-encoded image and optional temp file path for cleanup
    * @throws Error if resize is needed but fails
    */
-  private async resizeImageIfNeeded(base64Image: string, _originalPath?: string): Promise<{ base64: string; tempPath?: string }> {
+  private async resizeImageIfNeeded(
+    base64Image: string,
+    _originalPath?: string
+  ): Promise<{ base64: string; tempPath?: string }> {
     const maxWidth = 1920;
 
     try {
@@ -442,9 +450,7 @@ export class Core extends BaseCore implements CoreModule {
       this.brief('info', 'img_describe', `Resizing image from ${metadata.width}px to ${maxWidth}px wide`);
 
       // Resize and convert to buffer
-      const resizedBuffer = await sharp(imageBuffer)
-        .resize(maxWidth)
-        .toBuffer();
+      const resizedBuffer = await sharp(imageBuffer).resize(maxWidth).toBuffer();
 
       return { base64: resizedBuffer.toString('base64') };
     } catch (err) {
@@ -494,7 +500,10 @@ export class Core extends BaseCore implements CoreModule {
    */
   private computeCacheToken(absolutePath: string, focuses: string[]): string {
     const normalizedPath = this.normalizeForHash(absolutePath);
-    return createHash('sha256').update(JSON.stringify([normalizedPath, ...focuses])).digest('hex').slice(0, 16);
+    return createHash('sha256')
+      .update(JSON.stringify([normalizedPath, ...focuses]))
+      .digest('hex')
+      .slice(0, 16);
   }
 
   /**
@@ -543,7 +552,7 @@ export class Core extends BaseCore implements CoreModule {
     imagePath: string,
     prompt?: string,
     cacheToken?: string,
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<PictureResult> {
     const focus = (prompt || 'general description').trim();
     const stat = fs.statSync(imagePath);
@@ -570,7 +579,7 @@ export class Core extends BaseCore implements CoreModule {
     }
 
     // Cache hit: compute the current token from existing focuses
-    const currentFocuses = entry!.pairs.map(p => p.focus);
+    const currentFocuses = entry!.pairs.map((p) => p.focus);
     const currentToken = this.computeCacheToken(imagePath, currentFocuses);
 
     // No cache token passed: return cached pairs, no vision call (prompt ignored)
@@ -586,7 +595,7 @@ export class Core extends BaseCore implements CoreModule {
     }
 
     // Valid token: check if focus exists (exact string match, trimmed)
-    const existing = entry!.pairs.find(p => p.focus.trim() === focus);
+    const existing = entry!.pairs.find((p) => p.focus.trim() === focus);
     if (existing) {
       this.brief('info', 'read_picture_cached', `cache hit (focus exists): ${imagePath}`);
       return { pairs: entry!.pairs, cacheToken: currentToken };
@@ -610,11 +619,14 @@ export class Core extends BaseCore implements CoreModule {
    * @param args - Tool arguments (path for file ops, command and intent for bash)
    * @returns Grant result with approval status and optional reason
    */
-  async requestGrant(tool: 'write_file' | 'edit_file' | 'bash', args: {
-    path?: string;
-    command?: string;
-    intent?: string;
-  }): Promise<{ approved: boolean; reason?: string }> {
+  async requestGrant(
+    tool: 'write_file' | 'edit_file' | 'bash',
+    args: {
+      path?: string;
+      command?: string;
+      intent?: string;
+    }
+  ): Promise<{ approved: boolean; reason?: string }> {
     const verdict = await this.evaluateGrantForLead(tool, args);
     // Record EVERY refusal at this chokepoint so downstream consumers (the
     // hint round's "## Recent Permission Blocks") get exact, structural
@@ -626,11 +638,14 @@ export class Core extends BaseCore implements CoreModule {
   }
 
   /** The verdict computation, split out so requestGrant can record refusals. */
-  private async evaluateGrantForLead(tool: 'write_file' | 'edit_file' | 'bash', args: {
-    path?: string;
-    command?: string;
-    intent?: string;
-  }): Promise<{ approved: boolean; reason?: string }> {
+  private async evaluateGrantForLead(
+    tool: 'write_file' | 'edit_file' | 'bash',
+    args: {
+      path?: string;
+      command?: string;
+      intent?: string;
+    }
+  ): Promise<{ approved: boolean; reason?: string }> {
     // For bash: delegate to grant evaluator
     if (tool === 'bash') {
       return evaluateGrant('lead', { tool, ...args }, this);
@@ -640,9 +655,7 @@ export class Core extends BaseCore implements CoreModule {
     if (this.modeState === 'plan') {
       // Check if the requested file matches the allowed file
       if (args.path && this.allowedFile) {
-        const resolvedRequested = path.isAbsolute(args.path)
-          ? args.path
-          : path.resolve(this.workDir, args.path);
+        const resolvedRequested = path.isAbsolute(args.path) ? args.path : path.resolve(this.workDir, args.path);
         const resolvedAllowed = path.isAbsolute(this.allowedFile)
           ? this.allowedFile
           : path.resolve(this.workDir, this.allowedFile);
@@ -656,9 +669,7 @@ export class Core extends BaseCore implements CoreModule {
       // (e.g. .mycc/longtext, .mycc/imgcache). These hold transient analysis
       // artifacts, not project source, so they stay writable in plan mode.
       if (args.path) {
-        const resolvedRequested = path.isAbsolute(args.path)
-          ? args.path
-          : path.resolve(this.workDir, args.path);
+        const resolvedRequested = path.isAbsolute(args.path) ? args.path : path.resolve(this.workDir, args.path);
         if (isPlanModeWritablePath(resolvedRequested, this.workDir)) {
           return { approved: true };
         }
@@ -666,7 +677,7 @@ export class Core extends BaseCore implements CoreModule {
 
       return {
         approved: false,
-        reason: `Error: You are in plan mode. DO NOT make any code change${this.allowedFile ? ` except editing the file at ${this.allowedFile}` : ''}`,
+        reason: `Error: You are in plan mode. DO NOT make any code change${this.allowedFile ? ` except editing the file at ${this.allowedFile}` : ''}`
       };
     }
     return { approved: true };
@@ -682,7 +693,7 @@ export class Core extends BaseCore implements CoreModule {
     sender: string,
     tool: 'write_file' | 'edit_file' | 'bash',
     args: { path?: string; command?: string; intent?: string },
-    reason: string | undefined,
+    reason: string | undefined
   ): void {
     this.recordDenial(tool, args, reason ? `${reason} (requested by @${sender})` : `requested by @${sender}`);
   }
@@ -697,7 +708,7 @@ export class Core extends BaseCore implements CoreModule {
   private recordDenial(
     tool: 'write_file' | 'edit_file' | 'bash',
     args: { path?: string; command?: string; intent?: string },
-    reason: string | undefined,
+    reason: string | undefined
   ): void {
     this.denialSeq += 1;
     this.recentDenials.push({
@@ -705,7 +716,7 @@ export class Core extends BaseCore implements CoreModule {
       target: (tool === 'bash' ? args.command : args.path) ?? '(unknown)',
       reason: reason ?? '(no reason given)',
       kind: classifyDenial(reason),
-      seq: this.denialSeq,
+      seq: this.denialSeq
     });
     if (this.recentDenials.length > MAX_RECENT_DENIALS) {
       this.recentDenials.shift();
@@ -738,7 +749,7 @@ export class Core extends BaseCore implements CoreModule {
    */
   async requestExternalPathAccess(
     tool: 'read_file' | 'write_file' | 'edit_file' | 'grep',
-    requestedPath: string,
+    requestedPath: string
   ): Promise<{ approved: boolean; resolvedPath: string; reason?: string }> {
     // Check if already granted
     const existingGrant = this.findExistingGrant(requestedPath, tool);
@@ -751,7 +762,8 @@ export class Core extends BaseCore implements CoreModule {
     // file and offer the full 1/2/3/4 set.
     if (tool === 'grep') {
       const dirName = requestedPath; // already a resolved directory path
-      const prompt = `${tool} wants to search a directory outside the workspace:\n` +
+      const prompt =
+        `${tool} wants to search a directory outside the workspace:\n` +
         `  ${dirName}\n\n` +
         `Choose:\n` +
         `  1) Grant access to this folder: ${dirName}/\n` +
@@ -777,7 +789,8 @@ export class Core extends BaseCore implements CoreModule {
     // Build the grant prompt
     const dirName = path.dirname(requestedPath);
     const fileName = path.basename(requestedPath);
-    const prompt = `${tool} wants to access a file outside the workspace:\n` +
+    const prompt =
+      `${tool} wants to access a file outside the workspace:\n` +
       `  ${requestedPath}\n\n` +
       `Choose:\n` +
       `  1) Grant access to this folder: ${dirName}/\n` +
@@ -827,7 +840,10 @@ export class Core extends BaseCore implements CoreModule {
    * @param tool - The tool requesting access (read-only grants reject write tools)
    * @returns The matching GrantScope, or undefined if no grant covers this path
    */
-  private findExistingGrant(requestedPath: string, tool?: 'read_file' | 'write_file' | 'edit_file' | 'grep'): GrantScope | undefined {
+  private findExistingGrant(
+    requestedPath: string,
+    tool?: 'read_file' | 'write_file' | 'edit_file' | 'grep'
+  ): GrantScope | undefined {
     // Check exact file grant
     if (this.externalGrants.get(requestedPath) === 'file') {
       return 'file';
@@ -861,14 +877,14 @@ export class Core extends BaseCore implements CoreModule {
 
   /**
    * Wrap a slow operation with ESC-aware quick return
-   * 
+   *
    * When ESC is pressed during a slow operation:
    * - The original promise continues in background
    * - onCleanUp is called immediately
    * - The result of onCleanUp is returned to caller
-   * 
+   *
    * If ESC is not pressed, returns the original promise result.
-   * 
+   *
    * @param operation - A function that receives an AbortController and returns the slow operation promise
    * @param onCleanUp - Called when ESC is pressed, must return the fallback result
    * @returns Original result if not interrupted, or onCleanUp result if ESC pressed

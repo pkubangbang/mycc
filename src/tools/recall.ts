@@ -22,10 +22,10 @@ export const recallTool: ToolDefinition = {
     properties: {
       path: {
         type: 'string',
-        description: 'Node path (e.g., "/skill/example", or "/" for the root).',
-      },
+        description: 'Node path (e.g., "/skill/example", or "/" for the root).'
+      }
     },
-    required: ['path'],
+    required: ['path']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -54,7 +54,7 @@ export const recallTool: ToolDefinition = {
     const hoistedTerms = nodePath === '/' ? collectDescendantTerms(mindmap.root) : [];
 
     return formatNode(node, hoistedTerms);
-  },
+  }
 };
 
 /**
@@ -73,7 +73,7 @@ function collectDescendantTerms(node: Node): Array<{ term: string; path: string;
           terms.set(key, {
             term: link.term_name,
             path: n.id,
-            context: link.comment,
+            context: link.comment
           });
         }
       }
@@ -92,10 +92,7 @@ function collectDescendantTerms(node: Node): Array<{ term: string; path: string;
 /**
  * Format node for LLM consumption
  */
-function formatNode(
-  node: Node,
-  hoistedTerms?: Array<{ term: string; path: string; context: string }>
-): string {
+function formatNode(node: Node, hoistedTerms?: Array<{ term: string; path: string; context: string }>): string {
   const lines: string[] = [];
 
   lines.push(`# ${node.title}`);
@@ -125,7 +122,9 @@ function formatNode(
   // can distinguish base knowledge from agent-discovered knowledge.
   if (node.children.length > 0) {
     lines.push('## Children');
-    lines.push('_Drill down by using recall with any child path (slash-separated). [M]=MYCC.md-sourced, [P]=patch-added._');
+    lines.push(
+      '_Drill down by using recall with any child path (slash-separated). [M]=MYCC.md-sourced, [P]=patch-added._'
+    );
     lines.push('');
     for (const child of node.children) {
       const marker = child.is_mycc ? '[M]' : '[P]';

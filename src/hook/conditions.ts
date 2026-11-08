@@ -17,20 +17,9 @@ import { Sequence } from './sequence.js';
 import { structuredChat } from '../engine/chat-provider.js';
 import { atomicWrite } from '../utils/atomic-write.js';
 import { agentIO } from '../loop/agent-io.js';
-import {
-  validateCondition,
-  compileCondition,
-  type ValidationResult
-} from './condition-validator.js';
-import {
-  getSkillAbsolutePath,
-} from '../utils/skill-path-resolver.js';
-import {
-  VALID_VERBS,
-  VALID_OBJECTS,
-  VERB_MEANINGS,
-  OBJECT_MEANINGS,
-} from '../context/grant/intent-parser.js';
+import { validateCondition, compileCondition, type ValidationResult } from './condition-validator.js';
+import { getSkillAbsolutePath } from '../utils/skill-path-resolver.js';
+import { VALID_VERBS, VALID_OBJECTS, VERB_MEANINGS, OBJECT_MEANINGS } from '../context/grant/intent-parser.js';
 
 /**
  * JSON schema for condition compilation response
@@ -38,8 +27,16 @@ import {
 const CONDITION_SCHEMA = {
   type: 'object',
   properties: {
-    trigger: { type: 'array', items: { type: 'string' }, description: "Array of trigger names: 'stop' (no tool calls), '*' (any tool), or specific tool names like 'bash', 'edit_file', 'git_commit'" },
-    condition: { type: 'string', description: 'Expression using turn.X / session.X / isPlanMode() / totalTurns() functions' },
+    trigger: {
+      type: 'array',
+      items: { type: 'string' },
+      description:
+        "Array of trigger names: 'stop' (no tool calls), '*' (any tool), or specific tool names like 'bash', 'edit_file', 'git_commit'"
+    },
+    condition: {
+      type: 'string',
+      description: 'Expression using turn.X / session.X / isPlanMode() / totalTurns() functions'
+    },
     action: {
       type: 'object',
       properties: {
@@ -47,12 +44,12 @@ const CONDITION_SCHEMA = {
         tool: { type: 'string' },
         args: { type: 'object' },
         reason: { type: 'string' },
-        message: { type: 'string' },
+        message: { type: 'string' }
       },
-      required: ['type'],
-    },
+      required: ['type']
+    }
   },
-  required: ['trigger', 'condition', 'action'],
+  required: ['trigger', 'condition', 'action']
 };
 
 /**
@@ -96,17 +93,16 @@ export type HookAction =
   | { type: 'message'; message?: string }
   | { type: 'compact' };
 
-
 /**
  * Compiled condition
  */
 export interface Condition {
-  trigger: string[];    // Array of trigger names. '*' for any, 'stop' for no tool calls, or tool names like 'git_commit'
-  when: string;         // Original natural language
-  condition: string;    // Compiled expression
+  trigger: string[]; // Array of trigger names. '*' for any, 'stop' for no tool calls, or tool names like 'git_commit'
+  when: string; // Original natural language
+  condition: string; // Compiled expression
   action: HookAction;
   version: number;
-  sourceFile?: string;  // Source skill file path (relative to skills dir)
+  sourceFile?: string; // Source skill file path (relative to skills dir)
   history?: ConditionHistory[];
 }
 
@@ -125,14 +121,13 @@ export interface LegacyConditionInfo {
   sourceFile?: string;
 }
 
-
 /**
  * Condition registry - manages compiled conditions
  */
 export class ConditionRegistry {
   private conditions: Map<string, Condition> = new Map();
-  private pending: Set<string> = new Set();  // Skills with "when" but no condition
-  private injected: Set<string> = new Set();  // Skills already injected in conversation
+  private pending: Set<string> = new Set(); // Skills with "when" but no condition
+  private injected: Set<string> = new Set(); // Skills already injected in conversation
   private filePath: string;
   private loader: { listSkills: () => Array<{ name: string; when?: string }> } | null = null;
   /**
@@ -206,54 +201,55 @@ export class ConditionRegistry {
     // Validate each condition using ConditionValidator
     for (const [name, cond] of Object.entries(data)) {
       const result = validateCondition(cond);
-      
+
       if (!result.valid) {
         errors.push(`Condition '${name}' failed validation: ${result.errors.join('; ')}`);
         // Detect legacy `seq.X` syntax: collect for recompile prompting.
         // The validator sets an explicit error mentioning "Legacy" when the
         // expression contains `seq.`; we also double-check the raw condition
         // string as a belt-and-suspenders guard.
-        const isLegacy = (cond && typeof cond === 'object' && typeof cond.condition === 'string')
-          ? /seq\./.test(cond.condition)
-          : result.errors.some(e => /Legacy/i.test(e));
+        const isLegacy =
+          cond && typeof cond === 'object' && typeof cond.condition === 'string'
+            ? /seq\./.test(cond.condition)
+            : result.errors.some((e) => /Legacy/i.test(e));
         if (isLegacy) {
           legacyConditions.push({
             name,
             when: cond?.when,
             condition: cond?.condition,
-            sourceFile: cond?.sourceFile,
+            sourceFile: cond?.sourceFile
           });
         }
         // Don't load invalid conditions
         continue;
       }
-      
+
       // Check for orphaned conditions (source file no longer exists)
       if (cond.sourceFile) {
         // Use the skill path resolver to check if file exists
         const absolutePath = getSkillAbsolutePath(cond.sourceFile);
-        
+
         if (absolutePath === null) {
           // Invalid skill path format
           warnings.push(`Condition '${name}' has invalid sourceFile format: ${cond.sourceFile}`);
           continue;
         }
-        
+
         if (!fs.existsSync(absolutePath)) {
           orphanedConditions.push(name);
           warnings.push(`Condition '${name}' is orphaned (source file not found: ${cond.sourceFile})`);
           continue;
         }
       }
-      
+
       // Add warnings
       for (const warn of result.warnings) {
         warnings.push(`Condition '${name}': ${warn}`);
       }
-      
+
       // Apply runtime fixes (timeout clamping, etc.)
       this.applyRuntimeFixes(name, cond);
-      
+
       // Load valid condition
       this.conditions.set(name, cond);
     }
@@ -318,8 +314,6 @@ export class ConditionRegistry {
     }
   }
 
-
-
   /**
    * Save conditions to .mycc/conditions.json atomically.
    * Uses temp file + rename to prevent corruption.
@@ -327,11 +321,11 @@ export class ConditionRegistry {
    */
   async save(): Promise<{ success: boolean; error?: string }> {
     const data: ConditionsFile = {};
-    
+
     for (const [name, cond] of this.conditions) {
       data[name] = cond;
     }
-    
+
     try {
       // Backup existing file if it exists
       if (fs.existsSync(this.filePath)) {
@@ -468,13 +462,13 @@ export class ConditionRegistry {
    */
   findByTrigger(trigger: string): Condition[] {
     const matched: Condition[] = [];
-    
+
     for (const cond of this.conditions.values()) {
       if (cond.trigger.includes('*') || cond.trigger.includes(trigger)) {
         matched.push(cond);
       }
     }
-    
+
     return matched;
   }
 
@@ -543,9 +537,9 @@ export class ConditionRegistry {
         'hook',
         `Hook "${name}" is inactive: its condition failed to evaluate.`,
         `Reason: ${error.message}\n` +
-        `Condition: ${cond?.condition ?? '(unknown)'}\n` +
-        `Fix: recompile with skill_compile(name="${name}") so the condition guards the offending access.`,
-        { synthetic: true },
+          `Condition: ${cond?.condition ?? '(unknown)'}\n` +
+          `Fix: recompile with skill_compile(name="${name}") so the condition guards the offending access.`,
+        { synthetic: true }
       );
     }
   }
@@ -601,16 +595,17 @@ export class ConditionRegistry {
     availableTools?: ToolInfo[]
   ): Promise<{ condition?: Condition; validation?: ValidationResult; error?: string }> {
     // Build tools list for prompt
-    const toolsSection = availableTools && availableTools.length > 0
-      ? `Available tools (use these as trigger values):
-${availableTools.map(t => `- ${t.name}: ${t.description}`).join('\n')}
+    const toolsSection =
+      availableTools && availableTools.length > 0
+        ? `Available tools (use these as trigger values):
+${availableTools.map((t) => `- ${t.name}: ${t.description}`).join('\n')}
 
 NOTE: The trigger must be an array of strings:
 - "stop": Triggers when LLM finishes reply (no tool calls pending)
 - "*": Triggers on any tool call
 - A specific tool name from the list above
 Example: ["git_commit", "stop"] to trigger before commit or when LLM finishes.`
-      : `Trigger values (must be an array of strings):
+        : `Trigger values (must be an array of strings):
 - "stop": Triggers when LLM finishes (no tool calls pending). Use for "before LLM finishes reply" or "before stopping".
 - "*": Triggers on any tool call.
 - Tool name: Triggers on specific tool (e.g., "bash", "edit_file", "git_commit").
@@ -693,10 +688,10 @@ Valid verbs: ${VALID_VERBS.join(', ')}
 Valid objects: ${VALID_OBJECTS.join(', ')}
 | Verb | Meaning |
 |------|---------|
-${VALID_VERBS.map(v => `| ${v} | ${VERB_MEANINGS[v] || ''} |`).join('\n')}
+${VALID_VERBS.map((v) => `| ${v} | ${VERB_MEANINGS[v] || ''} |`).join('\n')}
 | Object | Meaning |
 |--------|---------|
-${VALID_OBJECTS.map(o => `| ${o} | ${OBJECT_MEANINGS[o] || ''} |`).join('\n')}
+${VALID_OBJECTS.map((o) => `| ${o} | ${OBJECT_MEANINGS[o] || ''} |`).join('\n')}
 The intent will be validated at compile time. Invalid intents will be rejected.
 Example intents for bash:
 - "TEST ARTIFACT TO verify lint before commit"
@@ -718,17 +713,14 @@ Output a JSON object with trigger, condition, and action.`;
 
       try {
         // Use structured output (JSON schema enforcement)
-        const response = await structuredChat(
-          [{ role: 'user', content: prompt }],
-          CONDITION_SCHEMA,
-        );
+        const response = await structuredChat([{ role: 'user', content: prompt }], CONDITION_SCHEMA);
 
         const content = response.message.content || '';
-        
+
         // Use the validation pipeline
         const existingVersion = existing?.version || 0;
         const result = await compileCondition(content, when, skillName, existingVersion);
-        
+
         lastValidation = result.validation;
 
         if (!result.success || !result.condition) {
@@ -760,9 +752,10 @@ Output a JSON object with trigger, condition, and action.`;
 
           // Otherwise must be a valid tool name (if we have a tools list)
           if (availableTools && availableTools.length > 0) {
-            const validToolNames = availableTools.map(ti => ti.name);
+            const validToolNames = availableTools.map((ti) => ti.name);
             if (!validToolNames.includes(t)) {
-              lastError = `Invalid trigger: '${t}' is not a known tool name. ` +
+              lastError =
+                `Invalid trigger: '${t}' is not a known tool name. ` +
                 `Valid triggers: 'stop', '*', or one of: ${validToolNames.slice(0, 10).join(', ')}...`;
               break; // break out of for loop, will be caught by retry
             }
@@ -783,7 +776,7 @@ Output a JSON object with trigger, condition, and action.`;
 
         // Apply runtime fixes
         this.applyRuntimeFixes(skillName, condition);
-        
+
         // Store in memory
         this.set(skillName, condition);
 
@@ -791,7 +784,7 @@ Output a JSON object with trigger, condition, and action.`;
         // for this hook, so a previously-broken condition drops out of the
         // "[Hooks Erroring]" list on the next project-context rebuild.
         this.clearEvalFailure(skillName);
-        
+
         // Persist atomically
         const saveResult = await this.save();
         if (!saveResult.success) {
@@ -804,13 +797,13 @@ Output a JSON object with trigger, condition, and action.`;
           return {
             condition,
             validation: result.validation,
-            error: `Failed to save: ${saveResult.error}`,
+            error: `Failed to save: ${saveResult.error}`
           };
         }
-        
-        return { 
+
+        return {
           condition,
-          validation: result.validation,
+          validation: result.validation
         };
       } catch (err) {
         const errorMsg = (err as Error).message;
@@ -820,9 +813,9 @@ Output a JSON object with trigger, condition, and action.`;
     }
 
     // All retries exhausted
-    return { 
+    return {
       validation: lastValidation,
-      error: `Compilation failed after ${MAX_COMPILE_RETRIES} attempts. Last error: ${lastError}`,
+      error: `Compilation failed after ${MAX_COMPILE_RETRIES} attempts. Last error: ${lastError}`
     };
   }
 
@@ -838,15 +831,10 @@ Output a JSON object with trigger, condition, and action.`;
     if (!existing) {
       return { error: `Condition '${skillName}' not found` };
     }
-    
+
     // Get skill content from loader (will be passed in)
     const skillContent = `Refining based on feedback: ${feedback}`;
-    
-    return this.compile(
-      existing.when,
-      skillName,
-      skillContent,
-      existing
-    );
+
+    return this.compile(existing.when, skillName, skillContent, existing);
   }
 }

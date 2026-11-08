@@ -16,7 +16,10 @@ export const configCommand: SlashCommand = {
   description: 'Show the effective configuration and which layer supplied each value',
   handler: (context) => {
     // Optional filter: `/config TOKEN_THRESHOLD OLLAMA_MODEL`.
-    const keys = context.args.slice(1).map(a => a.toUpperCase()).filter(Boolean);
+    const keys = context.args
+      .slice(1)
+      .map((a) => a.toUpperCase())
+      .filter(Boolean);
     const entries = describeEffectiveConfig(keys.length > 0 ? keys : undefined);
     if (entries.length === 0) {
       console.log(chalk.gray('No known configuration keys matched.'));
@@ -24,13 +27,14 @@ export const configCommand: SlashCommand = {
     }
     console.log(chalk.cyan('Effective configuration (value — source):'));
     for (const e of entries) {
-      const source = e.source === 'cli'
-        ? chalk.green(e.source)
-        : e.source === 'default'
-          ? chalk.gray(e.source)
-          : chalk.yellow(e.source);
+      const source =
+        e.source === 'cli'
+          ? chalk.green(e.source)
+          : e.source === 'default'
+            ? chalk.gray(e.source)
+            : chalk.yellow(e.source);
       console.log(`  ${chalk.bold(e.key.padEnd(26))} ${e.value.padEnd(24)} ${source}`);
     }
     console.log(chalk.gray('\nLayers (lowest → highest): user .env → project .env → system env → CLI flags.'));
-  },
+  }
 };

@@ -25,12 +25,11 @@ export function formatIssueList(issues: Issue[]): string {
       in_progress: '[>]',
       completed: '[x]',
       failed: '[!]',
-      abandoned: '[-]',
+      abandoned: '[-]'
     };
     const marker = status[issue.status] || '[?]';
     const owner = issue.owner ? ` @${issue.owner}` : '';
-    const blockedBy =
-      issue.blockedBy.length > 0 ? ` blocked:${issue.blockedBy.join(',')}` : '';
+    const blockedBy = issue.blockedBy.length > 0 ? ` blocked:${issue.blockedBy.join(',')}` : '';
     lines.push(`  ${marker} #${issue.id}: ${issue.title}${owner}${blockedBy}`);
   }
   return lines.join('\n');
@@ -48,7 +47,7 @@ export function formatIssueDetail(issue: Issue): string {
     in_progress: '[>]',
     completed: '[x]',
     failed: '[!]',
-    abandoned: '[-]',
+    abandoned: '[-]'
   };
 
   const lines: string[] = [];

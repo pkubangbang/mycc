@@ -18,8 +18,8 @@
 
 /** Names used by the abort error classes and by undici / Node. */
 const ABORT_ERROR_NAMES: ReadonlySet<string> = new Set([
-  'AbortError',      // undici / DOMException for an aborted fetch
-  'StreamAbortedError', // our own retry/collect plumbing
+  'AbortError', // undici / DOMException for an aborted fetch
+  'StreamAbortedError' // our own retry/collect plumbing
 ]);
 
 /**

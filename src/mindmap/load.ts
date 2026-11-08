@@ -16,14 +16,14 @@ import { validate_mindmap_structure } from './validate.js';
  */
 export function load_mindmap(jsonPath: string): Mindmap {
   const absolutePath = path.resolve(jsonPath);
-  
+
   if (!fs.existsSync(absolutePath)) {
     throw new Error(`Mindmap JSON not found: ${absolutePath}`);
   }
-  
+
   const content = fs.readFileSync(absolutePath, 'utf-8');
   const parsed: unknown = JSON.parse(content);
-  
+
   return load_mindmap_from_json(parsed);
 }
 
@@ -52,7 +52,7 @@ export function load_mindmap_from_json(json: unknown): Mindmap {
     hash: mindmapJson.hash,
     compiled_at: mindmapJson.compiled_at,
     updated_at: mindmapJson.updated_at,
-    root: mindmapJson.root,
+    root: mindmapJson.root
   };
 }
 
@@ -128,7 +128,7 @@ export function save_mindmap(mindmap: Mindmap, jsonPath?: string, projectDir?: s
     hash: mindmap.hash,
     compiled_at: mindmap.compiled_at,
     updated_at: mindmap.updated_at,
-    root,
+    root
   };
 
   fs.writeFileSync(outputPath, JSON.stringify(json, null, 2), 'utf-8');
@@ -149,7 +149,7 @@ export function serialize_mindmap(mindmap: Mindmap): string {
     hash: mindmap.hash,
     compiled_at: mindmap.compiled_at,
     updated_at: mindmap.updated_at,
-    root,
+    root
   };
 
   return JSON.stringify(json, null, 2);
@@ -167,6 +167,6 @@ function strip_in_memory_flags(node: Node): Node {
     summary: node.summary,
     level: node.level,
     children: node.children.map((c) => strip_in_memory_flags(c)),
-    links: node.links,
+    links: node.links
   };
 }

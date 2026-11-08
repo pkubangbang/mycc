@@ -33,7 +33,7 @@ function logSteeringWipe(reason: string): void {
     agentIO.brief(
       'warn',
       'steering',
-      `${dropped.length} queued steering note(s) discarded on ${reason}: ids ${dropped.map((n) => n.id).join(', ')} — they remain in /history as user submissions`,
+      `${dropped.length} queued steering note(s) discarded on ${reason}: ids ${dropped.map((n) => n.id).join(', ')} — they remain in /history as user submissions`
     );
   } else {
     agentIO.verbose('steering', `queue wiped on ${reason} (empty)`);
@@ -207,8 +207,8 @@ export class WebInputProvider implements InputProvider {
       kind: 'confirm',
       options: [
         { label: 'Yes', value: 'y' },
-        { label: 'No', value: 'n' },
-      ],
+        { label: 'No', value: 'n' }
+      ]
     });
     const answer = await hub.waitForCardResponse(cardId);
 
@@ -222,16 +222,12 @@ export class WebInputProvider implements InputProvider {
         if (hub.isRestarting()) return true; // still cycling — default retry
         // Gated on shouldDaemon() — see getInput() entry guard.
         if (shouldDaemon() && !hub.isRunning()) throw new ServeDetachedExitError();
-        return reAnswer !== null &&
-          reAnswer.toLowerCase() !== 'n' &&
-          reAnswer.toLowerCase() !== 'no';
+        return reAnswer !== null && reAnswer.toLowerCase() !== 'n' && reAnswer.toLowerCase() !== 'no';
       }
       // Gated on shouldDaemon() — see getInput() entry guard.
       if (shouldDaemon()) throw new ServeDetachedExitError();
       return this.userProvider.promptRetry(errorMessage);
     }
-    return answer !== null &&
-      answer.toLowerCase() !== 'n' &&
-      answer.toLowerCase() !== 'no';
+    return answer !== null && answer.toLowerCase() !== 'n' && answer.toLowerCase() !== 'no';
   }
 }

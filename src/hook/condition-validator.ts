@@ -74,9 +74,7 @@ const VALID_ACTION_TYPES = ['inject_before', 'inject_after', 'block', 'replace',
  * These are the 8 scoped functions + isPlanMode.
  * The validator checks that turn.X / session.X uses one of these names.
  */
-const KNOWN_SCOPED_FUNCTIONS = new Set([
-  'count', 'lastIndex', 'countResult', 'hadError',
-]);
+const KNOWN_SCOPED_FUNCTIONS = new Set(['count', 'lastIndex', 'countResult', 'hadError']);
 
 // Allowed literal values in expressions
 const ALLOWED_LITERALS = ['true', 'false', 'null', 'undefined'];
@@ -97,10 +95,31 @@ const FUNCTION_ONLY_NAMES = new Set(['isPlanMode', 'totalTurns']);
 
 // Dangerous identifiers that should never be allowed
 const DANGEROUS_IDENTIFIERS = new Set([
-  'eval', 'Function', 'require', 'import', 'process', 'fs', 'global',
-  'window', 'document', 'globalThis', 'module', 'exports', '__proto__',
-  'constructor', 'prototype', 'Reflect', 'Proxy', 'Buffer', 'Math',
-  'JSON', 'console', 'alert', 'fetch', 'XMLHttpRequest', 'WebSocket',
+  'eval',
+  'Function',
+  'require',
+  'import',
+  'process',
+  'fs',
+  'global',
+  'window',
+  'document',
+  'globalThis',
+  'module',
+  'exports',
+  '__proto__',
+  'constructor',
+  'prototype',
+  'Reflect',
+  'Proxy',
+  'Buffer',
+  'Math',
+  'JSON',
+  'console',
+  'alert',
+  'fetch',
+  'XMLHttpRequest',
+  'WebSocket'
 ]);
 
 // ============================================================================
@@ -174,13 +193,17 @@ export function validateAction(action: unknown): ValidationResult {
         if (act.tool === 'bash') {
           const intent = args.intent;
           if (typeof intent !== 'string' || intent.trim() === '') {
-            errors.push('action.args.intent is required for bash tool and must follow intent language: VERB OBJECT TO PURPOSE');
+            errors.push(
+              'action.args.intent is required for bash tool and must follow intent language: VERB OBJECT TO PURPOSE'
+            );
           } else {
             const trimmed = intent.trim();
             const parsed = parseIntent(trimmed);
             const intentResult = validateIntent(parsed, trimmed);
             if (!intentResult.valid) {
-              errors.push(`action.args.intent: ${intentResult.error}${intentResult.hint ? ` — ${intentResult.hint}` : ''}`);
+              errors.push(
+                `action.args.intent: ${intentResult.error}${intentResult.hint ? ` — ${intentResult.hint}` : ''}`
+              );
             }
           }
         }
@@ -385,7 +408,28 @@ function visitNode(node: jsep.Expression, errors: string[], warnings: string[]):
             if (memberExpr.property.type === 'Identifier') {
               const methodName = (memberExpr.property as jsep.Identifier).name;
               // Allow common string/array methods
-              const allowedMethods = ['includes', 'indexOf', 'startsWith', 'endsWith', 'slice', 'split', 'length', 'toString', 'trim', 'toLowerCase', 'toUpperCase', 'map', 'filter', 'some', 'every', 'find', 'push', 'join', 'pop', 'shift'];
+              const allowedMethods = [
+                'includes',
+                'indexOf',
+                'startsWith',
+                'endsWith',
+                'slice',
+                'split',
+                'length',
+                'toString',
+                'trim',
+                'toLowerCase',
+                'toUpperCase',
+                'map',
+                'filter',
+                'some',
+                'every',
+                'find',
+                'push',
+                'join',
+                'pop',
+                'shift'
+              ];
               if (!allowedMethods.includes(methodName)) {
                 warnings.push(`Method "${methodName}" on unknown object "${objName}" - may not be defined`);
               }
@@ -408,7 +452,9 @@ function visitNode(node: jsep.Expression, errors: string[], warnings: string[]):
           if (fnName === 'isPlanMode' || fnName === 'totalTurns') {
             // isPlanMode() and totalTurns() are allowed direct function calls
           } else if (!ALLOWED_LITERALS.includes(fnName)) {
-            newErrors.push(`Direct function call "${fnName}()" is not allowed - only turn.XXX(), session.XXX(), isPlanMode(), or totalTurns() permitted`);
+            newErrors.push(
+              `Direct function call "${fnName}()" is not allowed - only turn.XXX(), session.XXX(), isPlanMode(), or totalTurns() permitted`
+            );
           }
         } else {
           newErrors.push('Only turn.XXX(), session.XXX(), isPlanMode(), or totalTurns() calls are allowed');
@@ -534,11 +580,13 @@ export function testExpression(
     const ctx = {
       turnCount: (tool?: string) => sequence.turnCount(tool),
       turnLastIndex: (tool: string) => sequence.turnLastIndex(tool),
-      turnCountResult: (tool: string, pattern: string, maxChars?: number) => sequence.turnCountResult(tool, pattern, maxChars),
+      turnCountResult: (tool: string, pattern: string, maxChars?: number) =>
+        sequence.turnCountResult(tool, pattern, maxChars),
       turnHadError: (tool?: string) => sequence.turnHadError(tool),
       sessionCount: (tool?: string) => sequence.sessionCount(tool),
       sessionLastIndex: (tool: string) => sequence.sessionLastIndex(tool),
-      sessionCountResult: (tool: string, pattern: string, maxChars?: number) => sequence.sessionCountResult(tool, pattern, maxChars),
+      sessionCountResult: (tool: string, pattern: string, maxChars?: number) =>
+        sequence.sessionCountResult(tool, pattern, maxChars),
       sessionHadError: (tool?: string) => sequence.sessionHadError(tool),
       isPlanMode: () => sequence.isPlanMode(),
       totalTurns: () => sequence.totalTurns(),
@@ -547,14 +595,14 @@ export function testExpression(
           filePath: '/mock/test.ts',
           newLoc: 100,
           existingLoc: 50,
-          isDestructive: false,
+          isDestructive: false
         },
         args: {
           command: 'mock command',
           file_path: '/mock/test.ts',
-          content: 'mock content',
-        },
-      },
+          content: 'mock content'
+        }
+      }
     };
 
     const result = evaluateExpression(expression, ctx);
@@ -578,7 +626,7 @@ export function smokeTestExpression(expression: string): TestResult {
     sessionCountResult: () => 0,
     sessionHadError: () => false,
     isPlanMode: () => false,
-    totalTurns: () => 0,
+    totalTurns: () => 0
   };
   return testExpression(expression, emptyMock);
 }
@@ -592,7 +640,7 @@ export function testScenarios(
 ): Array<{ name: string; result: TestResult }> {
   return scenarios.map(({ name, sequence }) => ({
     name,
-    result: testExpression(condition.condition, sequence),
+    result: testExpression(condition.condition, sequence)
   }));
 }
 
@@ -626,7 +674,7 @@ export class MockSequence implements TestableSequence {
 
   turnCount(tool?: string): number {
     if (!tool) return this.events.length;
-    return this.events.filter(e => matchesToolSpec(e, tool)).length;
+    return this.events.filter((e) => matchesToolSpec(e, tool)).length;
   }
 
   turnLastIndex(tool: string): number {
@@ -637,7 +685,7 @@ export class MockSequence implements TestableSequence {
   }
 
   turnCountResult(tool: string, pattern: string, maxChars?: number): number {
-    return this.events.filter(e => {
+    return this.events.filter((e) => {
       if (tool !== '*' && !matchesToolSpec(e, tool)) return false;
       const searchText = maxChars ? e.result.slice(0, maxChars) : e.result;
       return searchText.includes(pattern);
@@ -645,7 +693,7 @@ export class MockSequence implements TestableSequence {
   }
 
   turnHadError(tool?: string): boolean {
-    return this.events.some(e => {
+    return this.events.some((e) => {
       if (tool && !matchesToolSpec(e, tool)) return false;
       const result = e.result?.toLowerCase() || '';
       return result.includes('error') || result.includes('failed');
@@ -658,11 +706,11 @@ export class MockSequence implements TestableSequence {
     if (!tool) return this.sessionResultsLog.length;
     if (tool.includes('#')) {
       const [toolName, pattern] = tool.split('#');
-      return this.sessionPatternLog.filter(e => {
+      return this.sessionPatternLog.filter((e) => {
         if (e.tool !== toolName) return false;
         if (toolName === 'bash') {
           const clauses = splitClauses(e.key);
-          return clauses.some(c => c.startsWith(pattern));
+          return clauses.some((c) => c.startsWith(pattern));
         }
         return e.key.includes(pattern);
       }).length;
@@ -678,7 +726,7 @@ export class MockSequence implements TestableSequence {
   }
 
   sessionCountResult(tool: string, pattern: string, maxChars?: number): number {
-    return this.sessionResultsLog.filter(e => {
+    return this.sessionResultsLog.filter((e) => {
       if (tool !== '*' && !matchesToolSpec(e, tool)) return false;
       const searchText = maxChars ? e.result.slice(0, maxChars) : e.result;
       return searchText.includes(pattern);
@@ -686,7 +734,7 @@ export class MockSequence implements TestableSequence {
   }
 
   sessionHadError(tool?: string): boolean {
-    return this.sessionResultsLog.some(e => {
+    return this.sessionResultsLog.some((e) => {
       if (tool && !matchesToolSpec(e, tool)) return false;
       const result = e.result?.toLowerCase() || '';
       return result.includes('error') || result.includes('failed');
@@ -695,9 +743,13 @@ export class MockSequence implements TestableSequence {
 
   // --- Global ---
 
-  isPlanMode(): boolean { return false; }
+  isPlanMode(): boolean {
+    return false;
+  }
 
-  totalTurns(): number { return 0; }
+  totalTurns(): number {
+    return 0;
+  }
 
   // --- Utility ---
 
@@ -742,7 +794,7 @@ export const testCondition = testExpression;
 export const ConditionValidator = {
   validate: validateCondition,
   validateSchema,
-  validateExpression,
+  validateExpression
 };
 
 // ============================================================================
@@ -781,14 +833,15 @@ export async function compileCondition(
     condition: typeof pObj.condition === 'string' ? pObj.condition : 'true',
     action: (pObj.action as HookAction) || { type: 'message' },
     version: newVersion,
-    history: [{
-      version: newVersion,
-      condition: typeof pObj.condition === 'string' ? pObj.condition : 'true',
-      action: (pObj.action as HookAction) || { type: 'message' },
-      reason: existingVersion > 0
-        ? `refined via skill_compile for ${skillName}`
-        : `initial compilation for ${skillName}`,
-    }],
+    history: [
+      {
+        version: newVersion,
+        condition: typeof pObj.condition === 'string' ? pObj.condition : 'true',
+        action: (pObj.action as HookAction) || { type: 'message' },
+        reason:
+          existingVersion > 0 ? `refined via skill_compile for ${skillName}` : `initial compilation for ${skillName}`
+      }
+    ]
   };
 
   // Step 3: Validate schema and expression

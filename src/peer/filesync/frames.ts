@@ -84,10 +84,14 @@ export function encodeDataFrame(share: string, pieceHash: string, data: Buffer):
   const shareBuf = Buffer.from(share, 'utf8');
   const out = Buffer.alloc(1 + HASH_LEN + SHARE_LEN_BYTES + shareBuf.length + data.length);
   let o = 0;
-  out.writeUInt8(SYNC_DATA_TYPE, o); o += 1;
-  Buffer.from(pieceHash, 'hex').copy(out, o); o += HASH_LEN;
-  out.writeUInt16BE(shareBuf.length, o); o += SHARE_LEN_BYTES;
-  shareBuf.copy(out, o); o += shareBuf.length;
+  out.writeUInt8(SYNC_DATA_TYPE, o);
+  o += 1;
+  Buffer.from(pieceHash, 'hex').copy(out, o);
+  o += HASH_LEN;
+  out.writeUInt16BE(shareBuf.length, o);
+  o += SHARE_LEN_BYTES;
+  shareBuf.copy(out, o);
+  o += shareBuf.length;
   data.copy(out, o);
   return out;
 }
@@ -97,10 +101,13 @@ export function decodeDataFrame(buf: Buffer): SyncDataFrame | null {
   if (buf.length < 1 + HASH_LEN + SHARE_LEN_BYTES) return null;
   if (buf.readUInt8(0) !== SYNC_DATA_TYPE) return null;
   let o = 1;
-  const pieceHash = buf.subarray(o, o + HASH_LEN).toString('hex'); o += HASH_LEN;
-  const shareLen = buf.readUInt16BE(o); o += SHARE_LEN_BYTES;
+  const pieceHash = buf.subarray(o, o + HASH_LEN).toString('hex');
+  o += HASH_LEN;
+  const shareLen = buf.readUInt16BE(o);
+  o += SHARE_LEN_BYTES;
   if (buf.length < o + shareLen) return null;
-  const share = buf.subarray(o, o + shareLen).toString('utf8'); o += shareLen;
+  const share = buf.subarray(o, o + shareLen).toString('utf8');
+  o += shareLen;
   return { t: 'data', share, pieceHash, data: buf.subarray(o) };
 }
 

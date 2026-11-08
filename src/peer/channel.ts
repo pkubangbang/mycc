@@ -36,7 +36,9 @@ function readChannelFile(filePath: string): ChannelFile | null {
     const content = fs.readFileSync(filePath, 'utf-8');
     return JSON.parse(content) as ChannelFile;
   } catch (err) {
-    console.warn(`[channel] malformed channel file, ignoring: ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+    console.warn(
+      `[channel] malformed channel file, ignoring: ${filePath}: ${err instanceof Error ? err.message : String(err)}`
+    );
     return null;
   }
 }
@@ -69,7 +71,7 @@ function appendMailToPath(mailboxPath: string, from: string, title: string, cont
     from,
     title,
     content,
-    timestamp: new Date().toISOString(),
+    timestamp: new Date().toISOString()
   };
   const line = `${JSON.stringify(mail)}\n`;
   fs.appendFileSync(mailboxPath, line, 'utf-8');
@@ -194,7 +196,7 @@ export class ChannelManager {
           count,
           lastError: reason,
           lastAttemptAt: now,
-          nextAttemptAt: now + delay,
+          nextAttemptAt: now + delay
         });
         // First failure is loud; repeats go to verbose (the count is on the
         // listing and in the brief-style verbose trace).
@@ -231,7 +233,7 @@ export class ChannelManager {
     const allFiles = fs.readdirSync(channelsDir);
 
     // Collect own channel files
-    const ownFiles = allFiles.filter(f => f.startsWith(ownPrefix) && f.endsWith('.json'));
+    const ownFiles = allFiles.filter((f) => f.startsWith(ownPrefix) && f.endsWith('.json'));
 
     const channels: ChannelFile[] = [];
     for (const file of ownFiles) {
@@ -287,7 +289,9 @@ export class ChannelManager {
 
     // Channel file must exist — creation is mediator's responsibility
     if (!ownChannel) {
-      throw new Error(`Channel file not found: ${ownChannelFile}. Channel must be created by a mediator before joining.`);
+      throw new Error(
+        `Channel file not found: ${ownChannelFile}. Channel must be created by a mediator before joining.`
+      );
     }
 
     // 1. Set joined flag
@@ -316,7 +320,7 @@ export class ChannelManager {
 
     return {
       joined: true,
-      firstQuery: ownChannel.firstQuery ?? undefined,
+      firstQuery: ownChannel.firstQuery ?? undefined
     };
   }
 

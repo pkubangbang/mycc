@@ -18,8 +18,16 @@ function injectSteeringSequence(): void {
   if (!seam) return;
   void seam.injectSequence([
     { type: 'steer-state', content: '', steeringRevision: 1, notes: [{ id: 9001, text: 'note A' }] },
-    { type: 'steer-state', content: '', steeringRevision: 2, notes: [{ id: 9001, text: 'note A' }, { id: 9002, text: 'note B' }] },
-    { type: 'prompt', content: '' },
+    {
+      type: 'steer-state',
+      content: '',
+      steeringRevision: 2,
+      notes: [
+        { id: 9001, text: 'note A' },
+        { id: 9002, text: 'note B' }
+      ]
+    },
+    { type: 'prompt', content: '' }
   ]);
 }
 

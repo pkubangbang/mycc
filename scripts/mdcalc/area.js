@@ -29,7 +29,11 @@ export function colToNumber(letters) {
 
 export function numberToCol(n) {
   let s = '';
-  while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
+  while (n > 0) {
+    const r = (n - 1) % 26;
+    s = String.fromCharCode(65 + r) + s;
+    n = Math.floor((n - 1) / 26);
+  }
   return s;
 }
 
@@ -47,12 +51,14 @@ export function parseArea(area, maxRow) {
   if (!area || typeof area !== 'string') throw new Error('area is empty or not a string');
   if (area.includes(':')) {
     const [start, end] = area.split(':');
-    const s = parseCellId(start), e = parseCellId(end);
+    const s = parseCellId(start),
+      e = parseCellId(end);
     if (!s || !e) throw new Error(`unparseable area "${area}"`);
 
     // whole column A:A
     if (/^[A-Z]+$/.test(start) && /^[A-Z]+$/.test(end)) {
-      const sc = colToNumber(start), ec = colToNumber(end);
+      const sc = colToNumber(start),
+        ec = colToNumber(end);
       if (sc !== ec) throw new Error(`whole-column range must be one column, got "${area}"`);
       const cells = [];
       for (let r = 1; r <= maxRow; r++) cells.push(`${start}${r}`);
@@ -65,11 +71,13 @@ export function parseArea(area, maxRow) {
     if (!sameRow && !sameCol) throw new Error(`area "${area}" is 2D — only 1D ranges allowed`);
     const cells = [];
     if (sameCol) {
-      const lo = Math.min(s.row, e.row), hi = Math.max(s.row, e.row);
+      const lo = Math.min(s.row, e.row),
+        hi = Math.max(s.row, e.row);
       for (let r = lo; r <= hi; r++) cells.push(`${numberToCol(s.col)}${r}`);
       return { cells, direction: 'col' };
     } else {
-      const lo = Math.min(s.col, e.col), hi = Math.max(s.col, e.col);
+      const lo = Math.min(s.col, e.col),
+        hi = Math.max(s.col, e.col);
       for (let c = lo; c <= hi; c++) cells.push(`${numberToCol(c)}${s.row}`);
       return { cells, direction: 'row' };
     }
@@ -93,17 +101,21 @@ export function parseArea2D(area, maxRow) {
   const [start, end] = area.split(':');
   // whole column A:A
   if (/^[A-Z]+$/.test(start) && /^[A-Z]+$/.test(end)) {
-    const sc = colToNumber(start), ec = colToNumber(end);
+    const sc = colToNumber(start),
+      ec = colToNumber(end);
     if (sc !== ec) throw new Error(`whole-column range must be one column, got "${area}"`);
     const cells = [];
     for (let r = 1; r <= maxRow; r++) cells.push(`${start}${r}`);
     if (cells.length === 0) throw new Error(`whole-column "${area}" has no rows (maxRow=0)`);
     return { cells, direction: 'col' };
   }
-  const s = parseCellId(start), e = parseCellId(end);
+  const s = parseCellId(start),
+    e = parseCellId(end);
   if (!s || !e) throw new Error(`unparseable area "${area}"`);
-  const clo = Math.min(s.col, e.col), chi = Math.max(s.col, e.col);
-  const rlo = Math.min(s.row, e.row), rhi = Math.max(s.row, e.row);
+  const clo = Math.min(s.col, e.col),
+    chi = Math.max(s.col, e.col);
+  const rlo = Math.min(s.row, e.row),
+    rhi = Math.max(s.row, e.row);
   const cells = [];
   for (let r = rlo; r <= rhi; r++) {
     for (let c = clo; c <= chi; c++) cells.push(`${numberToCol(c)}${r}`);

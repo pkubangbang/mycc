@@ -8,7 +8,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
-import { get_default_mindmap_path, load_mindmap, validate_mindmap, applyPatchAction, readAllPatches, getPatchPath } from '../mindmap/index.js';
+import {
+  get_default_mindmap_path,
+  load_mindmap,
+  validate_mindmap,
+  applyPatchAction,
+  readAllPatches,
+  getPatchPath
+} from '../mindmap/index.js';
 import type { Node, Mindmap } from '../mindmap/types.js';
 import type { CoreModule } from '../types.js';
 

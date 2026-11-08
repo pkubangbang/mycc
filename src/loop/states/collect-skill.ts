@@ -54,12 +54,7 @@ import { loader } from '../../context/shared/loader.js';
 import type { Skill, Message } from '../../types.js';
 import type { Triologue } from '../triologue.js';
 import { extractKeywords, type KeywordExtractionResult } from '../keyword-extractor.js';
-import {
-  scoreSkills,
-  SKILL_SEMANTIC_TOPK,
-  getSkillMatchThreshold,
-  type RankedSkill,
-} from '../skill-matcher.js';
+import { scoreSkills, SKILL_SEMANTIC_TOPK, getSkillMatchThreshold, type RankedSkill } from '../skill-matcher.js';
 
 // Scoring constants (KEYWORD_WEIGHTS, SKILL_SCORE_FLOOR, SKILL_TOP_N,
 // SKILL_SEMANTIC_TOPK) and the scope-aware semantic-boost logic now live in
@@ -409,7 +404,9 @@ export class SkillSuggester {
       lines.push(`The below skills are loaded and also relevant: ${loadedSkills.join(', ')}.`);
     }
     lines.push('Note: you can also use skill_search to search for skills semantically.');
-    lines.push('Discipline: this is a silent nudge. If a skill helps the current task, load it with skill_load; otherwise continue.');
+    lines.push(
+      'Discipline: this is a silent nudge. If a skill helps the current task, load it with skill_load; otherwise continue.'
+    );
 
     triologue.note('HINT', lines.join('\n'));
   }
@@ -445,11 +442,7 @@ export class SkillSuggester {
    * @param freeformQuery - the validated (non-empty) semantic phrase.
    * @returns the top-scoring skills (0..SKILL_TOP_N), highest score first.
    */
-  private async rankSkills(
-    ctx: MachineEnv['ctx'],
-    keywords: string[],
-    freeformQuery: string,
-  ): Promise<Skill[]> {
+  private async rankSkills(ctx: MachineEnv['ctx'], keywords: string[], freeformQuery: string): Promise<Skill[]> {
     const threshold = getSkillMatchThreshold();
 
     // 1. Semantic window (raw results; scoreSkills owns the scope-aware
@@ -459,14 +452,14 @@ export class SkillSuggester {
       semResults = await ctx.wiki.get(freeformQuery, {
         domain: 'skills',
         topK: SKILL_SEMANTIC_TOPK,
-        threshold,
+        threshold
       });
       // Saturated window: the domain may hold more qualifying rows than the
       // cap lets through — a signal to raise SKILL_SEMANTIC_TOPK.
       if (semResults.length === SKILL_SEMANTIC_TOPK) {
         ctx.core.verbose(
           'collect-skill',
-          `semantic window saturated (topK=${SKILL_SEMANTIC_TOPK}); results may be truncated`,
+          `semantic window saturated (topK=${SKILL_SEMANTIC_TOPK}); results may be truncated`
         );
       }
     } catch {
@@ -479,9 +472,9 @@ export class SkillSuggester {
       skills: ctx.skill.listSkills(),
       keywords,
       semanticResults: semResults,
-      threshold,
+      threshold
     });
-    return ranked.map(r => r.skill);
+    return ranked.map((r) => r.skill);
   }
 
   // ── Main entry ────────────────────────────────────────────────────────
@@ -568,7 +561,7 @@ export class SkillSuggester {
     }
     const result: KeywordExtractionResult = await ctx.core.escAware(
       async (ac) => extractKeywords(compositeText, loader.getSkillKeywords(), ac.signal),
-      () => ({ status: 'failed' } as const),
+      () => ({ status: 'failed' }) as const
     );
 
     if (result.status === 'failed') {
@@ -671,7 +664,9 @@ export const skillSuggester = new SkillSuggester();
  * @param turn - the live TurnVars instance to invalidate (same object the
  *        state machine holds, so the mutation is visible to the next COLLECT).
  */
-export function beginFreshSession(turn: Pick<import('../state-machine.js').TurnVars, 'lastUserQuery' | 'lastBriefMessage' | 'lastHintFocus'>): void {
+export function beginFreshSession(
+  turn: Pick<import('../state-machine.js').TurnVars, 'lastUserQuery' | 'lastBriefMessage' | 'lastHintFocus'>
+): void {
   skillSuggester.reset();
   turn.lastUserQuery = '';
   turn.lastBriefMessage = '';

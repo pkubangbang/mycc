@@ -24,11 +24,7 @@
  * lines are rendered verbatim.
  */
 import { computed } from 'vue';
-import {
-  parsePlanScope,
-  PLAN_SCOPE_HINTS,
-  isSentinelAnswer,
-} from '../plan-scope';
+import { parsePlanScope, PLAN_SCOPE_HINTS, isSentinelAnswer } from '../plan-scope';
 
 const props = defineProps<{
   /** The plan-scope log's raw content (the terminal-formatted block). */
@@ -53,9 +49,9 @@ const rows = computed(() =>
       // at the SAME weight as a real finding (a dimmed row reads as disabled /
       // inactive text to most users). `sentinel` is kept only so the CSS can
       // distinguish, not so it can fade the row out.
-      sentinel: isSentinelAnswer(check.value),
+      sentinel: isSentinelAnswer(check.value)
     };
-  }),
+  })
 );
 
 /** The backend clamps an over-long reflection at a word boundary and appends
@@ -93,7 +89,7 @@ function renderValue(value: string): string {
     .replace(/`([^`\n]+)`/g, (_match, code: string): string => `<code>${code}</code>`)
     .replace(
       /(^|[^\w])\[([^[\]\n]{1,40})\](?!\w)/g,
-      (_match, before: string, label: string): string => `${before}[<code>${label}</code>]`,
+      (_match, before: string, label: string): string => `${before}[<code>${label}</code>]`
     );
 }
 </script>
@@ -114,29 +110,18 @@ function renderValue(value: string): string {
     <pre v-if="parsed.prose" class="plan-scope-prose">{{ parsed.prose }}</pre>
 
     <ul v-if="rows.length" class="plan-scope-rows">
-      <li
-        v-for="row in rows"
-        :key="row.label"
-        class="plan-scope-row"
-        :class="{ sentinel: row.sentinel }"
-      >
+      <li v-for="row in rows" :key="row.label" class="plan-scope-row" :class="{ sentinel: row.sentinel }">
         <div class="plan-scope-row-head">
           <span class="plan-scope-label">{{ row.label }}</span>
           <span v-if="row.hint" class="plan-scope-hint">{{ row.hint }}</span>
         </div>
         <!-- eslint-disable-next-line vue/no-v-html -- html is escaped in renderValue; only <code> wrappers are inserted -->
-        <div
-          v-if="row.hasAnswer"
-          class="plan-scope-value"
-          v-html="row.html"
-        ></div>
+        <div v-if="row.hasAnswer" class="plan-scope-value" v-html="row.html"></div>
         <div v-else class="plan-scope-value plan-scope-empty">（无输出）</div>
         <!-- The backend clamps a long reflection and appends "…(truncated)";
              surface that as a marker on its own line so a cut answer is never
              mistaken for a complete one. -->
-        <div v-if="row.truncated" class="plan-scope-truncated">
-          （回答超长，已被截断）
-        </div>
+        <div v-if="row.truncated" class="plan-scope-truncated">（回答超长，已被截断）</div>
       </li>
     </ul>
   </div>

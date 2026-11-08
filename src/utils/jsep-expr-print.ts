@@ -22,16 +22,14 @@ export function printJsepExpr(expr: Expression): string {
 
     case 'ArrayExpression': {
       const arr = expr as jsep.ArrayExpression;
-      const elements = arr.elements
-        .filter((el): el is jsep.Expression => el !== null)
-        .map(el => printJsepExpr(el));
+      const elements = arr.elements.filter((el): el is jsep.Expression => el !== null).map((el) => printJsepExpr(el));
       return `[${elements.join(', ')}]`;
     }
 
     case 'CallExpression': {
       const call = expr as jsep.CallExpression;
       const callee = printJsepExpr(call.callee);
-      const args = call.arguments.map(a => printJsepExpr(a));
+      const args = call.arguments.map((a) => printJsepExpr(a));
       return `${callee}(${args.join(', ')})`;
     }
 
@@ -70,12 +68,12 @@ export function printJsepExpr(expr: Expression): string {
 
     case 'Compound': {
       const compound = expr as jsep.Compound;
-      return compound.body.map(s => printJsepExpr(s)).join(';\n');
+      return compound.body.map((s) => printJsepExpr(s)).join(';\n');
     }
 
     case 'SequenceExpression': {
       const seq = expr as jsep.SequenceExpression;
-      return seq.expressions.map(e => printJsepExpr(e)).join(', ');
+      return seq.expressions.map((e) => printJsepExpr(e)).join(', ');
     }
 
     case 'ThisExpression':
@@ -87,7 +85,7 @@ export function printJsepExpr(expr: Expression): string {
 }
 
 /** evaluated expr. Each node has expr and value */
-export type JsepEvaluatedNode = CoreExpression & { expr: string, value: any };
+export type JsepEvaluatedNode = CoreExpression & { expr: string; value: any };
 
 /**
  * take an evaluated expr, and print it out as a tree structure
@@ -108,7 +106,7 @@ export function printJsepTree(eexpr: JsepEvaluatedNode, indent: number = 0): str
   // Recurse into children based on node type
   const children = getChildNodes(eexpr);
   for (const child of children) {
-    result += `\n${  printJsepTree(child as JsepEvaluatedNode, indent + 1)}`;
+    result += `\n${printJsepTree(child as JsepEvaluatedNode, indent + 1)}`;
   }
 
   return result;
@@ -131,7 +129,7 @@ function formatValue(value: any): string {
     const keys = Object.keys(value);
     if (keys.length === 0) return '{}';
     if (keys.length <= 2) {
-      const pairs = keys.map(k => `${k}: ${formatValue(value[k])}`).join(', ');
+      const pairs = keys.map((k) => `${k}: ${formatValue(value[k])}`).join(', ');
       return `{${pairs}}`;
     }
     return `{${keys.length} keys}`;
@@ -146,7 +144,9 @@ function getChildNodes(node: JsepEvaluatedNode): JsepEvaluatedNode[] {
   switch (node.type) {
     case 'ArrayExpression': {
       const arr = node as jsep.ArrayExpression;
-      return arr.elements.filter((el): el is JsepEvaluatedNode => el !== null && typeof el === 'object' && 'expr' in el);
+      return arr.elements.filter(
+        (el): el is JsepEvaluatedNode => el !== null && typeof el === 'object' && 'expr' in el
+      );
     }
     case 'CallExpression': {
       const call = node as jsep.CallExpression;
@@ -206,15 +206,11 @@ function getChildNodes(node: JsepEvaluatedNode): JsepEvaluatedNode[] {
     }
     case 'Compound': {
       const compound = node as jsep.Compound;
-      return compound.body.filter((s): s is JsepEvaluatedNode =>
-        s !== null && typeof s === 'object' && 'expr' in s
-      );
+      return compound.body.filter((s): s is JsepEvaluatedNode => s !== null && typeof s === 'object' && 'expr' in s);
     }
     case 'SequenceExpression': {
       const seq = node as jsep.SequenceExpression;
-      return seq.expressions.filter((e): e is JsepEvaluatedNode =>
-        e !== null && typeof e === 'object' && 'expr' in e
-      );
+      return seq.expressions.filter((e): e is JsepEvaluatedNode => e !== null && typeof e === 'object' && 'expr' in e);
     }
     default:
       return [];

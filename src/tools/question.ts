@@ -10,16 +10,17 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const questionTool: ToolDefinition = {
   name: 'question',
-  description: 'Ask the user a question and wait for the answer. Blocks until the user responds. Only available in a child process. Use for clarification during work.',
+  description:
+    'Ask the user a question and wait for the answer. Blocks until the user responds. Only available in a child process. Use for clarification during work.',
   input_schema: {
     type: 'object',
     properties: {
       query: {
         type: 'string',
-        description: 'The question to ask the user',
-      },
+        description: 'The question to ask the user'
+      }
     },
-    required: ['query'],
+    required: ['query']
   },
   scope: ['child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -37,5 +38,5 @@ export const questionTool: ToolDefinition = {
     } catch (error) {
       return `Error: ${(error as Error).message}`;
     }
-  },
+  }
 };

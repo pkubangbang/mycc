@@ -40,7 +40,7 @@ function invalidateEsmCache(filepath: string): void {
  */
 function debounce<T extends (...args: Parameters<T>) => void>(
   fn: T,
-  delay: number,
+  delay: number
 ): (key: string, ...args: Parameters<T>) => void {
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   return (key: string, ...args: Parameters<T>) => {
@@ -51,14 +51,24 @@ function debounce<T extends (...args: Parameters<T>) => void>(
       setTimeout(() => {
         timers.delete(key);
         fn(...args);
-      }, delay),
+      }, delay)
     );
   };
 }
 
 // Package root: resolve up from this file (src/context/shared/loader.ts or dist/context/shared/loader.js)
 const packageRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..', '..');
-import type { DynamicLoader, ToolDefinition, Skill, Tool, ToolScope, AgentContext, SkillModule, WikiDocument, SkillIndexEntry } from '../../types.js';
+import type {
+  DynamicLoader,
+  ToolDefinition,
+  Skill,
+  Tool,
+  ToolScope,
+  AgentContext,
+  SkillModule,
+  WikiDocument,
+  SkillIndexEntry
+} from '../../types.js';
 import { getToolsDir, getSkillsDir, getUserToolsDir, getUserSkillsDir, ensureDirs } from '../../config.js';
 import { sendToParent } from '../../utils/parent-ipc.js';
 import * as crypto from 'crypto';
@@ -385,7 +395,10 @@ export class Loader implements DynamicLoader, SkillModule {
       if (Array.isArray(data.keywords)) {
         keywords = data.keywords.map((k: unknown) => String(k).trim());
       } else if (typeof data.keywords === 'string' && data.keywords.trim()) {
-        keywords = data.keywords.split(',').map((k: string) => k.trim()).filter(Boolean);
+        keywords = data.keywords
+          .split(',')
+          .map((k: string) => k.trim())
+          .filter(Boolean);
       } else {
         keywords = [];
       }
@@ -395,10 +408,10 @@ export class Loader implements DynamicLoader, SkillModule {
         description: data.description || '',
         keywords,
         content: body.trim(),
-        when: data.when,  // Hook condition (natural language)
-        sourceFile,  // Track source file for orphan detection (format: "layer:path")
+        when: data.when, // Hook condition (natural language)
+        sourceFile, // Track source file for orphan detection (format: "layer:path")
         service: data.service,
-        service_cron: data.service_cron,
+        service_cron: data.service_cron
       };
 
       const existing = this.skills.get(skill.name);
@@ -455,21 +468,15 @@ export class Loader implements DynamicLoader, SkillModule {
     // Debounce tool reloads — one save may surface as add + change.
     // The debounce keys by path, so pass it through: a burst of events on one
     // file coalesces, edits to two different files each still reload.
-    const reloadToolNow = debounce(
-      (filepath: string) => {
-        void this.reloadTool(filepath);
-      },
-      300,
-    );
+    const reloadToolNow = debounce((filepath: string) => {
+      void this.reloadTool(filepath);
+    }, 300);
     const debouncedReloadTool = (filepath: string) => reloadToolNow(filepath, filepath);
 
     // Debounce skill reloads
-    const reloadSkillNow = debounce(
-      (filepath: string) => {
-        this.reloadSkill(filepath, 'project');
-      },
-      300,
-    );
+    const reloadSkillNow = debounce((filepath: string) => {
+      this.reloadSkill(filepath, 'project');
+    }, 300);
     const debouncedReloadSkill = (filepath: string) => reloadSkillNow(filepath, filepath);
 
     // Debounced wiki re-index signal — a SEPARATE, longer debounce (2 min) so
@@ -482,13 +489,13 @@ export class Loader implements DynamicLoader, SkillModule {
     // it and re-indexes. This keeps the loader decoupled from the wiki
     // module. Guarded on process.send so processes without IPC (e.g. tests)
     // no-op.
-    const debouncedReindex = debounce(
-      () => {
-        agentIO.verbose('loader', 'Skill rebuild scheduled: wiki re-index queued (skill file changed under .mycc/skills/)');
-        sendToParent({ type: 'skill_reindex' });
-      },
-      120000,
-    );
+    const debouncedReindex = debounce(() => {
+      agentIO.verbose(
+        'loader',
+        'Skill rebuild scheduled: wiki re-index queued (skill file changed under .mycc/skills/)'
+      );
+      sendToParent({ type: 'skill_reindex' });
+    }, 120000);
     this.scheduleSkillReindex = () => debouncedReindex('__skill_change__');
 
     // chokidar wants existing paths; a missing dir just means "nothing to
@@ -509,16 +516,19 @@ export class Loader implements DynamicLoader, SkillModule {
       // up on a file that keeps being written (a log-ish name is not a tool).
       awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
       // Swap/scratch files are not entrypoints.
-      ignored: (p: string) => /(^|[\\/])(\.#|.#|.*\.tmp$)/.test(p),
+      ignored: (p: string) => /(^|[\\/])(\.#|.#|.*\.tmp$)/.test(p)
     });
 
     // `add` and `change` go through ONE handler: chokidar reports both for a
     // single write (and a burst of writes on one path collapses in the
     // debounce, which is keyed by path).
-    const reload = (abs: string) => this.onHotFile(abs, toolsDir, skillsDir, 'added', debouncedReloadTool, debouncedReloadSkill);
+    const reload = (abs: string) =>
+      this.onHotFile(abs, toolsDir, skillsDir, 'added', debouncedReloadTool, debouncedReloadSkill);
     this.hotWatcher.on('add', reload);
     this.hotWatcher.on('change', reload);
-    this.hotWatcher.on('unlink', (abs: string) => this.onHotFile(abs, toolsDir, skillsDir, 'removed', debouncedReloadTool, debouncedReloadSkill));
+    this.hotWatcher.on('unlink', (abs: string) =>
+      this.onHotFile(abs, toolsDir, skillsDir, 'removed', debouncedReloadTool, debouncedReloadSkill)
+    );
     // A removed skill DIRECTORY never emits `unlink` for the SKILL.md inside
     // it — chokidar reports the directory. Skills are the only thing nested,
     // so a directory removal is always "the skills under it are gone".
@@ -548,14 +558,17 @@ export class Loader implements DynamicLoader, SkillModule {
     skillsDir: string,
     verb: 'added' | 'changed' | 'removed',
     reloadTool: (filepath: string) => void,
-    reloadSkill: (filepath: string) => void,
+    reloadSkill: (filepath: string) => void
   ): void {
     const rel = path.relative(toolsDir, abs).replace(/\\/g, '/');
     const inTools = !rel.startsWith('..') && !path.isAbsolute(rel);
     if (inTools) {
       if (!rel || rel.includes('/')) return; // flat dir only
       if (!rel.endsWith('.ts') && !rel.endsWith('.js')) return;
-      if (verb === 'removed') { this.forgetTool(abs); return; }
+      if (verb === 'removed') {
+        this.forgetTool(abs);
+        return;
+      }
       if (!this.silent) agentIO.verbose('loader', `Reloading tool: ${rel}`);
       reloadTool(abs);
       return;
@@ -567,7 +580,10 @@ export class Loader implements DynamicLoader, SkillModule {
     const isRootLevel = !srel.includes('/');
     const isSkillEntrypoint = srel.endsWith('/SKILL.md');
     if (!isRootLevel && !isSkillEntrypoint) return;
-    if (verb === 'removed') { this.forgetSkill(abs); return; }
+    if (verb === 'removed') {
+      this.forgetSkill(abs);
+      return;
+    }
     if (!this.silent) agentIO.verbose('loader', `Reloading skill: ${srel}`);
     reloadSkill(abs);
     // Schedule a debounced wiki re-index signal so the skills domain stays in
@@ -592,7 +608,8 @@ export class Loader implements DynamicLoader, SkillModule {
         agentIO.brief('info', 'loader', `Removed tool: ${name} (file deleted)`);
         return;
       }
-      void entry; void name;
+      void entry;
+      void name;
     }
   }
 
@@ -624,7 +641,9 @@ export class Loader implements DynamicLoader, SkillModule {
   stopWatching(): void {
     // chokidar's close() is async and returns a promise; the handlers are
     // detached synchronously, so a later resolution cannot resurrect anything.
-    void this.hotWatcher?.close().catch(() => { /* already closed */ });
+    void this.hotWatcher?.close().catch(() => {
+      /* already closed */
+    });
     this.hotWatcher = null;
     this.scheduleSkillReindex = null;
   }
@@ -640,7 +659,7 @@ export class Loader implements DynamicLoader, SkillModule {
   /**
    * List all skills (without content)
    * From SkillModule interface
-   * 
+   *
    * @deprecated the return values should NOT be used by llm directly
    * because it may overflow the ctx.
    */
@@ -650,7 +669,7 @@ export class Loader implements DynamicLoader, SkillModule {
       description: entry.skill.description,
       keywords: entry.skill.keywords,
       when: entry.skill.when,
-      content: '', // Exclude content
+      content: '' // Exclude content
     }));
   }
 
@@ -683,8 +702,8 @@ export class Loader implements DynamicLoader, SkillModule {
         function: {
           name: entry.tool.name,
           description: entry.tool.description,
-          parameters: entry.tool.input_schema,
-        },
+          parameters: entry.tool.input_schema
+        }
       })) as Tool[];
   }
 
@@ -728,7 +747,7 @@ export class Loader implements DynamicLoader, SkillModule {
   listAllTools(): Array<{ name: string; description: string }> {
     return Array.from(this.tools.values()).map((entry) => ({
       name: entry.tool.name,
-      description: entry.tool.description,
+      description: entry.tool.description
     }));
   }
 
@@ -755,7 +774,7 @@ export class Loader implements DynamicLoader, SkillModule {
    */
   async compileCondition(
     skillName: string,
-    feedback?: string,
+    feedback?: string
   ): Promise<{ condition?: Condition; validation?: ValidationResult; error?: string }> {
     const skill = this.getSkill(skillName);
     if (!skill) {
@@ -774,9 +793,7 @@ export class Loader implements DynamicLoader, SkillModule {
     // Build skill content for the compiler. When feedback is provided
     // (refinement of an existing condition), fold it into the content so
     // the LLM sees the user's correction guidance during compilation.
-    const compileContent = feedback
-      ? `${skill.content}\n\n--- Refinement feedback ---\n${feedback}`
-      : skill.content;
+    const compileContent = feedback ? `${skill.content}\n\n--- Refinement feedback ---\n${feedback}` : skill.content;
 
     // Lead process: compile directly on the runtime registry. compile()
     // atomically calls .set() (in-memory update) and .save() (disk persist),
@@ -790,7 +807,7 @@ export class Loader implements DynamicLoader, SkillModule {
         compileContent,
         existing,
         sourceFile,
-        availableTools,
+        availableTools
       );
     }
 
@@ -813,7 +830,7 @@ export class Loader implements DynamicLoader, SkillModule {
       compileContent,
       existing,
       sourceFile,
-      availableTools,
+      availableTools
     );
 
     // Persist succeeded → ask the Lead to reload its runtime registry from disk
@@ -831,9 +848,7 @@ export class Loader implements DynamicLoader, SkillModule {
    *
    * No-op (returns error) when conditionRegistry is null (child process).
    */
-  async replaceCondition(
-    skillName: string,
-  ): Promise<{ success: boolean; error?: string }> {
+  async replaceCondition(skillName: string): Promise<{ success: boolean; error?: string }> {
     if (!this.conditionRegistry) {
       return { success: false, error: 'Condition registry not available (child process)' };
     }
@@ -882,15 +897,13 @@ export class Loader implements DynamicLoader, SkillModule {
    */
   private buildSkillDocument(skill: Skill, layer: Layer): WikiDocument {
     const scope = this.getSkillScope(layer);
-    const keywordsStr = skill.keywords.length > 0
-      ? ` Keywords: ${skill.keywords.join(', ')}`
-      : '';
+    const keywordsStr = skill.keywords.length > 0 ? ` Keywords: ${skill.keywords.join(', ')}` : '';
     const content = `Scope: ${scope}\nName: ${skill.name}\nDescription: ${skill.description}${keywordsStr}`;
     return {
       domain: 'skills',
       title: `${scope}:${skill.name}`,
       content,
-      references: [],
+      references: []
     };
   }
 
@@ -932,7 +945,7 @@ export class Loader implements DynamicLoader, SkillModule {
       const document = this.buildSkillDocument(skillEntry.skill, skillEntry.layer);
       entries.push({
         document,
-        contentHash: this.hashSkillContent(document.content),
+        contentHash: this.hashSkillContent(document.content)
       });
     }
     return entries;

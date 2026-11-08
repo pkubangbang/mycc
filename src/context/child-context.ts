@@ -2,7 +2,18 @@
  * child-context.ts - ChildContext for child process (teammate)
  */
 
-import type { AgentContext, SkillModule, CoreModule, TodoModule, MailModule, IssueModule, BgModule, TeamModule, WikiModule, PeerModule } from '../types.js';
+import type {
+  AgentContext,
+  SkillModule,
+  CoreModule,
+  TodoModule,
+  MailModule,
+  IssueModule,
+  BgModule,
+  TeamModule,
+  WikiModule,
+  PeerModule
+} from '../types.js';
 import { Todo } from './shared/todo.js';
 import { MailBox } from './shared/mail.js';
 import { Loader } from './shared/loader.js';
@@ -48,13 +59,31 @@ export class ChildContext implements AgentContext {
   }
 
   // Getters for each module
-  get core(): CoreModule { return this.coreModule; }
-  get todo(): TodoModule { return this.todoModule; }
-  get mail(): MailModule { return this.mailModule; }
-  get skill(): SkillModule { return this.skillModule; }
-  get issue(): IssueModule { return this.issueModule; }
-  get bg(): BgModule { return this.bgModule; }
-  get team(): TeamModule { return this.teamModule; }
-  get wiki(): WikiModule { return this.wikiModule; }
-  get peer(): PeerModule { return this.peerModule; }
+  get core(): CoreModule {
+    return this.coreModule;
+  }
+  get todo(): TodoModule {
+    return this.todoModule;
+  }
+  get mail(): MailModule {
+    return this.mailModule;
+  }
+  get skill(): SkillModule {
+    return this.skillModule;
+  }
+  get issue(): IssueModule {
+    return this.issueModule;
+  }
+  get bg(): BgModule {
+    return this.bgModule;
+  }
+  get team(): TeamModule {
+    return this.teamModule;
+  }
+  get wiki(): WikiModule {
+    return this.wikiModule;
+  }
+  get peer(): PeerModule {
+    return this.peerModule;
+  }
 }

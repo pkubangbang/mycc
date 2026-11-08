@@ -86,11 +86,23 @@ export function warn(msg: string): void {
 export function parseCliArgs(argv: string[]): CliArgs {
   const args: CliArgs = { command: null, file: null, json: false, help: false };
   for (const tok of argv) {
-    if (tok === '--help' || tok === '-h') { args.help = true; continue; }
-    if (tok === '--json') { args.json = true; continue; }
+    if (tok === '--help' || tok === '-h') {
+      args.help = true;
+      continue;
+    }
+    if (tok === '--json') {
+      args.json = true;
+      continue;
+    }
     if (tok.startsWith('-')) throw new Error(`unknown option: ${tok}`);
-    if (args.command === null) { args.command = tok; continue; }
-    if (args.file === null) { args.file = tok; continue; }
+    if (args.command === null) {
+      args.command = tok;
+      continue;
+    }
+    if (args.file === null) {
+      args.file = tok;
+      continue;
+    }
     throw new Error(`unexpected extra argument: ${tok}`);
   }
   return args;

@@ -28,5 +28,5 @@ export const issuesCommand: SlashCommand = {
       // Show all issues
       console.log(await context.ctx.issue.printIssues());
     }
-  },
+  }
 };

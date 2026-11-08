@@ -49,17 +49,41 @@ const CONFIG_FLAGS: FlagRow[] = [
   { flag: '--ollama-host <url>', env: 'OLLAMA_HOST', desc: 'Ollama server URL (default: http://127.0.0.1:11434)' },
   { flag: '--ollama-api-key <key>', env: 'OLLAMA_API_KEY', desc: 'Ollama API key for cloud features' },
   { flag: '--ollama-model <model>', env: 'OLLAMA_MODEL', desc: 'Ollama chat model (default: glm-5:cloud)' },
-  { flag: '--ollama-vision-model <model>', env: 'OLLAMA_VISION_MODEL', desc: 'Ollama vision model for screen/image tools' },
-  { flag: '--ollama-embedding-model <model>', env: 'OLLAMA_EMBEDDING_MODEL', desc: 'Embedding model for semantic search/RAG' },
-  { flag: '--deepseek-host <url>', env: 'DEEPSEEK_HOST', desc: 'DeepSeek API endpoint (default: https://api.deepseek.com)' },
+  {
+    flag: '--ollama-vision-model <model>',
+    env: 'OLLAMA_VISION_MODEL',
+    desc: 'Ollama vision model for screen/image tools'
+  },
+  {
+    flag: '--ollama-embedding-model <model>',
+    env: 'OLLAMA_EMBEDDING_MODEL',
+    desc: 'Embedding model for semantic search/RAG'
+  },
+  {
+    flag: '--deepseek-host <url>',
+    env: 'DEEPSEEK_HOST',
+    desc: 'DeepSeek API endpoint (default: https://api.deepseek.com)'
+  },
   { flag: '--deepseek-api-key <key>', env: 'DEEPSEEK_API_KEY', desc: 'DeepSeek API key' },
   { flag: '--deepseek-model <model>', env: 'DEEPSEEK_MODEL', desc: 'DeepSeek model name (default: deepseek-v4-pro)' },
-  { flag: '--deepseek-vision-model <model>', env: 'DEEPSEEK_VISION_MODEL', desc: 'DeepSeek vision model for screen/image tools (default: deepseek-flash)' },
+  {
+    flag: '--deepseek-vision-model <model>',
+    env: 'DEEPSEEK_VISION_MODEL',
+    desc: 'DeepSeek vision model for screen/image tools (default: deepseek-flash)'
+  },
   { flag: '--api-provider <ollama|deepseek>', env: 'API_PROVIDER', desc: 'API provider (default: ollama)' },
   { flag: '--token-threshold <n>', env: 'TOKEN_THRESHOLD', desc: 'Context limit threshold (default: 100000)' },
   { flag: '--editor <cmd>', env: 'EDITOR', desc: 'Text editor for file editing' },
-  { flag: '--skill-match-threshold <0-1>', env: 'SKILL_MATCH_THRESHOLD', desc: 'Skill similarity threshold (default: 0.5)' },
-  { flag: '--max-upload-mb <n>', env: 'MYCC_MAX_UPLOAD_MB', desc: 'Max single-file upload size (MB) for /serve Web UI (default: 50)' },
+  {
+    flag: '--skill-match-threshold <0-1>',
+    env: 'SKILL_MATCH_THRESHOLD',
+    desc: 'Skill similarity threshold (default: 0.5)'
+  },
+  {
+    flag: '--max-upload-mb <n>',
+    env: 'MYCC_MAX_UPLOAD_MB',
+    desc: 'Max single-file upload size (MB) for /serve Web UI (default: 50)'
+  }
 ];
 
 const STARTUP_FLAGS: FlagRow[] = [
@@ -70,21 +94,43 @@ const STARTUP_FLAGS: FlagRow[] = [
   { flag: '--from <session-id>', desc: 'Branch a NEW session pre-filled from an old session' },
   { flag: '--skip-healthcheck', desc: 'Skip the startup health check (faster startup)' },
   { flag: '--auto', desc: 'Start in autonomous mode (no prompt; auto-reply questions; press esc to exit)' },
-  { flag: '--daemon [skill]', desc: 'Start a detached headless daemon (returns immediately). With a skill name, auto-loads it and starts its cron timer (if service_cron); without, runs a passive auto-mode daemon' },
-  { flag: '--allow-plan-off', desc: 'In auto mode, auto-approve plan_off (skip confirmation; lets unattended peers escape plan mode)' },
-  { flag: '--allow-auto-commit <branches>', env: 'MYCC_ALLOW_AUTO_COMMIT', desc: 'In auto mode (NORMAL mode only), pre-approve git_commit on the comma-separated allow-listed branches (exact names, no globs); adds an Auto-Committed-By trailer' },
+  {
+    flag: '--daemon [skill]',
+    desc: 'Start a detached headless daemon (returns immediately). With a skill name, auto-loads it and starts its cron timer (if service_cron); without, runs a passive auto-mode daemon'
+  },
+  {
+    flag: '--allow-plan-off',
+    desc: 'In auto mode, auto-approve plan_off (skip confirmation; lets unattended peers escape plan mode)'
+  },
+  {
+    flag: '--allow-auto-commit <branches>',
+    env: 'MYCC_ALLOW_AUTO_COMMIT',
+    desc: 'In auto mode (NORMAL mode only), pre-approve git_commit on the comma-separated allow-listed branches (exact names, no globs); adds an Auto-Committed-By trailer'
+  },
   { flag: '-v, --verbose', desc: 'Show detailed debug output' },
   { flag: '--version', desc: 'Print the mycc version and exit' },
-  { flag: '-h, --help', desc: 'Show this help message and exit' },
+  { flag: '-h, --help', desc: 'Show this help message and exit' }
 ];
 
 const DEBUG_FLAGS: FlagRow[] = [
   { flag: '--debug-tp', desc: 'Triologue Parity: throw on role-transition violations instead of auto-recovering' },
   { flag: '--debug-eval', desc: 'Print the parsed jsep AST for each hook condition expression' },
-  { flag: '--disable-crossroad', desc: 'Skip crossroad turning-word detection (no truncation, no continuation generation)' },
-  { flag: '--debug-autofly', desc: 'Arm the autofly gate so auto mode engages on the LLM-stage streak threshold without an active peer channel' },
-  { flag: '--debug-wire', desc: 'Test-only escape hatch: allow peer_connect to a same-store / self peer (same-machine smoke test)' },
-  { flag: '--debug-ansi', desc: 'Force the plain (no-TTY) output path: hide the spinner, progress bars and colour, as if stdout were piped' },
+  {
+    flag: '--disable-crossroad',
+    desc: 'Skip crossroad turning-word detection (no truncation, no continuation generation)'
+  },
+  {
+    flag: '--debug-autofly',
+    desc: 'Arm the autofly gate so auto mode engages on the LLM-stage streak threshold without an active peer channel'
+  },
+  {
+    flag: '--debug-wire',
+    desc: 'Test-only escape hatch: allow peer_connect to a same-store / self peer (same-machine smoke test)'
+  },
+  {
+    flag: '--debug-ansi',
+    desc: 'Force the plain (no-TTY) output path: hide the spinner, progress bars and colour, as if stdout were piped'
+  }
 ];
 
 /** Pad a flag column to a fixed width for aligned columns. */
@@ -93,12 +139,14 @@ function pad(s: string, width: number): string {
 }
 
 function renderTable(rows: FlagRow[]): string {
-  const flagWidth = Math.max(...rows.map(r => r.flag.length)) + 2;
-  const envWidth = Math.max(...rows.map(r => (r.env ?? '').length), 4) + 2;
-  return rows.map(r => {
-    const env = r.env ? pad(r.env, envWidth) : pad('', envWidth);
-    return `  ${pad(r.flag, flagWidth)}${env}${r.desc}`;
-  }).join('\n');
+  const flagWidth = Math.max(...rows.map((r) => r.flag.length)) + 2;
+  const envWidth = Math.max(...rows.map((r) => (r.env ?? '').length), 4) + 2;
+  return rows
+    .map((r) => {
+      const env = r.env ? pad(r.env, envWidth) : pad('', envWidth);
+      return `  ${pad(r.flag, flagWidth)}${env}${r.desc}`;
+    })
+    .join('\n');
 }
 
 /**

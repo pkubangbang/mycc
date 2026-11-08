@@ -69,13 +69,19 @@ import {
   WIRE_CLOSE_BYE,
   type AnnounceFrame,
   type MailFrame,
-  type WireFrame,
+  type WireFrame
 } from '../peer/wire-registry.js';
 import { isWireDebugLocal } from '../config.js';
 // The 401 handshake code is shared with the dialer so a refused upgrade and
 // the message the operator sees agree on the number (row peer-004).
 import { WIRE_CLOSE_UNAUTHORIZED, peerSidForSocket, shareTags } from '../peer/wire-registry.js';
-import { trySyncDispatch, trySyncDataDispatch, handlePeerShares, handleShareChallenge, handleShareProof } from '../peer/filesync/wire-codec.js';
+import {
+  trySyncDispatch,
+  trySyncDataDispatch,
+  handlePeerShares,
+  handleShareChallenge,
+  handleShareProof
+} from '../peer/filesync/wire-codec.js';
 
 /** Dedicated maxPayload for peer mail frames — decoupled from the webui
  *  upload limit (getMaxUploadMb, default 50MB). Peer mail is agent-to-agent
@@ -198,7 +204,9 @@ export class PeerWireAcceptor {
     const phrase = code === WIRE_CLOSE_UNAUTHORIZED ? 'Unauthorized' : 'Service Unavailable';
     try {
       socket.write(`HTTP/1.1 ${code} ${phrase}\r\nConnection: close\r\n\r\n`);
-    } catch { /* socket already gone */ }
+    } catch {
+      /* socket already gone */
+    }
     socket.destroy();
     const hooks = getWireHooks();
     hooks?.verbose('wire', `peer wire upgrade refused (${code}): ${reason}`);
@@ -222,7 +230,10 @@ export class PeerWireAcceptor {
   private onConnection(ws: WebSocket): void {
     this.liveness.set(ws, { misses: 0 });
     ws.on('message', (data, isBinary) => {
-      if (isBinary) { this.onBinary(ws, data as Buffer); return; }
+      if (isBinary) {
+        this.onBinary(ws, data as Buffer);
+        return;
+      }
       this.onMessage(ws, data.toString());
     });
     ws.on('close', (code) => this.onClose(ws, code));
@@ -230,7 +241,9 @@ export class PeerWireAcceptor {
       const state = this.liveness.get(ws);
       if (state) state.misses = 0;
     });
-    ws.on('error', () => { /* close will follow; prune handled there */ });
+    ws.on('error', () => {
+      /* close will follow; prune handled there */
+    });
   }
 
   private onMessage(ws: WebSocket, raw: string): void {
@@ -286,7 +299,11 @@ export class PeerWireAcceptor {
     // sid is a self-connect the probe-time locality check missed (race).
     // Close 4000 on both ends and surface a "cannot wire to self" error.
     if (frame.sessionId === selfSid) {
-      try { ws.close(WIRE_CLOSE_SUPERSEDED, 'cannot wire to self'); } catch { /* closing */ }
+      try {
+        ws.close(WIRE_CLOSE_SUPERSEDED, 'cannot wire to self');
+      } catch {
+        /* closing */
+      }
       hooks.verbose('wire', 'self-dial backstop fired: refused announce with own sid');
       return;
     }
@@ -302,7 +319,7 @@ export class PeerWireAcceptor {
       sid: frame.sessionId,
       // For an accepted socket the dialer is the remote initiator.
       initiatorSid: frame.sessionId,
-      meta: { workDir: frame.workDir, role: frame.role, daemon: frame.daemon },
+      meta: { workDir: frame.workDir, role: frame.role, daemon: frame.daemon }
     });
     // filesync membership gossip (filesync.md §3): record the peer's shares
     // and kick an index exchange for any we also bind.
@@ -318,7 +335,7 @@ export class PeerWireAcceptor {
       ...(hooks.getRole() ? { role: hooks.getRole() } : {}),
       ...(hooks.getDaemon() ? { daemon: true } : {}),
       endpoint: hooks.getServingEndpoint() ?? undefined,
-      ...(hooks.getShares ? { shares: shareTags(hooks.getShares()) } : {}),
+      ...(hooks.getShares ? { shares: shareTags(hooks.getShares()) } : {})
     };
     sendFrame(ws, reply);
 
@@ -355,10 +372,7 @@ export class PeerWireAcceptor {
     }
     const claimed = frame.from.split('/')[0];
     if (claimed !== owner) {
-      hooks.verbose(
-        'wire',
-        `dropping mail frame ${frame.id}: from "${frame.from}" but socket announced ${owner}`
-      );
+      hooks.verbose('wire', `dropping mail frame ${frame.id}: from "${frame.from}" but socket announced ${owner}`);
       return;
     }
     if (!seenMailIdRegister(frame.id)) {
@@ -414,7 +428,7 @@ export class PeerWireAcceptor {
     if (prunedPair.sockets.length === 0) {
       teardownPair(prunedPair.endpoint, {
         notifyTodo: false,
-        reason: `transient close ${code} — dialer owns the redial`,
+        reason: `transient close ${code} — dialer owns the redial`
       });
     }
   }
@@ -432,10 +446,18 @@ export class PeerWireAcceptor {
         if (!state) continue;
         state.misses++;
         if (state.misses > MISSED_PONG_LIMIT) {
-          try { ws.terminate(); } catch { /* ignore */ }
+          try {
+            ws.terminate();
+          } catch {
+            /* ignore */
+          }
           continue;
         }
-        try { ws.ping(); } catch { /* ignore */ }
+        try {
+          ws.ping();
+        } catch {
+          /* ignore */
+        }
       }
     }, PING_INTERVAL_MS);
     this.pingTimer.unref?.();
@@ -452,11 +474,19 @@ export class PeerWireAcceptor {
       this.pingTimer = null;
     }
     for (const ws of this.liveness.keys()) {
-      try { ws.terminate(); } catch { /* ignore */ }
+      try {
+        ws.terminate();
+      } catch {
+        /* ignore */
+      }
     }
     this.liveness.clear();
     if (this.wsServer) {
-      try { this.wsServer.close(); } catch { /* ignore */ }
+      try {
+        this.wsServer.close();
+      } catch {
+        /* ignore */
+      }
       this.wsServer = null;
     }
   }

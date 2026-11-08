@@ -93,11 +93,13 @@ export const reloadCommand: SlashCommand = {
     // durable name↔sid mapping. Refuse EARLY with a visible message and send NO
     // IPC — renewal is compose's job.
     if (hasNameFlag()) {
-      console.log(chalk.yellow(
-        'This instance is managed by mycc-compose (launched with --name). ' +
-        '/reload is disabled here — it would orphan its channels. ' +
-        'Renew it via: mycc-compose up <spec>',
-      ));
+      console.log(
+        chalk.yellow(
+          'This instance is managed by mycc-compose (launched with --name). ' +
+            '/reload is disabled here — it would orphan its channels. ' +
+            'Renew it via: mycc-compose up <spec>'
+        )
+      );
       return;
     }
 
@@ -117,7 +119,7 @@ export const reloadCommand: SlashCommand = {
     const servePort = hub?.getPort() ?? 0;
     const serveHost = hub?.getHost() ?? null;
 
-      console.log(chalk.cyan('\nReloading mycc...'));
+    console.log(chalk.cyan('\nReloading mycc...'));
 
     if (wasServeActive && servePort > 0) {
       console.log(chalk.gray(`  Web UI will resume on port ${servePort} after restart.`));
@@ -138,13 +140,15 @@ export const reloadCommand: SlashCommand = {
     // every SEPARATE flag value, turning `--max-upload-mb 20` into a bare flag →
     // getMaxUploadMb() === 1).
     const leadArgs = collectReloadLeadArgs(process.argv);
-    if (sendToParent({
-      type: 'reload',
-      serveActive: wasServeActive,
-      servePort,
-      serveHost,
-      leadArgs,
-    })) {
+    if (
+      sendToParent({
+        type: 'reload',
+        serveActive: wasServeActive,
+        servePort,
+        serveHost,
+        leadArgs
+      })
+    ) {
       // Wait forever — the Coordinator will SIGTERM this process.
       // Same pattern as /load (src/slashes/load.ts line 69-71).
       await new Promise(() => {});
@@ -154,5 +158,5 @@ export const reloadCommand: SlashCommand = {
       console.log(chalk.red('Not running under Coordinator. Cannot reload in-place.'));
       console.log(chalk.gray('Restart manually: mycc'));
     }
-  },
+  }
 };

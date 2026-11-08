@@ -97,7 +97,10 @@ function parseArgs(argv) {
   const out = { cwd: process.cwd(), group: null, name: null, sessionId: null, help: false };
   for (let i = 0; i < argv.length; i++) {
     const tok = argv[i];
-    if (tok === '--help' || tok === '-h') { out.help = true; continue; }
+    if (tok === '--help' || tok === '-h') {
+      out.help = true;
+      continue;
+    }
     // Accept both `--flag value` and `--flag=value`.
     const eq = tok.indexOf('=');
     const key = eq === -1 ? tok : tok.slice(0, eq);
@@ -109,11 +112,20 @@ function parseArgs(argv) {
       return v;
     };
     switch (key) {
-      case '--cwd': out.cwd = takeValue(); break;
-      case '--group': out.group = takeValue(); break;
-      case '--name': out.name = takeValue(); break;
-      case '--session-id': out.sessionId = takeValue(); break;
-      default: throw new Error(`unknown option: ${tok}`);
+      case '--cwd':
+        out.cwd = takeValue();
+        break;
+      case '--group':
+        out.group = takeValue();
+        break;
+      case '--name':
+        out.name = takeValue();
+        break;
+      case '--session-id':
+        out.sessionId = takeValue();
+        break;
+      default:
+        throw new Error(`unknown option: ${tok}`);
     }
   }
   return out;

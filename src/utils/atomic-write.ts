@@ -71,7 +71,9 @@ export function atomicWrite(filePath: string, data: string): void {
           // next event-loop tick, but a small sleep smooths antivirus scans.
           const delay = RENAME_RETRY_DELAY_MS * (attempt + 1);
           const end = Date.now() + delay;
-          while (Date.now() < end) { /* busy-wait: synchronous context */ }
+          while (Date.now() < end) {
+            /* busy-wait: synchronous context */
+          }
           continue;
         }
         throw err;

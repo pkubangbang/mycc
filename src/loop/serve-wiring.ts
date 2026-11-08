@@ -70,11 +70,15 @@ export function wireServeCallbacks(ctx: AgentContext): void {
   // — before any mode change can happen — so the constructor default can be
   // removed and the seam is the only path. Best-effort: no hub → no-op, and a
   // non-serving session simply has nothing to broadcast to.
-  const core = ctx.core as { setModeChangeReporter?: (cb: ((mode: 'plan' | 'normal', allowedFile?: string) => void) | null) => void };
+  const core = ctx.core as {
+    setModeChangeReporter?: (cb: ((mode: 'plan' | 'normal', allowedFile?: string) => void) | null) => void;
+  };
   core.setModeChangeReporter?.((mode, allowedFile) => {
     try {
       tryGetServeHub()?.broadcastMode(mode, allowedFile);
-    } catch { /* serve is optional */ }
+    } catch {
+      /* serve is optional */
+    }
   });
 
   // ── channel-join: engage auto + abort a blocked PROMPT ──
@@ -106,9 +110,9 @@ export function wireServeCallbacks(ctx: AgentContext): void {
     // per-access user prompts, but never write to them (folder_recursive_
     // readonly). Idempotent — addExternalAutoGrant overwrites the Map entry.
     // Teammates inherit via the IPC external_path_access handler.
-    const ch = ctx.peer.listChannels().find(c => c.channelId === channelId);
+    const ch = ctx.peer.listChannels().find((c) => c.channelId === channelId);
     if (ch?.joined && ch.peerSessionId) {
-      const peer = ctx.peer.listIdentities().find(e => e.sessionId === ch.peerSessionId);
+      const peer = ctx.peer.listIdentities().find((e) => e.sessionId === ch.peerSessionId);
       if (peer?.workDir) {
         ctx.core.addExternalAutoGrant(peer.workDir, false); // false = read-only
       }
@@ -120,8 +124,16 @@ export function wireServeCallbacks(ctx: AgentContext): void {
       return;
     }
     autoState.setAuto(true);
-    try { agentIO.abortAsk(); } catch { /* best-effort */ }
-    try { tryGetServeHub()?.rejectInput(); } catch { /* best-effort */ }
+    try {
+      agentIO.abortAsk();
+    } catch {
+      /* best-effort */
+    }
+    try {
+      tryGetServeHub()?.rejectInput();
+    } catch {
+      /* best-effort */
+    }
   });
 
   // ── enter-auto provider: the webui "enter auto" lightning-bolt button ──
@@ -136,22 +148,32 @@ export function wireServeCallbacks(ctx: AgentContext): void {
   // hub is already loaded and otherwise queues it until the serve layer
   // materializes — so a non-serving session parks it harmlessly, while
   // --serve still wires the provider the moment the hub boots.
-  onServeHubReady((hub) => hub.setEnterAutoProvider(() => {
-    if (autoState.getAuto()) return false;
-    autoState.resetStreak();
-    autoState.setAuto(true);
-    console.log(chalk.cyan('auto mode is on (webui). Mails will be auto-replied. Press esc to exit.'));
+  onServeHubReady((hub) =>
+    hub.setEnterAutoProvider(() => {
+      if (autoState.getAuto()) return false;
+      autoState.resetStreak();
+      autoState.setAuto(true);
+      console.log(chalk.cyan('auto mode is on (webui). Mails will be auto-replied. Press esc to exit.'));
 
-    // Wake a blocked PROMPT wait so the loop immediately redirects to AWAIT
-    // (where mail/event polling happens). Same pattern as the channel-join
-    // callback above. Without this, when the lead is blocked in PROMPT
-    // (e.g. mail was written to unread-lead.jsonl while idle), the loop
-    // stays stuck until a user message arrives — so auto mode appears
-    // unresponsive to pending mail. Both calls are self-guarded no-ops
-    // when not blocked.
-    try { agentIO.abortAsk(); } catch { /* best-effort */ }
-    try { hub.rejectInput(); } catch { /* best-effort */ }
+      // Wake a blocked PROMPT wait so the loop immediately redirects to AWAIT
+      // (where mail/event polling happens). Same pattern as the channel-join
+      // callback above. Without this, when the lead is blocked in PROMPT
+      // (e.g. mail was written to unread-lead.jsonl while idle), the loop
+      // stays stuck until a user message arrives — so auto mode appears
+      // unresponsive to pending mail. Both calls are self-guarded no-ops
+      // when not blocked.
+      try {
+        agentIO.abortAsk();
+      } catch {
+        /* best-effort */
+      }
+      try {
+        hub.rejectInput();
+      } catch {
+        /* best-effort */
+      }
 
-    return true;
-  }));
+      return true;
+    })
+  );
 }

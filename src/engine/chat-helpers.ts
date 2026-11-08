@@ -72,7 +72,7 @@ const TRANSIENT_ERROR_PATTERNS = [
   // FIRST attempt with zero retries. The error then bubbles to the COLLECT
   // catch, which logs it and returns to PROMPT — silently aborting the
   // in-flight hint round (or chat) instead of retrying the dropped stream.
-  'did not receive done or success response in stream',
+  'did not receive done or success response in stream'
 ];
 
 /**
@@ -228,7 +228,7 @@ export const DEFAULT_RETRY_CONFIG: RetryConfig = {
   firstTokenTimeoutMs: 20000,
   responseTimeoutMs: 120000,
   tokenLivenessTimeoutMs: DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS,
-  thinkingLivenessTimeoutMs: DEFAULT_THINKING_LIVENESS_TIMEOUT_MS,
+  thinkingLivenessTimeoutMs: DEFAULT_THINKING_LIVENESS_TIMEOUT_MS
 };
 
 /** Standard retryChat request shape used by all providers. */
@@ -313,7 +313,7 @@ export function escalateFirstTokenTimeout(
   baseMs: number,
   attempt: number,
   capMs: number,
-  previousWasTimeout: boolean,
+  previousWasTimeout: boolean
 ): number {
   if (!previousWasTimeout) return baseMs;
   const multiplier = Math.pow(2, attempt - 1);
@@ -335,7 +335,7 @@ export async function retryWithBackoff<T>(
           operation(),
           new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error(`Request timed out after ${config.timeoutMs}ms`)), config.timeoutMs)
-          ),
+          )
         ]);
       }
       return await operation();
@@ -351,10 +351,14 @@ export async function retryWithBackoff<T>(
       const isLastAttempt = attempt > cfg.maxRetries;
       if (!isLastAttempt) {
         const retryAfterMs = (err as Error & { retryAfterMs?: unknown }).retryAfterMs;
-        const delay = typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs)
-          ? Math.min(Math.max(0, retryAfterMs), cfg.maxDelayMs)
-          : calculateDelay(attempt, cfg);
-        agentIO.verbose('retry', `Attempt ${attempt}/${cfg.maxRetries + 1} failed: ${lastError.message}. Retrying in ${delay}ms...`);
+        const delay =
+          typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs)
+            ? Math.min(Math.max(0, retryAfterMs), cfg.maxDelayMs)
+            : calculateDelay(attempt, cfg);
+        agentIO.verbose(
+          'retry',
+          `Attempt ${attempt}/${cfg.maxRetries + 1} failed: ${lastError.message}. Retrying in ${delay}ms...`
+        );
         await sleep(delay, config?.signal);
       }
     }
@@ -416,9 +420,10 @@ export function startSpinner(prefix: string = 'Thinking'): void {
     // misleading "(0 tokens)".
     let line: string;
     if (elapsedS >= SPINNER_STATS_THRESHOLD_S) {
-      line = spinnerTokenCount > 0
-        ? `\r${frame} ${prefix}... (${elapsedS}s, ${spinnerTokenCount.toLocaleString()} tokens)`
-        : `\r${frame} ${prefix}... (${elapsedS}s)`;
+      line =
+        spinnerTokenCount > 0
+          ? `\r${frame} ${prefix}... (${elapsedS}s, ${spinnerTokenCount.toLocaleString()} tokens)`
+          : `\r${frame} ${prefix}... (${elapsedS}s)`;
     } else {
       line = `\r${frame} ${prefix}...`;
     }
@@ -510,7 +515,7 @@ function fmtMs(ms: number): string {
 export class StreamTimeoutError extends Error {
   constructor(
     message: string,
-    public readonly reason: 'first-token' | 'liveness',
+    public readonly reason: 'first-token' | 'liveness'
   ) {
     super(message);
     this.name = 'StreamTimeoutError';
@@ -571,7 +576,7 @@ export async function collectStream<T>(
      *  logging happens (collectStream stays silent) — callers that want the
      *  stall timeline must opt in. */
     obs?: StreamObsContext;
-  },
+  }
 ): Promise<T[]> {
   const { firstTokenTimeoutMs, tokenLivenessTimeoutMs, livenessMsForChunk, signal, onChunk, obs } = config;
   const baseLivenessMs = tokenLivenessTimeoutMs ?? DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS;
@@ -603,7 +608,7 @@ export async function collectStream<T>(
   // one warning per genuine silence, not one per timer tick.
   let stallWarnArmed = true;
 
-  const obsTag = obs ? `${obs.op ? `${obs.op  }/` : ''}${obs.model}#a${obs.attempt}` : undefined;
+  const obsTag = obs ? `${obs.op ? `${obs.op}/` : ''}${obs.model}#a${obs.attempt}` : undefined;
 
   const armStallWarn = () => {
     if (!obs || !stallWarnArmed) return;
@@ -613,8 +618,8 @@ export async function collectStream<T>(
       const gap = Date.now() - lastChunkAt;
       agentIO.warn(
         `STALL [${obsTag}] no chunk for ${fmtMs(gap)} ` +
-        `(tokens so far: ${chunkCount}, liveness window: ${fmtMs(currentLivenessMs)}, ` +
-        `first token: ${firstTokenReceived ? 'yes' : 'not yet'})`,
+          `(tokens so far: ${chunkCount}, liveness window: ${fmtMs(currentLivenessMs)}, ` +
+          `first token: ${firstTokenReceived ? 'yes' : 'not yet'})`
       );
     }, STALL_WARN_AFTER_MS);
   };
@@ -625,8 +630,8 @@ export async function collectStream<T>(
       agentIO.verbose(
         'stream',
         `PROGRESS [${obsTag}] elapsed=${fmtMs(Date.now() - streamStart)} ` +
-        `chunks=${chunkCount} sinceLastChunk=${fmtMs(gap)} ` +
-        `phase-window=${fmtMs(currentLivenessMs)} firstToken=${firstTokenReceived}`,
+          `chunks=${chunkCount} sinceLastChunk=${fmtMs(gap)} ` +
+          `phase-window=${fmtMs(currentLivenessMs)} firstToken=${firstTokenReceived}`
       );
     }, PROGRESS_LOG_INTERVAL_MS);
     // Do not let the heartbeat keep the event loop alive if a caller forgets
@@ -747,14 +752,11 @@ export async function collectStream<T>(
       if (firstTokenTimeoutFired) {
         throw new StreamTimeoutError(
           `Request timed out after ${firstTokenTimeoutMs}ms (waiting for first token)`,
-          'first-token',
+          'first-token'
         );
       }
       if (livenessTimeoutFired) {
-        throw new StreamTimeoutError(
-          `Stream stalled: no token received for ${currentLivenessMs}ms`,
-          'liveness',
-        );
+        throw new StreamTimeoutError(`Stream stalled: no token received for ${currentLivenessMs}ms`, 'liveness');
       }
 
       return chunks;
@@ -787,14 +789,11 @@ export async function collectStream<T>(
     if (firstTokenTimeoutFired) {
       throw new StreamTimeoutError(
         `Request timed out after ${firstTokenTimeoutMs}ms (waiting for first token)`,
-        'first-token',
+        'first-token'
       );
     }
     if (livenessTimeoutFired) {
-      throw new StreamTimeoutError(
-        `Stream stalled: no token received for ${currentLivenessMs}ms`,
-        'liveness',
-      );
+      throw new StreamTimeoutError(`Stream stalled: no token received for ${currentLivenessMs}ms`, 'liveness');
     }
     if (signal?.aborted) throw new StreamAbortedError(err instanceof Error ? err : undefined);
     throw err;

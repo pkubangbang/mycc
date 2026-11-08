@@ -25,7 +25,7 @@ interface ModelInfo {
 const MODELS_TO_PULL: ModelInfo[] = [
   { name: 'general', envVar: 'OLLAMA_MODEL', required: true },
   { name: 'vision', envVar: 'OLLAMA_VISION_MODEL', required: false },
-  { name: 'embedding', envVar: 'OLLAMA_EMBEDDING_MODEL', required: false },
+  { name: 'embedding', envVar: 'OLLAMA_EMBEDDING_MODEL', required: false }
 ];
 
 /**
@@ -45,7 +45,7 @@ async function pullModel(modelName: string): Promise<{ success: boolean; error?:
     await new Promise((resolve, reject) => {
       const ollamaPath = getOllamaBinaryPath();
       const pull = spawn(ollamaPath, ['pull', modelName], {
-        stdio: 'inherit',
+        stdio: 'inherit'
       });
 
       pull.on('close', (code) => {
@@ -87,9 +87,7 @@ async function pullOllamaModels(config: Record<string, string>): Promise<void> {
 
     if (!result.success && model.required) {
       console.log(
-        chalk.yellow(
-          `  ⚠ Could not pull required model ${modelName}. You may need to pull it manually later.`
-        )
+        chalk.yellow(`  ⚠ Could not pull required model ${modelName}. You may need to pull it manually later.`)
       );
     }
   }

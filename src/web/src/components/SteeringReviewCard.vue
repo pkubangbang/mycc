@@ -55,34 +55,16 @@ function discardAll(): void {
 <template>
   <div class="card-row">
     <div class="card-bubble steering-card">
-      <div class="card-query">
-        继续… 以下转向消息尚未提交，请选择发送为查询或丢弃：
-      </div>
+      <div class="card-query">继续… 以下转向消息尚未提交，请选择发送为查询或丢弃：</div>
       <div class="steering-notes">
-        <div
-          v-for="note in notes"
-          :key="note.id"
-          class="steering-note"
-        >
+        <div v-for="note in notes" :key="note.id" class="steering-note">
           <span class="steering-note-text" :title="note.text">{{ note.text }}</span>
-          <button
-            class="steering-note-discard"
-            title="丢弃此条"
-            @click="discardNote(note.id)"
-          >&times;</button>
+          <button class="steering-note-discard" title="丢弃此条" @click="discardNote(note.id)">&times;</button>
         </div>
       </div>
       <div class="steering-actions">
-        <button
-          class="card-submit"
-          :disabled="notes.length === 0"
-          @click="sendAsQuery"
-        >发送为查询</button>
-        <button
-          class="card-option-btn"
-          :disabled="notes.length === 0"
-          @click="discardAll"
-        >全部丢弃</button>
+        <button class="card-submit" :disabled="notes.length === 0" @click="sendAsQuery">发送为查询</button>
+        <button class="card-option-btn" :disabled="notes.length === 0" @click="discardAll">全部丢弃</button>
       </div>
     </div>
   </div>

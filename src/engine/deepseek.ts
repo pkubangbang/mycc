@@ -8,8 +8,12 @@
 
 import chalk from 'chalk';
 import type {
-  ChatRequest, ChatResponse, WebSearchResult, WebFetchResponse,
-  ProviderMessage, ProviderToolCall,
+  ChatRequest,
+  ChatResponse,
+  WebSearchResult,
+  WebFetchResponse,
+  ProviderMessage,
+  ProviderToolCall
 } from './provider-types.js';
 import type { Message } from '../types.js';
 import { agentIO } from '../loop/agent-io.js';
@@ -33,7 +37,7 @@ import {
   DEFAULT_THINKING_LIVENESS_TIMEOUT_MS,
   type RetryConfig,
   type RetryChatRequest,
-  type RetryChatConfig,
+  type RetryChatConfig
 } from './chat-helpers.js';
 import { estimateTextTokens } from '../utils/token.js';
 import { isVisionEnabled, DEFAULT_DEEPSEEK_VISION_MODEL } from '../config.js';
@@ -81,7 +85,7 @@ function normalizeMessage(msg: ProviderMessage): NormalizedMessage {
 
   const normalized: NormalizedMessage = {
     role: extended.role,
-    content: extended.content,
+    content: extended.content
   };
 
   // Copy DeepSeek-compatible fields from the extended message type
@@ -105,10 +109,8 @@ function normalizeMessage(msg: ProviderMessage): NormalizedMessage {
       function: {
         ...tc.function,
         arguments:
-          typeof tc.function.arguments === 'string'
-            ? tc.function.arguments
-            : JSON.stringify(tc.function.arguments),
-      },
+          typeof tc.function.arguments === 'string' ? tc.function.arguments : JSON.stringify(tc.function.arguments)
+      }
     })) as unknown as ProviderToolCall[];
 
     // DeepSeek requires reasoning_content on ALL assistant messages with tool_calls
@@ -167,7 +169,7 @@ interface DeepSeekRequestBody {
 class FetchAsyncIterable implements AsyncIterable<DeepSeekChunk> {
   constructor(
     private reader: ReadableStreamDefaultReader<Uint8Array>,
-    private abortFn: () => void,
+    private abortFn: () => void
   ) {}
 
   abort(): void {
@@ -207,10 +209,7 @@ class FetchAsyncIterable implements AsyncIterable<DeepSeekChunk> {
   }
 }
 
-async function deepseekChat(
-  body: DeepSeekRequestBody,
-  signal?: AbortSignal,
-): Promise<FetchAsyncIterable> {
+async function deepseekChat(body: DeepSeekRequestBody, signal?: AbortSignal): Promise<FetchAsyncIterable> {
   const url = `${getHost()}/chat/completions`;
   const apiKey = getApiKey();
 
@@ -218,10 +217,10 @@ async function deepseekChat(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      Authorization: `Bearer ${apiKey}`
     },
     body: JSON.stringify(body),
-    signal,
+    signal
   });
 
   if (!response.ok) {
@@ -275,8 +274,8 @@ function safeParseToolArgs(args: string): ProviderToolArgs {
     const detail = err instanceof Error ? err.message : String(err);
     throw new Error(
       `DeepSeek stream truncated: tool call arguments are incomplete JSON (${detail}). ` +
-      `Likely finish_reason='length' or connection drop (premature close).`,
-      { cause: err },
+        `Likely finish_reason='length' or connection drop (premature close).`,
+      { cause: err }
     );
   }
 }
@@ -285,12 +284,15 @@ function reconstructResponse(chunks: DeepSeekChunk[], model: string): ChatRespon
   const contentParts: string[] = [];
   const reasoningParts: string[] = [];
   let finishReason = '';
-  const toolCallBuilders = new Map<number, {
-    id: string;
-    type: string;
-    functionName: string;
-    functionArgs: string;
-  }>();
+  const toolCallBuilders = new Map<
+    number,
+    {
+      id: string;
+      type: string;
+      functionName: string;
+      functionArgs: string;
+    }
+  >();
 
   for (const chunk of chunks) {
     const choice = chunk.choices?.[0];
@@ -322,9 +324,7 @@ function reconstructResponse(chunks: DeepSeekChunk[], model: string): ChatRespon
     }
   }
 
-  const sortedBuilders = [...toolCallBuilders.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([, b]) => b);
+  const sortedBuilders = [...toolCallBuilders.entries()].sort(([a], [b]) => a - b).map(([, b]) => b);
 
   // Detect max_tokens truncation BEFORE attempting to parse tool-call
   // arguments. When finish_reason='length', the stream was cut off mid-
@@ -336,20 +336,21 @@ function reconstructResponse(chunks: DeepSeekChunk[], model: string): ChatRespon
   if (finishReason === 'length') {
     throw new Error(
       `DeepSeek response truncated (finish_reason='length'): max_tokens limit ` +
-      `hit mid-generation (premature close). Tool call arguments may be incomplete.`,
+        `hit mid-generation (premature close). Tool call arguments may be incomplete.`
     );
   }
 
-  const toolCalls: ChatResponse['message']['tool_calls'] = sortedBuilders.length > 0
-    ? sortedBuilders.map((b) => ({
-        id: b.id,
-        type: b.type as 'function',
-        function: {
-          name: b.functionName,
-          arguments: b.functionArgs ? safeParseToolArgs(b.functionArgs) : {},
-        },
-      }))
-    : undefined;
+  const toolCalls: ChatResponse['message']['tool_calls'] =
+    sortedBuilders.length > 0
+      ? sortedBuilders.map((b) => ({
+          id: b.id,
+          type: b.type as 'function',
+          function: {
+            name: b.functionName,
+            arguments: b.functionArgs ? safeParseToolArgs(b.functionArgs) : {}
+          }
+        }))
+      : undefined;
 
   return {
     model,
@@ -358,7 +359,7 @@ function reconstructResponse(chunks: DeepSeekChunk[], model: string): ChatRespon
       role: 'assistant' as const,
       content: contentParts.join(''),
       ...(reasoningParts.length > 0 ? { reasoning_content: reasoningParts.join('') } : {}),
-      ...(toolCalls ? { tool_calls: toolCalls } : {}),
+      ...(toolCalls ? { tool_calls: toolCalls } : {})
     },
     done: true,
     done_reason: finishReason,
@@ -367,7 +368,7 @@ function reconstructResponse(chunks: DeepSeekChunk[], model: string): ChatRespon
     prompt_eval_count: 0,
     prompt_eval_duration: 0,
     eval_count: 0,
-    eval_duration: 0,
+    eval_duration: 0
   };
 }
 
@@ -375,10 +376,7 @@ function reconstructResponse(chunks: DeepSeekChunk[], model: string): ChatRespon
 // retryChat (same signature as ollama.ts)
 // ============================================================================
 
-export async function retryChat(
-  request: RetryChatRequest,
-  config?: RetryChatConfig,
-): Promise<ChatResponse> {
+export async function retryChat(request: RetryChatRequest, config?: RetryChatConfig): Promise<ChatResponse> {
   const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
   const signal = config?.signal;
   const neglected = config?.neglected ?? false;
@@ -409,7 +407,7 @@ export async function retryChat(
         cfg.firstTokenTimeoutMs ?? 20000,
         attempt,
         cfg.responseTimeoutMs ?? 120000,
-        previousWasTimeout,
+        previousWasTimeout
       );
       // Escalate BOTH liveness windows (response + thinking) on the same
       // previousWasTimeout trigger. The thinking window is wider than the
@@ -422,16 +420,19 @@ export async function retryChat(
         cfg.tokenLivenessTimeoutMs ?? DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS,
         attempt,
         cfg.responseTimeoutMs ?? 120000,
-        previousWasTimeout,
+        previousWasTimeout
       );
       const attemptThinkingLivenessMs = escalateFirstTokenTimeout(
         cfg.thinkingLivenessTimeoutMs ?? DEFAULT_THINKING_LIVENESS_TIMEOUT_MS,
         attempt,
         cfg.responseTimeoutMs ?? 120000,
-        previousWasTimeout,
+        previousWasTimeout
       );
       if (previousWasTimeout && attempt > 1) {
-        agentIO.verbose('deepseek', `Escalating first-token timeout to ${attemptTimeoutMs}ms, liveness (response) to ${attemptLivenessMs}ms, liveness (thinking) to ${attemptThinkingLivenessMs}ms for attempt ${attempt}`);
+        agentIO.verbose(
+          'deepseek',
+          `Escalating first-token timeout to ${attemptTimeoutMs}ms, liveness (response) to ${attemptLivenessMs}ms, liveness (thinking) to ${attemptThinkingLivenessMs}ms for attempt ${attempt}`
+        );
       }
 
       try {
@@ -457,8 +458,8 @@ export async function retryChat(
                 { type: 'text', text: typeof m.content === 'string' ? m.content : '' },
                 ...images.map((img): ContentBlock => ({
                   type: 'image_url',
-                  image_url: { url: `data:${mime};base64,${img}`, detail: 'auto' },
-                })),
+                  image_url: { url: `data:${mime};base64,${img}`, detail: 'auto' }
+                }))
               ];
               return { role: extended.role, content: blocks } as NormalizedMessage;
             }
@@ -484,7 +485,7 @@ export async function retryChat(
           // TOKEN_THRESHOLD (default 50K), so there is ample context budget.
           // max_tokens is an upper bound, not a forced length — the model
           // still stops naturally (finish_reason='stop') when done.
-          max_tokens: 65536,
+          max_tokens: 65536
         };
 
         // Convert Ollama `think` param to DeepSeek thinking toggle
@@ -514,48 +515,44 @@ export async function retryChat(
 
         const stream = await deepseekChat(body, signal);
 
-        const chunks = await collectStream<DeepSeekChunk>(
-          stream,
-          () => stream.abort(),
-          {
-            firstTokenTimeoutMs: attemptTimeoutMs,
-            tokenLivenessTimeoutMs: attemptLivenessMs,
-            signal,
-            // Phase-aware liveness: thinking chunks (delta.reasoning_content
-            // only) get a wider window than response chunks (delta.content).
-            // The thinking process is slower with longer intermissions, so a
-            // normal server-side scheduling pause during reasoning should not
-            // kill the stream. A chunk carrying response content (with or
-            // without reasoning) uses the tighter response window — the model
-            // is producing visible output and should keep flowing. A chunk
-            // carrying neither returns undefined so the current window is
-            // preserved.
-            livenessMsForChunk: (chunk) => {
-              const delta = chunk.choices?.[0]?.delta;
-              if (!delta) return undefined;
-              const hasResponse = !!delta.content;
-              const hasThinking = !!delta.reasoning_content;
-              if (hasResponse) return attemptLivenessMs;
-              if (hasThinking) return attemptThinkingLivenessMs;
-              return undefined;
-            },
-            // Feed each chunk's content + reasoning_content text into the
-            // spinner's live token counter so the "thinking... (Xs, Y tokens)"
-            // suffix updates every frame. The inter-token liveness window is
-            // applied by collectStream itself (phase-aware via
-            // livenessMsForChunk above); responseTimeoutMs is no longer a
-            // total cap — it remains only as the first-token escalation
-            // ceiling (see escalateFirstTokenTimeout above).
-            onChunk: (chunk) => {
-              const delta = chunk.choices?.[0]?.delta;
-              if (!delta) return;
-              let tokens = 0;
-              if (delta.content) tokens += estimateTextTokens(delta.content);
-              if (delta.reasoning_content) tokens += estimateTextTokens(delta.reasoning_content);
-              if (tokens > 0) updateSpinnerTokens(tokens);
-            },
+        const chunks = await collectStream<DeepSeekChunk>(stream, () => stream.abort(), {
+          firstTokenTimeoutMs: attemptTimeoutMs,
+          tokenLivenessTimeoutMs: attemptLivenessMs,
+          signal,
+          // Phase-aware liveness: thinking chunks (delta.reasoning_content
+          // only) get a wider window than response chunks (delta.content).
+          // The thinking process is slower with longer intermissions, so a
+          // normal server-side scheduling pause during reasoning should not
+          // kill the stream. A chunk carrying response content (with or
+          // without reasoning) uses the tighter response window — the model
+          // is producing visible output and should keep flowing. A chunk
+          // carrying neither returns undefined so the current window is
+          // preserved.
+          livenessMsForChunk: (chunk) => {
+            const delta = chunk.choices?.[0]?.delta;
+            if (!delta) return undefined;
+            const hasResponse = !!delta.content;
+            const hasThinking = !!delta.reasoning_content;
+            if (hasResponse) return attemptLivenessMs;
+            if (hasThinking) return attemptThinkingLivenessMs;
+            return undefined;
           },
-        );
+          // Feed each chunk's content + reasoning_content text into the
+          // spinner's live token counter so the "thinking... (Xs, Y tokens)"
+          // suffix updates every frame. The inter-token liveness window is
+          // applied by collectStream itself (phase-aware via
+          // livenessMsForChunk above); responseTimeoutMs is no longer a
+          // total cap — it remains only as the first-token escalation
+          // ceiling (see escalateFirstTokenTimeout above).
+          onChunk: (chunk) => {
+            const delta = chunk.choices?.[0]?.delta;
+            if (!delta) return;
+            let tokens = 0;
+            if (delta.content) tokens += estimateTextTokens(delta.content);
+            if (delta.reasoning_content) tokens += estimateTextTokens(delta.reasoning_content);
+            if (tokens > 0) updateSpinnerTokens(tokens);
+          }
+        });
 
         const response = reconstructResponse(chunks, body.model);
         return response;
@@ -577,7 +574,10 @@ export async function retryChat(
         const isLastAttempt = attempt > cfg.maxRetries;
         if (!isLastAttempt) {
           const delay = calculateDelay(attempt, cfg);
-          agentIO.verbose('deepseek', `Attempt ${attempt}/${cfg.maxRetries + 1} failed: ${lastError.message}. Retrying in ${delay}ms...`);
+          agentIO.verbose(
+            'deepseek',
+            `Attempt ${attempt}/${cfg.maxRetries + 1} failed: ${lastError.message}. Retrying in ${delay}ms...`
+          );
           await sleep(delay, signal);
         }
       }
@@ -596,10 +596,10 @@ export async function retryChat(
 export async function retryMultipleChoice(
   request: Omit<ChatRequest, 'stream'>,
   choices: string[],
-  config?: Partial<RetryConfig> & { signal?: AbortSignal },
+  config?: Partial<RetryConfig> & { signal?: AbortSignal }
 ): Promise<string | null> {
   const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
-  const validChoices = choices.map(c => c.toUpperCase());
+  const validChoices = choices.map((c) => c.toUpperCase());
 
   for (let attempt = 1; attempt <= cfg.maxRetries + 1; attempt++) {
     if (config?.signal?.aborted) {
@@ -702,14 +702,14 @@ async function deepseekResponsesWebSearch(query: string, signal?: AbortSignal): 
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      Authorization: `Bearer ${apiKey}`
     },
     body: JSON.stringify({
       model: MODEL,
       input: query,
       tools: [{ type: 'web_search' }],
-      stream: false,
-    }),
+      stream: false
+    })
   });
 
   if (!response.ok) {
@@ -724,9 +724,7 @@ async function deepseekResponsesWebSearch(query: string, signal?: AbortSignal): 
 
   const data = (await response.json()) as ResponsesResponse;
   if (data.status === 'failed') {
-    throw new Error(
-      `DeepSeek Responses API failed: ${data.error?.message || 'unknown error'}`,
-    );
+    throw new Error(`DeepSeek Responses API failed: ${data.error?.message || 'unknown error'}`);
   }
 
   const items = data.output || [];
@@ -765,7 +763,9 @@ async function deepseekResponsesWebSearch(query: string, signal?: AbortSignal): 
       .flatMap((r) => (r.content || []).map((c) => c.text || ''))
       .join('\n')
       .trim();
-    answer = reason ? `(No answer text returned; model reasoning: ${reason})` : '(No answer text returned by web search)';
+    answer = reason
+      ? `(No answer text returned; model reasoning: ${reason})`
+      : '(No answer text returned by web search)';
   }
 
   const header =
@@ -783,10 +783,13 @@ async function deepseekResponsesWebSearch(query: string, signal?: AbortSignal): 
  * but silently dropped the caller's AbortSignal under API_PROVIDER=deepseek.
  */
 export async function webSearch(query: string, signal?: AbortSignal): Promise<WebSearchResult[]> {
-  return retryWithBackoff(async () => {
-    const content = await deepseekResponsesWebSearch(query, signal);
-    return [{ content }];
-  }, { maxRetries: 2, signal });
+  return retryWithBackoff(
+    async () => {
+      const content = await deepseekResponsesWebSearch(query, signal);
+      return [{ content }];
+    },
+    { maxRetries: 2, signal }
+  );
 }
 
 /**
@@ -846,11 +849,11 @@ export async function imgDescribe(image: string, prompt?: string, signal?: Abort
           // `images[]` triggers multimodal block emission, `imageMime` sets the
           // data-URL media type.
           images: [image],
-          imageMime: mime,
-        } as ProviderMessage,
-      ],
+          imageMime: mime
+        } as ProviderMessage
+      ]
     },
-    { signal, noSpinner: true },
+    { signal, noSpinner: true }
   );
 
   return response.message?.content || 'No description returned from vision model.';
@@ -877,7 +880,7 @@ function sniffImageMime(base64: string): string {
 export async function structuredChat(
   messages: { role: string; content: string }[],
   _format: object,
-  options?: { signal?: AbortSignal; timeoutMs?: number; maxRetries?: number },
+  options?: { signal?: AbortSignal; timeoutMs?: number; maxRetries?: number }
 ): Promise<ChatResponse> {
   const url = `${getHost()}/chat/completions`;
   const apiKey = getApiKey();
@@ -899,15 +902,15 @@ export async function structuredChat(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
+          Authorization: `Bearer ${apiKey}`
         },
         body: JSON.stringify({
           model: MODEL,
           messages,
           response_format: { type: 'json_object' },
-          stream: false,
+          stream: false
         }),
-        signal: combinedSignal,
+        signal: combinedSignal
       });
 
       if (!response.ok) {
@@ -923,7 +926,7 @@ export async function structuredChat(
         created_at: new Date(),
         message: {
           role: 'assistant' as const,
-          content: choice?.message?.content || '',
+          content: choice?.message?.content || ''
         },
         done: true,
         done_reason: choice?.finish_reason || 'stop',
@@ -932,7 +935,7 @@ export async function structuredChat(
         prompt_eval_count: data.usage?.prompt_tokens || 0,
         prompt_eval_duration: 0,
         eval_count: data.usage?.completion_tokens || 0,
-        eval_duration: 0,
+        eval_duration: 0
       };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
@@ -971,7 +974,7 @@ export async function healthCheck(tokenThreshold: number): Promise<HealthCheckRe
     if (tokenThreshold > maxThreshold) {
       return {
         ok: false,
-        error: `TOKEN_THRESHOLD (${tokenThreshold}) exceeds 80% of model context length (${DEEPSEEK_CONTEXT_LENGTH}). Reduce TOKEN_THRESHOLD to ${maxThreshold} or less.`,
+        error: `TOKEN_THRESHOLD (${tokenThreshold}) exceeds 80% of model context length (${DEEPSEEK_CONTEXT_LENGTH}). Reduce TOKEN_THRESHOLD to ${maxThreshold} or less.`
       };
     }
 
@@ -989,7 +992,7 @@ export async function healthCheck(tokenThreshold: number): Promise<HealthCheckRe
     if (!isVisionEnabled()) {
       warnings.push(
         'Vision features (screen/read_picture tools) are disabled (DEEPSEEK_VISION_MODEL=none).',
-        'Unset DEEPSEEK_VISION_MODEL (default: deepseek-flash) or set it to a vision model to enable them.',
+        'Unset DEEPSEEK_VISION_MODEL (default: deepseek-flash) or set it to a vision model to enable them.'
       );
     }
     if (embeddingWarning) {
@@ -1001,15 +1004,15 @@ export async function healthCheck(tokenThreshold: number): Promise<HealthCheckRe
       warnings: warnings.length > 0 ? warnings : undefined,
       modelInfo: {
         name: MODEL,
-        contextLength: DEEPSEEK_CONTEXT_LENGTH,
-      },
+        contextLength: DEEPSEEK_CONTEXT_LENGTH
+      }
     };
   } catch (err) {
     stopSpinner();
     const msg = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
-      error: `DeepSeek API error for model '${MODEL}'. ${msg}. Check DEEPSEEK_API_KEY and DEEPSEEK_MODEL in .mycc/.env.`,
+      error: `DeepSeek API error for model '${MODEL}'. ${msg}. Check DEEPSEEK_API_KEY and DEEPSEEK_MODEL in .mycc/.env.`
     };
   }
 }

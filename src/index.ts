@@ -66,7 +66,7 @@ const PROJECT_ROOT = getProjectRoot();
 // This MUST run BEFORE the --help intercept below: `mycc --help > help.txt`
 // still writes through the same stdout, and the help text is chalk-styled, so
 // it must honour the same verdict. Deriving it first closes that hole.
-if (!process.stdout.isTTY || process.argv.slice(2).some(a => a === '--debug-ansi')) {
+if (!process.stdout.isTTY || process.argv.slice(2).some((a) => a === '--debug-ansi')) {
   process.env.MYCC_PLAIN = '1';
 }
 
@@ -79,7 +79,7 @@ if (!process.stdout.isTTY || process.argv.slice(2).some(a => a === '--debug-ansi
 // them here to avoid the cost of loading config / spawning the lead process.
 // The plain-output verdict above is already in place, so a redirected help
 // dump is plain too (printHelp consults isPlainOutput()).
-if (process.argv.slice(2).some(a => a === '--help' || a === '-h')) {
+if (process.argv.slice(2).some((a) => a === '--help' || a === '-h')) {
   printHelp();
   process.exit(0);
 }
@@ -88,7 +88,7 @@ if (process.argv.slice(2).some(a => a === '--help' || a === '-h')) {
 // exit 0. Intercepted here, before any side effects, for the same reasons as
 // --help above. Only the long form is supported (no short alias) to avoid
 // collision with -v (--verbose).
-if (process.argv.slice(2).some(a => a === '--version')) {
+if (process.argv.slice(2).some((a) => a === '--version')) {
   printVersion();
   process.exit(0);
 }
@@ -153,12 +153,12 @@ function runCoordinator(): void {
 
   // Validate environment before proceeding
   const envResult = validateEnv();
-  envResult.warnings.forEach(w => agentIO.brief('warn', 'config', w.instruction));
+  envResult.warnings.forEach((w) => agentIO.brief('warn', 'config', w.instruction));
 
   if (!envResult.valid) {
-    envResult.missing.forEach(m => agentIO.brief('error', 'config', m.instruction));
-    agentIO.log(chalk.yellow('\nRun \'mycc --setup\' to configure your environment.'));
-    process.exit(2);  // Exit code 2 = setup required
+    envResult.missing.forEach((m) => agentIO.brief('error', 'config', m.instruction));
+    agentIO.log(chalk.yellow("\nRun 'mycc --setup' to configure your environment."));
+    process.exit(2); // Exit code 2 = setup required
   }
 
   if (isVerbose()) {
@@ -219,9 +219,7 @@ function runCoordinator(): void {
     const tsxScript = resolve(PROJECT_ROOT, 'src', 'lead.ts');
 
     // Forward skip-healthcheck flag if set
-    const forwardedArgs = skipHealthCheck
-      ? [...args, '--skip-healthcheck']
-      : args;
+    const forwardedArgs = skipHealthCheck ? [...args, '--skip-healthcheck'] : args;
 
     // Pass terminal columns to Lead process for proper line wrapping
     const env = { ...process.env };
@@ -236,7 +234,7 @@ function runCoordinator(): void {
       args: forwardedArgs,
       cwd,
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
-      env,
+      env
     });
 
     // Handle stdout - forward directly
@@ -276,7 +274,10 @@ function runCoordinator(): void {
         // Lead finished shutting down Vite after our 'serve_shutdown' IPC.
         // Now it's safe to kill the Lead — the port is released.
         if (shuttingDownServe) {
-          if (serveShutdownTimer) { clearTimeout(serveShutdownTimer); serveShutdownTimer = null; }
+          if (serveShutdownTimer) {
+            clearTimeout(serveShutdownTimer);
+            serveShutdownTimer = null;
+          }
           shuttingDownServe = false;
           serveMode = false;
           forceKillLead();
@@ -428,7 +429,7 @@ function runCoordinator(): void {
     serveActive: boolean,
     servePort: number,
     serveHost: string | null,
-    leadArgs: string[],
+    leadArgs: string[]
   ): Promise<void> {
     // COMPOSE-MANAGED GUARD (defense in depth): the lead-side /reload slash
     // handler already refuses when its own argv carries `--name`, but a reload
@@ -440,10 +441,12 @@ function runCoordinator(): void {
     // OLD lead stays alive and untouched (teardown here would leave the
     // topology half-dead with no peer).
     if (hasNameFlag(leadArgs)) {
-      console.error(chalk.yellow(
-        'Reload refused: this Lead is managed by mycc-compose (launched with --name). ' +
-        'Renew via `mycc-compose up <spec>` — /reload would orphan its channels.',
-      ));
+      console.error(
+        chalk.yellow(
+          'Reload refused: this Lead is managed by mycc-compose (launched with --name). ' +
+            'Renew via `mycc-compose up <spec>` — /reload would orphan its channels.'
+        )
+      );
       return;
     }
 
@@ -556,7 +559,10 @@ function runCoordinator(): void {
         // Second Ctrl+C while already shutting down serve: skip the IPC
         // round-trip and force-kill immediately.
         if (shuttingDownServe) {
-          if (serveShutdownTimer) { clearTimeout(serveShutdownTimer); serveShutdownTimer = null; }
+          if (serveShutdownTimer) {
+            clearTimeout(serveShutdownTimer);
+            serveShutdownTimer = null;
+          }
           shuttingDownServe = false;
           forceKillLead();
           cleanup();

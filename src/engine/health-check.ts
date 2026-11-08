@@ -31,22 +31,22 @@ export const STARTUP_TOOL = {
       properties: {
         context_length: {
           type: 'number',
-          description: 'The maximum context window size in tokens for this model',
+          description: 'The maximum context window size in tokens for this model'
         },
         motd: {
           type: 'string',
-          description: 'A fun, creative, or witty message of the day (a short phrase, wordplay, or greeting)',
-        },
+          description: 'A fun, creative, or witty message of the day (a short phrase, wordplay, or greeting)'
+        }
       },
-      required: ['context_length', 'motd'],
-    },
-  },
+      required: ['context_length', 'motd']
+    }
+  }
 };
 
 export async function probeModel(
   retryChat: (req: RetryChatRequest, cfg?: RetryChatConfig) => Promise<ChatResponse>,
   MODEL: string,
-  modelInfo?: Record<string, unknown>,
+  modelInfo?: Record<string, unknown>
 ): Promise<{ contextLength: number; motd: string }> {
   let contextLength = 0;
   let motd = 'Ready!';
@@ -67,12 +67,12 @@ export async function probeModel(
           content:
             `You are starting up. Call the start_up tool to report your context length ` +
             `by reading the model_info metadata provided below, ` +
-            `and provide a fun message of the day.${modelInfoPrompt}`,
-        },
+            `and provide a fun message of the day.${modelInfoPrompt}`
+        }
       ],
-      tools: [STARTUP_TOOL],
+      tools: [STARTUP_TOOL]
     },
-    { noSpinner: true },
+    { noSpinner: true }
   );
 
   if (response.message.tool_calls && response.message.tool_calls.length > 0) {
@@ -91,7 +91,7 @@ export async function probeModel(
   if (contextLength === 0) {
     throw new Error(
       `Failed to extract context_length from model_info. ` +
-      `The LLM did not return a valid context_length. Please retry.`,
+        `The LLM did not return a valid context_length. Please retry.`
     );
   }
 
@@ -125,8 +125,10 @@ export async function probeEmbeddingModel(): Promise<string | null> {
     return null; // success
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return `Embedding model '${embeddingModel}' is not available on Ollama: ${msg}. ` +
+    return (
+      `Embedding model '${embeddingModel}' is not available on Ollama: ${msg}. ` +
       `RAG/wiki/skill-matching features will fail at runtime. ` +
-      `Run 'ollama pull ${embeddingModel}' to fix this.`;
+      `Run 'ollama pull ${embeddingModel}' to fix this.`
+    );
   }
 }

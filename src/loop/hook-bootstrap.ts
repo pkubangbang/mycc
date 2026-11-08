@@ -38,10 +38,7 @@ interface HookLoader {
  * Returns an empty array when neither category has entries, so the populator
  * contributes nothing to projectContext in the common (no-hooks) case.
  */
-export function buildHookInfoMessages(
-  conditions: ConditionRegistry,
-  loader: HookLoader,
-): Message[] {
+export function buildHookInfoMessages(conditions: ConditionRegistry, loader: HookLoader): Message[] {
   const out: Message[] = [];
 
   // Legacy hooks: compiled conditions using the outdated `seq.X` API,
@@ -50,7 +47,7 @@ export function buildHookInfoMessages(
   if (legacy.length > 0) {
     const lines: string[] = [
       '[Hooks Outdated] The following hookish skills have compiled conditions using the outdated `seq.X` API, which is no longer supported. These hooks were NOT loaded and are inactive. Recompile them to reactivate using the current `turn.X` / `session.X` / `isPlanMode()` syntax:',
-      '',
+      ''
     ];
     for (const entry of legacy) {
       lines.push(`- ${entry.name}:`);
@@ -61,11 +58,17 @@ export function buildHookInfoMessages(
       lines.push(`  Recompile: skill_compile(name="${entry.name}")`);
       lines.push('');
     }
-    lines.push('Recompiling re-runs the LLM translation and emits the new syntax, updating conditions.json in place. Once recompiled, the hook activates automatically on the next load.');
+    lines.push(
+      'Recompiling re-runs the LLM translation and emits the new syntax, updating conditions.json in place. Once recompiled, the hook activates automatically on the next load.'
+    );
     lines.push('');
     out.push(
       { role: 'user', content: lines.join('\n') },
-      { role: 'assistant', content: 'Understood. I see hooks with outdated `seq.X` conditions that failed to load. I will recompile them with skill_compile to reactivate them.' },
+      {
+        role: 'assistant',
+        content:
+          'Understood. I see hooks with outdated `seq.X` conditions that failed to load. I will recompile them with skill_compile to reactivate them.'
+      }
     );
   }
 
@@ -77,7 +80,7 @@ export function buildHookInfoMessages(
   if (errored.length > 0) {
     const lines: string[] = [
       '[Hooks Erroring] The following hookish skills have compiled conditions that FAILED to evaluate at runtime. Each failure was caught and the hook was skipped, so the hook is currently INACTIVE. This usually means the condition dereferences a call value that is absent for some tool calls (e.g. `call.args.command` when the current call is not a bash call). Recompile them so the condition guards the access (e.g. `call.args.command != undefined && call.args.command.includes(...)`) — prefer putting `turn.*` / `session.*` value checks before any `call.args.*` access:',
-      '',
+      ''
     ];
     for (const entry of errored) {
       lines.push(`- ${entry.name}:`);
@@ -89,11 +92,17 @@ export function buildHookInfoMessages(
       lines.push(`  Recompile: skill_compile(name="${entry.name}")`);
       lines.push('');
     }
-    lines.push('Recompiling re-runs the LLM translation; the new condition is validated and smoke-tested, updating conditions.json in place. A fixed hook drops out of this list once it evaluates cleanly.');
+    lines.push(
+      'Recompiling re-runs the LLM translation; the new condition is validated and smoke-tested, updating conditions.json in place. A fixed hook drops out of this list once it evaluates cleanly.'
+    );
     lines.push('');
     out.push(
       { role: 'user', content: lines.join('\n') },
-      { role: 'assistant', content: 'Understood. Some hooks threw while being evaluated and are currently inactive. I will recompile them with skill_compile so their conditions guard the offending access.' },
+      {
+        role: 'assistant',
+        content:
+          'Understood. Some hooks threw while being evaluated and are currently inactive. I will recompile them with skill_compile so their conditions guard the offending access.'
+      }
     );
   }
 
@@ -101,13 +110,11 @@ export function buildHookInfoMessages(
   // from the loader each call so the list reflects current disk state.
   const pendingSkillNames = conditions.getPending();
   if (pendingSkillNames.length > 0) {
-    const pendingSkills = pendingSkillNames
-      .map(name => loader.getSkill(name))
-      .filter((s): s is Skill => !!s);
+    const pendingSkills = pendingSkillNames.map((name) => loader.getSkill(name)).filter((s): s is Skill => !!s);
     if (pendingSkills.length > 0) {
       const lines: string[] = [
         '[Hooks Pending] The following skills have "when" conditions that can be compiled into proactive hooks. They are NOT active yet - use skill_compile to activate them:',
-        '',
+        ''
       ];
       for (const hook of pendingSkills) {
         lines.push(`- ${hook.name}: ${hook.description}`);
@@ -120,11 +127,17 @@ export function buildHookInfoMessages(
         lines.push(`  Activate: skill_compile(name="${hook.name}")`);
         lines.push('');
       }
-      lines.push('Not all hooks need to be compiled upfront. Only compile the ones relevant to your current task. A compiled hook stays in effect until the skill file changes.');
+      lines.push(
+        'Not all hooks need to be compiled upfront. Only compile the ones relevant to your current task. A compiled hook stays in effect until the skill file changes.'
+      );
       lines.push('');
       out.push(
         { role: 'user', content: lines.join('\n') },
-        { role: 'assistant', content: 'Understood. I know which hooks are available but not yet active. I can compile them when needed using the skill_compile tool.' },
+        {
+          role: 'assistant',
+          content:
+            'Understood. I know which hooks are available but not yet active. I can compile them when needed using the skill_compile tool.'
+        }
       );
     }
   }
@@ -150,7 +163,7 @@ export function buildHookInfoMessages(
 export async function initHookSystem(
   _ctx: AgentContext,
   loader: HookLoader,
-  _triologue: Triologue,
+  _triologue: Triologue
 ): Promise<ConditionRegistry> {
   // Initialize hook system (machine lifetime)
   const conditions = new ConditionRegistry();

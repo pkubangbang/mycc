@@ -47,7 +47,7 @@ const SYNTHESIS_RETRY_CONFIG: Partial<RetryConfig> = {
   responseTimeoutMs: 30_000,
   maxRetries: 1,
   baseDelayMs: 500,
-  maxDelayMs: 3_000,
+  maxDelayMs: 3_000
 };
 
 /**
@@ -75,7 +75,7 @@ async function synthesizeWithSteering(
   tools: Parameters<typeof forkChat>[1],
   freshQuery: string,
   steeringNotes: string[],
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<string> {
   const notesBlock = steeringNotes.map((n, i) => `(${i + 1}) ${n}`).join('\n');
   const synthesisPrompt = `While you were working, the user queued the following steering notes (mid-task direction). The work they were steering has been interrupted, so these notes may be stale as actionable direction, but they may still carry informational value. Your latest fresh query is also given below.
@@ -99,14 +99,7 @@ Synthesize a single combined user prompt that:
 Output ONLY the synthesized user prompt — no preamble, no sign-off, no quotes.`;
 
   try {
-    const synthesized = await forkChat(
-      messages,
-      tools,
-      synthesisPrompt,
-      signal,
-      'none',
-      SYNTHESIS_RETRY_CONFIG,
-    );
+    const synthesized = await forkChat(messages, tools, synthesisPrompt, signal, 'none', SYNTHESIS_RETRY_CONFIG);
     const clean = synthesized.trim();
     if (clean.length === 0) {
       agentIO.verbose('steer', 'Synthesis returned empty text; using raw fresh query');
@@ -131,11 +124,7 @@ export function setInitialQuery(query: string | null): void {
   initialQuery = query;
 }
 
-export async function handlePrompt(
-  env: MachineEnv,
-  turn: TurnVars,
-  _chat: ChatData,
-): Promise<HandlerResult> {
+export async function handlePrompt(env: MachineEnv, turn: TurnVars, _chat: ChatData): Promise<HandlerResult> {
   const { triologue, inputProvider, sessionFilePath } = env;
   const { ctx } = env;
 
@@ -220,7 +209,11 @@ export async function handlePrompt(
   // AWAIT. Layer B engages auto unconditionally because a channel DID just join
   // (the event itself is the signal); the next PROMPT then re-applies this
   // streak gate.
-  if ((isDebugAutofly() || ctx.peer.hasActiveChannel()) && autoState.getStreak() >= autoState.getAutoflyThreshold() && !hasSeededFirstQuery) {
+  if (
+    (isDebugAutofly() || ctx.peer.hasActiveChannel()) &&
+    autoState.getStreak() >= autoState.getAutoflyThreshold() &&
+    !hasSeededFirstQuery
+  ) {
     autoState.setAuto(true); // engage auto mode so subsequent loops take path 1
     console.log(chalk.gray('auto mode is on.'));
     return AgentState.AWAIT;
@@ -290,7 +283,7 @@ export async function handlePrompt(
       if (p0Input === null) {
         console.log(chalk.gray('(autonomous iteration)'));
         env.ctx.core.resetConfusionIndex();
-        env.crossroadOccurred = false;  // clear stale cooldown at turn start
+        env.crossroadOccurred = false; // clear stale cooldown at turn start
         // Reset sequence boundary and per-turn hook state for the autonomous
         // path too. markPromptBoundary() and resetTurn() are called on the
         // real-user-query path (below), but this autonomous null-skip early
@@ -312,8 +305,8 @@ export async function handlePrompt(
       // Multi-line input: trailing backslash or Chinese enumeration comma opens editor.
       // Never triggered in serve/webui mode — the terminal-based editor makes no
       // sense there; webui queries are always single-line submissions.
-      const isMultiline = !hub?.isRunning()
-        && (p0Input.endsWith('、') || (p0Input.endsWith('\\') && p0Input.trim() !== '\\'));
+      const isMultiline =
+        !hub?.isRunning() && (p0Input.endsWith('、') || (p0Input.endsWith('\\') && p0Input.trim() !== '\\'));
       if (isMultiline) {
         const result = await openMultilineEditor(p0Input.slice(0, -1));
         if (result.action === 'submit' && !result.content) {
@@ -356,16 +349,21 @@ export async function handlePrompt(
     // controller to borrow, so hand the tool the process-wide token. hand_over
     // blocks on a human at the terminal and must not be aborted by anything
     // but process shutdown.
-    const result = await loader.execute('hand_over', env.ctx, {
-      command,
-      intent: `RUN USER TO execute interactive command from user`,
-    }, getProcessSignal());
+    const result = await loader.execute(
+      'hand_over',
+      env.ctx,
+      {
+        command,
+        intent: `RUN USER TO execute interactive command from user`
+      },
+      getProcessSignal()
+    );
     triologue.note(
       'REMINDER',
-      `The user ran an interactive command in the handed-over terminal (${command || 'plain shell'}). Captured output:\n\n${result}`,
+      `The user ran an interactive command in the handed-over terminal (${command || 'plain shell'}). Captured output:\n\n${result}`
     );
     env.ctx.core.resetConfusionIndex();
-    env.crossroadOccurred = false;  // clear stale cooldown at turn start
+    env.crossroadOccurred = false; // clear stale cooldown at turn start
     return AgentState.PROMPT;
   }
 
@@ -391,9 +389,9 @@ export async function handlePrompt(
   if (triologue.hasActiveWrapUp()) {
     const action = evaluateWrapUp();
     if (action === 'commit') {
-      triologue.commitWrapUp();  // keep user_wrap + agent_wrap permanently
+      triologue.commitWrapUp(); // keep user_wrap + agent_wrap permanently
     } else {
-      triologue.rollbackWrapUp();  // remove user_wrap (and agent_wrap if present)
+      triologue.rollbackWrapUp(); // remove user_wrap (and agent_wrap if present)
     }
   }
 
@@ -415,7 +413,9 @@ export async function handlePrompt(
   // to the WebUI by the manager's onChange observer, so this state never
   // broadcasts steering itself.
   if (query !== null) {
-    const staleNotes = getSteeringManager().drainNotes().map((note) => note.text);
+    const staleNotes = getSteeringManager()
+      .drainNotes()
+      .map((note) => note.text);
     if (staleNotes.length > 0) {
       // The drain already emitted its (now empty) snapshot before the await,
       // so the UI clears for exactly this drained set. Notes arriving during
@@ -425,7 +425,7 @@ export async function handlePrompt(
       const tools = loader.getToolsForScope(env.scope);
       const synthesized = await env.ctx.core.escAware(
         async (ac) => synthesizeWithSteering(fullMessages, tools, freshQuery, staleNotes, ac.signal),
-        () => freshQuery,
+        () => freshQuery
       );
       query = synthesized;
       // The snapshot was drained before awaiting synthesis, so it cannot be
@@ -449,7 +449,9 @@ export async function handlePrompt(
         const filePath = path.join(uploadDir, safeName);
         fs.writeFileSync(filePath, Buffer.from(file.data, 'base64'));
         const relPath = path.relative(process.cwd(), filePath);
-        fileInfos.push(`- ${file.filename} → ${relPath} (${file.mimeType})${file.text ? `\n  Text: "${file.text.slice(0, 200)}${file.text.length > 200 ? '...' : ''}"` : ''}`);
+        fileInfos.push(
+          `- ${file.filename} → ${relPath} (${file.mimeType})${file.text ? `\n  Text: "${file.text.slice(0, 200)}${file.text.length > 200 ? '...' : ''}"` : ''}`
+        );
       }
       triologue.note('REMINDER', `Previously uploaded file(s) (from interrupted run):\n${fileInfos.join('\n')}`);
       agentIO.verbose('serve', `Saved ${staleFiles.length} stale uploaded file(s) at PROMPT`);
@@ -464,7 +466,7 @@ export async function handlePrompt(
   triologue.user(query);
   turn.lastUserQuery = query;
   env.ctx.core.resetConfusionIndex();
-  env.crossroadOccurred = false;  // clear stale cooldown at turn start
+  env.crossroadOccurred = false; // clear stale cooldown at turn start
 
   // Reset sequence to current turn (hooks only see events since last user query)
   env.sequence.markPromptBoundary();

@@ -13,16 +13,17 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issuePublishTool: ToolDefinition = {
   name: 'issue_publish',
-  description: 'Publish a draft issue, moving it from draft to pending so idle teammates can auto-claim it. Use when any available teammate should pick up the issue rather than a specific one. Returns the full issue list.',
+  description:
+    'Publish a draft issue, moving it from draft to pending so idle teammates can auto-claim it. Use when any available teammate should pick up the issue rather than a specific one. Returns the full issue list.',
   input_schema: {
     type: 'object',
     properties: {
       id: {
         type: 'integer',
-        description: 'Issue ID to publish. Must be in draft status (see issue_list).',
-      },
+        description: 'Issue ID to publish. Must be in draft status (see issue_list).'
+      }
     },
-    required: ['id'],
+    required: ['id']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -49,5 +50,5 @@ export const issuePublishTool: ToolDefinition = {
 
     // Return full issue list for visibility
     return await ctx.issue.printIssues();
-  },
+  }
 };

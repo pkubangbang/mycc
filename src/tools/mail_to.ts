@@ -13,29 +13,32 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const mailToTool: ToolDefinition = {
   name: 'mail_to',
-  description: 'Send an async message to a teammate or "lead". Non-blocking. Use for task assignment and inter-agent communication; include meaningful content.',
+  description:
+    'Send an async message to a teammate or "lead". Non-blocking. Use for task assignment and inter-agent communication; include meaningful content.',
   input_schema: {
     type: 'object',
     properties: {
       name: {
         type: 'string',
-        description: 'Target recipient: a teammate name, "lead" for local IPC, or a cross-instance peer identity "<session-id>/lead" to route to a remote mycc instance.',
+        description:
+          'Target recipient: a teammate name, "lead" for local IPC, or a cross-instance peer identity "<session-id>/lead" to route to a remote mycc instance.'
       },
       title: {
         type: 'string',
-        description: 'Message title/subject',
+        description: 'Message title/subject'
       },
       content: {
         type: 'string',
-        description: 'Message body content',
+        description: 'Message body content'
       },
       eta: {
         type: 'number',
-        description: 'MANDATORY when a teammate first mails "lead" (or extends). Duration in seconds (eta=120 = about 2 minutes); converted to an absolute deadline. ' +
-          'Set to 0 or omit for non-budget messages (progress updates, lead responses).',
-      },
+        description:
+          'MANDATORY when a teammate first mails "lead" (or extends). Duration in seconds (eta=120 = about 2 minutes); converted to an absolute deadline. ' +
+          'Set to 0 or omit for non-budget messages (progress updates, lead responses).'
+      }
     },
-    required: ['name', 'title', 'content'],
+    required: ['name', 'title', 'content']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -77,8 +80,10 @@ export const mailToTool: ToolDefinition = {
       const example = missing.includes('name')
         ? 'mail_to(name="lead", title="<subject>", content="<body>")'
         : `mail_to(name="${name}", title="<subject>", content="<body>")`;
-      return `Error: missing required argument(s): ${list}. A call to mail_to needs name, title, content. ` +
-        `Corrected example: ${example}`;
+      return (
+        `Error: missing required argument(s): ${list}. A call to mail_to needs name, title, content. ` +
+        `Corrected example: ${example}`
+      );
     }
 
     const isTeammateToLead = name === 'lead' && isChildSender;
@@ -122,22 +127,32 @@ export const mailToTool: ToolDefinition = {
           // sendPeerMail() below re-checks as a backup, but surfacing it here
           // gives a clearer, earlier rejection.
           if (!ctx.peer.isFresh(peerSid)) {
-            ctx.core.brief('error', 'mail_to',
-              `Peer ${peerSid} is offline/stale or not registered — mail rejected (fail-fast).`);
-            return `Error: peer ${peerSid} is offline/stale or not registered. ` +
+            ctx.core.brief(
+              'error',
+              'mail_to',
+              `Peer ${peerSid} is offline/stale or not registered — mail rejected (fail-fast).`
+            );
+            return (
+              `Error: peer ${peerSid} is offline/stale or not registered. ` +
               `The remote mycc instance may have exited, or its heartbeat is older than the freshness window. ` +
               `Verify the peer is running with myccdp enabled, then resend. Valid recipient forms: ` +
-              `"lead", "<session-id>/lead" (online peer), or a live teammate name.`;
+              `"lead", "<session-id>/lead" (online peer), or a live teammate name.`
+            );
           }
           // Peer is fresh — fall through to the sendPeerMail call below.
         } else {
           // Slash-bearing name that is NOT a valid <uuid>/lead peer route.
-          ctx.core.brief('error', 'mail_to',
-            `Unrecognized recipient '${name}': not a valid "<session-id>/lead" peer route, and teammate names cannot contain "/".`);
-          return `Error: unrecognized recipient '${name}'. A slash-bearing name must be a valid peer route ` +
+          ctx.core.brief(
+            'error',
+            'mail_to',
+            `Unrecognized recipient '${name}': not a valid "<session-id>/lead" peer route, and teammate names cannot contain "/".`
+          );
+          return (
+            `Error: unrecognized recipient '${name}'. A slash-bearing name must be a valid peer route ` +
             `"<session-id>/lead" with the session-id as a UUID and an ONLINE peer. ` +
             `For cross-instance peer mail use "<session-id>/lead" (verify the peer is online via the peers tool first). ` +
-            `For local mail use "lead" or a live teammate name (no "/").`;
+            `For local mail use "lead" or a live teammate name (no "/").`
+          );
         }
       } else {
         // Bare teammate name (no "/") — validate against the live roster.
@@ -151,11 +166,16 @@ export const mailToTool: ToolDefinition = {
           // Child context — cannot validate. Leave roster null (skip check).
         }
         if (roster !== null && !roster.includes(name)) {
-          ctx.core.brief('error', 'mail_to',
-            `Teammate '${name}' does not exist in the current roster — mail rejected (fail-fast).`);
-          return `Error: teammate '${name}' does not exist. Use tm_create to spawn a teammate first, ` +
+          ctx.core.brief(
+            'error',
+            'mail_to',
+            `Teammate '${name}' does not exist in the current roster — mail rejected (fail-fast).`
+          );
+          return (
+            `Error: teammate '${name}' does not exist. Use tm_create to spawn a teammate first, ` +
             `or check the name with the tm_print tool. Valid recipient forms: ` +
-            `"lead", "<session-id>/lead" (online peer), or a live teammate name.`;
+            `"lead", "<session-id>/lead" (online peer), or a live teammate name.`
+          );
         }
       }
     }
@@ -187,38 +207,55 @@ export const mailToTool: ToolDefinition = {
           // session-ids, so the live peers never polled them). The mail is still
           // sent — this is a non-blocking advisory appended to the OK result.
           if (!ctx.peer.hasChannelWith(peerSid)) {
-            ctx.core.brief('info', 'mail_to',
-              `No channel between this instance and ${peerSid} — replies may not be delivered.`);
-            return `OK. Peer mail sent to ${name}. WARNING: no channel exists between this instance and ${peerSid}, ` +
+            ctx.core.brief(
+              'info',
+              'mail_to',
+              `No channel between this instance and ${peerSid} — replies may not be delivered.`
+            );
+            return (
+              `OK. Peer mail sent to ${name}. WARNING: no channel exists between this instance and ${peerSid}, ` +
               `so the peer has no channel-driven path to deliver a REPLY back — consider establishing a channel ` +
-              `with the mail receiver (see the mediator skill), otherwise the peer's response may never arrive.`;
+              `with the mail receiver (see the mediator skill), otherwise the peer's response may never arrive.`
+            );
           }
           return `OK. Peer mail sent to ${name}.`;
         }
         // Defensive: isFresh passed above but sendPeerMail returned false
         // (e.g. the peer went stale between the check and the send).
-        ctx.core.brief('error', 'mail_to', `Peer ${peerSid} delivery failed (sendPeerMail=false) — mail not delivered.`);
-        return `Error: peer ${peerSid} delivery failed. The peer was fresh at validation but the mailbox write was rejected ` +
-          `(the remote instance may have just exited). Verify the peer is running and resend.`;
+        ctx.core.brief(
+          'error',
+          'mail_to',
+          `Peer ${peerSid} delivery failed (sendPeerMail=false) — mail not delivered.`
+        );
+        return (
+          `Error: peer ${peerSid} delivery failed. The peer was fresh at validation but the mailbox write was rejected ` +
+          `(the remote instance may have just exited). Verify the peer is running and resend.`
+        );
       }
     }
 
     // Conditional enforcement: child→lead requires eta (seconds from now)
     if (isTeammateToLead) {
       if (eta === undefined) {
-        ctx.core.brief('error', 'mail_to',
+        ctx.core.brief(
+          'error',
+          'mail_to',
           'eta is required when sending to lead. ' +
-          'Estimate how long you need in seconds (e.g., eta=120 for ~2 minutes). ' +
-          'Set to 0 for non-budget messages (progress updates, lead responses).');
-        return 'Error: eta is required when sending to lead. ' +
-               'Set eta to the number of seconds you need (e.g., eta=120 for 2 minutes). ' +
-               'Set to 0 for non-budget messages (progress updates, lead responses).';
+            'Estimate how long you need in seconds (e.g., eta=120 for ~2 minutes). ' +
+            'Set to 0 for non-budget messages (progress updates, lead responses).'
+        );
+        return (
+          'Error: eta is required when sending to lead. ' +
+          'Set eta to the number of seconds you need (e.g., eta=120 for 2 minutes). ' +
+          'Set to 0 for non-budget messages (progress updates, lead responses).'
+        );
       }
       if (typeof eta !== 'number' || !Number.isInteger(eta) || eta < 0) {
-        ctx.core.brief('error', 'mail_to',
-          `eta must be a non-negative integer (seconds from now), got: ${eta}`);
-        return 'Error: eta must be a non-negative integer (seconds from now). ' +
-               'Example: eta=120 for about 2 minutes, eta=0 for non-budget messages.';
+        ctx.core.brief('error', 'mail_to', `eta must be a non-negative integer (seconds from now), got: ${eta}`);
+        return (
+          'Error: eta must be a non-negative integer (seconds from now). ' +
+          'Example: eta=120 for about 2 minutes, eta=0 for non-budget messages.'
+        );
       }
 
       // ctx.team.mailTo handles IPC (eta_update) in ChildTeam implementation
@@ -235,5 +272,5 @@ export const mailToTool: ToolDefinition = {
     ctx.core.brief('info', 'mail_to', `(...to ${name}) ${title}\n${chalk.gray(content)}\n`);
     ctx.team.mailTo(name, title, content);
     return 'OK';
-  },
+  }
 };

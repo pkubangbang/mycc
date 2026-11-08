@@ -98,9 +98,7 @@ function resolveTranscriptDir(): string {
  * explorers run concurrently during compilation; a timestamp-only name could
  * collide within the same second.
  */
-function createExplorerTranscriptWriter(
-  transcriptPath: string
-): JsonlTranscriptWriter {
+function createExplorerTranscriptWriter(transcriptPath: string): JsonlTranscriptWriter {
   return new JsonlTranscriptWriter(transcriptPath, () => {
     // Transcript persistence is best-effort; never fail exploration over it.
   });
@@ -134,10 +132,18 @@ function createExplorerTriologue(nodeTitle: string): TriologueLite {
   );
 
   const onMisorder = (warning: MisorderWarning): void => {
-    agentIO.brief('warn', 'explorer', `Triologue misorder for "${nodeTitle}": ${warning.from} → ${warning.to} (gap: ${warning.gap})`);
+    agentIO.brief(
+      'warn',
+      'explorer',
+      `Triologue misorder for "${nodeTitle}": ${warning.from} → ${warning.to} (gap: ${warning.gap})`
+    );
   };
   const onToolMisalign = (warning: ToolAlignmentWarning): void => {
-    agentIO.brief('warn', 'explorer', `Triologue tool misalign for "${nodeTitle}": ${warning.functionName} (issue: ${warning.issue})`);
+    agentIO.brief(
+      'warn',
+      'explorer',
+      `Triologue tool misalign for "${nodeTitle}": ${warning.functionName} (issue: ${warning.issue})`
+    );
   };
 
   const transcriptWriter = createExplorerTranscriptWriter(transcriptPath);
@@ -146,7 +152,7 @@ function createExplorerTriologue(nodeTitle: string): TriologueLite {
     tokenThreshold: getTokenThreshold(),
     onMessage: (msg: Message) => transcriptWriter.append(asAppendablePiece(msg)),
     onMisorder,
-    onToolMisalign,
+    onToolMisalign
   });
 
   return triologue;
@@ -168,16 +174,17 @@ const EXPLORER_TOOLS: Tool[] = [
         properties: {
           path: {
             type: 'string',
-            description: 'File path relative to workDir',
+            description: 'File path relative to workDir'
           },
           offset: {
             type: 'number',
-            description: 'Character offset to start reading from (default: 0). Use this to continue reading a large file that was truncated, passing the offset shown in the previous truncation marker.',
-          },
+            description:
+              'Character offset to start reading from (default: 0). Use this to continue reading a large file that was truncated, passing the offset shown in the previous truncation marker.'
+          }
         },
-        required: ['path'],
-      },
-    },
+        required: ['path']
+      }
+    }
   },
   {
     type: 'function',
@@ -189,12 +196,12 @@ const EXPLORER_TOOLS: Tool[] = [
         properties: {
           path: {
             type: 'string',
-            description: 'Directory path (default: current)',
-          },
+            description: 'Directory path (default: current)'
+          }
         },
-        required: [],
-      },
-    },
+        required: []
+      }
+    }
   },
   {
     type: 'function',
@@ -206,16 +213,16 @@ const EXPLORER_TOOLS: Tool[] = [
         properties: {
           pattern: {
             type: 'string',
-            description: 'Search pattern (regex)',
+            description: 'Search pattern (regex)'
           },
           path: {
             type: 'string',
-            description: 'Directory to search (default: .)',
-          },
+            description: 'Directory to search (default: .)'
+          }
         },
-        required: ['pattern'],
-      },
-    },
+        required: ['pattern']
+      }
+    }
   },
   {
     type: 'function',
@@ -228,52 +235,50 @@ const EXPLORER_TOOLS: Tool[] = [
         properties: {
           path: {
             type: 'string',
-            description: 'File path to mark as relevant',
+            description: 'File path to mark as relevant'
           },
           reason: {
             type: 'string',
-            description: 'Why this file is relevant (brief)',
-          },
+            description: 'Why this file is relevant (brief)'
+          }
         },
-        required: ['path'],
-      },
-    },
+        required: ['path']
+      }
+    }
   },
   {
     type: 'function',
     function: {
       name: 'web_search',
-      description:
-        'Search the web for information. Use for documentation, libraries, or external resources.',
+      description: 'Search the web for information. Use for documentation, libraries, or external resources.',
       parameters: {
         type: 'object',
         properties: {
           query: {
             type: 'string',
-            description: 'The search query',
-          },
+            description: 'The search query'
+          }
         },
-        required: ['query'],
-      },
-    },
+        required: ['query']
+      }
+    }
   },
   {
     type: 'function',
     function: {
       name: 'web_fetch',
-      description:
-        'Fetch content from a URL. Use to read documentation or articles found via web_search.',
+      description: 'Fetch content from a URL. Use to read documentation or articles found via web_search.',
       parameters: {
         type: 'object',
         properties: {
           url: {
             type: 'string',
-            description: 'The URL to fetch',
-          },
+            description: 'The URL to fetch'
+          }
         },
-        required: ['url'],
-      },
-    },
+        required: ['url']
+      }
+    }
   },
   {
     type: 'function',
@@ -286,16 +291,16 @@ const EXPLORER_TOOLS: Tool[] = [
         properties: {
           url: {
             type: 'string',
-            description: 'URL to mark as relevant',
+            description: 'URL to mark as relevant'
           },
           reason: {
             type: 'string',
-            description: 'Why this URL is relevant (brief)',
-          },
+            description: 'Why this URL is relevant (brief)'
+          }
         },
-        required: ['url'],
-      },
-    },
+        required: ['url']
+      }
+    }
   },
   {
     type: 'function',
@@ -311,16 +316,16 @@ const EXPLORER_TOOLS: Tool[] = [
         properties: {
           term: {
             type: 'string',
-            description: 'The term name (e.g. "STAR principle", "microCompact", "triologue")',
+            description: 'The term name (e.g. "STAR principle", "microCompact", "triologue")'
           },
           context: {
             type: 'string',
-            description: 'Brief definition or context for this term (one sentence)',
-          },
+            description: 'Brief definition or context for this term (one sentence)'
+          }
         },
-        required: ['term'],
-      },
-    },
+        required: ['term']
+      }
+    }
   },
   {
     type: 'function',
@@ -336,13 +341,13 @@ const EXPLORER_TOOLS: Tool[] = [
         properties: {
           summary: {
             type: 'string',
-            description: 'The final summary text for this documentation section (50-200 words)',
-          },
+            description: 'The final summary text for this documentation section (50-200 words)'
+          }
         },
-        required: ['summary'],
-      },
-    },
-  },
+        required: ['summary']
+      }
+    }
+  }
 ];
 
 /**
@@ -366,34 +371,17 @@ async function executeTool(
     case 'ls':
       return ls(args.path as string | undefined, workDir);
     case 'grep':
-      return await grep(
-        args.pattern as string,
-        args.path as string | undefined,
-        workDir
-      );
+      return await grep(args.pattern as string, args.path as string | undefined, workDir);
     case 'mark_file':
-      return markFile(
-        args.path as string,
-        args.reason as string | undefined,
-        workDir,
-        markedFiles
-      );
+      return markFile(args.path as string, args.reason as string | undefined, workDir, markedFiles);
     case 'web_search':
       return await webSearch(args.query as string);
     case 'web_fetch':
       return await webFetch(args.url as string);
     case 'mark_url':
-      return markUrl(
-        args.url as string,
-        args.reason as string | undefined,
-        markedUrls
-      );
+      return markUrl(args.url as string, args.reason as string | undefined, markedUrls);
     case 'mark_term':
-      return markTerm(
-        args.term as string,
-        args.context as string | undefined,
-        markedTerms
-      );
+      return markTerm(args.term as string, args.context as string | undefined, markedTerms);
     default:
       return `Unknown tool: ${name}`;
   }
@@ -471,12 +459,7 @@ async function grep(pattern: string, p: string | undefined, workDir: string): Pr
 /**
  * Mark a file as relevant to the topic
  */
-function markFile(
-  p: string,
-  reason: string | undefined,
-  workDir: string,
-  markedFiles: MarkedItem[]
-): string {
+function markFile(p: string, reason: string | undefined, workDir: string, markedFiles: MarkedItem[]): string {
   const fullPath = path.resolve(workDir, p);
   if (!fullPath.startsWith(workDir)) {
     return 'Error: Path escapes workspace';
@@ -499,11 +482,7 @@ function markFile(
 /**
  * Mark a URL as relevant to the topic
  */
-function markUrl(
-  url: string,
-  reason: string | undefined,
-  markedUrls: MarkedItem[]
-): string {
+function markUrl(url: string, reason: string | undefined, markedUrls: MarkedItem[]): string {
   if (!url) {
     return 'Error: url is required';
   }
@@ -530,11 +509,7 @@ function markUrl(
  * Mark a term as relevant to the topic
  * Terms are hoisted to root-level discoverability
  */
-function markTerm(
-  term: string,
-  context: string | undefined,
-  markedTerms: MarkedTerm[]
-): string {
+function markTerm(term: string, context: string | undefined, markedTerms: MarkedTerm[]): string {
   if (!term) {
     return 'Error: term is required';
   }
@@ -556,7 +531,7 @@ function markTerm(
 function withTimeout<T>(
   operation: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
-  errorMessage: string,
+  errorMessage: string
 ): Promise<T> {
   const controller = new AbortController();
   return new Promise((resolve, reject) => {
@@ -634,7 +609,7 @@ async function webFetch(url: string): Promise<string> {
       `**URL:** ${response.url}\n`,
       '### Content',
       response.content || '(no content)',
-      '',
+      ''
     ];
 
     if (response.links && response.links.length > 0) {
@@ -661,7 +636,7 @@ function buildExplorationPrompt(
   nodeText: string,
   ancestorContext: string,
   existingNode?: Node,
-  maxRounds?: number,
+  maxRounds?: number
 ): string {
   const budget = maxRounds ?? MAX_ROUNDS_DEFAULT;
   let existingContextSection = '';
@@ -780,7 +755,11 @@ export async function summarizeWithExplorer(
       try {
         await triologue.compact(nodeTitle, undefined, EXPLORER_TOOLS, []);
       } catch (err) {
-        agentIO.brief('warn', 'explorer', `Compaction failed for "${nodeTitle}": ${(err as Error).message}. Continuing with full context.`);
+        agentIO.brief(
+          'warn',
+          'explorer',
+          `Compaction failed for "${nodeTitle}": ${(err as Error).message}. Continuing with full context.`
+        );
       }
     }
 
@@ -791,12 +770,16 @@ export async function summarizeWithExplorer(
           model: MODEL,
           messages: triologue.getMessages(),
           tools: EXPLORER_TOOLS,
-          think: false,
+          think: false
         },
-        { noSpinner: true },
+        { noSpinner: true }
       );
     } catch (err) {
-      agentIO.brief('warn', 'explorer', `LLM chat failed at round ${rounds} for "${nodeTitle}": ${(err as Error).message}`);
+      agentIO.brief(
+        'warn',
+        'explorer',
+        `LLM chat failed at round ${rounds} for "${nodeTitle}": ${(err as Error).message}`
+      );
       // Non-transient error or all retries exhausted - stop the loop with what we have
       break;
     }
@@ -811,7 +794,7 @@ export async function summarizeWithExplorer(
     if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
       triologue.user(
         `Your previous response was plain text, but the summary must be submitted via the final tool. ` +
-        `Call the final tool now with your summary (50-200 words). Do NOT output plain text — use the final tool.`
+          `Call the final tool now with your summary (50-200 words). Do NOT output plain text — use the final tool.`
       );
       continue;
     }
@@ -822,9 +805,10 @@ export async function summarizeWithExplorer(
     // (assistant→tool→assistant). The LLM sees remaining rounds alongside
     // the tool output it just requested.
     const remaining = maxRounds - rounds;
-    const budgetHint = remaining <= FORCE_STOP_THRESHOLD
-      ? `\n\n[STEERING] ${remaining} round${remaining === 1 ? '' : 's'} left. COUNTDOWN ACTIVE — call the final tool NOW with your summary. Do NOT call any other tools. You have enough information.`
-      : `\n\n[STEERING] ${remaining} round${remaining === 1 ? '' : 's'} left. Batch independent tool calls to conserve rounds; call final with your summary when ready.`;
+    const budgetHint =
+      remaining <= FORCE_STOP_THRESHOLD
+        ? `\n\n[STEERING] ${remaining} round${remaining === 1 ? '' : 's'} left. COUNTDOWN ACTIVE — call the final tool NOW with your summary. Do NOT call any other tools. You have enough information.`
+        : `\n\n[STEERING] ${remaining} round${remaining === 1 ? '' : 's'} left. Batch independent tool calls to conserve rounds; call final with your summary when ready.`;
 
     // Execute tool calls (each individually guarded)
     const calls = assistantMsg.tool_calls as ToolCall[];
@@ -845,13 +829,17 @@ export async function summarizeWithExplorer(
             summary: finalSummary,
             markedFiles,
             markedUrls,
-            markedTerms,
+            markedTerms
           };
         }
         // Summary too short — reject and let the loop continue so the LLM
         // can retry with a more substantial summary.
-        triologue.tool('final', 'Error: summary too short (minimum 10 characters). Call final again with a more detailed summary (50-200 words).', tc.id);
-        continue;  // skip the steering-hint append for this rejected call
+        triologue.tool(
+          'final',
+          'Error: summary too short (minimum 10 characters). Call final again with a more detailed summary (50-200 words).',
+          tc.id
+        );
+        continue; // skip the steering-hint append for this rejected call
       }
 
       if (onProgress) {
@@ -888,7 +876,7 @@ export async function summarizeWithExplorer(
     const conversationText = minifyMessages(triologue.getMessagesRaw(), {
       maxContentLength: 1000,
       maxArgsLength: 300,
-      truncateToolOutput: true,  // truncate large file reads in the transcript
+      truncateToolOutput: true // truncate large file reads in the transcript
     });
 
     const fallbackResponse = await retryChat(
@@ -897,13 +885,13 @@ export async function summarizeWithExplorer(
         messages: [
           {
             role: 'user',
-            content: `You are writing a summary for documentation section "${nodeTitle}".\n\n## Section content\n${nodeText.slice(0, 4000)}\n\n## Parent context\n${ancestorContext?.slice(0, 2000) || '(none)'}\n\nBelow is a compact transcript of an exploration session. Based on it, write a concise summary (50-200 words):\n\n${conversationText}`,
-          },
+            content: `You are writing a summary for documentation section "${nodeTitle}".\n\n## Section content\n${nodeText.slice(0, 4000)}\n\n## Parent context\n${ancestorContext?.slice(0, 2000) || '(none)'}\n\nBelow is a compact transcript of an exploration session. Based on it, write a concise summary (50-200 words):\n\n${conversationText}`
+          }
         ],
-        think: false,
+        think: false
         // No tools — fresh single-turn call, no historical tool_calls to conflict.
       },
-      { noSpinner: true },
+      { noSpinner: true }
     );
 
     const fallback = fallbackResponse.message.content || '';
@@ -921,6 +909,6 @@ export async function summarizeWithExplorer(
     summary: '',
     markedFiles,
     markedUrls,
-    markedTerms,
+    markedTerms
   };
 }

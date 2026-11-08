@@ -72,7 +72,7 @@ const groups = computed<TeammateGroup[]>(() => {
     const tool = toolTag(m.label);
     lastTool.set(name, tool ?? '—');
   }
-  return order.map(name => {
+  return order.map((name) => {
     const msgs = messagesMap.get(name) ?? [];
     const last = msgs.length > 0 ? msgs[msgs.length - 1] : null;
     return {
@@ -80,7 +80,7 @@ const groups = computed<TeammateGroup[]>(() => {
       count: msgs.length,
       currentTool: lastTool.get(name) ?? '—',
       messages: msgs,
-      done: last !== null ? toolTag(last.label) === 'exit' : false,
+      done: last !== null ? toolTag(last.label) === 'exit' : false
     };
   });
 });
@@ -95,14 +95,14 @@ watch(
   () => props.initiallyExpanded,
   (name) => {
     const next = new Set<string>();
-    if (name && groups.value.some(g => g.name === name)) {
+    if (name && groups.value.some((g) => g.name === name)) {
       next.add(name);
     } else if (groups.value.length > 0) {
       next.add(groups.value[0].name);
     }
     expanded.value = next;
   },
-  { immediate: true },
+  { immediate: true }
 );
 
 // Re-run default expansion if initiallyExpanded was empty and the first
@@ -118,7 +118,7 @@ watch(
         expanded.value = next;
       }
     }
-  },
+  }
 );
 
 function toggle(name: string): void {
@@ -178,9 +178,7 @@ function toolPrefix(m: ChatMessage): string {
 }
 
 function timeStr(m: ChatMessage): string {
-  return m.timestamp
-    ? new Date(m.timestamp).toLocaleTimeString('en-GB', { hour12: false })
-    : '';
+  return m.timestamp ? new Date(m.timestamp).toLocaleTimeString('en-GB', { hour12: false }) : '';
 }
 
 // Auto-scroll the body of an expanded accordion to the bottom when new
@@ -197,7 +195,7 @@ const bodyRefs = new Map<string, HTMLElement | null>();
 const bodyScrolledUp = new Map<string, boolean>();
 
 function setBodyRef(name: string, el: Element | ComponentPublicInstance | null): void {
-  bodyRefs.set(name, (el instanceof HTMLElement) ? el : null);
+  bodyRefs.set(name, el instanceof HTMLElement ? el : null);
 }
 
 function isBodyAtBottom(name: string): boolean {
@@ -225,14 +223,14 @@ function onBodyScroll(name: string): void {
 // Watch each group's message count; when it grows, scroll the body to bottom
 // ONLY if the user hasn't scrolled up (stick-to-bottom behavior).
 watch(
-  () => groups.value.map(g => `${g.name}:${g.messages.length}`).join('|'),
+  () => groups.value.map((g) => `${g.name}:${g.messages.length}`).join('|'),
   () => {
     for (const g of groups.value) {
       if (expanded.value.has(g.name) && !bodyScrolledUp.get(g.name)) {
         nextTick(() => scrollToBottom(g.name));
       }
     }
-  },
+  }
 );
 
 function onClose(): void {
@@ -246,9 +244,9 @@ function onClose(): void {
 // so neither side gets over-compressed. The handle uses pointer events for
 // smooth cross-platform dragging. MIN_LEFT ensures the chat log keeps at
 // least MIN_LEFT px; MIN_WIDTH ensures the drawer keeps at least MIN_WIDTH px.
-const MIN_WIDTH = 280;   // px — drawer never narrower than this
-const MIN_LEFT = 320;     // px — chat log never narrower than this
-const drawerWidth = ref(0);  // 0 = unset → CSS default (50%)
+const MIN_WIDTH = 280; // px — drawer never narrower than this
+const MIN_LEFT = 320; // px — chat log never narrower than this
+const drawerWidth = ref(0); // 0 = unset → CSS default (50%)
 
 const drawerRef = ref<HTMLElement | null>(null);
 let dragging = false;
@@ -281,9 +279,7 @@ function onHandleUp(e: PointerEvent): void {
   }
 }
 
-const drawerStyle = computed(() =>
-  drawerWidth.value > 0 ? { width: `${drawerWidth.value}px` } : {},
-);
+const drawerStyle = computed(() => (drawerWidth.value > 0 ? { width: `${drawerWidth.value}px` } : {}));
 </script>
 
 <template>
@@ -304,12 +300,7 @@ const drawerStyle = computed(() =>
       <button class="drawer-close" type="button" title="关闭" @click="onClose">✕</button>
     </div>
     <div class="accordion-list">
-      <div
-        v-for="g in groups"
-        :key="g.name"
-        class="accordion"
-        :class="{ expanded: expanded.has(g.name) }"
-      >
+      <div v-for="g in groups" :key="g.name" class="accordion" :class="{ expanded: expanded.has(g.name) }">
         <button
           class="accordion-header"
           type="button"
@@ -336,19 +327,12 @@ const drawerStyle = computed(() =>
           :ref="(el) => setBodyRef(g.name, el)"
           @scroll="onBodyScroll(g.name)"
         >
-          <div
-            v-for="(m, idx) in g.messages"
-            :key="m.id ?? idx"
-            class="tm-row"
-          >
+          <div v-for="(m, idx) in g.messages" :key="m.id ?? idx" class="tm-row">
             <div class="tm-meta">
               <span v-if="timeStr(m)" class="tm-time">{{ timeStr(m) }}</span>
               <span v-if="toolPrefix(m)" class="tm-tool">{{ toolPrefix(m) }}</span>
             </div>
-            <div
-              class="tm-bubble"
-              :class="[m.type, { mono: isMonospace(m), 'bash-card': isBashCommand(m) }]"
-            >
+            <div class="tm-bubble" :class="[m.type, { mono: isMonospace(m), 'bash-card': isBashCommand(m) }]">
               <div v-if="m.detail" class="tm-detail">{{ m.detail }}</div>
               <template v-if="isBashCommand(m)">
                 <pre class="tm-bash"><span class="tm-prompt">$</span>{{ m.content }}</pre>
@@ -453,7 +437,7 @@ const drawerStyle = computed(() =>
    together never exceed it. */
 .accordion-list {
   flex: 1;
-  min-height: 0;            /* allow children to shrink within the flex column */
+  min-height: 0; /* allow children to shrink within the flex column */
   display: flex;
   flex-direction: column;
   padding: 4px 0;
@@ -641,9 +625,15 @@ const drawerStyle = computed(() =>
   font-weight: 600;
   line-height: 1.3;
 }
-.tm-md :deep(h1) { font-size: 1.2em; }
-.tm-md :deep(h2) { font-size: 1.1em; }
-.tm-md :deep(h3) { font-size: 1em; }
+.tm-md :deep(h1) {
+  font-size: 1.2em;
+}
+.tm-md :deep(h2) {
+  font-size: 1.1em;
+}
+.tm-md :deep(h3) {
+  font-size: 1em;
+}
 /* Lists: constrain padding-inline-start so markdown-it bullets/numbers stay
    inside the narrow teammate bubble. Without this the browser default
    (padding-inline-start: 40px) pushes the marker past the left edge and clips

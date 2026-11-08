@@ -37,10 +37,10 @@ const DEFAULT_PROMPT =
 // ---------------------------------------------------------------------------
 
 interface DetectedEnv {
-  platform: string;       // 'linux' | 'darwin' | 'win32' | 'unknown'
-  displayServer: string;  // 'wayland' | 'x11' | 'unknown'
-  desktop: string;        // 'gnome' | 'kde' | 'sway' | 'hyprland' | 'unknown'
-  availableTools: string[];// screenshot commands found on $PATH
+  platform: string; // 'linux' | 'darwin' | 'win32' | 'unknown'
+  displayServer: string; // 'wayland' | 'x11' | 'unknown'
+  desktop: string; // 'gnome' | 'kde' | 'sway' | 'hyprland' | 'unknown'
+  availableTools: string[]; // screenshot commands found on $PATH
 }
 
 /**
@@ -111,12 +111,12 @@ function detectEnvironment(probe = false): DetectedEnv {
   const candidates = isWin
     ? ['powershell'] // Windows uses PowerShell with .NET
     : [
-        'gnome-screenshot',   // GNOME / Wayland or X11
-        'grim',               // wlroots compositors (Sway, Hyprland)
-        'spectacle',          // KDE
-        'scrot',              // X11 lightweight
-        'import',             // ImageMagick (X11)
-        'screencapture',      // macOS built-in
+        'gnome-screenshot', // GNOME / Wayland or X11
+        'grim', // wlroots compositors (Sway, Hyprland)
+        'spectacle', // KDE
+        'scrot', // X11 lightweight
+        'import', // ImageMagick (X11)
+        'screencapture' // macOS built-in
       ];
 
   const availableTools: string[] = [];
@@ -126,7 +126,7 @@ function detectEnvironment(probe = false): DetectedEnv {
       execSync(checkCmd, {
         encoding: 'utf-8',
         timeout: 3000,
-        ...(isWin ? { shell: 'cmd.exe' } : {}),
+        ...(isWin ? { shell: 'cmd.exe' } : {})
       });
       availableTools.push(cmd);
     } catch {
@@ -168,12 +168,12 @@ function listWindowsMonitors(): string[] | null {
       encoding: 'utf-8',
       timeout: 5000,
       stdio: 'pipe',
-      shell: 'cmd.exe',
+      shell: 'cmd.exe'
     });
     return out
       .split(/\r?\n/)
-      .map(l => l.trim())
-      .filter(l => l.length > 0);
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
   } catch {
     return null;
   }
@@ -188,11 +188,7 @@ function listWindowsMonitors(): string[] | null {
  *   this 0-based index. Out-of-range values are handled per-platform;
  *   on Windows an out-of-range index returns an error listing monitors.
  */
-function captureScreenshot(
-  env: DetectedEnv,
-  screenshotPath: string,
-  monitorIndex = 0,
-): CaptureResult | CaptureError {
+function captureScreenshot(env: DetectedEnv, screenshotPath: string, monitorIndex = 0): CaptureResult | CaptureError {
   // Build an ordered list of (command, description) to try
   const attempts: Array<{ cmd: string; desc: string }> = [];
 
@@ -219,8 +215,13 @@ $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height);
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap);
 $graphics.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, $bitmap.Size);
 $bitmap.Save('${winPath}')
-`.trim().replace(/\n/g, ' ');
-    attempts.push({ cmd: `powershell -NoProfile -Command "${psScript}"`, desc: `PowerShell/.NET (Windows built-in, monitor ${monitorIndex + 1})` });
+`
+      .trim()
+      .replace(/\n/g, ' ');
+    attempts.push({
+      cmd: `powershell -NoProfile -Command "${psScript}"`,
+      desc: `PowerShell/.NET (Windows built-in, monitor ${monitorIndex + 1})`
+    });
   }
 
   // --- macOS ---
@@ -228,7 +229,10 @@ $bitmap.Save('${winPath}')
     // screencapture -D <display> is 1-based; monitorIndex is 0-based, so
     // monitorIndex + 1 == the 1-based desktop number the user passed in.
     const displayNum = monitorIndex + 1;
-    attempts.push({ cmd: `screencapture -x -D ${displayNum} "${screenshotPath}"`, desc: `screencapture (macOS built-in, display ${displayNum})` });
+    attempts.push({
+      cmd: `screencapture -x -D ${displayNum} "${screenshotPath}"`,
+      desc: `screencapture (macOS built-in, display ${displayNum})`
+    });
   }
 
   // --- Linux + Wayland ---
@@ -255,10 +259,10 @@ $bitmap.Save('${winPath}')
   }
 
   // --- Cross-desktop fallbacks ---
-  if (env.availableTools.includes('spectacle') && !attempts.some(a => a.desc.includes('spectacle'))) {
+  if (env.availableTools.includes('spectacle') && !attempts.some((a) => a.desc.includes('spectacle'))) {
     attempts.push({ cmd: `spectacle -b -n -o "${screenshotPath}"`, desc: 'spectacle (KDE)' });
   }
-  if (env.availableTools.includes('gnome-screenshot') && !attempts.some(a => a.desc.includes('gnome-screenshot'))) {
+  if (env.availableTools.includes('gnome-screenshot') && !attempts.some((a) => a.desc.includes('gnome-screenshot'))) {
     attempts.push({ cmd: `gnome-screenshot -f "${screenshotPath}"`, desc: 'gnome-screenshot (fallback)' });
   }
 
@@ -267,7 +271,7 @@ $bitmap.Save('${winPath}')
     return {
       ok: false,
       error: `No compatible screenshot tool found for this environment (OS: ${env.platform}, display: ${env.displayServer}, desktop: ${env.desktop}).`,
-      diagnostics,
+      diagnostics
     };
   }
 
@@ -280,7 +284,7 @@ $bitmap.Save('${winPath}')
         encoding: 'utf-8',
         timeout: 10000,
         stdio: 'pipe',
-        ...(isWin ? { shell: 'cmd.exe' } : {}),
+        ...(isWin ? { shell: 'cmd.exe' } : {})
       });
       if (fs.existsSync(screenshotPath) && fs.statSync(screenshotPath).size > 0) {
         return { ok: true, path: screenshotPath, method: attempt.desc };
@@ -299,7 +303,7 @@ $bitmap.Save('${winPath}')
   return {
     ok: false,
     error: `All screenshot capture methods failed (tried ${failures.length} method(s)).`,
-    diagnostics,
+    diagnostics
   };
 }
 
@@ -364,21 +368,20 @@ export const screenTool: ToolDefinition = {
     properties: {
       prompt: {
         type: 'string',
-        description:
-          'Custom prompt for the vision model (e.g., "What error message is shown?").',
+        description: 'Custom prompt for the vision model (e.g., "What error message is shown?").'
       },
       desktop: {
         type: 'number',
         description:
-          'Monitor to capture on a multi-monitor setup, as a 1-based index (1 = primary). Omit or set 1 for the primary monitor. On Windows this selects among [System.Windows.Forms.Screen]::AllScreens (internally converted to a 0-based index); on macOS it maps to `screencapture -D <index>` (1-based display number). An out-of-range index returns the available monitors and their bounds.',
+          'Monitor to capture on a multi-monitor setup, as a 1-based index (1 = primary). Omit or set 1 for the primary monitor. On Windows this selects among [System.Windows.Forms.Screen]::AllScreens (internally converted to a 0-based index); on macOS it maps to `screencapture -D <index>` (1-based display number). An out-of-range index returns the available monitors and their bounds.'
       },
       probe: {
         type: 'boolean',
         description:
-          'If true, re-run environment detection (probe installed screenshot tools via `which`/`where`) instead of reusing the process-cached result. Default false — detection is cached to avoid child-process spawns. Set true after installing a screenshot tool mid-session (e.g. `sudo apt install scrot`).',
-      },
+          'If true, re-run environment detection (probe installed screenshot tools via `which`/`where`) instead of reusing the process-cached result. Default false — detection is cached to avoid child-process spawns. Set true after installing a screenshot tool mid-session (e.g. `sudo apt install scrot`).'
+      }
     },
-    required: [],
+    required: []
   },
   scope: ['main', 'child'],
 
@@ -394,7 +397,11 @@ export const screenTool: ToolDefinition = {
       if (Number.isInteger(n) && n >= 1) {
         desktopNum = n;
       } else {
-        ctx.core.brief('warn', 'screen', `Invalid desktop value "${args.desktop}" (expected positive integer, 1-based); falling back to primary monitor (1).`);
+        ctx.core.brief(
+          'warn',
+          'screen',
+          `Invalid desktop value "${args.desktop}" (expected positive integer, 1-based); falling back to primary monitor (1).`
+        );
       }
     }
     const monitorIndex = desktopNum - 1; // 0-based for AllScreens indexing
@@ -406,7 +413,11 @@ export const screenTool: ToolDefinition = {
 
     // Detect environment
     const env = detectEnvironment(probe);
-    ctx.core.brief('info', 'screen', `Environment: OS=${env.platform}, display=${env.displayServer}, desktop=${env.desktop}, monitor=${desktopNum}`);
+    ctx.core.brief(
+      'info',
+      'screen',
+      `Environment: OS=${env.platform}, display=${env.displayServer}, desktop=${env.desktop}, monitor=${desktopNum}`
+    );
 
     // On Windows, validate the monitor index up front so an out-of-range
     // value yields an actionable error listing the available monitors,
@@ -452,7 +463,11 @@ export const screenTool: ToolDefinition = {
       return `## ❌ Screen Tool Error\n\n${err.message}`;
     } finally {
       // Cleanup
-      try { fs.unlinkSync(screenshotPath); } catch { /* ignore */ }
+      try {
+        fs.unlinkSync(screenshotPath);
+      } catch {
+        /* ignore */
+      }
     }
-  },
+  }
 };

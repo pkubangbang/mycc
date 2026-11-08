@@ -13,10 +13,7 @@ import { buildCommonSections, buildTeammateAgentMemorySection } from './common.j
 // Teammate Prompt (Child Process)
 // ============================================================================
 
-export function buildTeammatePrompt(
-  workDir: string,
-  identity: { name: string; role: string }
-): string {
+export function buildTeammatePrompt(workDir: string, identity: { name: string; role: string }): string {
   return `You are ${identity.name}, a specialized agent working as part of a team, created by the "lead".
 Your role is ${identity.role}. You are working at ${workDir}.
 

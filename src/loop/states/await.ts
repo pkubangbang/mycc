@@ -39,11 +39,7 @@ import { autoState } from '../auto-state.js';
 import { exitAutoMode } from '../exit-auto.js';
 import { agentIO } from '../agent-io.js';
 
-export async function handleWait(
-  env: MachineEnv,
-  _turn: TurnVars,
-  _chat: ChatData,
-): Promise<HandlerResult> {
+export async function handleWait(env: MachineEnv, _turn: TurnVars, _chat: ChatData): Promise<HandlerResult> {
   const { ctx } = env;
 
   // AWAIT is a STATE the user must be able to see: "waiting for an event" and
@@ -54,7 +50,7 @@ export async function handleWait(
   ctx.core.brief(
     'info',
     'await',
-    'AWAIT — auto mode: waiting for an event (mail, teammate, steering). ESC leaves auto mode.',
+    'AWAIT — auto mode: waiting for an event (mail, teammate, steering). ESC leaves auto mode.'
   );
   let ticks = 0;
 
@@ -65,7 +61,7 @@ export async function handleWait(
   while (autoState.getAuto()) {
     const reason = await ctx.team.awaitTeammates({
       reasons: ['holding', 'mail', 'steering', 'esc', 'timeout'],
-      timeoutMs: 60_000,
+      timeoutMs: 60_000
     });
 
     if (reason === 'esc') {

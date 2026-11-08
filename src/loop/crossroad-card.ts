@@ -107,9 +107,9 @@ export function buildCrossroadCard(args: {
       index: i + 1,
       direction: directionNames?.[i] ?? `option ${i + 1}`,
       preview: plainPreview(text),
-      selected: i === chosenIndex,
+      selected: i === chosenIndex
     })),
-    outcome: resolvedOutcome ? plainPreview(resolvedOutcome, CROSSROAD_PREVIEW_MAX * 2) : '',
+    outcome: resolvedOutcome ? plainPreview(resolvedOutcome, CROSSROAD_PREVIEW_MAX * 2) : ''
   };
 }
 
@@ -165,8 +165,8 @@ export function toCrossroadCardWire(card: CrossroadCard): CrossroadCardWire {
       index: c.index,
       direction: c.direction,
       preview: c.preview,
-      selected: c.selected,
+      selected: c.selected
     })),
-    outcome: card.outcome,
+    outcome: card.outcome
   };
 }

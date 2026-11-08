@@ -45,5 +45,5 @@ export const modeCommand: SlashCommand = {
       console.log(chalk.red(`Unknown mode: ${modeArg}`));
       console.log(chalk.gray('Usage: /mode [plan|normal]'));
     }
-  },
+  }
 };

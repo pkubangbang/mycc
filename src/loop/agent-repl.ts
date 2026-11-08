@@ -10,7 +10,19 @@ import { classifyError } from '../engine/chat-helpers.js';
 import { ParentContext } from '../context/parent-context.js';
 import { getSessionId, markHeadlessSession } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
-import { getTokenThreshold, shouldServe, getServePort, getServeHost, shouldAuto, shouldDaemon, getAutoflyThresholdArg, getDiscoveryDir, isPlainOutput, getAllowAutoCommitBranches, shouldSkipHealthCheck } from '../config.js';
+import {
+  getTokenThreshold,
+  shouldServe,
+  getServePort,
+  getServeHost,
+  shouldAuto,
+  shouldDaemon,
+  getAutoflyThresholdArg,
+  getDiscoveryDir,
+  isPlainOutput,
+  getAllowAutoCommitBranches,
+  shouldSkipHealthCheck
+} from '../config.js';
 import { Triologue } from './triologue.js';
 import { JsonlTranscriptWriter, asAppendablePiece } from './triologue/transcript.js';
 import { agentIO } from './agent-io.js';
@@ -47,7 +59,12 @@ import { registerSignalHandlers } from './signal-handlers.js';
 import { initDaemonMode } from './daemon-init.js';
 import { ServeDetachedExitError } from '../serve/serve-errors.js';
 import { initHookSystem, buildHookInfoMessages } from './hook-bootstrap.js';
-import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildWikiDomainsMessages, buildCollaborationMessages } from './prompt-populators.js';
+import {
+  buildPlatformCalendarMessages,
+  buildNodeModulesReminderMessages,
+  buildWikiDomainsMessages,
+  buildCollaborationMessages
+} from './prompt-populators.js';
 import { loadDomains } from '../context/parent/wiki-utils.js';
 import { wireServeCallbacks } from './serve-wiring.js';
 
@@ -128,7 +145,10 @@ export async function main(): Promise<void> {
 
   console.log(chalk.redBright(`${alignLabel('WorkDir:')}${process.cwd()}`));
 
-  const commands = slashRegistry.list().map((c) => `/${c}`).join(', ');
+  const commands = slashRegistry
+    .list()
+    .map((c) => `/${c}`)
+    .join(', ');
   console.log(chalk.gray(`${alignLabel('Commands:')}${commands}, /exit`));
   console.log();
 
@@ -190,10 +210,13 @@ export async function main(): Promise<void> {
     // so disk-full / permission / invalid-path issues are not silently
     // lost — without this, every subsequent message is dropped from the
     // durable transcript with zero diagnostic.
-    agentIO.verbose('triologue', `Transcript write failed: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`);
+    agentIO.verbose(
+      'triologue',
+      `Transcript write failed: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`
+    );
     loopEvents.emit('triologue_event', {
       kind: 'transcript_write_error',
-      detail: writeErr instanceof Error ? writeErr.message : String(writeErr),
+      detail: writeErr instanceof Error ? writeErr.message : String(writeErr)
     });
   });
 
@@ -210,7 +233,7 @@ export async function main(): Promise<void> {
       // so getTriologue stays unused here; the parameter is kept to match
       // the contract (prefix-underscored).
       transcriptWriter.append(asAppendablePiece(msg));
-    },
+    }
   });
 
   // Wire the user-input journal provider: the transcript is the single source
@@ -275,8 +298,16 @@ export async function main(): Promise<void> {
   //     mindmap is not reloaded mid-session, so this is stable).
   if (mindmapLoaded) {
     triologue.registerProjectContextPopulator(() => [
-      { role: 'user', content: '[System] A mindmap (knowledge tree) is available. Use the `recall` tool to explore it. Start with `recall("/")` to see top-level nodes, then drill down into children. The mindmap contains compiled project knowledge and guidance.' },
-      { role: 'assistant', content: 'Understood. I will use the recall tool to explore the mindmap. Starting with recall("/") to see the top-level structure.' },
+      {
+        role: 'user',
+        content:
+          '[System] A mindmap (knowledge tree) is available. Use the `recall` tool to explore it. Start with `recall("/")` to see top-level nodes, then drill down into children. The mindmap contains compiled project knowledge and guidance.'
+      },
+      {
+        role: 'assistant',
+        content:
+          'Understood. I will use the recall tool to explore the mindmap. Starting with recall("/") to see the top-level structure.'
+      }
     ]);
   } else {
     // No mindmap. The recall tool needs a mindmap, so always steer the agent
@@ -289,13 +320,29 @@ export async function main(): Promise<void> {
       const myccPath = path.join(process.cwd(), 'MYCC.md');
       if (fs.existsSync(myccPath)) {
         return [
-          { role: 'user', content: '[System] No mindmap found. Please read MYCC.md to understand the project context and structure. IMPORTANT: The recall tool will not work without a mindmap, so do NOT use it. Use read_file tool to explore MYCC.md instead.' },
-          { role: 'assistant', content: 'Understood. I will read MYCC.md using read_file to understand the project. I will NOT use the recall tool since no mindmap is available.' },
+          {
+            role: 'user',
+            content:
+              '[System] No mindmap found. Please read MYCC.md to understand the project context and structure. IMPORTANT: The recall tool will not work without a mindmap, so do NOT use it. Use read_file tool to explore MYCC.md instead.'
+          },
+          {
+            role: 'assistant',
+            content:
+              'Understood. I will read MYCC.md using read_file to understand the project. I will NOT use the recall tool since no mindmap is available.'
+          }
         ];
       }
       return [
-        { role: 'user', content: '[System] No mindmap found. The recall tool will not work without a mindmap, so do NOT use it. Rely on the README.md project context (if provided) and normal exploration (read_file, grep, bash) to understand the project.' },
-        { role: 'assistant', content: 'Understood. No mindmap is available, so I will not use the recall tool. I will rely on the README.md project context and normal exploration to understand the project.' },
+        {
+          role: 'user',
+          content:
+            '[System] No mindmap found. The recall tool will not work without a mindmap, so do NOT use it. Rely on the README.md project context (if provided) and normal exploration (read_file, grep, bash) to understand the project.'
+        },
+        {
+          role: 'assistant',
+          content:
+            'Understood. No mindmap is available, so I will not use the recall tool. I will rely on the README.md project context and normal exploration to understand the project.'
+        }
       ];
     });
   }
@@ -313,7 +360,7 @@ export async function main(): Promise<void> {
     }
     return [
       { role: 'user', content: `[Project Context - README.md from project root, FYI]\n\n${content}` },
-      { role: 'assistant', content: 'Understood. I have read the project context from README.md.' },
+      { role: 'assistant', content: 'Understood. I have read the project context from README.md.' }
     ];
   });
 
@@ -442,7 +489,7 @@ export async function main(): Promise<void> {
     hook: handleHook as StateHandler,
     tool: handleTool as StateHandler,
     stop: handleStop as StateHandler,
-    await: handleWait as StateHandler,
+    await: handleWait as StateHandler
   };
 
   // ── Create state machine ──
@@ -461,7 +508,7 @@ export async function main(): Promise<void> {
     inputProvider,
     sessionFilePath,
     handlers,
-    requestEmbeddingTracker,
+    requestEmbeddingTracker
   );
 
   // ── Register global signal/error handlers ──
@@ -578,10 +625,10 @@ export async function main(): Promise<void> {
           console.error(chalk.gray('────────────────'));
         }
         try {
-          const raw = (triologue as unknown as {
+          const raw = triologue as unknown as {
             messages?: unknown[];
             getMessagesRaw?: () => unknown[];
-          });
+          };
           const arr = raw.messages ?? [];
           const issues: string[] = [];
           for (let i = 0; i < arr.length; i++) {
@@ -589,17 +636,22 @@ export async function main(): Promise<void> {
             if (m === undefined) issues.push(`[${i}] undefined`);
             else if (m === null) issues.push(`[${i}] null`);
             else if (typeof m !== 'object') issues.push(`[${i}] non-object: ${typeof m}`);
-            else if (!(m as { role?: unknown }).role) issues.push(`[${i}] object missing .role: ${JSON.stringify(Object.keys(m as object))}`);
+            else if (!(m as { role?: unknown }).role)
+              issues.push(`[${i}] object missing .role: ${JSON.stringify(Object.keys(m as object))}`);
           }
           console.error(chalk.gray(`messages array: length=${arr.length}`));
           if (issues.length > 0) {
             console.error(chalk.yellow(`malformed entries (${issues.length}):`));
             for (const it of issues) console.error(chalk.yellow(`  ${it}`));
           } else {
-            console.error(chalk.gray('no malformed entries found in this.messages (crash may be in a derived/copied array)'));
+            console.error(
+              chalk.gray('no malformed entries found in this.messages (crash may be in a derived/copied array)')
+            );
           }
         } catch (diagErr) {
-          console.error(chalk.gray(`(diagnostic scan failed: ${diagErr instanceof Error ? diagErr.message : String(diagErr)})`));
+          console.error(
+            chalk.gray(`(diagnostic scan failed: ${diagErr instanceof Error ? diagErr.message : String(diagErr)})`)
+          );
         }
       }
 
@@ -614,7 +666,9 @@ export async function main(): Promise<void> {
       // Always prompt for retry — only 'n'/'no' exits. In auto mode, skip
       // the prompt and always retry (autonomous operation never blocks).
       console.log(chalk.gray('─'.repeat(40)));
-      const answer = agentIO.getAuto() ? 'y' : await agentIO.ask(chalk.cyan('Retry? [Y/n] > '), { useAsPrompt: true, onEsc: 'n', onEnter: 'y' });
+      const answer = agentIO.getAuto()
+        ? 'y'
+        : await agentIO.ask(chalk.cyan('Retry? [Y/n] > '), { useAsPrompt: true, onEsc: 'n', onEnter: 'y' });
       if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
         console.log(chalk.yellow('Exiting at user request.'));
         break;

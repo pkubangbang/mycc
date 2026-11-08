@@ -22,11 +22,7 @@ export function setSlashQuery(query: string): void {
   slashQuery = query;
 }
 
-export async function handleSlash(
-  env: MachineEnv,
-  turn: TurnVars,
-  _chat: ChatData,
-): Promise<HandlerResult> {
+export async function handleSlash(env: MachineEnv, turn: TurnVars, _chat: ChatData): Promise<HandlerResult> {
   const { ctx, triologue, sessionFilePath } = env;
   const query = slashQuery;
   slashQuery = '';
@@ -44,7 +40,7 @@ export async function handleSlash(
     sequence: env.sequence,
     hookExecutor: env.hookExecutor,
     turn,
-    env,
+    env
   };
 
   try {

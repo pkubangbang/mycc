@@ -96,7 +96,8 @@ export function mergeWALEntries(namespace: string): WALEntry[] {
     return [];
   }
 
-  const walFiles = fs.readdirSync(walDir)
+  const walFiles = fs
+    .readdirSync(walDir)
     .filter((f) => f.endsWith('.wal'))
     .sort();
 

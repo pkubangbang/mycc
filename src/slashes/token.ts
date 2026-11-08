@@ -65,11 +65,7 @@ function renderBar(ratio: number, reservedRatio: number, width = 24): string {
   const reserved = Math.min(used, Math.round(clamp(reservedRatio) * width));
   const dynamic = used - reserved;
   const free = width - used;
-  return (
-    chalk.hex('#e5c07b')('█'.repeat(reserved)) +
-    chalk.cyan('█'.repeat(dynamic)) +
-    chalk.gray('░'.repeat(free))
-  );
+  return chalk.hex('#e5c07b')('█'.repeat(reserved)) + chalk.cyan('█'.repeat(dynamic)) + chalk.gray('░'.repeat(free));
 }
 
 /** Colour a token number by how much of the budget it consumes. */
@@ -94,9 +90,7 @@ export const tokenCommand: SlashCommand = {
       typeof triologue.getContextBudget !== 'function' ||
       typeof triologue.getTokenThreshold !== 'function'
     ) {
-      console.log(
-        chalk.yellow('Token info unavailable: triologue does not expose context-budget stats.')
-      );
+      console.log(chalk.yellow('Token info unavailable: triologue does not expose context-budget stats.'));
       return;
     }
 
@@ -114,8 +108,7 @@ export const tokenCommand: SlashCommand = {
     // pre-first-call estimate, build the same prompt here and pass it as an
     // override when the store has none.
     let systemPromptOverride: string | undefined;
-    const stored =
-      typeof triologue.getSystemPrompt === 'function' ? triologue.getSystemPrompt() : null;
+    const stored = typeof triologue.getSystemPrompt === 'function' ? triologue.getSystemPrompt() : null;
     if (!stored) {
       try {
         const workDir = context.ctx.core.getWorkDir();
@@ -149,32 +142,21 @@ export const tokenCommand: SlashCommand = {
     // Kept in the default colour; the reserved/dynamic split is carried by the
     // BAR above, not by tinting the numbers.
     const row = (label: string, value: number) =>
-      console.log(
-        `  ${chalk.gray(label.padEnd(16))}${chalk.white(value.toLocaleString().padStart(10))}`
-      );
+      console.log(`  ${chalk.gray(label.padEnd(16))}${chalk.white(value.toLocaleString().padStart(10))}`);
     row('system prompt', budget.system);
     row('project context', budget.projectContext);
     row('conversation', budget.conversation);
     row(`tools (${tools.length})`, budget.tools);
 
-    const messages =
-      typeof triologue.getMessagesRaw === 'function'
-        ? triologue.getMessagesRaw().length
-        : undefined;
+    const messages = typeof triologue.getMessagesRaw === 'function' ? triologue.getMessagesRaw().length : undefined;
     if (messages !== undefined) {
-      console.log(
-        chalk.gray(`  ${'messages'.padEnd(16)}${messages.toLocaleString().padStart(10)}`)
-      );
+      console.log(chalk.gray(`  ${'messages'.padEnd(16)}${messages.toLocaleString().padStart(10)}`));
     }
 
     console.log(
-      chalk.gray(
-        `\n  remaining: ${Math.max(0, allowed - budget.total).toLocaleString()} tokens before auto-compact`
-      )
+      chalk.gray(`\n  remaining: ${Math.max(0, allowed - budget.total).toLocaleString()} tokens before auto-compact`)
     );
-    console.log(
-      chalk.gray('  note: estimates (heuristic), and excludes per-call overhead the provider adds.')
-    );
+    console.log(chalk.gray('  note: estimates (heuristic), and excludes per-call overhead the provider adds.'));
     console.log();
-  },
+  }
 };

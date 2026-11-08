@@ -9,12 +9,7 @@ import type { PeerModule, IdentityEntry, ChannelFile } from '../types.js';
 import { IdentityManager } from './identity.js';
 import { ChannelManager } from './channel.js';
 import type { ChannelJoinFailure } from './channel.js';
-import {
-  findBySid,
-  liveSocketOf,
-  sendWireMail,
-  describeWireSendFailure,
-} from './wire-registry.js';
+import { findBySid, liveSocketOf, sendWireMail, describeWireSendFailure } from './wire-registry.js';
 import { stopWireClient } from './wire-client.js';
 
 export class PeerManager implements PeerModule {
@@ -83,7 +78,10 @@ export class PeerManager implements PeerModule {
     if (!wire.ok) {
       // Name the cause (row lead-023): the previous bare `false` made
       // "retrying" and "unknown peer" and "too big" indistinguishable here.
-      this.verboseLog?.('peer', `wire send to ${sessionId} failed: ${describeWireSendFailure(wire.failure, sessionId)}`);
+      this.verboseLog?.(
+        'peer',
+        `wire send to ${sessionId} failed: ${describeWireSendFailure(wire.failure, sessionId)}`
+      );
     }
     return wire.ok;
   }
@@ -200,22 +198,58 @@ export class PeerManager implements PeerModule {
  * touching the shared discovery files.
  */
 export class NoopPeerModule implements PeerModule {
-  listIdentities(): IdentityEntry[] { return []; }
-  isFresh(_sessionId: string): boolean { return false; }
-  listChannels(): ChannelFile[] { return []; }
-  getChannelJoinFailures(): ReadonlyMap<string, ChannelJoinFailure> { return new Map(); }
-  joinChannel(_channelId: string): { joined: boolean; firstQuery?: string } { return { joined: false }; }
-  sendMail(_channelId: string, _sessionId: string, _topic: string, _content: string): boolean { return false; }
-  sendPeerMail(_sessionId: string, _title: string, _content: string): boolean { return false; }
-  hasActiveChannel(): boolean { return false; }
-  hasChannelWith(_sessionId: string): boolean { return false; }
-  start(): void { /* no-op */ }
-  stop(): void { /* no-op */ }
-  getSelfSessionId(): string { return ''; }
-  recordBrief(_message: string, _confidence: number): void { /* no-op: children don't maintain a heartbeat */ }
-  getBriefs(_sessionId: string): Array<{ time: number; content: string; confidence: number }> { return []; }
-  getLatestHeartbeat(_sessionId: string): number | null { return null; }
-  getPid(_sessionId: string): number | null { return null; }
-  setOnChannelJoin(_callback: (channelId: string) => void): void { /* no-op: children don't participate in peer discovery */ }
-  setOnTombstone(_callback: (when: number) => void): void { /* no-op: children have no heartbeat to tombstone */ }
+  listIdentities(): IdentityEntry[] {
+    return [];
+  }
+  isFresh(_sessionId: string): boolean {
+    return false;
+  }
+  listChannels(): ChannelFile[] {
+    return [];
+  }
+  getChannelJoinFailures(): ReadonlyMap<string, ChannelJoinFailure> {
+    return new Map();
+  }
+  joinChannel(_channelId: string): { joined: boolean; firstQuery?: string } {
+    return { joined: false };
+  }
+  sendMail(_channelId: string, _sessionId: string, _topic: string, _content: string): boolean {
+    return false;
+  }
+  sendPeerMail(_sessionId: string, _title: string, _content: string): boolean {
+    return false;
+  }
+  hasActiveChannel(): boolean {
+    return false;
+  }
+  hasChannelWith(_sessionId: string): boolean {
+    return false;
+  }
+  start(): void {
+    /* no-op */
+  }
+  stop(): void {
+    /* no-op */
+  }
+  getSelfSessionId(): string {
+    return '';
+  }
+  recordBrief(_message: string, _confidence: number): void {
+    /* no-op: children don't maintain a heartbeat */
+  }
+  getBriefs(_sessionId: string): Array<{ time: number; content: string; confidence: number }> {
+    return [];
+  }
+  getLatestHeartbeat(_sessionId: string): number | null {
+    return null;
+  }
+  getPid(_sessionId: string): number | null {
+    return null;
+  }
+  setOnChannelJoin(_callback: (channelId: string) => void): void {
+    /* no-op: children don't participate in peer discovery */
+  }
+  setOnTombstone(_callback: (when: number) => void): void {
+    /* no-op: children have no heartbeat to tombstone */
+  }
 }

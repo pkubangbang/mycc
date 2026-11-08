@@ -16,7 +16,11 @@ import { StreamAbortedError } from '../engine/chat-provider.js';
 import type { AgentContext } from '../types.js';
 import type { ToolCall } from '../types.js';
 import { buildNormalModePrompt } from '../loop/prompts/lead.js';
-import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildWikiDomainsMessages } from '../loop/prompt-populators.js';
+import {
+  buildPlatformCalendarMessages,
+  buildNodeModulesReminderMessages,
+  buildWikiDomainsMessages
+} from '../loop/prompt-populators.js';
 import { loadDomains } from './parent/wiki-utils.js';
 import { getTokenThreshold, getSessionContext, getSessionDir, setSessionContext, isVerbose } from '../config.js';
 import { TriologueLite } from '../loop/triologue-lite.js';
@@ -45,7 +49,7 @@ let WORKDIR = process.cwd();
 // Budget/deadline tracking
 let budgetSent = false;
 let startTime = 0;
-let deadlineMs = 0;        // Absolute deadline in ms (computed from eta)
+let deadlineMs = 0; // Absolute deadline in ms (computed from eta)
 
 // Heartbeat interval (30s)
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -65,9 +69,9 @@ const TIME_NUDGE_INTERVAL = 3;
 // Budget-aware: when an ETA deadline is set we use a fraction of the REMAINING
 // budget per turn so a single turn can never eat the whole budget. When no
 // budget is set yet we fall back to a fixed cap.
-const TURN_WATCHDOG_FALLBACK_MS = 180_000;   // 3 min cap when no ETA budget
-const TURN_WATCHDOG_MIN_MS = 60_000;        // never shorter than 60s
-const TURN_WATCHDOG_BUDGET_FRACTION = 0.5;  // use up to half of remaining budget
+const TURN_WATCHDOG_FALLBACK_MS = 180_000; // 3 min cap when no ETA budget
+const TURN_WATCHDOG_MIN_MS = 60_000; // never shorter than 60s
+const TURN_WATCHDOG_BUDGET_FRACTION = 0.5; // use up to half of remaining budget
 
 /**
  * Per-turn watchdog for this worker: composes the turn deadline with the
@@ -89,7 +93,8 @@ function createTurnWatchdog(): TurnWatchdog {
  */
 function reportStuckTurn(reason: string, elapsedMs: number): void {
   const secs = Math.round(elapsedMs / 1000);
-  const text = `Teammate "${teammateName}" appears stuck (${reason}) — LLM turn aborted after ${secs}s. ` +
+  const text =
+    `Teammate "${teammateName}" appears stuck (${reason}) — LLM turn aborted after ${secs}s. ` +
     `Mail polling has resumed; if you sent mail it will be picked up on the next loop iteration. ` +
     `If this repeats, consider tm_remove to terminate or extend the ETA via mail_to.`;
   try {
@@ -155,8 +160,10 @@ function createPersistentTriologue(name: string, assignedPath?: string): Triolog
   // invalid-path failure drops EVERY subsequent message from the durable
   // transcript with zero diagnostic.
   const transcriptWriter = new JsonlTranscriptWriter(triologuePath, (writeErr) => {
-    ctx.core.verbose('triologue',
-      `Transcript write failed: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`);
+    ctx.core.verbose(
+      'triologue',
+      `Transcript write failed: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`
+    );
   });
 
   const triologue = new TriologueLite({
@@ -168,7 +175,7 @@ function createPersistentTriologue(name: string, assignedPath?: string): Triolog
       // adds the timestamp. A merely-mutating call (user()/note() combine)
       // emits a 'merge' piece instead of a full resent snapshot.
       transcriptWriter.append(asAppendablePiece(msg));
-    },
+    }
   });
 
   // Register the platform + calendar project-context populator so the child
@@ -217,8 +224,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
   // self-reported by the teammate that actually created the file, and
   // lands in the lead's triologue as a [MAIL] note at the next COLLECT.
   // Format chosen to be greppable: "[READY] triologue file: <path>".
-  ctx.team.mailTo('lead', 'Teammate ready',
-    `[READY] triologue file: ${triologuePath}\nname: ${teammateName}`);
+  ctx.team.mailTo('lead', 'Teammate ready', `[READY] triologue file: ${triologuePath}\nname: ${teammateName}`);
 
   // Todo nudging state (counter-based, same as lead agent)
   let nextTodoNudge = 3;
@@ -229,8 +235,15 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
   // Tools that are purely exploratory (information gathering)
   const EXPLORATION_TOOLS = new Set([
-    'read_file', 'web_search', 'web_fetch', 'brief', 'issue_list',
-    'bg_print', 'tm_print', 'question', 'recall',
+    'read_file',
+    'web_search',
+    'web_fetch',
+    'brief',
+    'issue_list',
+    'bg_print',
+    'tm_print',
+    'question',
+    'recall'
   ]);
 
   // Loop-scope tracking for time management
@@ -243,10 +256,22 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
   // suggest the child has a broadcast path it does not have (ChildTeam had a
   // request-forwarding stub, now deleted: no `team_broadcast` IPC exists).
   const ACTION_TOOLS = new Set([
-    'write_file', 'edit_file', 'todo_create', 'todo_update', 'issue_create', 'issue_close',
-    'issue_claim', 'issue_comment', 'blockage_create', 'blockage_remove',
-    'tm_create', 'tm_remove', 'bg_create',
-    'bg_remove', 'mail_to', 'git_commit',
+    'write_file',
+    'edit_file',
+    'todo_create',
+    'todo_update',
+    'issue_create',
+    'issue_close',
+    'issue_claim',
+    'issue_comment',
+    'blockage_create',
+    'blockage_remove',
+    'tm_create',
+    'tm_remove',
+    'bg_create',
+    'bg_remove',
+    'mail_to',
+    'git_commit'
   ]);
 
   // Read-only bash classification is derived from the command's INTENT verb
@@ -320,7 +345,6 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
     const lastRole = triologue.getLastRole();
 
     try {
-
       // 1. Collect mails from file-based mailbox
       //    Self-contained MAIL entries: sender + title + body + an explicit
       //    reply line. `mail.from` IS the mail_to `name` argument (for a peer
@@ -331,9 +355,11 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           .map((mail) => {
             const isPeer = mail.from.endsWith('/lead');
             const peerTag = isPeer ? ' (peer — cross-instance)' : '';
-            return `Mail from ${mail.from}${peerTag}: ${mail.title}\n${mail.content}\n` +
+            return (
+              `Mail from ${mail.from}${peerTag}: ${mail.title}\n${mail.content}\n` +
               `↳ Reply with mail_to(name="${mail.from}", title="${mail.title}: <re>", content="…")` +
-              `${isPeer ? ' — for a peer this session-id IS the name argument.' : ''}`;
+              `${isPeer ? ' — for a peer this session-id IS the name argument.' : ''}`
+            );
           })
           .join('\n\n---\n\n');
         triologue.note('MAIL', mailContent);
@@ -346,9 +372,15 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       //    mode. Our tool list never changes, so this note is the only signal.
       if (pendingModeChange) {
         if (pendingModeChange === 'normal') {
-          triologue.note('SYSTEM', "FYI: the LEAD's mode is now 'normal'. Write_file/edit_file and bash mutation verbs are permitted again by the parent grant gate. Re-orient on your open todos before acting.");
+          triologue.note(
+            'SYSTEM',
+            "FYI: the LEAD's mode is now 'normal'. Write_file/edit_file and bash mutation verbs are permitted again by the parent grant gate. Re-orient on your open todos before acting."
+          );
         } else {
-          triologue.note('SYSTEM', "FYI: the LEAD's mode is now 'plan'. Your own run-mode is unchanged (teammates always run in normal mode), but while the lead is in plan mode the parent grant gate will DENY write_file/edit_file and bash mutation verbs — stay on READ/TEST verbs, or expect a grant rejection until the lead returns to normal mode. Re-orient on your open todos before acting.");
+          triologue.note(
+            'SYSTEM',
+            "FYI: the LEAD's mode is now 'plan'. Your own run-mode is unchanged (teammates always run in normal mode), but while the lead is in plan mode the parent grant gate will DENY write_file/edit_file and bash mutation verbs — stay on READ/TEST verbs, or expect a grant rejection until the lead returns to normal mode. Re-orient on your open todos before acting."
+          );
         }
         pendingModeChange = null;
       }
@@ -373,8 +405,10 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         if (nextTimeNudge <= 0) {
           nextTimeNudge = TIME_NUDGE_INTERVAL;
           const remaining = Math.max(0, Math.round((deadlineMs - Date.now()) / 1000));
-          triologue.note('REMINDER',
-            `~${remaining}s left.${remaining < 30 ? ' Send mail_to with a new eta to extend.' : ''}`);
+          triologue.note(
+            'REMINDER',
+            `~${remaining}s left.${remaining < 30 ? ' Send mail_to with a new eta to extend.' : ''}`
+          );
         }
       }
 
@@ -423,16 +457,20 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
             }
             const elapsed = Date.now() - compactStart;
             reportStuckTurn('compact summarization watchdog', elapsed);
-            triologue.note('SYSTEM',
+            triologue.note(
+              'SYSTEM',
               `Auto-compact summarization was aborted by the stuck-teammate watchdog after ${Math.round(elapsed / 1000)}s. ` +
-              `Context remains over the threshold; compaction retries next turn — keep this turn small ` +
-              `(finish the current step, avoid large reads) so the retry succeeds.`);
+                `Context remains over the threshold; compaction retries next turn — keep this turn small ` +
+                `(finish the current step, avoid large reads) so the retry succeeds.`
+            );
           } else {
             // Non-watchdog compact error: surface but don't crash the worker.
             ctx.core.brief('error', 'compact', `Compact failed: ${(err as Error).message}`);
-            triologue.note('SYSTEM',
+            triologue.note(
+              'SYSTEM',
               `Auto-compact failed: ${(err as Error).message}. Continuing without compaction — ` +
-              `context stays over the threshold; if the next call fails, reduce what you emit this turn and retry.`);
+                `context stays over the threshold; if the next call fails, reduce what you emit this turn and retry.`
+            );
           }
         } finally {
           compactWatchdog.clearTimeout();
@@ -454,9 +492,9 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           {
             model: MODEL,
             messages: triologue.getMessages(),
-            tools,
+            tools
           },
-          { signal: watchdog.signal, noSpinner: true },
+          { signal: watchdog.signal, noSpinner: true }
         );
       } catch (err) {
         watchdog.clearTimeout();
@@ -471,10 +509,12 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           // Watchdog fired: report and let the loop continue (mail poll resumes).
           const elapsed = Date.now() - turnStart;
           reportStuckTurn('LLM turn watchdog', elapsed);
-          triologue.note('SYSTEM',
+          triologue.note(
+            'SYSTEM',
             `Previous LLM turn was aborted by the stuck-teammate watchdog after ${Math.round(elapsed / 1000)}s ` +
-            `(likely the LLM endpoint hung). No response was received. ` +
-            `Check mailbox for any new instructions from lead and re-orient on your open todos before proceeding.`);
+              `(likely the LLM endpoint hung). No response was received. ` +
+              `Check mailbox for any new instructions from lead and re-orient on your open todos before proceeding.`
+          );
           continue;
         }
         // Non-watchdog error: rethrow into the outer try/catch (briefs + 1s pause + retry).
@@ -486,7 +526,8 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       consecutiveFailures = 0;
 
       const assistantMessage = response.message;
-      const reasoningContent = (assistantMessage as unknown as Record<string, unknown>).reasoning_content as string | undefined;
+      const reasoningContent = (assistantMessage as unknown as Record<string, unknown>).reasoning_content as
+        string | undefined;
       const toolCalls = assistantMessage.tool_calls as ToolCall[] | undefined;
 
       // No per-turn confusion increment: the main process scores confusion
@@ -518,11 +559,14 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
             notifyLeadInBestEffort(
               `WARNING: ${teammateName} produced no output`,
               `Teammate "${teammateName}" returned ${MAX_EMPTY_TURN_RETRIES} consecutive EMPTY responses ` +
-              `(no content, no tool calls) and is entering idle. The phase is NOT complete — no deliverable ` +
-              `was sent. Consider sending mail with explicit instructions, or tm_remove.`);
-            triologue.note('SYSTEM',
+                `(no content, no tool calls) and is entering idle. The phase is NOT complete — no deliverable ` +
+                `was sent. Consider sending mail with explicit instructions, or tm_remove.`
+            );
+            triologue.note(
+              'SYSTEM',
               `Produced ${MAX_EMPTY_TURN_RETRIES} consecutive empty responses (no content, no tool calls). ` +
-              `The lead has been notified that the phase is NOT complete. Entering idle to resume mail polling.`);
+                `The lead has been notified that the phase is NOT complete. Entering idle to resume mail polling.`
+            );
             emptyTurnRetries = 0;
             const result = await enterIdleState(triologue);
             if (result === 'shutdown') {
@@ -530,20 +574,24 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
             }
             continue;
           }
-          triologue.note('REMINDER',
+          triologue.note(
+            'REMINDER',
             budgetSent
               ? 'Your previous response was EMPTY (no content and no tool calls) — that is not a completion. ' +
-                'If you have a deliverable, send it now via mail_to(name="lead", eta=<seconds>, title="<subject>", content="<your report>"). ' +
-                'Otherwise call the tool that advances the next step.'
+                  'If you have a deliverable, send it now via mail_to(name="lead", eta=<seconds>, title="<subject>", content="<your report>"). ' +
+                  'Otherwise call the tool that advances the next step.'
               : 'Your previous response was EMPTY (no content and no tool calls) — that is not a completion, and you have not ' +
-                'reported a time budget yet. Send mail_to(name="lead", eta=<seconds>, title="<subject>", content="<details>") FIRST, ' +
-                'then do the work.');
+                  'reported a time budget yet. Send mail_to(name="lead", eta=<seconds>, title="<subject>", content="<details>") FIRST, ' +
+                  'then do the work.'
+          );
           continue;
         }
 
         if (!budgetSent) {
-          triologue.note('REMINDER',
-            'Request a time budget from lead via mail_to(name="lead", eta=<seconds>, title="<subject>", content="<details>").');
+          triologue.note(
+            'REMINDER',
+            'Request a time budget from lead via mail_to(name="lead", eta=<seconds>, title="<subject>", content="<details>").'
+          );
         } else if (!ctx.todo.hasOpenTodo()) {
           // No open todos and the LLM produced a CONTENTFUL text-only turn —
           // likely done. Auto-mail that content to lead (never empty; the
@@ -556,7 +604,10 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           // Resume work phase
           continue;
         } else {
-          triologue.note('REMINDER', 'No tool calls were made. Re-read the task and your open todos, then call the tool that advances the next step.');
+          triologue.note(
+            'REMINDER',
+            'No tool calls were made. Re-read the task and your open todos, then call the tool that advances the next step.'
+          );
         }
         continue;
       }
@@ -623,10 +674,9 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           }
 
           // Heartbeat every 30s to lead
-          if (budgetSent && (Date.now() - lastHeartbeatTime >= HEARTBEAT_INTERVAL_MS)) {
+          if (budgetSent && Date.now() - lastHeartbeatTime >= HEARTBEAT_INTERVAL_MS) {
             const elapsed = Math.round((Date.now() - startTime) / 1000);
-            ctx.team.mailTo('lead', `Progress: ${teammateName}`,
-              `[PROGRESS] ${elapsed}s elapsed, still working.`);
+            ctx.team.mailTo('lead', `Progress: ${teammateName}`, `[PROGRESS] ${elapsed}s elapsed, still working.`);
             lastHeartbeatTime = Date.now();
           }
 
@@ -674,7 +724,6 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           if (toolName === 'brief') {
             nextBriefNudge = 5;
           }
-
         } catch (err) {
           // Cancellation is the LEAD's shutdown, not a teammate failure: do not
           // brief it as an error, do not push a confusion point, and do not hand
@@ -694,7 +743,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
               triologue.tool(
                 pendingCall.function.name,
                 'Tool execution cancelled (teammate is shutting down).',
-                pendingCall.id,
+                pendingCall.id
               );
             }
             return;
@@ -720,11 +769,14 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           // still working and is asking for direction/feedback, so the lead
           // doesn't mistake this for a hard blocker (which caused false
           // "stuck" alarms and premature teammate removals in the past).
-          ctx.team.mailTo('lead', 'Guidance request',
+          ctx.team.mailTo(
+            'lead',
+            'Guidance request',
             `Guidance request (confusion index: ${confusionIndex}). ` +
-            `I'm working but could benefit from direction or feedback. ` +
-            `Current state: ${ctx.todo.hasOpenTodo() ? ctx.todo.printTodoList() : 'No active todos'}`,
-            ctx.core.getName());
+              `I'm working but could benefit from direction or feedback. ` +
+              `Current state: ${ctx.todo.hasOpenTodo() ? ctx.todo.printTodoList() : 'No active todos'}`,
+            ctx.core.getName()
+          );
 
           // Reset confusion after requesting help
           ctx.core.resetConfusionIndex();
@@ -734,7 +786,10 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       // 7. Brief nudging - remind agent to use brief tool
       nextBriefNudge--;
       if (nextBriefNudge <= 0) {
-        triologue.note('REMINDER', 'Provide a brief status update using the brief tool: brief("<what you are doing now>", <confidence 0-10>).');
+        triologue.note(
+          'REMINDER',
+          'Provide a brief status update using the brief tool: brief("<what you are doing now>", <confidence 0-10>).'
+        );
         nextBriefNudge = 5;
       }
     } catch (err) {
@@ -759,17 +814,14 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         ? 'Re-orient on your open todos to decide the next step.'
         : 'There are no open todos, so there is nothing to re-orient on.';
       const failureNumber = consecutiveFailures + 1;
-      const ordinal =
-        `This failure (${failureNumber} of ${MAX_CONSECUTIVE_FAILURES})`;
-      const outlook = failureNumber >= MAX_CONSECUTIVE_FAILURES
-        ? `No more automatic retries — you are entering idle to resume ` +
-          `mail polling.`
-        : `This failure looks transient — you will be retried automatically; ` +
-          `no action needed. ` +
-          `If it keeps failing, you will be moved to idle to resume mail polling.`;
-      triologue.note('SYSTEM',
-        `An error occurred: ${errorMsg}. ${orientation} ` +
-        `${ordinal} ${outlook}`);
+      const ordinal = `This failure (${failureNumber} of ${MAX_CONSECUTIVE_FAILURES})`;
+      const outlook =
+        failureNumber >= MAX_CONSECUTIVE_FAILURES
+          ? `No more automatic retries — you are entering idle to resume ` + `mail polling.`
+          : `This failure looks transient — you will be retried automatically; ` +
+            `no action needed. ` +
+            `If it keeps failing, you will be moved to idle to resume mail polling.`;
+      triologue.note('SYSTEM', `An error occurred: ${errorMsg}. ${orientation} ` + `${ordinal} ${outlook}`);
 
       consecutiveFailures++;
 
@@ -780,8 +832,11 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       // hammering the hung endpoint). Idling lets the lead's mail get
       // picked up and surfaces the problem instead of silent spinning.
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        ctx.core.brief('warn', 'loop',
-          `${consecutiveFailures} consecutive failures. Entering idle to resume mail polling.`);
+        ctx.core.brief(
+          'warn',
+          'loop',
+          `${consecutiveFailures} consecutive failures. Entering idle to resume mail polling.`
+        );
         // Send the lead notice BEFORE the SYSTEM note so the note can report
         // the actual outcome (D2). The old version asserted "Lead will be
         // notified." above a catch{}-swallowed send — a claim that could be
@@ -789,14 +844,18 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         const leadNotified = notifyLeadInBestEffort(
           `WARNING: ${teammateName} network failures`,
           `Teammate "${teammateName}" hit ${consecutiveFailures} consecutive LLM/network failures ` +
-          `and is entering idle to resume mail polling. The endpoint may be down. ` +
-          `Consider tm_remove or send mail with instructions.`);
-        triologue.note('SYSTEM',
+            `and is entering idle to resume mail polling. The endpoint may be down. ` +
+            `Consider tm_remove or send mail with instructions.`
+        );
+        triologue.note(
+          'SYSTEM',
           `Experienced ${consecutiveFailures} consecutive network failures. ` +
-          `Entering idle state to resume mail polling. ${
-          leadNotified
-            ? 'Lead has been notified of this failure.'
-            : 'The attempted notice to lead could not be sent.'}`);
+            `Entering idle state to resume mail polling. ${
+              leadNotified
+                ? 'Lead has been notified of this failure.'
+                : 'The attempted notice to lead could not be sent.'
+            }`
+        );
         consecutiveFailures = 0; // reset on entering idle
         const result = await enterIdleState(triologue);
         if (result === 'shutdown') {
@@ -807,10 +866,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       }
 
       // Exponential backoff: 1s, 2s, 4s, ... capped at MAX_LOOP_BACKOFF_MS.
-      const backoffMs = Math.min(
-        1000 * Math.pow(2, consecutiveFailures - 1),
-        MAX_LOOP_BACKOFF_MS,
-      );
+      const backoffMs = Math.min(1000 * Math.pow(2, consecutiveFailures - 1), MAX_LOOP_BACKOFF_MS);
       await new Promise((resolve) => setTimeout(resolve, backoffMs));
     }
   }
@@ -871,8 +927,8 @@ async function enterIdleState(triologue: TriologueLite): Promise<'shutdown' | 'r
             triologue.note(
               'SYSTEM',
               `Auto-claimed issue #${issue.id} as "${teammateName}" (unowned pending issue, no open blockers).\n` +
-              `Close it with issue_close(${issue.id}, status="completed"|"failed", comment=...) when the work is done.\n` +
-              `${issue.title}\n${issue.content || ''}`,
+                `Close it with issue_close(${issue.id}, status="completed"|"failed", comment=...) when the work is done.\n` +
+                `${issue.title}\n${issue.content || ''}`
             );
             return 'resume';
           }
@@ -939,13 +995,15 @@ async function handleSpawn(msg: {
 }
 
 // === IPC Message Listener ===
-process.on('message', (msg: { type: string;[key: string]: unknown }) => {
+process.on('message', (msg: { type: string; [key: string]: unknown }) => {
   if (msg.type === 'spawn') {
-    handleSpawn(msg as unknown as { name: string; role: string; prompt: string; triologuePath?: string }).catch((err) => {
-      // ctx may not be available yet, use sendNotification directly
-      ipc.sendNotification('error', { error: `Spawn failed: ${(err as Error).message}` });
-      process.exit(1);
-    });
+    handleSpawn(msg as unknown as { name: string; role: string; prompt: string; triologuePath?: string }).catch(
+      (err) => {
+        // ctx may not be available yet, use sendNotification directly
+        ipc.sendNotification('error', { error: `Spawn failed: ${(err as Error).message}` });
+        process.exit(1);
+      }
+    );
   } else if (msg.type === 'shutdown') {
     shutdownRequested = true;
     // Cancel BEFORE the loop notices the flag: the loop only checks it between

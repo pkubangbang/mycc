@@ -77,18 +77,9 @@ defineProps<{
         <!-- Mach diamonds / shock rings (diamonds read clearer than
              circles at this 22x22 size; match the line-art rocket). -->
         <g class="mach-rings">
-          <path
-            class="mach-ring mach-ring--1"
-            d="M10.0 16.2 L12 17.0 L14.0 16.2 L12 15.5 Z"
-          />
-          <path
-            class="mach-ring mach-ring--2"
-            d="M10.4 18.2 L12 19.0 L13.6 18.2 L12 17.4 Z"
-          />
-          <path
-            class="mach-ring mach-ring--3"
-            d="M10.8 20.0 L12 20.6 L13.2 20.0 L12 19.4 Z"
-          />
+          <path class="mach-ring mach-ring--1" d="M10.0 16.2 L12 17.0 L14.0 16.2 L12 15.5 Z" />
+          <path class="mach-ring mach-ring--2" d="M10.4 18.2 L12 19.0 L13.6 18.2 L12 17.4 Z" />
+          <path class="mach-ring mach-ring--3" d="M10.8 20.0 L12 20.6 L13.2 20.0 L12 19.4 Z" />
         </g>
       </g>
     </g>

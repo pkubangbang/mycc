@@ -42,7 +42,7 @@ export class DisconnectTimer {
 
   constructor(
     private readonly cb: DisconnectTimerCallbacks,
-    private readonly persist: () => boolean,
+    private readonly persist: () => boolean
   ) {}
 
   /** Start the 30s countdown (no-op if already counting, or if persistent). */
@@ -87,7 +87,10 @@ export class DisconnectTimer {
       // fired late because the process was frozen), and CPU usage during the
       // whole interval is negligible (process was not actually running).
       if (excessMs > SUSPEND_EXCESS_MS && cpuElapsedMs < 5_000) {
-        agentIO.verbose('serve', `suspend/resume detected (wall+${Math.round(excessMs / 1000)}s, cpu ${Math.round(cpuElapsedMs)}ms) — keeping Web UI alive for reconnect`);
+        agentIO.verbose(
+          'serve',
+          `suspend/resume detected (wall+${Math.round(excessMs / 1000)}s, cpu ${Math.round(cpuElapsedMs)}ms) — keeping Web UI alive for reconnect`
+        );
         // The existing WS clients are dead from the suspend; drop them so the
         // browser's fresh reconnect is the only one tracked.
         this.cb.onSuspend();

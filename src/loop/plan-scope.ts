@@ -64,7 +64,7 @@ const PLAN_SCOPE_RETRY_CONFIG: Partial<RetryConfig> = {
   responseTimeoutMs: 30_000,
   maxRetries: 1,
   baseDelayMs: 500,
-  maxDelayMs: 3_000,
+  maxDelayMs: 3_000
 };
 
 /** The prompt. TEXT ONLY — the reflection must not take actions. */
@@ -79,7 +79,7 @@ function buildPrompt(briefMessage: string): string {
     'because every step optimises inside a frame nobody questioned. Your job here is to question',
     'the frame: to find the move that is cheap only if you make it NOW, and expensive later.',
     '',
-    'Everything you may cite must already appear above: the user\'s request, your tool calls and',
+    "Everything you may cite must already appear above: the user's request, your tool calls and",
     'their results. You have NO tools here — you cannot read anything new. If a check needs a',
     'file you have not read, answer with "needs read of <path>" and nothing else: naming what',
     'you must read is worth more than guessing what it says.',
@@ -108,7 +108,7 @@ function buildPrompt(briefMessage: string): string {
     '  tension, and saying so in one clause is the honest answer.',
     '',
     'WRONG PRB — stronger than "did I drift": if this task had never been proposed, would you',
-    '  still do this now? If not, say what you would do instead and why the user\'s phrasing',
+    "  still do this now? If not, say what you would do instead and why the user's phrasing",
     '  points elsewhere. The cheaper equivalent of what was asked counts as an answer.',
     '  Otherwise `no — <one clause naming what the user actually asked and why this serves it>`.',
     '',
@@ -119,15 +119,13 @@ function buildPrompt(briefMessage: string): string {
     '',
     'Banned: restating the brief, summarizing progress, and any sentence that would be equally true',
     'of a different task ("consider the bigger picture", "there may be risks", "we should validate").',
-    'Every line must be checkable against a file, a named decision, or a user statement above.',
+    'Every line must be checkable against a file, a named decision, or a user statement above.'
   ].join('\n');
 }
 
 /** Provider reasoning echoes (thinking blocks) must not reach the tool result. */
 function stripReasoningEcho(text: string): string {
-  return text
-    .replace(/^\s*<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>\s*/i, '')
-    .trim();
+  return text.replace(/^\s*<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>\s*/i, '').trim();
 }
 
 /**
@@ -179,10 +177,8 @@ export async function buildPlanScopeNote(deps: PlanScopeDeps): Promise<string | 
     // the reflection actually cancels it (a tool-stage wrapper's signal is
     // already dead by then and cannot).
     out = await deps.escAware(
-      async (ac) => await forkChat(
-        deps.messages, deps.tools, prompt, ac.signal, 'none', PLAN_SCOPE_RETRY_CONFIG,
-      ),
-      () => null as string | null,
+      async (ac) => await forkChat(deps.messages, deps.tools, prompt, ac.signal, 'none', PLAN_SCOPE_RETRY_CONFIG),
+      () => null as string | null
     );
   } catch {
     return null; // a reflection is an enhancement, never a dependency

@@ -8,25 +8,27 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issueCreateTool: ToolDefinition = {
   name: 'issue_create',
-  description: 'Create a new shared issue to track team work. Unlike private todos, issues are visible to all agents (lead + teammates) and support dependency tracking. Returns the full issue list. Use blockedBy to set dependencies.',
+  description:
+    'Create a new shared issue to track team work. Unlike private todos, issues are visible to all agents (lead + teammates) and support dependency tracking. Returns the full issue list. Use blockedBy to set dependencies.',
   input_schema: {
     type: 'object',
     properties: {
       title: {
         type: 'string',
-        description: 'Concise summary of the issue (1-10 words recommended).',
+        description: 'Concise summary of the issue (1-10 words recommended).'
       },
       content: {
         type: 'string',
-        description: 'Detailed description: context, requirements, acceptance criteria, or steps to reproduce.',
+        description: 'Detailed description: context, requirements, acceptance criteria, or steps to reproduce.'
       },
       blockedBy: {
         type: 'array',
         items: { type: 'integer' },
-        description: 'Issue IDs that must be completed before this one can be worked on. Creates blocking relationships.',
-      },
+        description:
+          'Issue IDs that must be completed before this one can be worked on. Creates blocking relationships.'
+      }
     },
-    required: ['title', 'content'],
+    required: ['title', 'content']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -58,5 +60,5 @@ export const issueCreateTool: ToolDefinition = {
       `  • issue_publish(id=${id}) — open for any idle teammate to claim (draft → pending)\n` +
       `You may also add comments (issue_comment) or dependencies (blockage_create) while it is in draft.`;
     return issueList + draftHint;
-  },
+  }
 };

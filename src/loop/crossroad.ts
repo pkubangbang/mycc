@@ -104,7 +104,7 @@ const STRONG_TURNING_WORDS: RegExp[] = [
   /\bThat being said\b/i,
   /\bOn the other hand\b/i,
   /话说回来/,
-  /等一下/,
+  /等一下/
 ];
 
 /**
@@ -123,7 +123,7 @@ const SENTENCE_BOUNDARY_TURNING_WORDS: RegExp[] = [
   /(?<=^|[。！？\n])\s*然而/,
   /(?<=^|[。！？\n])\s*但/,
   /(?<=^|[。！？\n])\s*不过/,
-  /(?<=^|[。！？\n])\s*其实/,
+  /(?<=^|[。！？\n])\s*其实/
 ];
 
 /**
@@ -139,7 +139,7 @@ const SPECIAL_TURNING_PATTERNS: RegExp[] = [
   // "Wait" as interjection: followed by comma, exclamation, dash, ellipsis, or end-of-text
   /\bWait\b(?=\s*[,!.—]|\s*$)/i,
   // "等等" as interjection: followed by Chinese/English punctuation or end-of-text
-  /等等(?=\s*[,，!！。.—]|\s*$)/,
+  /等等(?=\s*[,，!！。.—]|\s*$)/
 ];
 
 // ============================================================================
@@ -166,16 +166,19 @@ const ANCHOR_INSTRUCTION = (wordsBeforeTurn: string): string =>
 const GENERATION_DIRECTIONS: GenerationDirection[] = [
   {
     name: 'go forward',
-    buildPrompt: (w) => `You are generating a continuation for a response that was cut off. Continue in a proactive, action-oriented direction. Focus on what to do next, taking decisive steps. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice.${ANCHOR_INSTRUCTION(w)}`,
+    buildPrompt: (w) =>
+      `You are generating a continuation for a response that was cut off. Continue in a proactive, action-oriented direction. Focus on what to do next, taking decisive steps. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice.${ANCHOR_INSTRUCTION(w)}`
   },
   {
     name: 'go backward',
-    buildPrompt: (w) => `You are generating a continuation for a response that was cut off. Reconsider the basic assumptions and be cautious. Question whether the current direction is correct, and suggest re-examining foundations before proceeding. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice.${ANCHOR_INSTRUCTION(w)}`,
+    buildPrompt: (w) =>
+      `You are generating a continuation for a response that was cut off. Reconsider the basic assumptions and be cautious. Question whether the current direction is correct, and suggest re-examining foundations before proceeding. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice.${ANCHOR_INSTRUCTION(w)}`
   },
   {
     name: 'synthesize at a high level',
-    buildPrompt: (w) => `You are generating a continuation for a response that was cut off. Step back and provide a higher-level abstraction. Synthesize the situation, identify the core question or principle at play, and reframe the problem in broader terms. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice.${ANCHOR_INSTRUCTION(w)}`,
-  },
+    buildPrompt: (w) =>
+      `You are generating a continuation for a response that was cut off. Step back and provide a higher-level abstraction. Synthesize the situation, identify the core question or principle at play, and reframe the problem in broader terms. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice.${ANCHOR_INSTRUCTION(w)}`
+  }
 ];
 
 /**
@@ -189,7 +192,7 @@ const CROSSROAD_RETRY_CONFIG: Partial<RetryConfig> = {
   responseTimeoutMs: 30_000,
   maxRetries: 1,
   baseDelayMs: 500,
-  maxDelayMs: 3_000,
+  maxDelayMs: 3_000
 };
 
 // ============================================================================
@@ -312,11 +315,7 @@ export function detectTurningWord(content: string): TurningWordMatch | null {
  * @param continuation - The raw continuation text (already stripInternalMarkup'd)
  * @returns The continuation with the anchor removed, or null if validation failed
  */
-export function stripAndValidate(
-  wordsBeforeTurn: string,
-  continuation: string,
-  prefix?: string,
-): string | null {
+export function stripAndValidate(wordsBeforeTurn: string, continuation: string, prefix?: string): string | null {
   let candidate = continuation.trim();
 
   // A retry can ignore the instruction not to repeat already-shown text and
@@ -359,8 +358,8 @@ export function stripAndValidate(
 export function extractWordsBeforeTurn(prefix: string): string {
   const sentences = prefix
     .split(/(?<=[.!?])\s+|(?<=[。！？])|\n+/)
-    .map(s => s.trim())
-    .filter(s => s.length > 0);
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
   return sentences.length > 0 ? sentences[sentences.length - 1] : '';
 }
 
@@ -383,7 +382,7 @@ export async function generateContinuations(
   tools: Tool[],
   prefix: string,
   signal?: AbortSignal,
-  wordsBeforeTurn: string = '',
+  wordsBeforeTurn: string = ''
 ): Promise<string[]> {
   // Inject the prefix into each direction prompt so the LLM sees what was
   // already said and continues from it rather than regenerating it from
@@ -409,8 +408,7 @@ export async function generateContinuations(
     }
 
     // Retry once — validation failed (continuation didn't start with anchor)
-    agentIO.verbose('crossroad',
-      `Direction "${direction.name}" failed anchor validation, retrying...`);
+    agentIO.verbose('crossroad', `Direction "${direction.name}" failed anchor validation, retrying...`);
     await sleep(300);
     raw = await forkChat(messages, tools, fullPrompt, signal, 'none', CROSSROAD_RETRY_CONFIG);
     cleanText = stripInternalMarkup((raw || '').trim());
@@ -420,20 +418,16 @@ export async function generateContinuations(
     }
 
     // Both attempts failed — skip this direction
-    agentIO.verbose('crossroad',
-      `Direction "${direction.name}" failed anchor validation after retry, skipping.`);
+    agentIO.verbose('crossroad', `Direction "${direction.name}" failed anchor validation after retry, skipping.`);
     return null;
   };
 
-  const results = await Promise.allSettled(
-    GENERATION_DIRECTIONS.map((direction) => runDirection(direction)),
-  );
+  const results = await Promise.allSettled(GENERATION_DIRECTIONS.map((direction) => runDirection(direction)));
 
   const continuations: string[] = [];
   for (const result of results) {
     if (result.status === 'fulfilled' && result.value) {
-      agentIO.verbose('crossroad',
-        `Direction "${result.value.name}" produced: ${result.value.text.slice(0, 100)}...`);
+      agentIO.verbose('crossroad', `Direction "${result.value.name}" produced: ${result.value.text.slice(0, 100)}...`);
       continuations.push(result.value.text);
     } else if (result.status === 'rejected') {
       const msg = result.reason instanceof Error ? result.reason.message : String(result.reason);
@@ -455,7 +449,7 @@ export async function generateContinuations(
 function buildSelectionPrompt(prefix: string, continuations: string[]): string {
   const parts: string[] = [
     `A response was cut off at a turning word. The prefix (before the turning word) is:\n\n"""\n${prefix}\n"""\n\n`,
-    `Below are ${continuations.length} possible continuations for this response. Read each one carefully, then select the BEST one.\n\n`,
+    `Below are ${continuations.length} possible continuations for this response. Read each one carefully, then select the BEST one.\n\n`
   ];
 
   for (let i = 0; i < continuations.length; i++) {
@@ -485,7 +479,7 @@ export async function selectBestContinuation(
   tools: Tool[],
   prefix: string,
   continuations: string[],
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<string> {
   if (continuations.length === 0) {
     return '';
@@ -502,7 +496,10 @@ export async function selectBestContinuation(
     agentIO.verbose('crossroad', `Selection response: ${text.slice(0, 200)}...`);
 
     // Try to parse the selected option number from the response
-    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    const lines = text
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
     const firstLine = lines[0] || '';
 
     // Match "N" or "Option N" at the start
@@ -587,7 +584,7 @@ export function buildCandidatesBrief(candidates: string[], selectedIndex: number
   const card = buildCrossroadCard({
     candidates,
     selectedIndex,
-    directionNames: GENERATION_DIRECTIONS.map((d) => d.name),
+    directionNames: GENERATION_DIRECTIONS.map((d) => d.name)
   });
   // The card title/rows are the same information this function always produced;
   // the card module owns the preview normalization (flatten → de-markdown →
@@ -609,7 +606,7 @@ export async function handleCrossroad(
   messages: Message[],
   originalContent: string,
   tools: Tool[],
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<CrossroadResult | null> {
   // Step 1: Detect turning word
   // Try the semantic detector first (INT8 ONNX DistilBERT via @pkubangbang/
@@ -678,8 +675,7 @@ export async function handleCrossroad(
     // buildCandidatesBrief() and emitted by hook.ts in the correct 3-part
     // order: prefix → candidates → outcome. The spinner stop stays here.
     if (result) {
-      agentIO.verbose('crossroad',
-        `Crossroad resolved: selected ${selectedIndex + 1} of ${continuations.length}`);
+      agentIO.verbose('crossroad', `Crossroad resolved: selected ${selectedIndex + 1} of ${continuations.length}`);
     }
   }
 }

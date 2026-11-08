@@ -8,28 +8,29 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issueCloseTool: ToolDefinition = {
   name: 'issue_close',
-  description: 'Close a shared team issue with final status: completed, failed, or abandoned. A non-empty comment is REQUIRED. Unlike private todos, issues are visible to all agents. Returns the full issue list. Closing a blocker unblocks dependent issues.',
+  description:
+    'Close a shared team issue with final status: completed, failed, or abandoned. A non-empty comment is REQUIRED. Unlike private todos, issues are visible to all agents. Returns the full issue list. Closing a blocker unblocks dependent issues.',
   input_schema: {
     type: 'object',
     properties: {
       id: {
         type: 'integer',
-        description: 'Issue ID number to close.',
+        description: 'Issue ID number to close.'
       },
       status: {
         type: 'string',
-        enum: ['completed', 'failed', 'abandoned'],
+        enum: ['completed', 'failed', 'abandoned']
       },
       comment: {
         type: 'string',
-        description: 'REQUIRED. A non-empty final comment explaining the resolution or reason for closure.',
+        description: 'REQUIRED. A non-empty final comment explaining the resolution or reason for closure.'
       },
       poster: {
         type: 'string',
-        description: 'Name of the person or agent closing the issue. Defaults to anonymous if omitted.',
-      },
+        description: 'Name of the person or agent closing the issue. Defaults to anonymous if omitted.'
+      }
     },
-    required: ['id', 'status', 'comment'],
+    required: ['id', 'status', 'comment']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -67,5 +68,5 @@ export const issueCloseTool: ToolDefinition = {
 
     // Return full issue list for visibility
     return await ctx.issue.printIssues();
-  },
+  }
 };

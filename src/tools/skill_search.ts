@@ -48,11 +48,7 @@
 
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { extractKeywords } from '../loop/keyword-extractor.js';
-import {
-  scoreSkills,
-  SKILL_SEMANTIC_TOPK,
-  getSkillMatchThreshold,
-} from '../loop/skill-matcher.js';
+import { scoreSkills, SKILL_SEMANTIC_TOPK, getSkillMatchThreshold } from '../loop/skill-matcher.js';
 import { loader } from '../context/shared/loader.js';
 
 export const skillSearchTool: ToolDefinition = {
@@ -66,14 +62,16 @@ Once you find the right skill, use skill_load(name="<exact_name>") to load its f
     properties: {
       search: {
         type: 'string',
-        description: 'REQUIRED: A natural-language query (a few words) describing the skill you are looking for, in any language. Use concise terms, not long essays.',
+        description:
+          'REQUIRED: A natural-language query (a few words) describing the skill you are looking for, in any language. Use concise terms, not long essays.'
       },
       semantic: {
         type: 'string',
-        description: 'OPTIONAL: A semantic refinement phrase whose embedding similarity boosts the keyword-match score. When omitted, the query itself is used for the semantic lookup.',
-      },
+        description:
+          'OPTIONAL: A semantic refinement phrase whose embedding similarity boosts the keyword-match score. When omitted, the query itself is used for the semantic lookup.'
+      }
     },
-    required: ['search'],
+    required: ['search']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -100,9 +98,7 @@ Once you find the right skill, use skill_load(name="<exact_name>") to load its f
     // resort. (The tool description documents this precedence — it is NOT a
     // simple `semantic || search` default.)
     const semanticQuery =
-      (semantic && semantic.trim()) ||
-      (extraction.status === 'success' && extraction.freeformQuery) ||
-      search;
+      (semantic && semantic.trim()) || (extraction.status === 'success' && extraction.freeformQuery) || search;
 
     const threshold = getSkillMatchThreshold();
 
@@ -115,7 +111,7 @@ Once you find the right skill, use skill_load(name="<exact_name>") to load its f
       semResults = await ctx.wiki.get(semanticQuery, {
         domain: 'skills',
         topK: SKILL_SEMANTIC_TOPK,
-        threshold,
+        threshold
       });
       // Saturated-window signal: if the returned count equals topK, the
       // domain may have more qualifying rows than the cap allows through —
@@ -125,7 +121,7 @@ Once you find the right skill, use skill_load(name="<exact_name>") to load its f
           'warn',
           'skill_search',
           `semantic window saturated (topK=${SKILL_SEMANTIC_TOPK}); results may be truncated`,
-          semanticQuery,
+          semanticQuery
         );
       }
     } catch {
@@ -138,7 +134,7 @@ Once you find the right skill, use skill_load(name="<exact_name>") to load its f
       skills: ctx.skill.listSkills(),
       keywords,
       semanticResults: semResults,
-      threshold,
+      threshold
     });
 
     if (kept.length === 0) {
@@ -161,15 +157,15 @@ Suggestions:
       const kw = r.skill.keywords.length > 0 ? `Keywords: ${r.skill.keywords.join(', ')}` : '';
       const parts = [desc, kw].filter(Boolean);
       suggestions.push(
-        `## ${r.skill.name} (score ${r.score} · pts ${r.points}${boostTag}${pct})\n\n${parts.join('\n')}`,
+        `## ${r.skill.name} (score ${r.score} · pts ${r.points}${boostTag}${pct})\n\n${parts.join('\n')}`
       );
     }
 
-    const names = kept.map(r => r.skill.name).join(', ');
+    const names = kept.map((r) => r.skill.name).join(', ');
     ctx.core.brief('info', 'skill_search', `→ ${names}`, search);
 
     const body = suggestions.join('\n\n---\n\n');
 
     return `Found ${kept.length} skill(s) matching '${search}':\n\n---\n\n${body}\n\n---\n\nTo load a specific skill, use: skill_load(name="<exact_skill_name>")`;
-  },
+  }
 };

@@ -8,16 +8,17 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const bgRemoveTool: ToolDefinition = {
   name: 'bg_remove',
-  description: 'Terminate a background task by pid. Use when a background task is stuck or no longer needed. Get pid from bg_create result or bg_print output.',
+  description:
+    'Terminate a background task by pid. Use when a background task is stuck or no longer needed. Get pid from bg_create result or bg_print output.',
   input_schema: {
     type: 'object',
     properties: {
       pid: {
         type: 'number',
-        description: 'Process ID of the background task to kill (from bg_create or bg_print).',
-      },
+        description: 'Process ID of the background task to kill (from bg_create or bg_print).'
+      }
     },
-    required: ['pid'],
+    required: ['pid']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -45,5 +46,5 @@ export const bgRemoveTool: ToolDefinition = {
       ctx.core.brief('error', 'bg_remove', err.message);
       return `Error: ${err.message}`;
     }
-  },
+  }
 };

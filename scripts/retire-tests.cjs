@@ -12,7 +12,10 @@ if (!file || needles.length === 0) {
   console.error('usage: node retire-tests.js <file> <desc1> [desc2 ...]');
   process.exit(1);
 }
-if (!fs.existsSync(file)) { console.error('not found: ' + file); process.exit(1); }
+if (!fs.existsSync(file)) {
+  console.error('not found: ' + file);
+  process.exit(1);
+}
 
 const src = fs.readFileSync(file, 'utf8');
 // Detect and preserve original line ending
@@ -32,7 +35,7 @@ while (i < n) {
   const m = line.match(startRe);
   if (m) {
     const desc = m[3];
-    const hit = needles.some(nd => desc.includes(nd));
+    const hit = needles.some((nd) => desc.includes(nd));
     if (hit) {
       // Find block end by tracking paren depth across subsequent lines.
       let depth = 0;
@@ -46,19 +49,28 @@ while (i < n) {
         const cur = lines[j];
         // Track string literals to avoid counting parens inside strings.
         // Simple scanner: toggle inString on quote (handles most cases).
-        let inStr = false, strCh = '';
+        let inStr = false,
+          strCh = '';
         for (let k = 0; k < cur.length; k++) {
           const ch = cur[k];
           if (inStr) {
-            if (ch === '\\') { k++; continue; }
+            if (ch === '\\') {
+              k++;
+              continue;
+            }
             if (ch === strCh) inStr = false;
           } else {
-            if (ch === '"' || ch === "'" || ch === '`') { inStr = true; strCh = ch; }
-            else if (ch === '(') depth++;
+            if (ch === '"' || ch === "'" || ch === '`') {
+              inStr = true;
+              strCh = ch;
+            } else if (ch === '(') depth++;
             else if (ch === ')') depth--;
           }
         }
-        if (depth <= 0) { foundEnd = true; break; }
+        if (depth <= 0) {
+          foundEnd = true;
+          break;
+        }
         j++;
       }
       if (foundEnd) {

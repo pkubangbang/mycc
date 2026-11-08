@@ -54,9 +54,7 @@ export function format(filePath) {
   // minimal required fields. peerSessionId/title/firstQuery/joined/
   // firstQuerySent/createdAt are optional and rendered defensively.
   if (typeof record.channelId !== 'string' || typeof record.ownerSessionId !== 'string') {
-    throw new Error(
-      `File is not a channel record (missing channelId/ownerSessionId): ${filePath}`
-    );
+    throw new Error(`File is not a channel record (missing channelId/ownerSessionId): ${filePath}`);
   }
 
   const lines = [];

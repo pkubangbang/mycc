@@ -41,18 +41,25 @@ export interface CompactDeps {
 /**
  * Build the summary prompt (sections preserved verbatim from triologue.ts).
  */
-export function buildSummaryPrompt(conversationText: string, deps: CompactDeps, domains: Array<{ domain_name: string; description?: string }>, focus?: string): string {
-  const domainList = domains.length > 0
-    ? domains.map(d => `- ${d.domain_name}${d.description ? `: ${d.description}` : ''}`).join('\n')
-    : '';
+export function buildSummaryPrompt(
+  conversationText: string,
+  deps: CompactDeps,
+  domains: Array<{ domain_name: string; description?: string }>,
+  focus?: string
+): string {
+  const domainList =
+    domains.length > 0
+      ? domains.map((d) => `- ${d.domain_name}${d.description ? `: ${d.description}` : ''}`).join('\n')
+      : '';
 
-  const knowledgeInstruction = domains.length > 0
-    ? `### Knowledge Persistence\n` +
-    `Available wiki domains:\n${domainList}\n\n` +
-    `IMPORTANT: Only persist knowledge that matches one of the available domains above.\n` +
-    `For knowledge worth remembering, note as: "Knowledge: [domain] - [fact/rule]"\n` +
-    `Skip opinions, temporary details, or knowledge that does not fit any domain.\n\n`
-    : '';
+  const knowledgeInstruction =
+    domains.length > 0
+      ? `### Knowledge Persistence\n` +
+        `Available wiki domains:\n${domainList}\n\n` +
+        `IMPORTANT: Only persist knowledge that matches one of the available domains above.\n` +
+        `For knowledge worth remembering, note as: "Knowledge: [domain] - [fact/rule]"\n` +
+        `Skip opinions, temporary details, or knowledge that does not fit any domain.\n\n`
+      : '';
 
   const focusInstruction = focus
     ? `\n**Focus Area:** Pay special attention to information related to "${focus}" and ensure the summary captures all relevant details about this topic.\n`
@@ -140,7 +147,12 @@ export function saveTranscript(messages: Message[]): string {
  *   stage pass `loader.getToolsForScope(scope)` so the fork hits the exact
  *   cache prefix the next LLM call will use.
  */
-export async function runAutoCompact(deps: CompactDeps, focus?: string, signal?: AbortSignal, tools?: Tool[]): Promise<Message[]> {
+export async function runAutoCompact(
+  deps: CompactDeps,
+  focus?: string,
+  signal?: AbortSignal,
+  tools?: Tool[]
+): Promise<Message[]> {
   // Save full transcript to disk
   const transcriptPath = saveTranscript(deps.getRawMessages());
   deps.onCompact(transcriptPath);
@@ -171,13 +183,8 @@ export async function runAutoCompact(deps: CompactDeps, focus?: string, signal?:
   const fullMessages = useFocus ? deps.getFullMessages() : [];
 
   const [summaryResponse, focusText] = await Promise.all([
-    retryChat(
-      { model: MODEL, messages: [{ role: 'user', content: summaryPrompt }] },
-      { signal, noSpinner: true },
-    ),
-    useFocus
-      ? forkChat(fullMessages, tools!, focusExtractionPrompt, signal, 'none')
-      : Promise.resolve(''),
+    retryChat({ model: MODEL, messages: [{ role: 'user', content: summaryPrompt }] }, { signal, noSpinner: true }),
+    useFocus ? forkChat(fullMessages, tools!, focusExtractionPrompt, signal, 'none') : Promise.resolve('')
   ]);
 
   const summary = summaryResponse.message.content || '(no summary)';
@@ -188,15 +195,10 @@ export async function runAutoCompact(deps: CompactDeps, focus?: string, signal?:
   // messages, preserving the historical contract.
   const focusPrefix = focus ? `Focus: ${focus}. ` : '';
   const lastUserQuery = deps.lastUserQuery();
-  const userQueryNote = lastUserQuery
-    ? `\n\n**Previous user instruction:** ${lastUserQuery}`
-    : '';
-  const focusSection = focusText
-    ? `\n\n### Recent Working Memory\n${focusText}`
-    : '';
+  const userQueryNote = lastUserQuery ? `\n\n**Previous user instruction:** ${lastUserQuery}` : '';
+  const focusSection = focusText ? `\n\n### Recent Working Memory\n${focusText}` : '';
 
   const summaryPrefix = `[Conversation compressed. ${focusPrefix}Transcript: ${transcriptPath}]\n\n`;
-
 
   // The post-compact sequence is a 3-message brief tool-call round-trip:
   //
@@ -227,17 +229,13 @@ export async function runAutoCompact(deps: CompactDeps, focus?: string, signal?:
   // A SYNTHESIZED call id, minted like every other synthetic producer (no
   // hand-invented id scheme): opaque and unique is all it must be — a reader
   // the anchor's message, never its id.
-  const briefCall = briefToolCall(
-    COMPACT_RESUME_BRIEF_MESSAGE,
-    7,
-    newBriefCallId('compact_resume'),
-  );
+  const briefCall = briefToolCall(COMPACT_RESUME_BRIEF_MESSAGE, 7, newBriefCallId('compact_resume'));
   return buildResumeRoundTrip({
     briefCall,
     summaryPrefix,
     summary,
     focusSection,
-    userQueryNote,
+    userQueryNote
   });
 }
 
@@ -248,8 +246,7 @@ export async function runAutoCompact(deps: CompactDeps, focus?: string, signal?:
 export const COMPACT_RESUME_INSTRUCTION =
   '\n\n--- Resume: review "Current State" and "Recent Working Memory" above to re-orient on the in-flight task and decide the next step.';
 
-export const COMPACT_RESUME_BRIEF_MESSAGE =
-  'Re-orienting on the compacted summary to resume the in-flight task.';
+export const COMPACT_RESUME_BRIEF_MESSAGE = 'Re-orienting on the compacted summary to resume the in-flight task.';
 
 /**
  * Build the post-compact 3-message round-trip that `replaceAll` installs.
@@ -289,7 +286,7 @@ export function buildResumeRoundTrip(args: {
   return [
     {
       role: 'user',
-      content: `${summaryPrefix}${summary}${focusSection}${userQueryNote}${COMPACT_RESUME_INSTRUCTION}`,
+      content: `${summaryPrefix}${summary}${focusSection}${userQueryNote}${COMPACT_RESUME_INSTRUCTION}`
     },
     {
       role: 'assistant',
@@ -301,7 +298,7 @@ export function buildResumeRoundTrip(args: {
       // compaction it is the only brief left, so marking it would leave a reader
       // with no anchor at all. The call id is an opaque unique id and carries
       // no meaning.
-      tool_calls: [briefCall],
+      tool_calls: [briefCall]
     },
     {
       role: 'tool',
@@ -312,7 +309,7 @@ export function buildResumeRoundTrip(args: {
       // never hand-assembled. A later section may be appended in place
       // summary, keeping the hash line.
       content: briefResultLine(briefCall.id),
-      tool_call_id: briefCall.id,
-    },
+      tool_call_id: briefCall.id
+    }
   ];
 }

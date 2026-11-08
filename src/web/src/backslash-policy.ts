@@ -72,7 +72,7 @@ export const PATH_TOOL_LABELS: ReadonlySet<string> = new Set([
   'bg_create',
   'bg_await',
   'bg_print',
-  'bg_remove',
+  'bg_remove'
 ]);
 
 /**

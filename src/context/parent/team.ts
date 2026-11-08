@@ -12,7 +12,7 @@ import type {
   TeammateWaitReason,
   AgentContext,
   IpcHandlerRegistration,
-  SendResponseCallback,
+  SendResponseCallback
 } from '../../types.js';
 import chalk from 'chalk';
 import { getSessionDir } from '../../config.js';
@@ -64,10 +64,13 @@ export class TeamManager implements TeamModule {
   }> = [];
 
   // ETA/deadline tracking per teammate (from eta_update IPC)
-  private teammateEta: Map<string, {
-    deadlineMs: number;     // Absolute deadline in ms (eta * 1000)
-    updatedAt: number;      // When this ETA was last set
-  }> = new Map();
+  private teammateEta: Map<
+    string,
+    {
+      deadlineMs: number; // Absolute deadline in ms (eta * 1000)
+      updatedAt: number; // When this ETA was last set
+    }
+  > = new Map();
 
   constructor(context: AgentContext, sessionFilePath: string) {
     this.context = context;
@@ -142,7 +145,7 @@ export class TeamManager implements TeamModule {
     const child = spawnTsx({
       script: path.join(PROJECT_ROOT, 'src', 'context', 'teammate-worker.ts'),
       cwd: this.context.core.getWorkDir(),
-      stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc']
     });
 
     // Track process
@@ -192,7 +195,7 @@ export class TeamManager implements TeamModule {
       prompt,
       triologuePath,
       sessionId,
-      cwd: spawnCwd,
+      cwd: spawnCwd
     });
 
     // Wait for 'teammate_ready' notification with 30s timeout
@@ -249,7 +252,11 @@ export class TeamManager implements TeamModule {
       // Just verify sender matches and log
       const teammateName = msg.name as string;
       if (sender !== teammateName) {
-        this.context.core.brief('error', 'session', `teammate ${teammateName} ready but the actual sender is ${sender}`);
+        this.context.core.brief(
+          'error',
+          'session',
+          `teammate ${teammateName} ready but the actual sender is ${sender}`
+        );
         return;
       }
       this.context.core.brief('info', teammateName, 'Teammate ready');
@@ -262,9 +269,7 @@ export class TeamManager implements TeamModule {
       const deadlineMs = etaMsg.eta * 1000;
       this.teammateEta.set(etaMsg.sender, { deadlineMs, updatedAt: Date.now() });
       const deadlineStr = new Date(deadlineMs).toLocaleTimeString();
-      const banner = chalk.bgCyan.black.bold(
-        ` ${etaMsg.sender} will be finishing the task by ${deadlineStr} `
-      );
+      const banner = chalk.bgCyan.black.bold(` ${etaMsg.sender} will be finishing the task by ${deadlineStr} `);
       this.context.core.brief('info', 'eta_update', banner);
       return;
     }
@@ -318,11 +323,9 @@ export class TeamManager implements TeamModule {
       const { skillName } = msg as unknown as { skillName: string };
       const result = await this.context.skill.replaceCondition(skillName);
       if (!result.success) {
-        this.context.core.brief('warn', sender,
-          `condition_replace for '${skillName}' failed: ${result.error}`);
+        this.context.core.brief('warn', sender, `condition_replace for '${skillName}' failed: ${result.error}`);
       } else {
-        this.context.core.brief('info', sender,
-          `Hook condition for '${skillName}' reloaded from disk`);
+        this.context.core.brief('info', sender, `Hook condition for '${skillName}' reloaded from disk`);
       }
       return;
     }
@@ -345,7 +348,7 @@ export class TeamManager implements TeamModule {
           sender,
           reqId: reqId!,
           query: msg.query as string,
-          options: msg.options as { onEsc?: string; onEnter?: string } | undefined,
+          options: msg.options as { onEsc?: string; onEnter?: string } | undefined
         });
         // Immediately notify the user that a question is queued. Without this,
         // the thinking spinner (if active during an LLM call) silently covers
@@ -358,9 +361,10 @@ export class TeamManager implements TeamModule {
         // at the start of the next COLLECT state.
         stopSpinner();
         this.context.core.brief(
-          'warn', 'question',
+          'warn',
+          'question',
           `${sender} has a question waiting (will be asked when current task finishes)`,
-          msg.query as string,
+          msg.query as string
         );
         return;
       }
@@ -390,7 +394,7 @@ export class TeamManager implements TeamModule {
         reqId,
         success,
         data,
-        error,
+        error
       });
     }
   }
@@ -408,7 +412,7 @@ export class TeamManager implements TeamModule {
       status: (this.statuses.get(name) || stored.status) as TeammateStatus,
       process: this.processes.get(name),
       prompt: stored.prompt,
-      createdAt: stored.createdAt,
+      createdAt: stored.createdAt
     };
   }
 
@@ -420,7 +424,7 @@ export class TeamManager implements TeamModule {
     return stored.map((t) => ({
       name: t.name,
       role: t.role,
-      status: (this.statuses.get(t.name) || t.status) as TeammateStatus,
+      status: (this.statuses.get(t.name) || t.status) as TeammateStatus
     }));
   }
 
@@ -468,8 +472,14 @@ export class TeamManager implements TeamModule {
   }): Promise<TeammateWaitReason> {
     const name = opts?.name;
     const maxWaitMs = opts?.timeoutMs ?? 10 * 60 * 1000;
-    const accepted: TeammateWaitReason[] = opts?.reasons
-      ?? ['all done', 'holding', 'mail', 'steering', 'esc', 'timeout'];
+    const accepted: TeammateWaitReason[] = opts?.reasons ?? [
+      'all done',
+      'holding',
+      'mail',
+      'steering',
+      'esc',
+      'timeout'
+    ];
     const accepts = (r: TeammateWaitReason): boolean => accepted.includes(r);
 
     const waitStart = Date.now();
@@ -499,11 +509,7 @@ export class TeamManager implements TeamModule {
       // No working teammates → all done. (Idle/shutdown are the resting state.)
       // A `failed` teammate is NOT done: it stopped without finishing, so the
       // caller must be told instead of receiving "all done".
-      if (
-        accepts('all done') &&
-        live.some((t) => t.status === 'failed') &&
-        !live.some((t) => t.status === 'working')
-      ) {
+      if (accepts('all done') && live.some((t) => t.status === 'failed') && !live.some((t) => t.status === 'working')) {
         return 'failed';
       }
 
@@ -557,8 +563,7 @@ export class TeamManager implements TeamModule {
       let info = `  ${t.name} (${t.role}): ${t.status}`;
       const eta = this.teammateEta.get(t.name);
       if (eta && t.status === 'working') {
-        const remaining = Math.max(0,
-          Math.round((eta.deadlineMs - Date.now()) / 1000));
+        const remaining = Math.max(0, Math.round((eta.deadlineMs - Date.now()) / 1000));
         const deadlineStr = new Date(eta.deadlineMs).toLocaleTimeString();
         // The displayed deadline is an ADVISORY SNAPSHOT set once on the
         // child's eta_update IPC and never auto-refreshed. A re-activated

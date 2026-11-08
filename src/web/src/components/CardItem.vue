@@ -101,11 +101,7 @@ function onReasonKeydown(event: KeyboardEvent): void {
           rows="3"
           @keydown="onKeydown"
         ></textarea>
-        <button
-          class="card-submit"
-          :disabled="responded || !inputValue.trim()"
-          @click="submitInput"
-        >提交</button>
+        <button class="card-submit" :disabled="responded || !inputValue.trim()" @click="submitInput">提交</button>
       </template>
 
       <!-- notice kind: instruction + single OK button, NO free-text input.
@@ -121,7 +117,9 @@ function onReasonKeydown(event: KeyboardEvent): void {
             :class="{ 'card-option-default': opt.isDefault }"
             :disabled="responded"
             @click="selectOption(opt.value)"
-          >{{ opt.label }}</button>
+          >
+            {{ opt.label }}
+          </button>
         </div>
       </template>
 
@@ -138,16 +136,15 @@ function onReasonKeydown(event: KeyboardEvent): void {
       <template v-else-if="card.kind === 'choice'">
         <div class="card-options">
           <template v-for="opt in card.options" :key="opt.value">
-            <div
-              v-if="allowsReason() && isNegativeOption(opt.value, opt.label)"
-              class="card-split"
-            >
+            <div v-if="allowsReason() && isNegativeOption(opt.value, opt.label)" class="card-split">
               <button
                 class="card-option-btn card-split-main"
                 :class="{ 'card-option-default': opt.isDefault }"
                 :disabled="responded"
                 @click="selectOption(opt.value)"
-              >{{ opt.label }}</button>
+              >
+                {{ opt.label }}
+              </button>
               <button
                 class="card-option-btn card-split-caret"
                 :class="{ 'card-option-default': opt.isDefault }"
@@ -155,7 +152,9 @@ function onReasonKeydown(event: KeyboardEvent): void {
                 :aria-expanded="reasonOpen"
                 :title="reasonOpen ? '收起理由' : '输入拒绝理由'"
                 @click="toggleReason"
-              >▾</button>
+              >
+                ▾
+              </button>
             </div>
             <button
               v-else
@@ -163,7 +162,9 @@ function onReasonKeydown(event: KeyboardEvent): void {
               :class="{ 'card-option-default': opt.isDefault }"
               :disabled="responded"
               @click="selectOption(opt.value)"
-            >{{ opt.label }}</button>
+            >
+              {{ opt.label }}
+            </button>
           </template>
         </div>
         <div v-if="reasonOpen && !responded" class="card-reason">
@@ -186,16 +187,15 @@ function onReasonKeydown(event: KeyboardEvent): void {
       <template v-else>
         <div class="card-options">
           <template v-for="opt in card.options" :key="opt.value">
-            <div
-              v-if="allowsReason() && isNegativeOption(opt.value, opt.label)"
-              class="card-split"
-            >
+            <div v-if="allowsReason() && isNegativeOption(opt.value, opt.label)" class="card-split">
               <button
                 class="card-option-btn card-split-main"
                 :class="{ 'card-option-default': opt.isDefault }"
                 :disabled="responded"
                 @click="selectOption(opt.value)"
-              >{{ opt.label }}</button>
+              >
+                {{ opt.label }}
+              </button>
               <button
                 class="card-option-btn card-split-caret"
                 :class="{ 'card-option-default': opt.isDefault }"
@@ -203,7 +203,9 @@ function onReasonKeydown(event: KeyboardEvent): void {
                 :aria-expanded="reasonOpen"
                 :title="reasonOpen ? '收起理由' : '输入拒绝理由'"
                 @click="toggleReason"
-              >▾</button>
+              >
+                ▾
+              </button>
             </div>
             <button
               v-else
@@ -211,7 +213,9 @@ function onReasonKeydown(event: KeyboardEvent): void {
               :class="{ 'card-option-default': opt.isDefault }"
               :disabled="responded"
               @click="selectOption(opt.value)"
-            >{{ opt.label }}</button>
+            >
+              {{ opt.label }}
+            </button>
           </template>
         </div>
         <!-- The refusal reason takes over the free-text box: once the user asks
@@ -234,11 +238,7 @@ function onReasonKeydown(event: KeyboardEvent): void {
             rows="2"
             @keydown="onKeydown"
           ></textarea>
-          <button
-            class="card-submit"
-            :disabled="responded || !inputValue.trim()"
-            @click="submitInput"
-          >提交</button>
+          <button class="card-submit" :disabled="responded || !inputValue.trim()" @click="submitInput">提交</button>
         </template>
       </template>
     </div>
@@ -259,7 +259,9 @@ function onReasonKeydown(event: KeyboardEvent): void {
   background: var(--bubble-prompt-bg);
   color: var(--bubble-prompt-text);
   border: 1px solid var(--bubble-prompt-border);
-  transition: opacity 0.2s, filter 0.2s;
+  transition:
+    opacity 0.2s,
+    filter 0.2s;
 }
 .card-bubble.responded {
   opacity: 0.55;

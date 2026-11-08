@@ -35,28 +35,42 @@ export const shareCommand: SlashCommand = {
     const unbind = args.includes('--unbind');
 
     if (rawId && unbind) {
-      if (!SHARE_ID_RE.test(rawId)) { console.log(chalk.red(`Invalid share id: ${rawId}`)); return; }
+      if (!SHARE_ID_RE.test(rawId)) {
+        console.log(chalk.red(`Invalid share id: ${rawId}`));
+        return;
+      }
       const ok = mgr.unbind(rawId);
-      console.log(ok ? chalk.yellow(`Unbound share ${rawId} (folder kept).`) : chalk.gray(`Share ${rawId} was not bound.`));
+      console.log(
+        ok ? chalk.yellow(`Unbound share ${rawId} (folder kept).`) : chalk.gray(`Share ${rawId} was not bound.`)
+      );
       return;
     }
 
     // /share <id> — bind
     if (rawId) {
-      if (!SHARE_ID_RE.test(rawId)) { console.log(chalk.red(`Invalid share id: ${rawId} (use [A-Za-z0-9_-]{1,64})`)); return; }
+      if (!SHARE_ID_RE.test(rawId)) {
+        console.log(chalk.red(`Invalid share id: ${rawId} (use [A-Za-z0-9_-]{1,64})`));
+        return;
+      }
       // `bind` pins the share todo itself (manager → pinShareTodo), so
       // `/share` and `--share` produce the SAME reminder instead of two
       // near-duplicate pinned entries.
       const e = mgr.bind(rawId);
       console.log(chalk.green(`Bound share ${chalk.bold(rawId)}`) + chalk.gray(` → ${e.root}`));
-      console.log(chalk.gray(`Wired peers announcing ${rawId} sync automatically. Debug frames: ${isDebugFilesync() ? 'ON' : 'off (enable with --debug-filesync)'}.`));
+      console.log(
+        chalk.gray(
+          `Wired peers announcing ${rawId} sync automatically. Debug frames: ${isDebugFilesync() ? 'ON' : 'off (enable with --debug-filesync)'}.`
+        )
+      );
       return;
     }
 
     // /share — list
     const shares = mgr.shares();
     if (!shares.length) {
-      console.log(chalk.gray('No shares bound. Use /share <id> to bind one (or --share <id> / MYCC_SHARES at launch).'));
+      console.log(
+        chalk.gray('No shares bound. Use /share <id> to bind one (or --share <id> / MYCC_SHARES at launch).')
+      );
       return;
     }
     console.log(chalk.bold('filesync shares:'));
@@ -68,8 +82,9 @@ export const shareCommand: SlashCommand = {
       console.log(chalk.gray(`    partners: ${partners.length ? partners.join(', ') : '(none connected)'}`));
       if (conflicts.length) {
         console.log(chalk.yellow(`    conflicts: ${conflicts.length} (resolve [sync-conflict] mail)`));
-        for (const c of conflicts) console.log(chalk.gray(`      ${c.relPath} — kept ${c.keptGen.sid}, lost ${c.loserSid}`));
+        for (const c of conflicts)
+          console.log(chalk.gray(`      ${c.relPath} — kept ${c.keptGen.sid}, lost ${c.loserSid}`));
       }
     }
-  },
+  }
 };

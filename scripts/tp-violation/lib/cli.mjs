@@ -19,7 +19,11 @@ export const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO = join(HERE, '..', '..', '..');
 
 /** Read one `--name=value` CLI flag. */
-export const flag = (n) => process.argv.slice(2).find((a) => a.startsWith(`--${n}=`))?.split('=')[1];
+export const flag = (n) =>
+  process.argv
+    .slice(2)
+    .find((a) => a.startsWith(`--${n}=`))
+    ?.split('=')[1];
 /** True iff a bare `--name` flag is present. */
 export const has = (n) => process.argv.slice(2).includes(`--${n}`);
 
@@ -64,7 +68,11 @@ export function runMatrix(Triologue, isIllegal, MATRIX, describe) {
     const t = new Triologue({ onMessage: () => {}, tokenThreshold: 50000, resultThreshold: 100000 });
     t.user('task');
     let threw = null;
-    try { c.build(t); } catch (e) { threw = e; }
+    try {
+      c.build(t);
+    } catch (e) {
+      threw = e;
+    }
     if (threw) {
       console.log(`  [threw] ${c.name}\n          ${String(threw.message).slice(0, 100)}`);
       built.push({ c, msgs: null, illegal: false });

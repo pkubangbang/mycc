@@ -35,7 +35,7 @@ const SENSITIVE_PREFIXES: { prefix: string; reason: string }[] = [
   { prefix: '/lib', reason: 'system libraries' },
   { prefix: '/bin', reason: 'system binaries' },
   { prefix: '/sbin', reason: 'system admin binaries' },
-  { prefix: '/root', reason: 'root user home directory' },
+  { prefix: '/root', reason: 'root user home directory' }
 ];
 
 /**
@@ -87,7 +87,7 @@ export function checkSensitivePath(p: string): { reason: string } | null {
     { suffix: normalizeForComparison(path.join(os.homedir(), '.ssh')), reason: 'SSH keys directory' },
     { suffix: normalizeForComparison(path.join(os.homedir(), '.gnupg')), reason: 'GPG keys directory' },
     { suffix: normalizeForComparison(path.join(os.homedir(), '.aws')), reason: 'AWS credentials directory' },
-    { suffix: normalizeForComparison(path.join(os.homedir(), '.gitconfig')), reason: 'global git configuration' },
+    { suffix: normalizeForComparison(path.join(os.homedir(), '.gitconfig')), reason: 'global git configuration' }
   ];
   for (const { suffix, reason } of homeAnchored) {
     if (normalized === suffix || normalized.startsWith(`${suffix}/`)) {

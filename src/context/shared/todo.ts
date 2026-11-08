@@ -143,7 +143,6 @@ export class Todo implements TodoModule {
     return this.items.map((i) => ({ ...i }));
   }
 
-
   /**
    * Pin or unpin a todo item, optionally setting a natural-language STOP-GUARD
    * condition. Requires the current hash (anti-hallusion) — rejects if id not
@@ -187,8 +186,6 @@ export class Todo implements TodoModule {
    * checkbox.
    */
   getPreventStopTodos(): TodoItem[] {
-    return this.items
-      .filter((i) => i.pinned && !!i.preventStop)
-      .map((i) => ({ ...i }));
+    return this.items.filter((i) => i.pinned && !!i.preventStop).map((i) => ({ ...i }));
   }
 }

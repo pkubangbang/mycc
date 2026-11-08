@@ -62,25 +62,19 @@ export function stripInternalMarkup(content: string): string {
   if (result.includes('DSML')) {
     // Strip full DSML paired tags: <||DSML||tagname>...</||DSML||tagname>
     // (opening tag may carry attributes, e.g. <||DSML||parameter name="m">)
-    const fullTagRe = new RegExp(
-      `${FW_DSML_OPEN_RE  }(\\w+)(?:\\s[^>]*)?>[\\s\\S]*?${  FW_DSML_CLOSE_RE  }\\1>`,
-      'g'
-    );
+    const fullTagRe = new RegExp(`${FW_DSML_OPEN_RE}(\\w+)(?:\\s[^>]*)?>[\\s\\S]*?${FW_DSML_CLOSE_RE}\\1>`, 'g');
     result = result.replace(fullTagRe, '');
 
     // Strip self-closing DSML tags: <||DSML||tagname />
-    const selfCloseRe = new RegExp(
-      `${FW_DSML_OPEN_RE  }(\\w+)(?:\\s[^>]*)?\\s*/\\s*>`,
-      'g'
-    );
+    const selfCloseRe = new RegExp(`${FW_DSML_OPEN_RE}(\\w+)(?:\\s[^>]*)?\\s*/\\s*>`, 'g');
     result = result.replace(selfCloseRe, '');
 
     // Strip opening-only DSML tags: <||DSML||tagname> (with or without attrs)
-    const openTagRe = new RegExp(`${FW_DSML_OPEN_RE  }(\\w+)(?:\\s[^>]*)?>`, 'g');
+    const openTagRe = new RegExp(`${FW_DSML_OPEN_RE}(\\w+)(?:\\s[^>]*)?>`, 'g');
     result = result.replace(openTagRe, '');
 
     // Strip closing-only DSML tags: </||DSML||tagname>
-    const closeTagRe = new RegExp(`${FW_DSML_CLOSE_RE  }(\\w+)>`, 'g');
+    const closeTagRe = new RegExp(`${FW_DSML_CLOSE_RE}(\\w+)>`, 'g');
     result = result.replace(closeTagRe, '');
   }
 

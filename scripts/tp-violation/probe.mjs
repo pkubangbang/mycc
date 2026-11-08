@@ -129,64 +129,183 @@ const describe = (msgs) =>
  */
 const MATRIX = [
   // ── baseline ──
-  { name: 'agent → tool → note (true turn boundary)', expect: 'legal',
-    build: (t) => { t.agent('go', [tc('p1', 'bash')]); t.tool('bash', 'o'); t.note('REMINDER', 'b'); } },
+  {
+    name: 'agent → tool → note (true turn boundary)',
+    expect: 'legal',
+    build: (t) => {
+      t.agent('go', [tc('p1', 'bash')]);
+      t.tool('bash', 'o');
+      t.note('REMINDER', 'b');
+    }
+  },
   // ── single pending call ──
-  { name: 'note() with 1 call pending', expect: 'legal',
-    build: (t) => { t.agent('go', [tc('p1', 'bash')]); t.note('REMINDER', 's'); t.tool('bash', 'o'); } },
-  { name: 'user() with 1 call pending', expect: 'legal',
-    build: (t) => { t.agent('go', [tc('p1', 'bash')]); t.user('new direction'); t.tool('bash', 'o'); } },
-  { name: 'hook note() with 1 call pending', expect: 'legal',
-    build: (t) => { t.agent('go', [tc('p1', 'bash')]); t.note('MAIL', 'hooked', 'some-hook'); t.tool('bash', 'o'); } },
-  { name: 'all five categories with 1 call pending', expect: 'legal',
+  {
+    name: 'note() with 1 call pending',
+    expect: 'legal',
+    build: (t) => {
+      t.agent('go', [tc('p1', 'bash')]);
+      t.note('REMINDER', 's');
+      t.tool('bash', 'o');
+    }
+  },
+  {
+    name: 'user() with 1 call pending',
+    expect: 'legal',
+    build: (t) => {
+      t.agent('go', [tc('p1', 'bash')]);
+      t.user('new direction');
+      t.tool('bash', 'o');
+    }
+  },
+  {
+    name: 'hook note() with 1 call pending',
+    expect: 'legal',
+    build: (t) => {
+      t.agent('go', [tc('p1', 'bash')]);
+      t.note('MAIL', 'hooked', 'some-hook');
+      t.tool('bash', 'o');
+    }
+  },
+  {
+    name: 'all five categories with 1 call pending',
+    expect: 'legal',
     build: (t) => {
       t.agent('go', [tc('p1', 'bash')]);
       for (const c of ['URGENT', 'MAIL', 'HINT', 'SYSTEM', 'REMINDER']) t.note(c, `${c} text`);
       t.tool('bash', 'o');
-    } },
-  { name: 'note(), user(), note() with 1 call pending', expect: 'legal',
+    }
+  },
+  {
+    name: 'note(), user(), note() with 1 call pending',
+    expect: 'legal',
     build: (t) => {
       t.agent('go', [tc('p1', 'bash')]);
-      t.note('URGENT', 'a'); t.user('q'); t.note('HINT', 'b');
+      t.note('URGENT', 'a');
+      t.user('q');
+      t.note('HINT', 'b');
       t.tool('bash', 'o');
-    } },
+    }
+  },
   // ── multi pending call ──
-  { name: 'multi-call: note before any result', expect: 'legal',
-    build: (t) => { t.agent('go', [tc('p1', 'bash'), tc('p2', 'read')]); t.note('MAIL', 's'); t.tool('bash', 'o1'); t.tool('read', 'o2'); } },
-  { name: 'multi-call: note BETWEEN the two results', expect: 'legal',
-    build: (t) => { t.agent('go', [tc('p1', 'bash'), tc('p2', 'read')]); t.tool('bash', 'o1'); t.note('HINT', 'mid'); t.tool('read', 'o2'); } },
-  { name: 'multi-call: note after the LAST result', expect: 'legal',
-    build: (t) => { t.agent('go', [tc('p1', 'bash'), tc('p2', 'read')]); t.tool('bash', 'o1'); t.tool('read', 'o2'); t.note('SYSTEM', 'late'); } },
-  { name: 'triple-call: notes interleaved between results', expect: 'legal',
+  {
+    name: 'multi-call: note before any result',
+    expect: 'legal',
+    build: (t) => {
+      t.agent('go', [tc('p1', 'bash'), tc('p2', 'read')]);
+      t.note('MAIL', 's');
+      t.tool('bash', 'o1');
+      t.tool('read', 'o2');
+    }
+  },
+  {
+    name: 'multi-call: note BETWEEN the two results',
+    expect: 'legal',
+    build: (t) => {
+      t.agent('go', [tc('p1', 'bash'), tc('p2', 'read')]);
+      t.tool('bash', 'o1');
+      t.note('HINT', 'mid');
+      t.tool('read', 'o2');
+    }
+  },
+  {
+    name: 'multi-call: note after the LAST result',
+    expect: 'legal',
+    build: (t) => {
+      t.agent('go', [tc('p1', 'bash'), tc('p2', 'read')]);
+      t.tool('bash', 'o1');
+      t.tool('read', 'o2');
+      t.note('SYSTEM', 'late');
+    }
+  },
+  {
+    name: 'triple-call: notes interleaved between results',
+    expect: 'legal',
     build: (t) => {
       t.agent('go', [tc('p1', 'bash'), tc('p2', 'read'), tc('p3', 'grep')]);
-      t.note('URGENT', 'a'); t.tool('bash', 'o1');
-      t.user('q'); t.tool('read', 'o2');
-      t.note('HINT', 'b'); t.tool('grep', 'o3');
-    } },
+      t.note('URGENT', 'a');
+      t.tool('bash', 'o1');
+      t.user('q');
+      t.tool('read', 'o2');
+      t.note('HINT', 'b');
+      t.tool('grep', 'o3');
+    }
+  },
   // ── interrupt / recovery paths ──
-  { name: 'skipPendingTools() answers all calls, then note', expect: 'legal',
-    build: (t) => { t.agent('go', [tc('p1', 'bash'), tc('p2', 'read')]); t.skipPendingTools('[interrupted]'); t.note('SYSTEM', 'paused'); } },
-  { name: 'note deferred across an ESC interrupt', expect: 'legal',
-    build: (t) => { t.agent('go', [tc('p1', 'bash')]); t.note('SYSTEM', 'p'); t.skipPendingTools('[interrupted]'); } },
-  { name: 'second agent() while calls pending (duplicate-assistant recovery)', expect: 'legal',
-    build: (t) => { t.agent('go', [tc('p1', 'bash')]); t.agent('again', [tc('p2', 'read')]); t.tool('read', 'o2'); } },
-  { name: 'note then second agent() while pending', expect: 'legal',
-    build: (t) => { t.agent('go', [tc('p1', 'bash')]); t.note('MAIL', 'n'); t.agent('again', [tc('p2', 'read')]); t.tool('read', 'o2'); } },
+  {
+    name: 'skipPendingTools() answers all calls, then note',
+    expect: 'legal',
+    build: (t) => {
+      t.agent('go', [tc('p1', 'bash'), tc('p2', 'read')]);
+      t.skipPendingTools('[interrupted]');
+      t.note('SYSTEM', 'paused');
+    }
+  },
+  {
+    name: 'note deferred across an ESC interrupt',
+    expect: 'legal',
+    build: (t) => {
+      t.agent('go', [tc('p1', 'bash')]);
+      t.note('SYSTEM', 'p');
+      t.skipPendingTools('[interrupted]');
+    }
+  },
+  {
+    name: 'second agent() while calls pending (duplicate-assistant recovery)',
+    expect: 'legal',
+    build: (t) => {
+      t.agent('go', [tc('p1', 'bash')]);
+      t.agent('again', [tc('p2', 'read')]);
+      t.tool('read', 'o2');
+    }
+  },
+  {
+    name: 'note then second agent() while pending',
+    expect: 'legal',
+    build: (t) => {
+      t.agent('go', [tc('p1', 'bash')]);
+      t.note('MAIL', 'n');
+      t.agent('again', [tc('p2', 'read')]);
+      t.tool('read', 'o2');
+    }
+  },
   // ── reset / drop points: a deferred input must NOT resurrect ──
-  { name: 'clear() while a note is deferred', expect: 'legal',
-    build: (t) => { t.agent('go', [tc('p1', 'bash')]); t.note('URGENT', 'x'); t.clear(); t.user('after clear'); } },
-  { name: 'beginWrapUp() flushes pending (skips) then note', expect: 'legal',
-    build: (t) => { t.agent('go', [tc('p1', 'bash')]); t.note('SYSTEM', 'p'); t.beginWrapUp(); t.user('next'); } },
+  {
+    name: 'clear() while a note is deferred',
+    expect: 'legal',
+    build: (t) => {
+      t.agent('go', [tc('p1', 'bash')]);
+      t.note('URGENT', 'x');
+      t.clear();
+      t.user('after clear');
+    }
+  },
+  {
+    name: 'beginWrapUp() flushes pending (skips) then note',
+    expect: 'legal',
+    build: (t) => {
+      t.agent('go', [tc('p1', 'bash')]);
+      t.note('SYSTEM', 'p');
+      t.beginWrapUp();
+      t.user('next');
+    }
+  },
   // ── longer realistic turn ──
-  { name: 'realistic: two tool rounds with notes at each boundary', expect: 'legal',
+  {
+    name: 'realistic: two tool rounds with notes at each boundary',
+    expect: 'legal',
     build: (t) => {
       t.user('do the work');
-      t.agent('step 1', [tc('a1', 'bash')]); t.tool('bash', 'r1'); t.note('REMINDER', 'steer 1');
+      t.agent('step 1', [tc('a1', 'bash')]);
+      t.tool('bash', 'r1');
+      t.note('REMINDER', 'steer 1');
       t.agent('step 2', [tc('a2', 'read'), tc('a3', 'grep')]);
-      t.tool('read', 'r2'); t.note('HINT', 'steer 2'); t.tool('grep', 'r3');
-      t.note('MAIL', 'wrap'); t.user('final');
-    } },
+      t.tool('read', 'r2');
+      t.note('HINT', 'steer 2');
+      t.tool('grep', 'r3');
+      t.note('MAIL', 'wrap');
+      t.user('final');
+    }
+  }
 ];
 
 // ── Phase 3: hand-built tolerance probes (coarse, kept for continuity) ─────
@@ -195,14 +314,14 @@ const MOCK = {
     { role: 'user', content: 'Read notes.txt.' },
     { role: 'assistant', content: 'Calling.', tool_calls: [tc('m1', 'bash')] },
     { role: 'tool', tool_name: 'bash', tool_call_id: 'm1', content: 'hi' },
-    { role: 'user', content: 'Summarize in three words.' },
+    { role: 'user', content: 'Summarize in three words.' }
   ],
   B_interposed_note: [
     { role: 'user', content: 'Read notes.txt.' },
     { role: 'assistant', content: 'Calling.', tool_calls: [tc('m1', 'bash')] },
     { role: 'user', content: '[REMINDER] Steering notes (mid-task direction):\n(1) check the header' },
     { role: 'tool', tool_name: 'bash', tool_call_id: 'm1', content: 'hi' },
-    { role: 'user', content: 'Summarize in three words.' },
+    { role: 'user', content: 'Summarize in three words.' }
   ],
   C_empty_assistant_bridge: [
     { role: 'user', content: 'Read notes.txt.' },
@@ -210,13 +329,13 @@ const MOCK = {
     { role: 'assistant', content: '' },
     { role: 'user', content: '[REMINDER] Steering notes (mid-task direction):\n(1) check the header' },
     { role: 'tool', tool_name: 'bash', tool_call_id: 'm1', content: 'hi' },
-    { role: 'user', content: 'Summarize in three words.' },
+    { role: 'user', content: 'Summarize in three words.' }
   ],
   D_orphaned_tool_calls: [
     { role: 'user', content: 'Read notes.txt.' },
     { role: 'assistant', content: 'Calling.', tool_calls: [tc('m1', 'bash')] },
     { role: 'assistant', content: 'Never mind.' },
-    { role: 'user', content: 'Summarize in three words.' },
+    { role: 'user', content: 'Summarize in three words.' }
   ],
   E_second_call_unanswered: [
     { role: 'user', content: 'Read both files.' },
@@ -224,8 +343,8 @@ const MOCK = {
     { role: 'tool', tool_name: 'bash', tool_call_id: 'm1', content: 'one' },
     { role: 'user', content: '[HINT] mid-batch note' },
     { role: 'tool', tool_name: 'read', tool_call_id: 'm2', content: 'two' },
-    { role: 'user', content: 'Summarize.' },
-  ],
+    { role: 'user', content: 'Summarize.' }
+  ]
 };
 
 // ── Phase 4: the exhaustive role-sequence matrix ──────────────────────────
@@ -251,139 +370,371 @@ const P123 = [tc('p1', 'bash'), tc('p2', 'read'), tc('p3', 'grep')];
 
 const SEQUENCES = [
   // ════ 1. BASELINE LEGAL SHAPES (the shapes the facade is allowed to build) ════
-  { name: '01 baseline: single turn, no tools', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'), A('a')] },
-  { name: '02 baseline: tool round answered', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P1), T('p1'), A('done')] },
-  { name: '03 baseline: tool round, then user asks again', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P1), T('p1'), A('done'), U('again'), A('done2')] },
-  { name: '04 baseline: two sequential tool rounds', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'), A('r1', P1), T('p1'), A('r2', P12), T('p1'), T('p2'), A('end')] },
-  { name: '05 baseline: parallel calls answered in ORDER', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P123), T('p1'), T('p2'), T('p3'), A('end')] },
-  { name: '06 baseline: parallel calls answered REVERSED', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P123), T('p3'), T('p2'), T('p1'), A('end')] },
-  { name: '07 baseline: tool result then user (tool→user native)', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P1), T('p1'), U('steer now')] },
-  { name: '08 baseline: tool result then note (tool→note native)', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P1), T('p1'), N('REMINDER', 'steer')] },
-  { name: '09 baseline: consecutive user turns', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q1'), U('q2'), U('q3')] },
-  { name: '10 baseline: consecutive user turns then a tool round', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q1'), U('q2'), U('q3'), A('calling', P1), T('p1'), A('end')] },
-  { name: '11 baseline: empty assistant bridge is answered', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P1), T('p1'), A(''), A('answer')] },
-  { name: '12 baseline: no user at all (assistant first)', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [A('hello')] },
-  { name: '13 baseline: multi-round with a note between rounds', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'), A('r1', P1), T('p1'), N('HINT', 'hint'), A('r2', P12), T('p1'), T('p2'), A('end')] },
+  { name: '01 baseline: single turn, no tools', wantDeepseek: 'legal', wantOllama: 'legal', msgs: [U('q'), A('a')] },
+  {
+    name: '02 baseline: tool round answered',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P1), T('p1'), A('done')]
+  },
+  {
+    name: '03 baseline: tool round, then user asks again',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P1), T('p1'), A('done'), U('again'), A('done2')]
+  },
+  {
+    name: '04 baseline: two sequential tool rounds',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('r1', P1), T('p1'), A('r2', P12), T('p1'), T('p2'), A('end')]
+  },
+  {
+    name: '05 baseline: parallel calls answered in ORDER',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P123), T('p1'), T('p2'), T('p3'), A('end')]
+  },
+  {
+    name: '06 baseline: parallel calls answered REVERSED',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P123), T('p3'), T('p2'), T('p1'), A('end')]
+  },
+  {
+    name: '07 baseline: tool result then user (tool→user native)',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P1), T('p1'), U('steer now')]
+  },
+  {
+    name: '08 baseline: tool result then note (tool→note native)',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P1), T('p1'), N('REMINDER', 'steer')]
+  },
+  {
+    name: '09 baseline: consecutive user turns',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q1'), U('q2'), U('q3')]
+  },
+  {
+    name: '10 baseline: consecutive user turns then a tool round',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q1'), U('q2'), U('q3'), A('calling', P1), T('p1'), A('end')]
+  },
+  {
+    name: '11 baseline: empty assistant bridge is answered',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P1), T('p1'), A(''), A('answer')]
+  },
+  {
+    name: '12 baseline: no user at all (assistant first)',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [A('hello')]
+  },
+  {
+    name: '13 baseline: multi-round with a note between rounds',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('r1', P1), T('p1'), N('HINT', 'hint'), A('r2', P12), T('p1'), T('p2'), A('end')]
+  },
 
   // ════ 2. INVARIANT (1): NON-TOOL ROLE INTERPOSED INSIDE A tool_calls BLOCK ════
-  { name: '14 note BEFORE the only tool result', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P1), N('REMINDER', 'steer'), T('p1')] },
-  { name: '15 user BEFORE the only tool result', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P1), U('new direction'), T('p1')] },
-  { name: '16 note AFTER first of TWO results', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P12), T('p1'), N('HINT', 'mid'), T('p2')] },
-  { name: '17 user AFTER first of TWO results', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P12), T('p1'), U('q2'), T('p2')] },
-  { name: '18 note AFTER first of THREE results', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P123), T('p1'), N('URGENT', 'now'), T('p2'), T('p3')] },
-  { name: '19 assistant bridge interposed mid-batch', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P12), T('p1'), A('bridging'), T('p2')] },
-  { name: '20 tool result interposed, then another assistant block', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P12), T('p1'), A('second', [tc('p9', 'grep')]), T('p2'), T('p9')] },
-  { name: '21 note between rounds leaves p2 unanswered', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P12), T('p1'), N('MAIL', 'm'), A('next turn', [tc('p3', 'grep')]), T('p2'), T('p3')] },
+  {
+    name: '14 note BEFORE the only tool result',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P1), N('REMINDER', 'steer'), T('p1')]
+  },
+  {
+    name: '15 user BEFORE the only tool result',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P1), U('new direction'), T('p1')]
+  },
+  {
+    name: '16 note AFTER first of TWO results',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P12), T('p1'), N('HINT', 'mid'), T('p2')]
+  },
+  {
+    name: '17 user AFTER first of TWO results',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P12), T('p1'), U('q2'), T('p2')]
+  },
+  {
+    name: '18 note AFTER first of THREE results',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P123), T('p1'), N('URGENT', 'now'), T('p2'), T('p3')]
+  },
+  {
+    name: '19 assistant bridge interposed mid-batch',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P12), T('p1'), A('bridging'), T('p2')]
+  },
+  {
+    name: '20 tool result interposed, then another assistant block',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P12), T('p1'), A('second', [tc('p9', 'grep')]), T('p2'), T('p9')]
+  },
+  {
+    name: '21 note between rounds leaves p2 unanswered',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P12), T('p1'), N('MAIL', 'm'), A('next turn', [tc('p3', 'grep')]), T('p2'), T('p3')]
+  },
 
   // ════ 3. INVARIANT (1): BLOCK NEVER ANSWERED — a trailing block is REJECTED ════
   //  Measured: the provider refuses an unanswered block even at the very end of
   //  the request. There is no legal "in-flight" wire state — the facade must
   //  answer (or drop) every block before posting.
-  { name: '22 trailing unanswered block (rejected: unfinished block)', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P12), T('p1')] },
-  { name: '23 trailing unanswered block, nothing after (rejected)', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P1)] },
-  { name: '24 unanswered block followed by a fresh assistant turn', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P1), A('never mind')] },
-  { name: '25 unanswered block followed by a user turn', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P1), U('hello?')] },
-  { name: '26 unanswered block followed by a note', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P1), N('SYSTEM', 'worker paused')] },
-  { name: '27 partial answer then a fresh user turn', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P12), T('p1'), U('stop')] },
+  {
+    name: '22 trailing unanswered block (rejected: unfinished block)',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P12), T('p1')]
+  },
+  {
+    name: '23 trailing unanswered block, nothing after (rejected)',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P1)]
+  },
+  {
+    name: '24 unanswered block followed by a fresh assistant turn',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P1), A('never mind')]
+  },
+  {
+    name: '25 unanswered block followed by a user turn',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P1), U('hello?')]
+  },
+  {
+    name: '26 unanswered block followed by a note',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P1), N('SYSTEM', 'worker paused')]
+  },
+  {
+    name: '27 partial answer then a fresh user turn',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P12), T('p1'), U('stop')]
+  },
 
   // ════ 4. INVARIANT (2): tool MESSAGE WITHOUT A PRECEDING ANNOUNCEMENT ════
-  { name: '28 tool result with no assistant at all', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), T('p1')] },
-  { name: '29 tool result directly after a plain user message', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), T('p1'), A('end')] },
-  { name: '30 tool result after an assistant WITHOUT tool_calls', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('no calls here'), T('p1')] },
-  { name: '31 tool result after a plain assistant then user', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('plain'), U('q2'), T('p1')] },
-  { name: '32 orphan tool result between user turns', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P1), T('p1'), U('q2'), T('p1')] },
-  { name: '33 tool result after a NOTE (note→tool)', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), N('REMINDER', 'steer'), T('p1')] },
-  { name: '34 the reported sequence: user → user → user → tool', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q1'), U('q2'), U('q3'), T('p1')] },
+  {
+    name: '28 tool result with no assistant at all',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), T('p1')]
+  },
+  {
+    name: '29 tool result directly after a plain user message',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), T('p1'), A('end')]
+  },
+  {
+    name: '30 tool result after an assistant WITHOUT tool_calls',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('no calls here'), T('p1')]
+  },
+  {
+    name: '31 tool result after a plain assistant then user',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('plain'), U('q2'), T('p1')]
+  },
+  {
+    name: '32 orphan tool result between user turns',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P1), T('p1'), U('q2'), T('p1')]
+  },
+  {
+    name: '33 tool result after a NOTE (note→tool)',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), N('REMINDER', 'steer'), T('p1')]
+  },
+  {
+    name: '34 the reported sequence: user → user → user → tool',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q1'), U('q2'), U('q3'), T('p1')]
+  },
 
   // ════ 5. DUPLICATE / MISALIGNED tool RESULTS ════
-  { name: '35 same tool_call_id answered twice', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P1), T('p1'), T('p1')] },
-  { name: '36 extra tool result answering an unannounced id', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P1), T('p1'), T('p_unknown')] },
-  { name: '37 two results for p1, p2 left unanswered', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P12), T('p1'), T('p1')] },
-  { name: '38 answer id belongs to a LATER block', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P12), T('p2'), A('next', [tc('p3', 'grep')]), T('p1'), T('p3')] },
-  { name: '39 interleave a foreign id between valid results', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P123), T('p1'), T('pX'), T('p2'), T('p3')] },
+  {
+    name: '35 same tool_call_id answered twice',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P1), T('p1'), T('p1')]
+  },
+  {
+    name: '36 extra tool result answering an unannounced id',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P1), T('p1'), T('p_unknown')]
+  },
+  {
+    name: '37 two results for p1, p2 left unanswered',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P12), T('p1'), T('p1')]
+  },
+  {
+    name: '38 answer id belongs to a LATER block',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P12), T('p2'), A('next', [tc('p3', 'grep')]), T('p1'), T('p3')]
+  },
+  {
+    name: '39 interleave a foreign id between valid results',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P123), T('p1'), T('pX'), T('p2'), T('p3')]
+  },
 
   // ════ 6. TRUNCATION / ROLLBACK SHAPES (what recap & wrap-up rollback can leave) ════
-  { name: '40 truncation leaves a bare tool result', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), T('p1')] },
-  { name: '41 truncation leaves a trailing unanswered block (rejected)', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P1)] },
-  { name: '42 truncation leaves assistant → user (no tools)', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [A('answer'), U('next')] },
-  { name: '43 tool result kept, assistant dropped, then user', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [T('p1'), U('next')] },
-  { name: '44 wrap-up: tool results flushed then [WRAP_UP] user', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P12), T('p1'), T('p2'), U('[WRAP_UP] wrap up quickly')] },
+  {
+    name: '40 truncation leaves a bare tool result',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), T('p1')]
+  },
+  {
+    name: '41 truncation leaves a trailing unanswered block (rejected)',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P1)]
+  },
+  {
+    name: '42 truncation leaves assistant → user (no tools)',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [A('answer'), U('next')]
+  },
+  {
+    name: '43 tool result kept, assistant dropped, then user',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [T('p1'), U('next')]
+  },
+  {
+    name: '44 wrap-up: tool results flushed then [WRAP_UP] user',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P12), T('p1'), T('p2'), U('[WRAP_UP] wrap up quickly')]
+  },
 
   // ════ 7. MESSAGE-SHAPE EDGE CASES ════
-  { name: '45 assistant with EMPTY tool_calls array', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'), A('plain', []), A('answer')] },
-  { name: '46 assistant with empty content but real tool_calls', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'), A('', P1), T('p1'), A('answer')] },
-  { name: '47 tool result with empty content', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P1), { role: 'tool', tool_name: 'bash', tool_call_id: 'p1', content: '' }, A('answer')] },
-  { name: '48 system message first (facade always prepends one)', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [{ role: 'system', content: 'You are mycc.' }, U('q'), A('calling', P1), T('p1'), A('answer')] },
-  { name: '49 system message mid-conversation', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'), A('a'), { role: 'system', content: 'note to self' }, U('q2')] },
-  { name: '50 consecutive assistant turns (no tools)', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'), A('a1'), A('a2')] },
+  {
+    name: '45 assistant with EMPTY tool_calls array',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('plain', []), A('answer')]
+  },
+  {
+    name: '46 assistant with empty content but real tool_calls',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('', P1), T('p1'), A('answer')]
+  },
+  {
+    name: '47 tool result with empty content',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P1), { role: 'tool', tool_name: 'bash', tool_call_id: 'p1', content: '' }, A('answer')]
+  },
+  {
+    name: '48 system message first (facade always prepends one)',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [{ role: 'system', content: 'You are mycc.' }, U('q'), A('calling', P1), T('p1'), A('answer')]
+  },
+  {
+    name: '49 system message mid-conversation',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('a'), { role: 'system', content: 'note to self' }, U('q2')]
+  },
+  {
+    name: '50 consecutive assistant turns (no tools)',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('a1'), A('a2')]
+  },
 
   // ════ 8. LONGER REALISTIC MIXES ════
-  { name: '51 three rounds with notes at every boundary', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'),
-      A('r1', P1), T('p1'), N('REMINDER', 's1'),
-      A('r2', P12), T('p1'), T('p2'), N('HINT', 's2'),
-      A('r3', P123), T('p1'), T('p2'), T('p3'),
-      N('MAIL', 'wrap'), U('final'), A('end')] },
-  { name: '52 two rounds where round 2 orphans one call', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'),
-      A('r1', P1), T('p1'),
-      A('r2', P12), T('p1'), U('interrupt'), T('p2')] },
-  { name: '53 note + user deferred after last result (the PART-2 replay shape)', wantDeepseek: 'legal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P12), T('p1'), T('p2'), N('REMINDER', 'note'), U('genuine query')] },
-  { name: '54 the exact pre-fix facade shape (must be rejected)', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P1), U('[REMINDER] steer'), A('', [tc('tp_recovery_1', 'bash')]), T('tp_recovery_1'), T('p1')] },
-  { name: '55 double violation: interpose AND orphan', wantDeepseek: 'illegal', wantOllama: 'legal',
-    msgs: [U('q'), A('calling', P12), U('interrupt'), T('p2'), A('plain'), T('p9')] },
+  {
+    name: '51 three rounds with notes at every boundary',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [
+      U('q'),
+      A('r1', P1),
+      T('p1'),
+      N('REMINDER', 's1'),
+      A('r2', P12),
+      T('p1'),
+      T('p2'),
+      N('HINT', 's2'),
+      A('r3', P123),
+      T('p1'),
+      T('p2'),
+      T('p3'),
+      N('MAIL', 'wrap'),
+      U('final'),
+      A('end')
+    ]
+  },
+  {
+    name: '52 two rounds where round 2 orphans one call',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('r1', P1), T('p1'), A('r2', P12), T('p1'), U('interrupt'), T('p2')]
+  },
+  {
+    name: '53 note + user deferred after last result (the PART-2 replay shape)',
+    wantDeepseek: 'legal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P12), T('p1'), T('p2'), N('REMINDER', 'note'), U('genuine query')]
+  },
+  {
+    name: '54 the exact pre-fix facade shape (must be rejected)',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [
+      U('q'),
+      A('calling', P1),
+      U('[REMINDER] steer'),
+      A('', [tc('tp_recovery_1', 'bash')]),
+      T('tp_recovery_1'),
+      T('p1')
+    ]
+  },
+  {
+    name: '55 double violation: interpose AND orphan',
+    wantDeepseek: 'illegal',
+    wantOllama: 'legal',
+    msgs: [U('q'), A('calling', P12), U('interrupt'), T('p2'), A('plain'), T('p9')]
+  }
 ];
 
 // ── Runner ─────────────────────────────────────────────────────────────────
@@ -402,7 +753,11 @@ function runMatrix() {
     const t = makeFacade();
     t.user('task');
     let threw = null;
-    try { c.build(t); } catch (e) { threw = e; }
+    try {
+      c.build(t);
+    } catch (e) {
+      threw = e;
+    }
     if (threw) {
       console.log(`  [threw] ${c.name}\n          ${String(threw.message).slice(0, 100)}`);
       built.push({ c, msgs: null, illegal: false });
@@ -423,9 +778,14 @@ async function post(messages) {
   try {
     const resp = await retryChat(
       { model: MODEL, messages, tools: [], think: false },
-      { signal: AbortSignal.timeout(120000) },
+      { signal: AbortSignal.timeout(120000) }
     );
-    return { status: 'ACCEPTED', detail: `reply: ${String(resp?.message?.content ?? '').replace(/\s+/g, ' ').slice(0, 60)}` };
+    return {
+      status: 'ACCEPTED',
+      detail: `reply: ${String(resp?.message?.content ?? '')
+        .replace(/\s+/g, ' ')
+        .slice(0, 60)}`
+    };
   } catch (err) {
     const code = err?.status ?? err?.statusCode;
     const msg = String(err?.message ?? err);
@@ -433,7 +793,9 @@ async function post(messages) {
     // .status, so match the body too or real rejections get misfiled.
     const rejected =
       /40\d/.test(String(code)) ||
-      /API error 4\d\d|invalid_request_error|must be followed by tool messages|must be a response to a preceding message/i.test(msg);
+      /API error 4\d\d|invalid_request_error|must be followed by tool messages|must be a response to a preceding message/i.test(
+        msg
+      );
     if (!rejected) inconclusive++;
     return { status: rejected ? 'REJECTED' : 'TRANSPORT-ERROR', detail: msg.replace(/\s+/g, ' ').slice(0, 170) };
   }
@@ -457,8 +819,13 @@ function wantFor(case_, provider) {
 }
 
 async function runSequences(provider) {
-  console.log(`\n── phase 4: exhaustive sequence matrix vs the LIVE ${provider} provider (${SEQUENCES.length} cases) ──\n`);
-  let accepted = 0, rejected = 0, mismatches = 0, wrong = 0;
+  console.log(
+    `\n── phase 4: exhaustive sequence matrix vs the LIVE ${provider} provider (${SEQUENCES.length} cases) ──\n`
+  );
+  let accepted = 0,
+    rejected = 0,
+    mismatches = 0,
+    wrong = 0;
 
   for (const c of SEQUENCES) {
     process.stdout.write(`  ${c.name}... `);
@@ -480,7 +847,9 @@ async function runSequences(provider) {
 
     const tag = !informative ? '???' : providerOk ? 'ok ' : 'BAD';
     if (VERBOSE || tag !== 'ok ' || !agrees) {
-      console.log(`${r.status}  [${tag}]${agrees ? '' : `  ← EXPECTATION MISMATCH (expected ${wantDeepseek}, local checker says ${localVerdict})`}`);
+      console.log(
+        `${r.status}  [${tag}]${agrees ? '' : `  ← EXPECTATION MISMATCH (expected ${wantDeepseek}, local checker says ${localVerdict})`}`
+      );
       console.log(`          ${describe(c.msgs)}`);
       console.log(`          ${r.detail}`);
     } else {
@@ -560,7 +929,9 @@ async function main() {
   console.log('\n═══ summary ═══');
   console.log(`  provider                    : ${provider}`);
   console.log(`  invariant breaches (phase 1): ${invariantBreaches}`);
-  console.log(`  sequence cases              : ${SEQUENCES.length} (${seq.accepted} accepted / ${seq.rejected} rejected)`);
+  console.log(
+    `  sequence cases              : ${SEQUENCES.length} (${seq.accepted} accepted / ${seq.rejected} rejected)`
+  );
   console.log(`  expectation mismatches      : ${seq.wrong}`);
   console.log(`  checker blind spots         : ${seq.mismatches}`);
   console.log(`  transport errors            : ${inconclusive}`);

@@ -19,7 +19,7 @@ import {
   buildLeadAgentMemorySection,
   buildOutputBehaviorSection,
   buildPinnedTodoSection,
-  buildVerificationSection,
+  buildVerificationSection
 } from './common.js';
 import { buildIntentLanguageSection } from './intent-lang.js';
 import { buildTeammatePrompt } from './teammate.js';

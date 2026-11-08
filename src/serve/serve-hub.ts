@@ -70,7 +70,8 @@ export class ServeHub implements HubHandler, ServeHubLike {
   private wsServer: WebSocketServer | null = null;
   private clients = new ClientRegistry();
   private port = 0;
-  private upgradeHandler: ((req: http.IncomingMessage, socket: import('net').Socket, head: Buffer) => void) | null = null;
+  private upgradeHandler: ((req: http.IncomingMessage, socket: import('net').Socket, head: Buffer) => void) | null =
+    null;
   private host: string | null = null;
 
   // ── Input bridge — single resolver, no AbortController ──
@@ -121,14 +122,19 @@ export class ServeHub implements HubHandler, ServeHubLike {
   // hub's lifecycle policy into a callback whose firing condition already
   // excluded it.) The "restart instead of kill when persistent" intent now
   // lives entirely in restartServe(), the 重启 button path.
-  private disconnectTimer = new DisconnectTimer({
-    onGenuineDisconnect: () => {
-      this.gracefulShutdown().catch((err) => {
-        agentIO.verbose('serve', `disconnect shutdown error: ${String(err)}`);
-      });
+  private disconnectTimer = new DisconnectTimer(
+    {
+      onGenuineDisconnect: () => {
+        this.gracefulShutdown().catch((err) => {
+          agentIO.verbose('serve', `disconnect shutdown error: ${String(err)}`);
+        });
+      },
+      onSuspend: () => {
+        this.clients.closeAll();
+      }
     },
-    onSuspend: () => { this.clients.closeAll(); },
-  }, () => shouldDaemon());
+    () => shouldDaemon()
+  );
 
   // ── Auto-mode providers (callbacks to avoid a module-load cycle with agent-io) ──
   private autoStateProvider: (() => boolean) | null = null;
@@ -163,10 +169,14 @@ export class ServeHub implements HubHandler, ServeHubLike {
    * waitForInput() survives a restartServe() cycle instead of falling through
    * to the headless-exit branch.
    */
-  isRestarting(): boolean { return this.restarting; }
+  isRestarting(): boolean {
+    return this.restarting;
+  }
 
   /** Set the durable triologue transcript path (read by /history). */
-  setTranscriptPath(p: string | null): void { this.transcriptPath = p; }
+  setTranscriptPath(p: string | null): void {
+    this.transcriptPath = p;
+  }
 
   /**
    * Register the user-input journal provider: the lead-side callback that
@@ -210,21 +220,27 @@ export class ServeHub implements HubHandler, ServeHubLike {
   // Lifecycle
   // ===========================================================================
 
-  isRunning(): boolean { return this.running; }
+  isRunning(): boolean {
+    return this.running;
+  }
 
   /**
    * The port the server is currently bound to (0 when not running). Used by
    * /reload so the coordinator can respawn the lead with `--serve <port>` and
    * the web UI resumes on the same port after the brief disconnect.
    */
-  getPort(): number { return this.port; }
+  getPort(): number {
+    return this.port;
+  }
 
   /**
    * The host the server is bound to (null = localhost-only). Used by /reload
    * to forward the --host binding to the respawned lead so the web UI stays
    * reachable on the same interface.
    */
-  getHost(): string | null { return this.host; }
+  getHost(): string | null {
+    return this.host;
+  }
 
   getUrl(): string | null {
     if (!this.running) return null;
@@ -255,7 +271,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
     }
     const local = `http://localhost:${this.port}`;
     if (this.host === '0.0.0.0') {
-      const network = detectAllLanIpv4().map(ip => `http://${ip}:${this.port}`);
+      const network = detectAllLanIpv4().map((ip) => `http://${ip}:${this.port}`);
       return { local, network };
     }
     // localhost-only bind (no --host).
@@ -280,7 +296,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
       if (!this.isRunning()) return;
       this.clients.broadcastBespoke('steer-state', {
         steeringRevision: snapshot.revision,
-        notes: snapshot.notes,
+        notes: snapshot.notes
       });
     });
 
@@ -340,10 +356,10 @@ export class ServeHub implements HubHandler, ServeHubLike {
         server: {
           middlewareMode: true,
           hmr: { server: this.httpServer },
-          watch: { ignored: ['**/.mycc/**'] },
+          watch: { ignored: ['**/.mycc/**'] }
         },
         appType: 'custom',
-        configFile: false, // inline config only — avoid parent vite.config
+        configFile: false // inline config only — avoid parent vite.config
       });
 
       // Serve the agent runtime dir <cwd>/.mycc/public at the root path `/`,
@@ -371,11 +387,13 @@ export class ServeHub implements HubHandler, ServeHubLike {
       //     `.mycc/public` and the whole workdir, so a symlink escapes nothing it
       //     could not write directly — a realpath guard would only break
       //     legitimate symlinked artifacts. Do NOT treat this mount as a sandbox.
-      this.expressApp.use(express.static(publicDir, {
-        fallthrough: true,
-        index: false,
-        dotfiles: 'deny',
-      }));
+      this.expressApp.use(
+        express.static(publicDir, {
+          fallthrough: true,
+          index: false,
+          dotfiles: 'deny'
+        })
+      );
 
       // GET /health — registered BEFORE viteServer.middlewares so it answers
       // while Vite is still compiling (a watchdog polling every 30 s must never
@@ -383,35 +401,40 @@ export class ServeHub implements HubHandler, ServeHubLike {
       // provider/embedding probe (those hit Ollama on every poll). A deep check
       // (?deep=1) can be added later if wanted.
       this.expressApp.get('/health', (_req, res) => {
-        res.status(200).set({ 'Content-Type': 'application/json' }).end(JSON.stringify({
-          status: this.running ? 'ok' : 'stopping',
-          pid: process.pid,
-          uptimeMs: Math.round(process.uptime() * 1000),
-          version: pkg.version,
-          serve: {
-            port: this.port,
-            host: this.host,
-            clients: this.clients.size,
-            persistent: shouldDaemon(),
-            agentRunning: this.agentRunning,
-            auto: this.getAutoState(),
-          },
-          peer: (() => {
-            // Remote peer wire identity (docs/peers/remote-peer-protocol.md §2 step 1):
-            // the dialer probes /health BEFORE dialing — the peer block tells it
-            // who answers (sid) and whether the webui is daemon-backed (so the
-            // dialer can refuse/flag an interactive instance whose webui will
-            // auto-shutdown in 30s). Values come from the wire hooks (G3); a
-            // null hooks means the agent context never started (unreachable in
-            // practice — serve starts from the lead loop).
-            const wireHooks = getWireHooks();
-            return {
-              sessionId: wireHooks?.getSessionId() ?? null,
-              daemon: wireHooks?.getDaemon() ?? false,
-            };
-          })(),
-          provider: getApiProvider(),
-        }));
+        res
+          .status(200)
+          .set({ 'Content-Type': 'application/json' })
+          .end(
+            JSON.stringify({
+              status: this.running ? 'ok' : 'stopping',
+              pid: process.pid,
+              uptimeMs: Math.round(process.uptime() * 1000),
+              version: pkg.version,
+              serve: {
+                port: this.port,
+                host: this.host,
+                clients: this.clients.size,
+                persistent: shouldDaemon(),
+                agentRunning: this.agentRunning,
+                auto: this.getAutoState()
+              },
+              peer: (() => {
+                // Remote peer wire identity (docs/peers/remote-peer-protocol.md §2 step 1):
+                // the dialer probes /health BEFORE dialing — the peer block tells it
+                // who answers (sid) and whether the webui is daemon-backed (so the
+                // dialer can refuse/flag an interactive instance whose webui will
+                // auto-shutdown in 30s). Values come from the wire hooks (G3); a
+                // null hooks means the agent context never started (unreachable in
+                // practice — serve starts from the lead loop).
+                const wireHooks = getWireHooks();
+                return {
+                  sessionId: wireHooks?.getSessionId() ?? null,
+                  daemon: wireHooks?.getDaemon() ?? false
+                };
+              })(),
+              provider: getApiProvider()
+            })
+          );
       });
 
       this.expressApp.use(this.viteServer.middlewares);
@@ -446,10 +469,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
       // set, and length cannot see id churn.
       this.expressApp.get('/history', (req, res) => {
         const steering = getSteeringManager().snapshot();
-        const etag = computeHistoryVersion(
-          this.transcriptPath, this.messageLog,
-          steering.revision, this.agentRunning,
-        );
+        const etag = computeHistoryVersion(this.transcriptPath, this.messageLog, steering.revision, this.agentRunning);
         res.set('ETag', etag);
         res.set('Cache-Control', 'no-cache');
         // If-None-Match match → 304 Not Modified, empty body. The client's
@@ -476,7 +496,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
           // buffer bar; the ids are what per-note discard/send acts on.
           steeringRevision: steering.revision,
           steeringBuffer: steering.notes,
-          isRunning: this.agentRunning,
+          isRunning: this.agentRunning
         });
         res.status(200).set({ 'Content-Type': 'application/json' }).end(payload);
       });
@@ -491,16 +511,19 @@ export class ServeHub implements HubHandler, ServeHubLike {
       // this value and pruned of other sessions on every write.
       this.expressApp.get('/config', (_req, res) => {
         const wireHooks = getWireHooks();
-        res.status(200).set({ 'Content-Type': 'application/json' }).end(
-          JSON.stringify({
-            maxUploadMb: getMaxUploadMb(),
-            persistent: shouldDaemon(),
-            sessionId: wireHooks?.getSessionId() ?? null,
-            // Plan/normal mode (row obs-002): the browser must be able to see
-            // that edits are refused because the lead is in plan mode.
-            mode: this.getMode(),
-          }),
-        );
+        res
+          .status(200)
+          .set({ 'Content-Type': 'application/json' })
+          .end(
+            JSON.stringify({
+              maxUploadMb: getMaxUploadMb(),
+              persistent: shouldDaemon(),
+              sessionId: wireHooks?.getSessionId() ?? null,
+              // Plan/normal mode (row obs-002): the browser must be able to see
+              // that edits are refused because the lead is in plan mode.
+              mode: this.getMode()
+            })
+          );
       });
 
       // Chat WebSocket on /ws (noServer; route upgrades by URL so Vite HMR at /
@@ -516,7 +539,11 @@ export class ServeHub implements HubHandler, ServeHubLike {
       // WebSocketServer with its OWN maxPayload (4 MB, decoupled from the webui
       // upload cap); the acceptor NEVER touches this.clients or the
       // disconnectTimer (G1: peer wires must not sustain the webui lifetime).
-      try { getPeerWireAcceptor().createServer(); } catch { /* start() is re-entrant via restartServe */ }
+      try {
+        getPeerWireAcceptor().createServer();
+      } catch {
+        /* start() is re-entrant via restartServe */
+      }
       this.upgradeHandler = (req, socket, head) => {
         if (req.url && req.url.split('?')[0] === '/peer/ws') {
           getPeerWireAcceptor().handleUpgrade(req, socket, head);
@@ -570,14 +597,34 @@ export class ServeHub implements HubHandler, ServeHubLike {
       this.httpServer.removeListener('upgrade', this.upgradeHandler);
       this.upgradeHandler = null;
     }
-    if (this.wsServer) { try { this.wsServer.close(); } catch { /* ignore */ } this.wsServer = null; }
+    if (this.wsServer) {
+      try {
+        this.wsServer.close();
+      } catch {
+        /* ignore */
+      }
+      this.wsServer = null;
+    }
     // Peer wire acceptor teardown (docs/peers/remote-peer-protocol.md §2
     // disconnect): abnormal close so the DIALER side fails fast / redials
     // per its loop policy. Idempotent (stop() is safe when no server exists).
-    try { await getPeerWireAcceptor().stop(); } catch { /* ignore */ }
-    if (this.viteServer) { try { await this.viteServer.close(); } catch { /* ignore */ } this.viteServer = null; }
+    try {
+      await getPeerWireAcceptor().stop();
+    } catch {
+      /* ignore */
+    }
+    if (this.viteServer) {
+      try {
+        await this.viteServer.close();
+      } catch {
+        /* ignore */
+      }
+      this.viteServer = null;
+    }
     if (this.httpServer) {
-      await new Promise<void>((resolve) => { this.httpServer!.close(() => resolve()); });
+      await new Promise<void>((resolve) => {
+        this.httpServer!.close(() => resolve());
+      });
       this.httpServer = null;
     }
     this.expressApp = null;
@@ -610,7 +657,9 @@ export class ServeHub implements HubHandler, ServeHubLike {
       // re-asserts it after start() for defence in depth).
       if (!this.restarting) setWebUiUp(false);
       sendToParent({ type: 'serve_mode', active: false }); // restore stdin filtering
-      if (!skipAbortInput) { this.abortInput(); }
+      if (!skipAbortInput) {
+        this.abortInput();
+      }
       this.disconnectTimer.cancel();
       this.clients.closeAll();
       await this.disposeStack();
@@ -622,7 +671,9 @@ export class ServeHub implements HubHandler, ServeHubLike {
       // unconditionally here was the root cause of the 停止-button race (a
       // note sent in the stop window was vacuumed before wrap-up could
       // deliver it).
-      if (!this.restarting) { getSteeringManager().clear(); }
+      if (!this.restarting) {
+        getSteeringManager().clear();
+      }
       this.fileUploadQueue = [];
       // Steering observer teardown (paired with the start() subscription). A
       // restartServe() recycle re-subscribes in start(), so this must happen on
@@ -677,8 +728,12 @@ export class ServeHub implements HubHandler, ServeHubLike {
 
   /** Resolve blocked waitForInput() with null + clear all card resolvers. */
   abortInput(): void {
-    if (this.inputResolver) { this.inputResolver(null); }
-    for (const resolver of this.cardResolvers.values()) { resolver(null); }
+    if (this.inputResolver) {
+      this.inputResolver(null);
+    }
+    for (const resolver of this.cardResolvers.values()) {
+      resolver(null);
+    }
     this.cardResolvers.clear();
   }
 
@@ -697,7 +752,9 @@ export class ServeHub implements HubHandler, ServeHubLike {
   }
 
   /** Whether a PROMPT wait (waitForInput) is currently blocked. */
-  isInputBlocked(): boolean { return this.inputRejecter !== null; }
+  isInputBlocked(): boolean {
+    return this.inputRejecter !== null;
+  }
 
   // ===========================================================================
   // Card bridge (called by agent-io ask() serve-mode path)
@@ -710,14 +767,20 @@ export class ServeHub implements HubHandler, ServeHubLike {
       cardId: card.cardId,
       query: stripAnsi(card.query),
       kind: card.kind,
-      options: card.options?.map((opt) => ({ label: stripAnsi(opt.label), value: opt.value, isDefault: opt.isDefault })),
+      options: card.options?.map((opt) => ({
+        label: stripAnsi(opt.label),
+        value: opt.value,
+        isDefault: opt.isDefault
+      })),
       initialContent: card.initialContent ? stripAnsi(card.initialContent) : card.initialContent,
-      placeholder: card.placeholder,
+      placeholder: card.placeholder
     };
     const entry: LogEntry = { type: 'card', content: cleanCard.query, timestamp: Date.now() };
     (entry as LogEntry & { card?: CardMessage }).card = cleanCard;
     this.messageLog.push(entry);
-    if (this.messageLog.length > ServeHub.MAX_LOG_SIZE) { this.messageLog.shift(); }
+    if (this.messageLog.length > ServeHub.MAX_LOG_SIZE) {
+      this.messageLog.shift();
+    }
     const payload = JSON.stringify(cleanCard);
     this.clients.forEachOpen((ws) => ws.send(payload));
   }
@@ -735,7 +798,9 @@ export class ServeHub implements HubHandler, ServeHubLike {
   /** Resolve a pending card response (stale/duplicate ids silently drop). */
   submitCardResponse(cardId: string, value: string): void {
     const resolver = this.cardResolvers.get(cardId);
-    if (resolver) { resolver(value); }
+    if (resolver) {
+      resolver(value);
+    }
   }
 
   // ===========================================================================
@@ -836,10 +901,14 @@ export class ServeHub implements HubHandler, ServeHubLike {
     // makes "which steering notes vanished" diagnosable under -v. The
     // steering-manager stays framework-free/pure, so the log lives in the hub.
     if (discarded.length > 0) {
-      agentIO.verbose('serve',
-        `Steering notes discarded (not sent): ids=[${discarded.map((n) => n.id).join(',')}] count=${discarded.length}`);
+      agentIO.verbose(
+        'serve',
+        `Steering notes discarded (not sent): ids=[${discarded.map((n) => n.id).join(',')}] count=${discarded.length}`
+      );
     }
-    if (selected.length > 0) { this.submitInput(joinSteeringNotes(selected)); }
+    if (selected.length > 0) {
+      this.submitInput(joinSteeringNotes(selected));
+    }
     return selected.map((n) => n.text);
   }
 
@@ -876,7 +945,9 @@ export class ServeHub implements HubHandler, ServeHubLike {
     return files;
   }
 
-  getFileUploads(): FileUploadEntry[] { return [...this.fileUploadQueue]; }
+  getFileUploads(): FileUploadEntry[] {
+    return [...this.fileUploadQueue];
+  }
 
   // ===========================================================================
   // Auto-mode + running-state signals (session-level, not logged)
@@ -910,7 +981,9 @@ export class ServeHub implements HubHandler, ServeHubLike {
   }
 
   /** Install the plan/normal mode provider (mirror of setAutoStateProvider). */
-  setModeStateProvider(provider: (() => 'plan' | 'normal') | null): void { this.modeStateProvider = provider; }
+  setModeStateProvider(provider: (() => 'plan' | 'normal') | null): void {
+    this.modeStateProvider = provider;
+  }
 
   /** Broadcast agent running state (idle PROMPT/AWAIT → off; processing → on). */
   setAgentRunning(value: boolean): void {
@@ -920,14 +993,25 @@ export class ServeHub implements HubHandler, ServeHubLike {
     this.clients.forEachOpen((ws) => ws.send(payload));
   }
 
-  setAutoStateProvider(provider: (() => boolean) | null): void { this.autoStateProvider = provider; }
-  setEnterAutoProvider(provider: (() => boolean) | null): void { this.enterAutoProvider = provider; }
+  setAutoStateProvider(provider: (() => boolean) | null): void {
+    this.autoStateProvider = provider;
+  }
+  setEnterAutoProvider(provider: (() => boolean) | null): void {
+    this.enterAutoProvider = provider;
+  }
 
   // ===========================================================================
   // Output bridge (called by agentIO output callback)
   // ===========================================================================
 
-  broadcast(type: string, content: string, label?: string, detail?: string, synthetic?: boolean, crossroad?: CrossroadCardWire): void {
+  broadcast(
+    type: string,
+    content: string,
+    label?: string,
+    detail?: string,
+    synthetic?: boolean,
+    crossroad?: CrossroadCardWire
+  ): void {
     this.clients.broadcast(type, content, label, detail, synthetic, this.messageLog, crossroad);
   }
 
@@ -936,11 +1020,16 @@ export class ServeHub implements HubHandler, ServeHubLike {
     this.clients.broadcastExcept(sender, type, content, label, detail);
   }
 
-  getAutoState(): boolean { return this.autoStateProvider ? this.autoStateProvider() : false; }
+  getAutoState(): boolean {
+    return this.autoStateProvider ? this.autoStateProvider() : false;
+  }
 
   /** Run the combined auto entry; return true if a provider ran, false if none registered. */
   enterAuto(): boolean {
-    if (this.enterAutoProvider) { this.enterAutoProvider(); return true; }
+    if (this.enterAutoProvider) {
+      this.enterAutoProvider();
+      return true;
+    }
     return false;
   }
 
@@ -954,19 +1043,37 @@ export class ServeHub implements HubHandler, ServeHubLike {
     // History is NOT replayed over the socket — the client fetches /history at
     // load before connecting; WS carries only live updates from here on.
     if (this.inputResolver) {
-      try { ws.send(JSON.stringify({ type: 'prompt', content: '' })); } catch { /* ignore */ }
+      try {
+        ws.send(JSON.stringify({ type: 'prompt', content: '' }));
+      } catch {
+        /* ignore */
+      }
     }
     // Send current auto + running state so late-joining/reconnecting clients
     // pick up the flags without waiting for the next flip.
     if (this.autoStateProvider) {
-      try { if (this.autoStateProvider()) { ws.send(JSON.stringify({ type: 'auto', content: 'on' })); } } catch { /* ignore */ }
+      try {
+        if (this.autoStateProvider()) {
+          ws.send(JSON.stringify({ type: 'auto', content: 'on' }));
+        }
+      } catch {
+        /* ignore */
+      }
     }
-    try { ws.send(JSON.stringify({ type: 'running', content: this.agentRunning ? 'on' : 'off' })); } catch { /* ignore */ }
+    try {
+      ws.send(JSON.stringify({ type: 'running', content: this.agentRunning ? 'on' : 'off' }));
+    } catch {
+      /* ignore */
+    }
     // Same for plan/normal mode: a browser joining mid-plan must be told that
     // edits are prohibited instead of guessing why a request was refused.
     // getMode() is provider-first, so a mode flip that happened BEFORE the
     // hub existed (plan_on → /serve) is still reported correctly here.
-    try { ws.send(JSON.stringify({ type: 'mode', content: this.getMode(), detail: null })); } catch { /* ignore */ }
+    try {
+      ws.send(JSON.stringify({ type: 'mode', content: this.getMode(), detail: null }));
+    } catch {
+      /* ignore */
+    }
     ws.on('message', (data) => handleWsMessage(this, ws, data.toString()));
     ws.on('close', () => this.onWsClose(ws));
     ws.on('error', (err) => this.onWsError(ws, err));
@@ -980,7 +1087,9 @@ export class ServeHub implements HubHandler, ServeHubLike {
     // connection during shutdown is expected — skip the reconnect path.
     if (!this.running) return;
     this.clients.delete(ws);
-    if (this.clients.size === 0) { this.disconnectTimer.start(); }
+    if (this.clients.size === 0) {
+      this.disconnectTimer.start();
+    }
   }
 
   private onWsError(_ws: WebSocket, err: Error): void {

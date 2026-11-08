@@ -133,11 +133,15 @@ function cmdCheck(file) {
   // check mode: do NOT rewrite the file. Just report.
   const k = result.errors.length;
   if (k === 0) {
-    process.stdout.write(`OK: ${result.opsCount} ops, ${result.formulaCount} formulas, no errors. (file not modified)\n`);
+    process.stdout.write(
+      `OK: ${result.opsCount} ops, ${result.formulaCount} formulas, no errors. (file not modified)\n`
+    );
     process.exit(0);
   } else {
     for (const e of result.errors) process.stderr.write(e + '\n');
-    process.stdout.write(`${k} error(s) across ${result.opsCount} ops, ${result.formulaCount} formulas. (file not modified)\n`);
+    process.stdout.write(
+      `${k} error(s) across ${result.opsCount} ops, ${result.formulaCount} formulas. (file not modified)\n`
+    );
     process.exit(1);
   }
 }
@@ -167,11 +171,15 @@ function cmdEval(file) {
 
   const k = result.errors.length;
   if (k === 0) {
-    process.stdout.write(`Evaluated ${result.okFormulas}/${result.formulaCount} formulas, ${result.opsCount} ops. OK.\n`);
+    process.stdout.write(
+      `Evaluated ${result.okFormulas}/${result.formulaCount} formulas, ${result.opsCount} ops. OK.\n`
+    );
     process.exit(0);
   } else {
     for (const e of result.errors) process.stderr.write(e + '\n');
-    process.stdout.write(`Evaluated ${result.okFormulas}/${result.formulaCount} formulas, ${result.opsCount} ops. ${k} errors.\n`);
+    process.stdout.write(
+      `Evaluated ${result.okFormulas}/${result.formulaCount} formulas, ${result.opsCount} ops. ${k} errors.\n`
+    );
     process.exit(1);
   }
 }

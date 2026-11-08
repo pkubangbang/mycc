@@ -13,30 +13,30 @@ import { stripBom, detectLineEnding, normalizeLineEndings, countReplacementChars
 export const editTool: ToolDefinition = {
   name: 'edit_file',
   description:
-    'Replace exact text in an existing file (old_text is a literal match, not a regex). Use this for targeted edits instead of rewriting entire files. PREFER this over shell text replacement for editing existing files (bash `sed -i`, pwsh `(Get-Content x) -replace ... | Set-Content`) — unlike those, it refuses an ambiguous old_text that matches more than once (instead of silently editing the first match), preserves the file\'s BOM state and CRLF/LF line endings, and re-reads + verifies the write, restoring the original content on failure.',
+    "Replace exact text in an existing file (old_text is a literal match, not a regex). Use this for targeted edits instead of rewriting entire files. PREFER this over shell text replacement for editing existing files (bash `sed -i`, pwsh `(Get-Content x) -replace ... | Set-Content`) — unlike those, it refuses an ambiguous old_text that matches more than once (instead of silently editing the first match), preserves the file's BOM state and CRLF/LF line endings, and re-reads + verifies the write, restoring the original content on failure.",
   input_schema: {
     type: 'object',
     properties: {
       path: {
         type: 'string',
-        description: 'File path relative to workspace root.',
+        description: 'File path relative to workspace root.'
       },
       old_text: {
         type: 'string',
         description:
-          'Exact LITERAL text to find and replace (NOT a regex — ) $ [ . * are matched verbatim). Must match exactly including whitespace and be unique in the file — a multi-occurrence match is rejected with an error rather than silently editing the first occurrence.',
+          'Exact LITERAL text to find and replace (NOT a regex — ) $ [ . * are matched verbatim). Must match exactly including whitespace and be unique in the file — a multi-occurrence match is rejected with an error rather than silently editing the first occurrence.'
       },
       new_text: {
         type: 'string',
-        description: 'Text to replace old_text with. Can be empty string to delete the old_text.',
+        description: 'Text to replace old_text with. Can be empty string to delete the old_text.'
       },
       strip_bom: {
         type: 'boolean',
         description:
-          'Whether to remove a UTF-8 BOM (EF BB BF). Default false: preserve the file\'s existing BOM state. Set true to strip an existing BOM.',
-      },
+          "Whether to remove a UTF-8 BOM (EF BB BF). Default false: preserve the file's existing BOM state. Set true to strip an existing BOM."
+      }
     },
-    required: ['path', 'old_text', 'new_text'],
+    required: ['path', 'old_text', 'new_text']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -67,7 +67,7 @@ export const editTool: ToolDefinition = {
     try {
       // Resolve path first (tilde expansion, relative → absolute)
       const resolvedPath = resolvePath(filePath, ctx.core.getWorkDir());
-      args.path = resolvedPath;  // Update args for requestGrant
+      args.path = resolvedPath; // Update args for requestGrant
 
       // Check permission (respects plan mode, worktree ownership)
       const grant = await ctx.core.requestGrant('edit_file', args);
@@ -207,14 +207,13 @@ export const editTool: ToolDefinition = {
         .join(' ');
       // Report the ACTUAL written BOM state (from the raw bytes), not the
       // stripped copy, so the agent sees whether the BOM was preserved/removed.
-      const bomPresent = written.length >= 3 &&
-        written[0] === 0xef && written[1] === 0xbb && written[2] === 0xbf;
+      const bomPresent = written.length >= 3 && written[0] === 0xef && written[1] === 0xbb && written[2] === 0xbf;
       const leStyle = detectLineEnding(writtenStripped);
       return `OK (first4=${first4}, bom=${bomPresent}, newline=${leStyle})`;
     } catch (error: unknown) {
       return `Error: ${(error as Error).message}`;
     }
-  },
+  }
 };
 
 /**

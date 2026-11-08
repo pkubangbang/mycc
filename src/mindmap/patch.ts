@@ -40,9 +40,7 @@ export async function patch_mindmap(
   const workDir = mindmap.dir;
 
   // Update the node's text
-  targetNode.text = feedback
-    ? `${newText}\n\n<!-- Feedback: ${feedback} -->`
-    : newText;
+  targetNode.text = feedback ? `${newText}\n\n<!-- Feedback: ${feedback} -->` : newText;
 
   // Get all descendants (for bottom-up summary update)
   const descendants = get_descendants(targetNode);
@@ -61,24 +59,14 @@ export async function patch_mindmap(
 
     if (parent) {
       const ancestorContext = parent.text;
-      const result = await summarizeWithExplorer(
-        desc.title,
-        desc.text,
-        ancestorContext,
-        workDir
-      );
+      const result = await summarizeWithExplorer(desc.title, desc.text, ancestorContext, workDir);
       desc.summary = result.summary;
     }
   }
 
   // Step 2: Update target node's summary
   const ancestorTexts = ancestors.map((a) => a.text).join('\n\n---\n\n');
-  const targetResult = await summarizeWithExplorer(
-    targetNode.title,
-    targetNode.text,
-    ancestorTexts,
-    workDir
-  );
+  const targetResult = await summarizeWithExplorer(targetNode.title, targetNode.text, ancestorTexts, workDir);
   targetNode.summary = targetResult.summary;
 
   // Step 3: Update ancestors' summaries bottom-up (from deepest to root)
@@ -87,16 +75,9 @@ export async function patch_mindmap(
 
   for (const ancestor of ancestorsToUpdates) {
     const ancestorAncestors = get_ancestors(mindmap, ancestor.id);
-    const ancestorAncestorTexts = ancestorAncestors
-      .map((a) => a.text)
-      .join('\n\n---\n\n');
+    const ancestorAncestorTexts = ancestorAncestors.map((a) => a.text).join('\n\n---\n\n');
 
-    const ancestorResult = await summarizeWithExplorer(
-      ancestor.title,
-      ancestor.text,
-      ancestorAncestorTexts,
-      workDir
-    );
+    const ancestorResult = await summarizeWithExplorer(ancestor.title, ancestor.text, ancestorAncestorTexts, workDir);
     ancestor.summary = ancestorResult.summary;
   }
 
@@ -122,12 +103,7 @@ export async function summarize_node(mindmap: Mindmap, id: string): Promise<stri
   const ancestorTexts = ancestors.map((a) => a.text).join('\n\n---\n\n');
   const workDir = mindmap.dir;
 
-  const result = await summarizeWithExplorer(
-    node.title,
-    node.text,
-    ancestorTexts,
-    workDir
-  );
+  const result = await summarizeWithExplorer(node.title, node.text, ancestorTexts, workDir);
   node.summary = result.summary;
 
   mindmap.updated_at = new Date().toISOString();
@@ -164,7 +140,7 @@ export async function add_child_node(
     summary: '',
     level: parent.level + 1,
     children: [],
-    links: [],
+    links: []
   };
 
   // Generate initial summary
@@ -178,12 +154,7 @@ export async function add_child_node(
   // Update parent summary
   const parentAncestors = get_ancestors(mindmap, parentId);
   const parentAncestorTexts = parentAncestors.map((a) => a.text).join('\n\n---\n\n');
-  const parentResult = await summarizeWithExplorer(
-    parent.title,
-    parent.text,
-    parentAncestorTexts,
-    workDir
-  );
+  const parentResult = await summarizeWithExplorer(parent.title, parent.text, parentAncestorTexts, workDir);
   parent.summary = parentResult.summary;
 
   mindmap.updated_at = new Date().toISOString();
@@ -218,9 +189,7 @@ export async function remove_node(mindmap: Mindmap, id: string): Promise<boolean
   // comparison fails for any title with spaces/special chars: path segment
   // "code-cleanup" never equals raw title "Code Cleanup" lowercased to
   // "code cleanup", so the delete silently no-ops.
-  const index = parent.children.findIndex(
-    (c) => safeNodeId(c.title) === nodeTitle
-  );
+  const index = parent.children.findIndex((c) => safeNodeId(c.title) === nodeTitle);
 
   if (index === -1) {
     return false;
@@ -232,12 +201,7 @@ export async function remove_node(mindmap: Mindmap, id: string): Promise<boolean
   const workDir = mindmap.dir;
   const parentAncestors = get_ancestors(mindmap, parentPath);
   const parentAncestorTexts = parentAncestors.map((a) => a.text).join('\n\n---\n\n');
-  const parentResult = await summarizeWithExplorer(
-    parent.title,
-    parent.text,
-    parentAncestorTexts,
-    workDir
-  );
+  const parentResult = await summarizeWithExplorer(parent.title, parent.text, parentAncestorTexts, workDir);
   parent.summary = parentResult.summary;
 
   mindmap.updated_at = new Date().toISOString();
@@ -252,11 +216,7 @@ export async function remove_node(mindmap: Mindmap, id: string): Promise<boolean
  * @param newParentId - The new parent's id
  * @returns The moved node, or null if not found
  */
-export async function move_node(
-  mindmap: Mindmap,
-  nodeId: string,
-  newParentId: string
-): Promise<Node | null> {
+export async function move_node(mindmap: Mindmap, nodeId: string, newParentId: string): Promise<Node | null> {
   const node = get_node(mindmap, nodeId);
   const newParent = get_node(mindmap, newParentId);
 
@@ -283,9 +243,7 @@ export async function move_node(
   // comparison fails for spaced/special-char titles and makes the move a
   // silent no-op.
   const nodeTitle = segments[segments.length - 1];
-  const index = oldParent.children.findIndex(
-    (c) => safeNodeId(c.title) === nodeTitle
-  );
+  const index = oldParent.children.findIndex((c) => safeNodeId(c.title) === nodeTitle);
 
   if (index === -1) {
     return null;
@@ -325,20 +283,12 @@ function update_node_ids(node: Node, newId: string, newLevel: number): void {
 /**
  * Update summaries after a node move
  */
-async function update_summaries_after_move(
-  mindmap: Mindmap,
-  node: Node
-): Promise<void> {
+async function update_summaries_after_move(mindmap: Mindmap, node: Node): Promise<void> {
   const ancestors = get_ancestors(mindmap, node.id);
   const ancestorTexts = ancestors.map((a) => a.text).join('\n\n---\n\n');
   const workDir = mindmap.dir;
 
-  const result = await summarizeWithExplorer(
-    node.title,
-    node.text,
-    ancestorTexts,
-    workDir
-  );
+  const result = await summarizeWithExplorer(node.title, node.text, ancestorTexts, workDir);
   node.summary = result.summary;
 }
 
@@ -361,9 +311,7 @@ export function applyPatchAction(mindmap: Mindmap, action: MindmapPatchAction): 
       if (!parent) return false;
       if (!action.title || !action.text) return false;
 
-      const id = parent.id === '/'
-        ? `/${safeNodeId(action.title)}`
-        : `${parent.id}/${safeNodeId(action.title)}`;
+      const id = parent.id === '/' ? `/${safeNodeId(action.title)}` : `${parent.id}/${safeNodeId(action.title)}`;
 
       // Idempotency: if a child with this id already exists, skip the push.
       // loadMindmapWithPatches replays all JSONL patch lines on every load
@@ -372,7 +320,7 @@ export function applyPatchAction(mindmap: Mindmap, action: MindmapPatchAction): 
       // duplicate node — self-amplifying on the next rebuildPatches until a
       // manual /mindmap compile. Treating a duplicate add as a no-op makes
       // replay safe.
-      if (parent.children.some(c => c.id === id)) return true;
+      if (parent.children.some((c) => c.id === id)) return true;
 
       const newNode: Node = {
         id,
@@ -388,8 +336,8 @@ export function applyPatchAction(mindmap: Mindmap, action: MindmapPatchAction): 
         // runtime without recompiling MYCC.md. Filter to well-formed Link
         // objects (defensive: a malformed links array must not poison the tree).
         links: sanitizeLinks(action.links),
-        is_mycc: false,  // patch-added, not from MYCC.md
-        is_patch: true,  // marked as patch-touched
+        is_mycc: false, // patch-added, not from MYCC.md
+        is_patch: true // marked as patch-touched
       };
 
       parent.children.push(newNode);
@@ -400,19 +348,19 @@ export function applyPatchAction(mindmap: Mindmap, action: MindmapPatchAction): 
     case 'update': {
       const node = get_node(mindmap, action.path);
       if (!node) return false;
-      if (action.path === '/' || action.path === '') return false;  // cannot update root
+      if (action.path === '/' || action.path === '') return false; // cannot update root
       if (!action.text) return false;
 
       node.text = action.text;
-      node.summary = '';  // clear — re-summarized on next compile if is_mycc
-      node.is_patch = true;  // mark as patch-modified
+      node.summary = ''; // clear — re-summarized on next compile if is_mycc
+      node.is_patch = true; // mark as patch-modified
       // is_mycc is preserved — an is_mycc node that's patched is still is_mycc
       mindmap.updated_at = new Date().toISOString();
       return true;
     }
 
     case 'delete': {
-      if (action.path === '/' || action.path === '') return false;  // cannot delete root
+      if (action.path === '/' || action.path === '') return false; // cannot delete root
 
       const segments = action.path.split('/').filter((s) => s.length > 0);
       if (segments.length === 0) return false;
@@ -427,9 +375,7 @@ export function applyPatchAction(mindmap: Mindmap, action: MindmapPatchAction): 
       // title — the canonical addressing scheme is the normalized id (see
       // get-node.ts findChild). A bare toLowerCase title comparison fails for
       // spaced/special-char titles and makes the delete a silent no-op.
-      const index = parent.children.findIndex(
-        (c) => safeNodeId(c.title) === nodeTitle
-      );
+      const index = parent.children.findIndex((c) => safeNodeId(c.title) === nodeTitle);
       if (index === -1) return false;
 
       parent.children.splice(index, 1);
@@ -473,8 +419,7 @@ function sanitizeLinks(links: Link[] | undefined): Link[] {
           out.push({ target_type: 'file', file_path: l.file_path, comment });
         break;
       case 'url':
-        if (typeof l.url === 'string' && l.url.length > 0)
-          out.push({ target_type: 'url', url: l.url, comment });
+        if (typeof l.url === 'string' && l.url.length > 0) out.push({ target_type: 'url', url: l.url, comment });
         break;
       case 'term':
         if (typeof l.term_name === 'string' && l.term_name.length > 0)

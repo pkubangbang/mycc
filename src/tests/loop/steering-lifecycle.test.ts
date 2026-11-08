@@ -29,7 +29,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HUB_PATH = path.resolve(__dirname, '..', '..', '..', 'src', 'serve', 'serve-hub.ts');
 const PROVIDER_PATH = path.resolve(__dirname, '..', '..', '..', 'src', 'serve', 'web-input-provider.ts');
 
-const read = (p: string): string => fs.readFileSync(p, 'utf-8');
+// Source-text pins below match CODE SHAPE, not layout: the formatter is free to
+// reflow a one-line guard into a block (or join it back), so every assertion
+// reads a whitespace-normalized copy. Freezing prettier's output here would
+// make `pnpm format` break the gate — the pin must describe the guard, not the
+// line breaks around it.
+const read = (p: string): string => fs.readFileSync(p, 'utf-8').replace(/\s+/g, ' ');
 
 describe('A2 manager contract (real singleton + fresh instances)', () => {
   afterEach(() => {

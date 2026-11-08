@@ -27,7 +27,13 @@ export class ChildCore extends BaseCore implements CoreModule {
     return this.name;
   }
 
-  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire }): void {
+  brief(
+    level: 'info' | 'warn' | 'error',
+    tool: string,
+    message: string,
+    detail?: string,
+    opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire }
+  ): void {
     if (level === 'error') {
       ipc.sendNotification('error', { error: message, detail, tool, synthetic: opts?.synthetic ?? false });
     } else {
@@ -66,11 +72,15 @@ export class ChildCore extends BaseCore implements CoreModule {
       // The parent's Core.question() builds the full AskResult (including the
       // auto-mode short-circuit with source:'auto'), so the IPC response carries
       // the whole object — return it verbatim rather than re-deriving it here.
-      const response = await ipc.sendRequest<AskResult>('question', {
-        query,
-        asker,
-        options,
-      }, 0);
+      const response = await ipc.sendRequest<AskResult>(
+        'question',
+        {
+          query,
+          asker,
+          options
+        },
+        0
+      );
       return response;
     } finally {
       // Transition back to working after getting answer
@@ -94,7 +104,7 @@ export class ChildCore extends BaseCore implements CoreModule {
     const response = await ipc.sendRequest<{ description: string }>('core_img_describe', {
       image,
       prompt,
-      aborted: signal?.aborted ?? false,
+      aborted: signal?.aborted ?? false
     });
     return response.description;
   }
@@ -107,12 +117,17 @@ export class ChildCore extends BaseCore implements CoreModule {
    * @param cacheToken - Optional M token from a previous read
    * @returns PictureResult with accumulated pairs and the current cache token
    */
-  async readPictureCached(imagePath: string, prompt?: string, cacheToken?: string, signal?: AbortSignal): Promise<PictureResult> {
+  async readPictureCached(
+    imagePath: string,
+    prompt?: string,
+    cacheToken?: string,
+    signal?: AbortSignal
+  ): Promise<PictureResult> {
     const response = await ipc.sendRequest<PictureResult>('core_read_picture_cached', {
       imagePath,
       prompt,
       cacheToken,
-      aborted: signal?.aborted ?? false,
+      aborted: signal?.aborted ?? false
     });
     return response;
   }
@@ -124,11 +139,14 @@ export class ChildCore extends BaseCore implements CoreModule {
    * @param args - Tool arguments (path for file ops, command and intent for bash)
    * @returns Grant result with approval status and optional reason
    */
-  async requestGrant(tool: 'write_file' | 'edit_file' | 'bash', args: {
-    path?: string;
-    command?: string;
-    intent?: string;
-  }): Promise<{ approved: boolean; reason?: string }> {
+  async requestGrant(
+    tool: 'write_file' | 'edit_file' | 'bash',
+    args: {
+      path?: string;
+      command?: string;
+      intent?: string;
+    }
+  ): Promise<{ approved: boolean; reason?: string }> {
     // NO TIMEOUT. The parent's grant path can block on a human [y/N] prompt
     // (dangerous/batch confirmations) or on a slow LLM safeguard — both are
     // unbounded by design. A 5 s timeout here used to turn a still-pending
@@ -152,12 +170,12 @@ export class ChildCore extends BaseCore implements CoreModule {
    */
   async requestExternalPathAccess(
     tool: 'read_file' | 'write_file' | 'edit_file' | 'grep',
-    requestedPath: string,
+    requestedPath: string
   ): Promise<{ approved: boolean; resolvedPath: string; reason?: string }> {
     const response = await ipc.sendRequest<{ approved: boolean; resolvedPath: string; reason?: string }>(
       'external_path_access',
       { tool, requestedPath },
-      0, // No timeout - user interaction may take arbitrary time
+      0 // No timeout - user interaction may take arbitrary time
     );
     return response;
   }

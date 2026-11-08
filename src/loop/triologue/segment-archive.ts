@@ -90,7 +90,7 @@ export class SegmentArchiver {
   async run(
     currentTitleAssistantIndex: number,
     signal?: AbortSignal,
-    domains: Array<{ domain_name: string; description?: string }> = [],
+    domains: Array<{ domain_name: string; description?: string }> = []
   ): Promise<Message[] | undefined> {
     if (this.active) {
       agentIO.brief('warn', 'triologue', 'compactSegment skipped: an archive is already queued/running');
@@ -107,7 +107,7 @@ export class SegmentArchiver {
     const fingerprint: Fingerprint = {
       msg: this.deps.messageAt(anchorEnd),
       len: this.deps.getRawMessages().length,
-      epoch: this.deps.compactionEpoch(),
+      epoch: this.deps.compactionEpoch()
     };
 
     // The archive task must never outlive the turn that will await the next
@@ -116,7 +116,9 @@ export class SegmentArchiver {
     const watchdog = new AbortController();
     const timeout = setTimeout(() => watchdog.abort(), ARCHIVE_WATCHDOG_MS);
     try {
-      return await this.deps.enqueueCompaction(() => this.archive(anchorEnd, fingerprint, domains, signal ?? watchdog.signal));
+      return await this.deps.enqueueCompaction(() =>
+        this.archive(anchorEnd, fingerprint, domains, signal ?? watchdog.signal)
+      );
     } finally {
       clearTimeout(timeout);
       this.active = false;
@@ -132,7 +134,7 @@ export class SegmentArchiver {
     anchorEnd: number,
     fingerprint: Fingerprint,
     domains: Array<{ domain_name: string; description?: string }>,
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<Message[] | undefined> {
     // Staleness gates, in order:
     //  - the boundary OBJECT must still be there (a shrink past it yields
@@ -161,11 +163,11 @@ export class SegmentArchiver {
         getFullMessages: () => this.deps.getFullMessages(),
         lastUserQuery: () => this.deps.lastUserQuery() ?? '',
         onCompact: (p) => this.deps.onCompact(p),
-        domains,
+        domains
       },
       undefined, // segment summaries are focus-free by design
       signal,
-      undefined, // no focus fork on the segment path
+      undefined // no focus fork on the segment path
     );
 
     // Re-check after the (slow) summarization. Appends are fine — the agent
@@ -177,10 +179,7 @@ export class SegmentArchiver {
       agentIO.brief('warn', 'triologue', 'compactSegment discarded: a full compact ran during summarization');
       return undefined;
     }
-    if (
-      this.deps.messageAt(anchorEnd) !== fingerprint.msg ||
-      this.deps.getRawMessages().length < fingerprint.len
-    ) {
+    if (this.deps.messageAt(anchorEnd) !== fingerprint.msg || this.deps.getRawMessages().length < fingerprint.len) {
       agentIO.brief('warn', 'triologue', 'compactSegment aborted: store changed during summarization');
       return undefined;
     }

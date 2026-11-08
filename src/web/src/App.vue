@@ -44,10 +44,7 @@ function closeDrawer(): void {
     <SteeringBuffer :notes="state.steeringBuffer" />
     <DebugPanel v-if="state.debugMode" :state="state" />
     <div class="middle-section">
-      <ChatLog
-        :messages="state.messages"
-        :state="state"
-      />
+      <ChatLog :messages="state.messages" :state="state" />
       <TodoCard :messages="state.messages" />
       <TeammateCard
         v-if="!drawerOpen && state.teammateMessages.length > 0"

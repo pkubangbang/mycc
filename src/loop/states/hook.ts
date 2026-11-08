@@ -39,10 +39,7 @@ import { startSpinner, stopSpinner } from '../../engine/chat-helpers.js';
  * raw markup reaches the terminal. Content that is ENTIRELY DSML strips to
  * empty and is skipped (nothing displayable).
  */
-function briefAssistantContent(
-  ctx: MachineEnv['ctx'],
-  content: string | undefined,
-): void {
+function briefAssistantContent(ctx: MachineEnv['ctx'], content: string | undefined): void {
   if (!content) return;
   const stripped = stripInternalMarkup(content);
   if (stripped) {
@@ -100,7 +97,7 @@ function injectDeferredHookMessages(
 async function handlePlanScopeBrief(
   env: MachineEnv,
   chat: ChatData,
-  hookResult: ProcessToolCallsResult,
+  hookResult: ProcessToolCallsResult
 ): Promise<HandlerResult | null> {
   const { triologue, ctx } = env;
   if (ctx.core.getMode() !== 'plan') return null;
@@ -143,8 +140,7 @@ async function handlePlanScopeBrief(
       resultThreshold: triologue.getResultThreshold(),
       // The fork gets its OWN ESC-aware slot: it must be interruptible while it
       // runs, which the tool-execution wrapper cannot provide here.
-      escAware: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) =>
-        ctx.core.escAware(fn, cleanup),
+      escAware: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => ctx.core.escAware(fn, cleanup)
     });
   } finally {
     stopSpinner();
@@ -155,7 +151,7 @@ async function handlePlanScopeBrief(
   // crossroad branch below, so the loop skips this call: the tool never runs and
   // TP parity holds (the round-trip is complete and last).
   triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, {
-    reasoningContent: chat.assistantReasoningContent,
+    reasoningContent: chat.assistantReasoningContent
   });
   triologue.tool('brief', withPlanScopeNote(note), briefCall.id);
 
@@ -174,8 +170,12 @@ async function handlePlanScopeBrief(
   briefAssistantContent(ctx, chat.assistantContent);
   const confidence = typeof args?.confidence === 'number' ? args.confidence : undefined;
   if (briefMessage) {
-    ctx.core.brief('info', 'brief', briefMessage,
-      confidence === undefined ? undefined : `confidence: ${confidence * 10}%`);
+    ctx.core.brief(
+      'info',
+      'brief',
+      briefMessage,
+      confidence === undefined ? undefined : `confidence: ${confidence * 10}%`
+    );
     try {
       ctx.peer.recordBrief(briefMessage, confidence ?? 0);
     } catch {
@@ -195,11 +195,7 @@ async function handlePlanScopeBrief(
   return AgentState.COLLECT;
 }
 
-export async function handleHook(
-  env: MachineEnv,
-  turn: TurnVars,
-  chat: ChatData,
-): Promise<HandlerResult> {
+export async function handleHook(env: MachineEnv, turn: TurnVars, chat: ChatData): Promise<HandlerResult> {
   const { triologue, ctx, hookExecutor } = env;
 
   try {
@@ -208,17 +204,13 @@ export async function handleHook(
     chat.augmentedCalls = augmentedCalls;
 
     // 2. Process hooks (block/replace/inject/message).
-    const hookResult = await hookExecutor.processToolCalls(
-      augmentedCalls,
-      ctx,
-      ctx.skill.getSkill.bind(ctx.skill),
-    );
+    const hookResult = await hookExecutor.processToolCalls(augmentedCalls, ctx, ctx.skill.getSkill.bind(ctx.skill));
     chat.hookResult = hookResult;
 
     // Observability: emit hook_result (silent when no listeners)
     loopEvents.emit('hook_result', {
       blocked: hookResult.blockedCalls.size > 0,
-      compactRequested: !!hookResult.compactRequested,
+      compactRequested: !!hookResult.compactRequested
     });
 
     // 3. Handle compact request (highest priority — short-circuits all processing)
@@ -239,7 +231,7 @@ export async function handleHook(
       // totalTurns survive — a turn spans across compaction).
       env.ctx.core.resetConfusionIndex();
       env.sequence.compactReset();
-      env.crossroadOccurred = false;  // clear stale cooldown after compaction
+      env.crossroadOccurred = false; // clear stale cooldown after compaction
 
       return AgentState.COLLECT;
     }
@@ -311,7 +303,7 @@ export async function handleHook(
       const crossroadBrief = briefToolCall(briefMessage, 7, briefCallId);
       triologue.agent(finalContent, [crossroadBrief], {
         reasoningContent: chat.assistantReasoningContent,
-        synthetic: true,
+        synthetic: true
       });
 
       // Inject the crossroad file path into the brief tool result so the LLM
@@ -355,10 +347,10 @@ export async function handleHook(
         const card = buildCrossroadCard({
           candidates: chat.crossroadCandidates,
           selectedIndex: chat.crossroadSelectedIndex ?? -1,
-          resolvedOutcome: chat.crossroadContinuation,
+          resolvedOutcome: chat.crossroadContinuation
         });
         ctx.core.brief('info', 'crossroad', formatCrossroadCard(card), undefined, {
-          crossroad: toCrossroadCardWire(card),
+          crossroad: toCrossroadCardWire(card)
         });
       } else {
         // Only one direction survived — there is no card to compare, so the
@@ -381,14 +373,10 @@ export async function handleHook(
     //    by the early return above).
     const finalAssistantContent = chat.assistantContent;
     const finalToolCalls =
-      hookResult.calls.length > 0
-        ? hookResult.calls.map((c) => ({ id: c.id, function: c.function }))
-        : undefined;
-    triologue.agent(
-      finalAssistantContent,
-      finalToolCalls as ToolCall[] | undefined,
-      { reasoningContent: chat.assistantReasoningContent },
-    );
+      hookResult.calls.length > 0 ? hookResult.calls.map((c) => ({ id: c.id, function: c.function })) : undefined;
+    triologue.agent(finalAssistantContent, finalToolCalls as ToolCall[] | undefined, {
+      reasoningContent: chat.assistantReasoningContent
+    });
 
     // Confusion scoring: +1 per assistant turn (agent spinning without progress)
     // In plan mode, the agent explores by reading files — tool calls are sparse,

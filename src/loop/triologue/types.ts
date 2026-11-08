@@ -51,7 +51,6 @@ export interface TriologueOptions {
    * time, so it survives compact()/clear() store swaps.
    */
   onMessage?: (msg: Message, getTriologue: () => Message[]) => void;
-
 }
 
 export interface ResolvedTriologueOptions {

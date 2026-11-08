@@ -12,7 +12,7 @@ import * as os from 'os';
 
 /**
  * Resolve a path that may include ~, relative paths, or absolute paths.
- * 
+ *
  * 1. Expands ~ to the user's home directory
  * 2. Resolves relative paths against workdir
  * 3. Returns the canonical absolute path
@@ -28,9 +28,7 @@ export function resolvePath(p: string, workdir: string): string {
   // .startsWith call below, which escapes to the tool dispatcher as an
   // opaque "Error executing <tool>: ..." and is hard to diagnose.
   if (typeof p !== 'string' || p.length === 0) {
-    throw new Error(
-      'path argument is required and must be a non-empty string. Provide a valid file path.'
-    );
+    throw new Error('path argument is required and must be a non-empty string. Provide a valid file path.');
   }
 
   // Expand ~ to home directory

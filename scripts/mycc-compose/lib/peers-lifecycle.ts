@@ -11,13 +11,9 @@ import {
   heartbeatPid,
   readIdentityMap,
   resolveLivePeer,
-  resolvePeerForStop,
+  resolvePeerForStop
 } from './discovery.js';
-import {
-  LAUNCH_TIMEOUT_MS,
-  LAUNCH_POLL_MS,
-  isLauncherFlag,
-} from './peers-types.js';
+import { LAUNCH_TIMEOUT_MS, LAUNCH_POLL_MS, isLauncherFlag } from './peers-types.js';
 import type { Peer } from './peers-types.js';
 import { openTerminal } from '../../../src/utils/open-terminal.js';
 
@@ -120,10 +116,12 @@ export function readProcessCommandLine(pid: number): string | null {
       const out = execFileSync(
         'powershell',
         [
-          '-NoProfile', '-NonInteractive', '-Command',
-          `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`,
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`
         ],
-        { encoding: 'utf-8', timeout: 8_000, windowsHide: true },
+        { encoding: 'utf-8', timeout: 8_000, windowsHide: true }
       ).trim();
       return out.length > 0 ? out : null;
     }
@@ -210,7 +208,7 @@ export function resolveMyccLauncher(): string | null {
     // 2. module-relative repo bin: three levels up from lib/ → REPO ROOT
     //    (two would stop short at scripts/bin, silently preferring a stale
     //    npm-linked PATH shim over a fresh checkout).
-    ...binNames(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')),
+    ...binNames(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..'))
   ];
 
   for (const candidate of candidates) {
@@ -239,10 +237,7 @@ function existsQuiet(p: string): boolean {
  * fallback: detached so the child survives the compose CLI's exit, `stdio:'ignore'`
  * because it renders nothing, unref'd so the caller can exit. A `.cmd`/`.bat`
  * shim needs `cmd /c` (libuv cannot exec a batch file with `shell:false`). */
-function asSpawnableCommand(
-  command: string,
-  args: readonly string[],
-): { command: string; args: string[] } {
+function asSpawnableCommand(command: string, args: readonly string[]): { command: string; args: string[] } {
   if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(command)) {
     return { command: 'cmd', args: ['/c', command, ...args] };
   }
@@ -292,11 +287,7 @@ function collectProgAssigns(text: string): string[] {
  * that both consumes `%*` and quotes an entry `.js`, read as the quoted pair
  * `"<prog>" "<target.js>"`. Null when no parsable pair survives.
  */
-function execSegment(
-  line: string,
-  progAssigns: string[],
-  shimDir: string,
-): { prog: string; target: string } | null {
+function execSegment(line: string, progAssigns: string[], shimDir: string): { prog: string; target: string } | null {
   const seg = line
     .split('&')
     .map((s) => s.trim())
@@ -352,15 +343,11 @@ function resolveTarget(targetTok: string, shimDir: string): string | null {
  * spawned via its parsed real argv (never a `cmd /c` interpreter — that is
  * what pops the console); unparsable shapes keep the `cmd /c` fallback. */
 function spawnDetached(
-  spawnImpl: (
-    command: string,
-    args: readonly string[],
-    options: SpawnOptions,
-  ) => ChildProcess,
+  spawnImpl: (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess,
   command: string,
   args: readonly string[],
   cwd: string,
-  onSpawnError: (err: Error) => void,
+  onSpawnError: (err: Error) => void
 ): void {
   const opts: SpawnOptions = {
     cwd,
@@ -369,7 +356,7 @@ function spawnDetached(
     // detached: the child must survive the compose CLI's exit. windowsHide
     // alone is NOT enough for a `cmd /c` wrap — see the doc above.
     detached: true,
-    windowsHide: true,
+    windowsHide: true
   };
   const shim = parseCmdShim(command);
   const launch = shim
@@ -386,11 +373,7 @@ export interface LaunchPeerOpts {
   /** Test seam ABOVE the daemon/terminal split: a spawn-shaped function for
    * headless tests (deliberately narrowed, not `typeof spawn` — the builtin's
    * overloads reject loose test doubles). Production omits it. */
-  spawnImpl?: (
-    command: string,
-    args: readonly string[],
-    options: SpawnOptions,
-  ) => ChildProcess;
+  spawnImpl?: (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
   /** Test-only: overrides the beat-poll deadline (never in production). */
   timeoutMs?: number;
 }
@@ -418,10 +401,7 @@ export interface LaunchPeerOpts {
  * success the resolved sid is STAMPED onto peer.sessionId, so the post-launch
  * callers (deliverRemotes, the cmd-up liveness wait) act on the real sid.
  */
-export function launchPeer(
-  peer: Peer,
-  opts: LaunchPeerOpts = {},
-): Promise<LaunchResult> {
+export function launchPeer(peer: Peer, opts: LaunchPeerOpts = {}): Promise<LaunchResult> {
   return new Promise((resolve, reject) => {
     const identityName = peer.identityName ?? peer.name;
     if (!identityName) {
@@ -486,13 +466,16 @@ export function launchPeer(
             openTerminal(buildPeerShellCommand(launchCommand, launchArgs, cwd));
           } catch (err) {
             const cause = err instanceof Error ? err.message : String(err);
-            done(reject, new Error(
-              `spawn failed for "${peer.name}": ${cause}\n` +
-              `Hint: peer "${peer.name}" is not launched with --daemon, so compose ` +
-              `tried to open a VISIBLE terminal window — which needs an interactive ` +
-              `desktop session and is unavailable to an automated/headless caller. ` +
-              `Add "--daemon" to peers[].args in the spec to launch it headless.`,
-            ));
+            done(
+              reject,
+              new Error(
+                `spawn failed for "${peer.name}": ${cause}\n` +
+                  `Hint: peer "${peer.name}" is not launched with --daemon, so compose ` +
+                  `tried to open a VISIBLE terminal window — which needs an interactive ` +
+                  `desktop session and is unavailable to an automated/headless caller. ` +
+                  `Add "--daemon" to peers[].args in the spec to launch it headless.`
+              )
+            );
             return;
           }
         }
@@ -520,16 +503,20 @@ export function launchPeer(
           // non-interactive console (no window, so the command never runs) —
           // exactly an automated caller's situation. Append the same remedy the
           // opener-throw branch gives, so the timeout is actionable too.
-          const headlessHint = peer.parsedArgs?.daemon === undefined
-            ? `\nHint: this peer is not launched with --daemon, so it was started ` +
-              `via a VISIBLE terminal window; under a headless/non-interactive ` +
-              `session no window opens and the command never runs. Add "--daemon" ` +
-              `to peers[].args in the spec to launch it headless.`
-            : '';
-          done(reject, new Error(
-            `peer "${peer.name}" did not come up within ` +
-            `${opts.timeoutMs ?? LAUNCH_TIMEOUT_MS}ms (spawned at ${spawnAt}).${headlessHint}`,
-          ));
+          const headlessHint =
+            peer.parsedArgs?.daemon === undefined
+              ? `\nHint: this peer is not launched with --daemon, so it was started ` +
+                `via a VISIBLE terminal window; under a headless/non-interactive ` +
+                `session no window opens and the command never runs. Add "--daemon" ` +
+                `to peers[].args in the spec to launch it headless.`
+              : '';
+          done(
+            reject,
+            new Error(
+              `peer "${peer.name}" did not come up within ` +
+                `${opts.timeoutMs ?? LAUNCH_TIMEOUT_MS}ms (spawned at ${spawnAt}).${headlessHint}`
+            )
+          );
         }
       }, LAUNCH_POLL_MS);
     })();

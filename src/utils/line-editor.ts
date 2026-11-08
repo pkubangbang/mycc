@@ -29,7 +29,7 @@ interface LineEditorOptions {
 interface LineInfo {
   lines: string[][];
   cursorLine: number;
-  cursorCol: number;  // absolute column, includes promptLength for line 0
+  cursorCol: number; // absolute column, includes promptLength for line 0
 }
 
 /**
@@ -135,7 +135,7 @@ export class LineEditor {
   private splitIntoChars(text: string): string[] {
     if (global.Intl && Intl.Segmenter) {
       const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-      return Array.from(segmenter.segment(text), seg => seg.segment);
+      return Array.from(segmenter.segment(text), (seg) => seg.segment);
     }
     return [...text];
   }
@@ -145,7 +145,7 @@ export class LineEditor {
   }
 
   getContent(_forOutput: boolean = true): string {
-    return this.content.filter(c => c !== CURSOR).join('');
+    return this.content.filter((c) => c !== CURSOR).join('');
   }
 
   private computeLineInfo(): LineInfo {
@@ -179,9 +179,7 @@ export class LineEditor {
         continue;
       }
 
-      const maxWidth = lines.length === 0
-        ? this.columns - this.promptLength
-        : this.columns;
+      const maxWidth = lines.length === 0 ? this.columns - this.promptLength : this.columns;
 
       // Width is always computed on the raw char (pre-ANSI) so wrapping
       // is unaffected by inverse-video highlighting.
@@ -258,7 +256,7 @@ export class LineEditor {
       acc += ch;
       accWidth += w;
     }
-    return `${acc  }…`;
+    return `${acc}…`;
   }
 
   // Layout: whisper (1 line) + prompt/content (1+ lines) + blank (1 line) + cursor row
@@ -271,9 +269,7 @@ export class LineEditor {
     output.push('\r');
     if (this.screenStartRow > 0) output.push(`\x1b[${this.screenStartRow}A`);
     output.push('\x1b[2K\x1b[J');
-    const whisper = this.whisperText !== null
-      ? this.truncateToWidth(this.whisperText, this.columns)
-      : '';
+    const whisper = this.whisperText !== null ? this.truncateToWidth(this.whisperText, this.columns) : '';
     output.push(`\x1b[90m${whisper}\x1b[0m\n`);
 
     for (let i = 0; i < totalLines; i++) {
@@ -311,10 +307,7 @@ export class LineEditor {
   private getSelectionRange(): [number, number] | null {
     if (!this.hasSelection()) return null;
     const cursorIdx = this.getCursorIndex();
-    return [
-      Math.min(this.selectionAnchor!, cursorIdx),
-      Math.max(this.selectionAnchor!, cursorIdx),
-    ];
+    return [Math.min(this.selectionAnchor!, cursorIdx), Math.max(this.selectionAnchor!, cursorIdx)];
   }
 
   /**
@@ -541,26 +534,63 @@ export class LineEditor {
 
     // Phase 2 — Shift+arrow/home/end: extend selection (anchor stays fixed).
     if (key.shift && !key.ctrl) {
-      if (key.name === 'left') { this.extendSelectionLeft(); return; }
-      if (key.name === 'right') { this.extendSelectionRight(); return; }
-      if (key.name === 'home') { this.extendSelectionHome(); return; }
-      if (key.name === 'end') { this.extendSelectionEnd(); return; }
+      if (key.name === 'left') {
+        this.extendSelectionLeft();
+        return;
+      }
+      if (key.name === 'right') {
+        this.extendSelectionRight();
+        return;
+      }
+      if (key.name === 'home') {
+        this.extendSelectionHome();
+        return;
+      }
+      if (key.name === 'end') {
+        this.extendSelectionEnd();
+        return;
+      }
     }
 
     // Phase 3 — Non-shift movement: clear selection, then move.
     if (!key.shift) {
-      if (key.name === 'left') { this.clearSelection(); this.moveLeft(); return; }
-      if (key.name === 'right') { this.clearSelection(); this.moveRight(); return; }
-      if (key.name === 'home' || (key.ctrl && key.name === 'a')) { this.clearSelection(); this.moveHome(); return; }
-      if (key.name === 'end' || (key.ctrl && key.name === 'e')) { this.clearSelection(); this.moveEnd(); return; }
-      if (key.name === 'up') { this.clearSelection(); this.historyUp(); return; }
-      if (key.name === 'down') { this.clearSelection(); this.historyDown(); return; }
+      if (key.name === 'left') {
+        this.clearSelection();
+        this.moveLeft();
+        return;
+      }
+      if (key.name === 'right') {
+        this.clearSelection();
+        this.moveRight();
+        return;
+      }
+      if (key.name === 'home' || (key.ctrl && key.name === 'a')) {
+        this.clearSelection();
+        this.moveHome();
+        return;
+      }
+      if (key.name === 'end' || (key.ctrl && key.name === 'e')) {
+        this.clearSelection();
+        this.moveEnd();
+        return;
+      }
+      if (key.name === 'up') {
+        this.clearSelection();
+        this.historyUp();
+        return;
+      }
+      if (key.name === 'down') {
+        this.clearSelection();
+        this.historyDown();
+        return;
+      }
     } else {
       // Shift is held but not an extendable movement key — still clear so a
       // stale selection doesn't persist through unrelated shift+key combos.
-      if (key.name === 'up' || key.name === 'down') { this.clearSelection(); }
-      if (key.name === 'home' || key.name === 'end' ||
-          (key.ctrl && (key.name === 'a' || key.name === 'e'))) {
+      if (key.name === 'up' || key.name === 'down') {
+        this.clearSelection();
+      }
+      if (key.name === 'home' || key.name === 'end' || (key.ctrl && (key.name === 'a' || key.name === 'e'))) {
         this.clearSelection();
       }
     }
@@ -652,7 +682,13 @@ export class LineEditor {
   }
 
   close(): void {
-    if (this.resizeTimer) { clearTimeout(this.resizeTimer); this.resizeTimer = null; }
-    if (this.whisperTimer) { clearTimeout(this.whisperTimer); this.whisperTimer = null; }
+    if (this.resizeTimer) {
+      clearTimeout(this.resizeTimer);
+      this.resizeTimer = null;
+    }
+    if (this.whisperTimer) {
+      clearTimeout(this.whisperTimer);
+      this.whisperTimer = null;
+    }
   }
 }

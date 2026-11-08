@@ -54,7 +54,9 @@ const SID_FILE_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 
 function dieUsage(msg) {
   console.error(msg);
-  console.error('usage: node scripts/mycc-compose/compose-cleanup-audit.js [--json] [--days N] [--dir <discovery-dir>]');
+  console.error(
+    'usage: node scripts/mycc-compose/compose-cleanup-audit.js [--json] [--days N] [--dir <discovery-dir>]'
+  );
   process.exit(2);
 }
 
@@ -72,7 +74,9 @@ function parseArgs(argv) {
       if (!d) dieUsage('--dir needs a path');
       opts.dir = d;
     } else if (a === '--help' || a === '-h') {
-      console.log('usage: node scripts/mycc-compose/compose-cleanup-audit.js [--json] [--days N] [--dir <discovery-dir>]');
+      console.log(
+        'usage: node scripts/mycc-compose/compose-cleanup-audit.js [--json] [--days N] [--dir <discovery-dir>]'
+      );
       process.exit(0);
     } else dieUsage(`unknown argument: ${a}`);
   }
@@ -113,8 +117,8 @@ function tombstoneOf(data) {
 
 function main() {
   const opts = parseArgs(process.argv.slice(2));
-  const discoveryDir = opts.dir || process.env.MYCC_DISCOVERY_DIR
-    || path.join(os.homedir(), '.mycc-store', 'discovery');
+  const discoveryDir =
+    opts.dir || process.env.MYCC_DISCOVERY_DIR || path.join(os.homedir(), '.mycc-store', 'discovery');
   const channelsDir = path.join(discoveryDir, 'channels');
   const heartbeatDir = path.join(discoveryDir, 'heartbeat');
   const identityFile = path.join(discoveryDir, 'identity.json');
@@ -127,9 +131,7 @@ function main() {
   const registered = new Set(Object.keys(identity));
 
   // ---- heartbeats ----
-  const hbFiles = fs.existsSync(heartbeatDir)
-    ? fs.readdirSync(heartbeatDir).filter((f) => SID_FILE_RE.test(f))
-    : [];
+  const hbFiles = fs.existsSync(heartbeatDir) ? fs.readdirSync(heartbeatDir).filter((f) => SID_FILE_RE.test(f)) : [];
   const hbBySid = new Map(); // sid -> { file, data, latest, briefs, tombstone }
   for (const f of hbFiles) {
     const m = SID_FILE_RE.exec(f);
@@ -141,7 +143,7 @@ function main() {
       data,
       latest: latestHeartbeat(data),
       briefs: briefCount(data),
-      tombstone: tombstoneOf(data),
+      tombstone: tombstoneOf(data)
     });
   }
 
@@ -149,7 +151,8 @@ function main() {
     const hb = hbBySid.get(sid);
     if (registered.has(sid)) return { verdict: 'KEEP', reason: 'registered in identity.json' };
     if (!hb) return { verdict: 'UNKNOWN', reason: 'no heartbeat file' };
-    if (hb.tombstone !== undefined) return { verdict: 'KEEP', reason: 'tombstone pending (peer must observe the stop)' };
+    if (hb.tombstone !== undefined)
+      return { verdict: 'KEEP', reason: 'tombstone pending (peer must observe the stop)' };
     if (hb.latest === null) return { verdict: 'UNKNOWN', reason: 'heartbeat file has no timestamps' };
     if (now - hb.latest <= PEER_LISTING_CUTOFF_MS) {
       return { verdict: 'KEEP', reason: 'live heartbeat (<1h)' };
@@ -161,9 +164,7 @@ function main() {
   };
 
   // ---- channel files ----
-  const channelFiles = fs.existsSync(channelsDir)
-    ? fs.readdirSync(channelsDir).filter((f) => f.endsWith('.json'))
-    : [];
+  const channelFiles = fs.existsSync(channelsDir) ? fs.readdirSync(channelsDir).filter((f) => f.endsWith('.json')) : [];
 
   const channels = [];
   for (const f of channelFiles) {
@@ -174,10 +175,20 @@ function main() {
       const st = fs.statSync(full);
       size = st.size;
       mtime = st.mtime.toISOString();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     const m = CHANNEL_FILE_RE.exec(f);
     if (!m) {
-      channels.push({ file: f, sid: null, label: null, size, mtime, verdict: 'UNKNOWN', reason: 'filename does not match <sid>-<label>.json' });
+      channels.push({
+        file: f,
+        sid: null,
+        label: null,
+        size,
+        mtime,
+        verdict: 'UNKNOWN',
+        reason: 'filename does not match <sid>-<label>.json'
+      });
       continue;
     }
     const sid = m[1];
@@ -190,8 +201,14 @@ function main() {
       return om && om[2] === label && om[1] !== sid && classifySid(om[1]).verdict === 'KEEP';
     });
     channels.push({
-      file: f, sid, label, size, mtime,
-      verdict: c.verdict, reason: c.reason, hasNewerSibling,
+      file: f,
+      sid,
+      label,
+      size,
+      mtime,
+      verdict: c.verdict,
+      reason: c.reason,
+      hasNewerSibling
     });
   }
 
@@ -200,9 +217,13 @@ function main() {
   for (const [sid, hb] of hbBySid) {
     const c = classifySid(sid);
     heartbeats.push({
-      sid, file: path.basename(hb.file), latest: hb.latest, briefs: hb.briefs,
+      sid,
+      file: path.basename(hb.file),
+      latest: hb.latest,
+      briefs: hb.briefs,
       tombstone: hb.tombstone !== undefined,
-      verdict: c.verdict, reason: c.reason,
+      verdict: c.verdict,
+      reason: c.reason
     });
   }
 
@@ -218,10 +239,10 @@ function main() {
       heartbeatFiles: hbFiles.length,
       channelFiles: channelFiles.length,
       orphanChannelCandidates: orphanChannels.length,
-      staleHeartbeatCandidates: staleHeartbeats.length,
+      staleHeartbeatCandidates: staleHeartbeats.length
     },
     channels,
-    heartbeats,
+    heartbeats
   };
 
   if (opts.json) {
@@ -232,16 +253,22 @@ function main() {
   const pad = (s, n) => String(s).padEnd(n);
   console.log(`discovery dir : ${discoveryDir}`);
   console.log(`cutoff        : ${opts.days}d  (live = heartbeat newer than ${PEER_LISTING_CUTOFF_MS / HOUR_MS}h)`);
-  console.log(`counts        : ${registered.size} identity, ${hbFiles.length} heartbeat, ${channelFiles.length} channel`);
+  console.log(
+    `counts        : ${registered.size} identity, ${hbFiles.length} heartbeat, ${channelFiles.length} channel`
+  );
   console.log('');
   console.log(`CANDIDATE channel files: ${orphanChannels.length}`);
   for (const c of orphanChannels) {
-    console.log(`  ${c.verdict.padEnd(9)} ${pad(c.sid, 38)} ${pad(c.label, 24)} ${c.reason}${c.hasNewerSibling ? ' [newer sibling exists]' : ''}`);
+    console.log(
+      `  ${c.verdict.padEnd(9)} ${pad(c.sid, 38)} ${pad(c.label, 24)} ${c.reason}${c.hasNewerSibling ? ' [newer sibling exists]' : ''}`
+    );
   }
   console.log('');
   console.log(`CANDIDATE heartbeat files: ${staleHeartbeats.length}`);
   for (const h of staleHeartbeats) {
-    console.log(`  ${h.verdict.padEnd(9)} ${pad(h.sid, 38)} ${h.reason}${h.briefs > 0 ? `  (deletes ${h.briefs} brief(s))` : ''}`);
+    console.log(
+      `  ${h.verdict.padEnd(9)} ${pad(h.sid, 38)} ${h.reason}${h.briefs > 0 ? `  (deletes ${h.briefs} brief(s))` : ''}`
+    );
   }
   console.log('');
   if (orphanChannels.length === 0 && staleHeartbeats.length === 0) {

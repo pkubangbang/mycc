@@ -22,7 +22,6 @@ import { parseIntent } from '../context/grant/intent-parser.js';
 import { retryChat, MODEL } from '../engine/chat-provider.js';
 import { getShellInfo } from '../utils/shell-detect.js';
 
-
 /**
  * Spawn `tmux` with an explicit arg array (NOT via a shell). This is the
  * escaping-safe delivery path: each argument is passed verbatim to tmux
@@ -33,11 +32,13 @@ function spawnTmux(args: string[], cwd: string, captureStdout = false): Promise<
   return new Promise((resolve, reject) => {
     const proc = spawn('tmux', args, {
       cwd,
-      stdio: captureStdout ? ['ignore', 'pipe', 'ignore'] : 'ignore',
+      stdio: captureStdout ? ['ignore', 'pipe', 'ignore'] : 'ignore'
     });
     let out = '';
     if (captureStdout) {
-      proc.stdout?.on('data', (chunk: Buffer | string) => { out += chunk.toString(); });
+      proc.stdout?.on('data', (chunk: Buffer | string) => {
+        out += chunk.toString();
+      });
     }
     proc.on('error', reject);
     proc.on('close', (code) => {
@@ -71,20 +72,20 @@ IMPORTANT: When the user keeps the session (answers 'y'), the tool returns a ses
       command: {
         type: 'string',
         description:
-          'The single foreground command to hand to the user to type/run in the popup (e.g. `sudo apt install X`, `ssh user@host`, `vim notes.txt`). It is typed into the popup shell verbatim; do NOT prefix it with `tmux`, and do NOT chain background/detached constructs (`&&`, `&`, `> file`) — pass one interactive command the user must drive to completion.',
+          'The single foreground command to hand to the user to type/run in the popup (e.g. `sudo apt install X`, `ssh user@host`, `vim notes.txt`). It is typed into the popup shell verbatim; do NOT prefix it with `tmux`, and do NOT chain background/detached constructs (`&&`, `&`, `> file`) — pass one interactive command the user must drive to completion.'
       },
       intent: {
         type: 'string',
         description:
-          'REQUIRED: Explain why this command is needed (use intent language). The OBJECT must be USER and the VERB must be RUN: hand_over executes a command by having a human interact with the terminal.',
-      },
+          'REQUIRED: Explain why this command is needed (use intent language). The OBJECT must be USER and the VERB must be RUN: hand_over executes a command by having a human interact with the terminal.'
+      }
     },
-    required: ['command', 'intent'],
+    required: ['command', 'intent']
   },
   scope: ['main'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     return handleHandOver(ctx, args);
-  },
+  }
 };
 
 async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>): Promise<string> {
@@ -163,10 +164,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
     // platform shell re-interpret it (metacharacters, spaces-in-paths), so the
     // pane's own shell must parse it — delivered byte-for-byte by send-keys.
     const shellName = getShellInfo().shell_cmd;
-    await spawnTmux(
-      ['new-session', '-d', '-s', sessionName, '-c', cwd, '-x', '120', '-y', '40', shellName],
-      cwd,
-    );
+    await spawnTmux(['new-session', '-d', '-s', sessionName, '-c', cwd, '-x', '120', '-y', '40', shellName], cwd);
 
     // Type the command into the pane. The leading space is harmless and guards
     // against a command starting with `-` being mistaken for a tmux option.
@@ -179,10 +177,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
     // shell prompt — typing the literal "undefined" (from a coerced
     // command || undefined) was the old bug.
     if (command.length > 0) {
-      await spawnTmux(
-        ['send-keys', '-t', sessionName, ` ${command}`, 'Enter'],
-        cwd,
-      );
+      await spawnTmux(['send-keys', '-t', sessionName, ` ${command}`, 'Enter'], cwd);
     }
   } catch (e) {
     return `Error: Failed to create session: ${e}`;
@@ -197,7 +192,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   const terminalArgs = parseTerminalArgs(terminalLauncher, sessionName);
   spawn(terminalArgs[0], terminalArgs[1], {
     detached: true,
-    stdio: 'ignore',
+    stdio: 'ignore'
   }).unref();
 
   ctx.core.brief('info', 'hand_over', `Opened: ${sessionName}`, intent);
@@ -226,11 +221,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
 
   // If user provided feedback (not y/n/enter), return it for LLM to handle
   if (!killSession && !keepSession) {
-    agentIO.log(
-      chalk.yellow(
-        `✓ Session ${sessionName} kept for review. Reattach with: tmux attach -t ${sessionName}`
-      )
-    );
+    agentIO.log(chalk.yellow(`✓ Session ${sessionName} kept for review. Reattach with: tmux attach -t ${sessionName}`));
 
     // Capture output
     let output = '';
@@ -242,17 +233,14 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
     }
 
     const lines = output.split('\n');
-    const result =
-      lines.length > 100 ? await summarizeOutput(output, command, 100) : output || '(empty output)';
+    const result = lines.length > 100 ? await summarizeOutput(output, command, 100) : output || '(empty output)';
 
     return `User provided feedback: "${answer}"\n\nSession ${sessionName} is still running. Reattach with: tmux attach -t ${sessionName}\n\nOutput:\n${result}`;
   }
 
   // Show closing notice based on user's choice
   if (keepSession) {
-    agentIO.log(
-      chalk.green(`✓ Session ${sessionName} kept. Reattach with: tmux attach -t ${sessionName}`)
-    );
+    agentIO.log(chalk.green(`✓ Session ${sessionName} kept. Reattach with: tmux attach -t ${sessionName}`));
   } else {
     agentIO.log(chalk.green(`✓ Session closed. Processing output...`));
   }
@@ -283,9 +271,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   const lines = output.split('\n');
 
   const result =
-    lines.length > maxLines
-      ? await summarizeOutput(output, command, maxLines)
-      : output || '(empty output)';
+    lines.length > maxLines ? await summarizeOutput(output, command, maxLines) : output || '(empty output)';
 
   // 9. Build and return result.
   //
@@ -309,13 +295,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
       `Only create a new hand_over popup if you need an independent terminal in a different directory or for an unrelated task.`
     : `Next action: the session is closed; read the captured output below and continue (or ask the user for guidance if the human reported something).`;
 
-  return (
-    `${header}\n` +
-    `${status}\n` +
-    `${nextAction}\n` +
-    `\n` +
-    `Output (${lines.length} lines):\n\n${result}`
-  );
+  return `${header}\n` + `${status}\n` + `${nextAction}\n` + `\n` + `Output (${lines.length} lines):\n\n${result}`;
 }
 
 /**
@@ -332,13 +312,13 @@ async function summarizeOutput(output: string, command: string, maxLines: number
       messages: [
         {
           role: 'system',
-          content: `Summarize terminal output. Keep under ${maxLines} lines. Preserve errors and exit codes.`,
+          content: `Summarize terminal output. Keep under ${maxLines} lines. Preserve errors and exit codes.`
         },
         {
           role: 'user',
-          content: `Command: ${command}\n\n${output}`,
-        },
-      ],
+          content: `Command: ${command}\n\n${output}`
+        }
+      ]
     });
     return response.message.content || '(summarization returned empty)';
   } catch {
@@ -417,8 +397,8 @@ export function parseTerminalArgs(launcher: string, sessionName: string): [strin
   // Per-launcher typed dispatch: [exe, ...launcher-specific args].
   const dispatch: Record<string, [string, ...string[]]> = {
     'open -a Terminal.app --args': ['open', '-a', 'Terminal.app', '--args'],
-    'wt': ['wt'],
-    'cmd /c start cmd /k': ['cmd', '/c', 'start', 'cmd', '/k'],
+    wt: ['wt'],
+    'cmd /c start cmd /k': ['cmd', '/c', 'start', 'cmd', '/k']
   };
   const known = dispatch[launcher];
   // Linux launchers (gnome-terminal, konsole, xfce4-terminal, mate-terminal,

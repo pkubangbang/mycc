@@ -22,7 +22,7 @@ interface MinifierOptions {
 const ROLE_ABBREVS: Record<string, string> = {
   user: 'ux',
   assistant: 'ax',
-  tool: 'to',
+  tool: 'to'
 };
 
 /**
@@ -41,10 +41,7 @@ const ROLE_ABBREVS: Record<string, string> = {
  * ax|there are 5 markdown files...
  * ```
  */
-export function minifyMessages(
-  messages: Message[],
-  options: MinifierOptions = {}
-): string {
+export function minifyMessages(messages: Message[], options: MinifierOptions = {}): string {
   const { maxContentLength = 500, maxArgsLength = 200, truncateToolOutput = false } = options;
 
   const lines: string[] = [
@@ -71,9 +68,7 @@ export function minifyMessages(
         // Note: Ollama's ToolCall type lacks `id`, but mycc's extended ToolCall
         // (src/types.ts) adds it; tool_calls populated by the triologue carry it.
         const hookName = extractHookName((tc as { id?: string }).id);
-        lines.push(hookName
-          ? `ti[${hookName}]|${tc.function.name}|${args}`
-          : `ti|${tc.function.name}|${args}`);
+        lines.push(hookName ? `ti[${hookName}]|${tc.function.name}|${args}` : `ti|${tc.function.name}|${args}`);
       }
       // Also include text content if present
       if (msg.content?.trim()) {
@@ -84,9 +79,7 @@ export function minifyMessages(
 
     // Handle tool result - truncated if truncateToolOutput is true
     if (msg.role === 'tool') {
-      const content = truncateToolOutput
-        ? truncate(msg.content || '', maxContentLength)
-        : (msg.content || '');
+      const content = truncateToolOutput ? truncate(msg.content || '', maxContentLength) : msg.content || '';
       lines.push(`to|${msg.tool_name || 'unknown'}|${content}`);
       continue;
     }
@@ -97,9 +90,11 @@ export function minifyMessages(
     // downstream consumers (hint round) can attribute notes to their hook.
     const abbrev = ROLE_ABBREVS[msg.role] || msg.role;
     const hookName = (msg as { hook_name?: string }).hook_name;
-    lines.push(hookName
-      ? `${abbrev}[${hookName}]|${truncate(msg.content || '', maxContentLength)}`
-      : `${abbrev}|${truncate(msg.content || '', maxContentLength)}`);
+    lines.push(
+      hookName
+        ? `${abbrev}[${hookName}]|${truncate(msg.content || '', maxContentLength)}`
+        : `${abbrev}|${truncate(msg.content || '', maxContentLength)}`
+    );
   }
 
   return lines.join('\n');
@@ -107,7 +102,7 @@ export function minifyMessages(
 
 function truncate(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
-  return `${text.slice(0, maxLen - 20)  }...${  text.slice(-17)}`;
+  return `${text.slice(0, maxLen - 20)}...${text.slice(-17)}`;
 }
 
 function truncateArgs(args: Record<string, unknown>, maxLen: number): string {
@@ -116,13 +111,14 @@ function truncateArgs(args: Record<string, unknown>, maxLen: number): string {
   // Keep keys, truncate values
   const parts: string[] = [];
   for (const [key, value] of Object.entries(args)) {
-    const valStr = typeof value === 'string' && value.length > 50
-      ? `"${value.slice(0, 20)}...${value.slice(-10)}"`
-      : JSON.stringify(value);
+    const valStr =
+      typeof value === 'string' && value.length > 50
+        ? `"${value.slice(0, 20)}...${value.slice(-10)}"`
+        : JSON.stringify(value);
     parts.push(`${key}:${valStr}`);
   }
   const compact = `{${parts.join(',')}}`;
-  return compact.length <= maxLen ? compact : `${compact.slice(0, maxLen - 3)  }...`;
+  return compact.length <= maxLen ? compact : `${compact.slice(0, maxLen - 3)}...`;
 }
 
 /**

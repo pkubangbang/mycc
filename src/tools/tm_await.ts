@@ -8,20 +8,21 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const tmAwaitTool: ToolDefinition = {
   name: 'tm_await',
-  description: 'Block until teammate(s) finish their task. Prefer NOT to use — let teammates work asynchronously. Timeout defaults to the teammate\'s ETA (from mail_to) when provided.',
+  description:
+    "Block until teammate(s) finish their task. Prefer NOT to use — let teammates work asynchronously. Timeout defaults to the teammate's ETA (from mail_to) when provided.",
   input_schema: {
     type: 'object',
     properties: {
       name: {
         type: 'string',
-        description: 'Teammate name to wait for; if omitted, waits for all.',
+        description: 'Teammate name to wait for; if omitted, waits for all.'
       },
       timeout: {
         type: 'number',
-        description: 'Timeout in milliseconds (default 300000 = 5 min); the teammate\'s ETA is used instead if provided.',
-      },
+        description: "Timeout in milliseconds (default 300000 = 5 min); the teammate's ETA is used instead if provided."
+      }
     },
-    required: [],
+    required: []
   },
   scope: ['main'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -52,18 +53,25 @@ export const tmAwaitTool: ToolDefinition = {
       ctx.core.brief('error', 'tm_await', err.message);
       return `Error: ${err.message}`;
     }
-  },
+  }
 };
 
 /** Map a TeammateWaitReason to a user-facing message. */
 function reasonToMessage(reason: string): string {
   switch (reason) {
-    case 'all done':  return 'All teammates finished their work.';
-    case 'holding':   return 'A teammate has a question waiting for response.';
-    case 'mail':      return 'New mail arrived.';
-    case 'steering':  return 'A WebUI steering note is waiting.';
-    case 'esc':       return 'Wait interrupted by ESC.';
-    case 'timeout':   return 'Timeout waiting for teammates to finish.';
-    default:          return `Unknown result: ${reason}`;
+    case 'all done':
+      return 'All teammates finished their work.';
+    case 'holding':
+      return 'A teammate has a question waiting for response.';
+    case 'mail':
+      return 'New mail arrived.';
+    case 'steering':
+      return 'A WebUI steering note is waiting.';
+    case 'esc':
+      return 'Wait interrupted by ESC.';
+    case 'timeout':
+      return 'Timeout waiting for teammates to finish.';
+    default:
+      return `Unknown result: ${reason}`;
   }
 }

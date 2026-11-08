@@ -13,97 +13,97 @@ export const DANGEROUS_COMMANDS: DangerousCommand[] = [
   {
     pattern: /\bsudo\b.*\brm\b/i,
     reason: 'Privileged deletion',
-    category: 'destructive',
+    category: 'destructive'
   },
   {
     pattern: /\bsudo\b.*\bchmod\b.*\b000\b/i,
     reason: 'Privileged permission removal',
-    category: 'destructive',
+    category: 'destructive'
   },
 
   // ── Root-level deletions ───────────────────────────────────────────
   {
     pattern: /\brm\s+(?:-[a-zA-Z]*[rR][a-zA-Z]*\s+)+(?:--?[a-zA-Z][a-zA-Z-]*\s+)*\/(?:\*|\s|$)/i,
     reason: 'Recursive delete from root directory',
-    category: 'destructive',
+    category: 'destructive'
   },
 
   // ── Current-directory deletions ─────────────────────────────────────
   {
     pattern: /\brm\s+(?:-[a-zA-Z]*[rR][a-zA-Z]*\s+)+(?:--?[a-zA-Z][a-zA-Z-]*\s+)*\.(?:\s|$)/,
     reason: 'Recursive delete of current directory',
-    category: 'destructive',
+    category: 'destructive'
   },
 
   // ── Home-directory deletions ────────────────────────────────────────
   {
     pattern: /\brm\s+(?:-[a-zA-Z]*[rR][a-zA-Z]*\s+)+(?:--?[a-zA-Z][a-zA-Z-]*\s+)*~(?:\/|\s|$)/i,
     reason: 'Recursive deletion in home directory',
-    category: 'destructive',
+    category: 'destructive'
   },
 
   // ── Batch deletions (defense-in-depth; also gated in bash-judge step 4)
   {
     pattern: /\brm\s+(?:-[a-zA-Z]+\s+)?[^/\s]*\*[^/\s]*$/,
     reason: 'Batch deletion with glob pattern',
-    category: 'destructive',
+    category: 'destructive'
   },
 
   // ── Irreversible operations ─────────────────────────────────────────
   {
     pattern: /\bmkfs\b/i,
     reason: 'Filesystem formatting',
-    category: 'irreversible',
+    category: 'irreversible'
   },
   {
     pattern: /\bdd\b.*\bif=/i,
     reason: 'Disk imaging operation',
-    category: 'irreversible',
+    category: 'irreversible'
   },
   {
     pattern: /\bshutdown\b/i,
     reason: 'System shutdown',
-    category: 'irreversible',
+    category: 'irreversible'
   },
   {
     pattern: /\breboot\b/i,
     reason: 'System reboot',
-    category: 'irreversible',
+    category: 'irreversible'
   },
 
   // ── Git operations (should use dedicated tools) ─────────────────────
   {
     pattern: /\bgit\s+commit\b/i,
     reason: 'Use git_commit tool instead',
-    category: 'system',
+    category: 'system'
   },
   {
     pattern: /\bgit\s+push\s+.*--force(?:$|\s)/i,
     reason: 'Force push',
-    category: 'destructive',
+    category: 'destructive'
   },
   {
     pattern: /\bgit\s+push\s+.*(?<!\S)-f(?:$|\s)/i,
     reason: 'Force push (-f)',
-    category: 'destructive',
+    category: 'destructive'
   },
   {
     pattern: /\bgit\s+reset\s+--hard\b/i,
     reason: 'Hard reset discards working changes',
-    category: 'destructive',
+    category: 'destructive'
   },
 
   // ── Package publishing ──────────────────────────────────────────────
   {
     pattern: /\bnpm\s+publish\b/i,
     reason: 'Package publishing requires manual confirmation',
-    category: 'system',
+    category: 'system'
   },
   {
     pattern: /\b(?:twine|python\s+(?:-m\s+)?twine)\s+upload\b/i,
     reason: 'Package publishing requires manual confirmation',
-    category: 'system',
-  },
+    category: 'system'
+  }
 ];
 
 /**
@@ -117,7 +117,7 @@ export const DANGEROUS_COMMANDS: DangerousCommand[] = [
  * check (and, with `dangerous=i_know`, through user confirmation).
  */
 const INDIRECT_WRAPPERS: RegExp[] = [
-  /\btmux\s+(?:capture-pane|show|display-message|list-sessions|list-windows|list-panes|show-options)\b/,
+  /\btmux\s+(?:capture-pane|show|display-message|list-sessions|list-windows|list-panes|show-options)\b/
 ];
 
 /**
@@ -133,7 +133,7 @@ const EXEC_WRAPPERS: RegExp[] = [
   /\$\(/, // command substitution $(...)
   /`/, // backtick command substitution
   /\bxargs\b/,
-  /\bfind\b.*-exec\b/,
+  /\bfind\b.*-exec\b/
 ];
 
 /**

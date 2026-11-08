@@ -6,11 +6,11 @@
  * Parsed intent from bash tool
  */
 export interface ParsedIntent {
-  verb: string;           // e.g., 'READ', 'WRITE', 'RUN'
-  object: string;         // e.g., 'SOURCE', 'CONFIG'
-  params: Record<string, string>;  // key=value pairs
-  purpose: string;        // The TO clause
-  raw: string;            // Original intent string
+  verb: string; // e.g., 'READ', 'WRITE', 'RUN'
+  object: string; // e.g., 'SOURCE', 'CONFIG'
+  params: Record<string, string>; // key=value pairs
+  purpose: string; // The TO clause
+  raw: string; // Original intent string
 }
 
 /**
@@ -18,9 +18,9 @@ export interface ParsedIntent {
  */
 export interface IntentValidation {
   valid: boolean;
-  error?: string;         // Human-readable error for LLM to fix
-  hint?: string;          // Suggested correction
-  warning?: string;       // Soft warning (intent is valid but could be improved)
+  error?: string; // Human-readable error for LLM to fix
+  hint?: string; // Suggested correction
+  warning?: string; // Soft warning (intent is valid but could be improved)
 }
 
 /**
@@ -52,5 +52,5 @@ export interface GrantRequest {
   tool: GrantTool;
   path?: string;
   command?: string;
-  intent?: string;  // Required for bash and hand_over tools
+  intent?: string; // Required for bash and hand_over tools
 }

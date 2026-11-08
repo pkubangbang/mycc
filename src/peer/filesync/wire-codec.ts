@@ -24,14 +24,16 @@
  */
 
 import type { WebSocket } from 'ws';
+import { decodeDataFrame, encodeDataFrame, type SyncControlFrame, type SyncDataFrame } from './frames.js';
 import {
-  decodeDataFrame, encodeDataFrame,
-  type SyncControlFrame, type SyncDataFrame,
-} from './frames.js';
-import {
-  recordPeerShares, peerSidForSocket, findSocketBySid, partnersForShare,
-  challengePeerShares, confirmShareChallenges, answerShareChallenge,
-  type SyncControlFrameShape,
+  recordPeerShares,
+  peerSidForSocket,
+  findSocketBySid,
+  partnersForShare,
+  challengePeerShares,
+  confirmShareChallenges,
+  answerShareChallenge,
+  type SyncControlFrameShape
 } from '../wire-registry.js';
 import type { SyncMessage, SyncDataMessage, PeerPort } from '@pkubangbang/filesync-manager';
 
@@ -115,8 +117,10 @@ export function controlToMessage(frame: SyncControlFrame): SyncMessage | null {
   switch (frame.t) {
     case 'index':
       return {
-        kind: 'manifest', share: frame.share,
-        files: frame.entries ?? [], tombstones: frame.tombstones ?? [],
+        kind: 'manifest',
+        share: frame.share,
+        files: frame.entries ?? [],
+        tombstones: frame.tombstones ?? []
       };
     case 'req':
       if (frame.want === 'pieces' && typeof frame.file === 'string') {
@@ -163,7 +167,7 @@ export const wirePort: PeerPort = {
   },
   async partners(share: string): Promise<string[]> {
     return partnersForShare(share);
-  },
+  }
 };
 
 /** Dispatch a raw TEXT wire frame if it is filesync control. Returns true
@@ -196,7 +200,11 @@ export function trySyncDataDispatch(target: SyncDispatchTarget | null, peer: str
  * recognise). Membership — and the immediate index exchange — follows only
  * when {@link handleShareProof} confirms the answers.
  */
-export function handlePeerShares(target: SyncDispatchTarget | null, sid: string, shares: string[] | undefined): boolean {
+export function handlePeerShares(
+  target: SyncDispatchTarget | null,
+  sid: string,
+  shares: string[] | undefined
+): boolean {
   recordPeerShares(sid, shares);
   if (!target || !shares?.length) return false;
   // Only OUR bound ids are offered for challenge, and the nonce→id mapping
@@ -216,7 +224,7 @@ export function handleShareProof(
   target: SyncDispatchTarget | null,
   sid: string,
   challenge: string,
-  proofs: Array<{ tag: string; proof: string }> | undefined,
+  proofs: Array<{ tag: string; proof: string }> | undefined
 ): string[] {
   const proven = confirmShareChallenges(sid, challenge, proofs);
   if (!target || !proven.length) return proven;
@@ -225,7 +233,12 @@ export function handleShareProof(
 }
 
 /** A peer challenged US: answer with proofs for the nonces we recognise. */
-export function handleShareChallenge(target: SyncDispatchTarget | null, sid: string, challenge: string, shares: string[] | undefined): void {
+export function handleShareChallenge(
+  target: SyncDispatchTarget | null,
+  sid: string,
+  challenge: string,
+  shares: string[] | undefined
+): void {
   // The target only guarantees filesync is wired; the answer is computed from
   // the host's own bound shares (wire hooks), so no engine access is needed.
   if (target) answerShareChallenge(sid, challenge, shares);
@@ -252,7 +265,12 @@ export function sendFoldedControl(targetSid: string, wireFrame: Record<string, u
   if (!socket) return false;
   const frame = JSON.stringify(wireFrame);
   if (Buffer.byteLength(frame) > WIRE_MAX_PAYLOAD_BYTES) return false;
-  try { socket.send(frame); return true; } catch { return false; }
+  try {
+    socket.send(frame);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Send a filesync binary DATA frame (already-encoded piece bytes) to a peer. */
@@ -260,7 +278,12 @@ export function sendSyncData(targetSid: string, buf: Buffer): boolean {
   const socket = findLiveSocket(targetSid);
   if (!socket) return false;
   if (buf.length > WIRE_MAX_PAYLOAD_BYTES) return false;
-  try { socket.send(buf, { binary: true }); return true; } catch { return false; }
+  try {
+    socket.send(buf, { binary: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** The live open socket for a sid — delegated to the wire-registry's socket

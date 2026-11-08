@@ -142,12 +142,15 @@ export interface Tool {
       $defs?: unknown;
       items?: unknown;
       required?: string[];
-      properties?: Record<string, {
-        type?: string | string[];
-        items?: unknown;
-        description?: string;
-        enum?: unknown[];
-      }>;
+      properties?: Record<
+        string,
+        {
+          type?: string | string[];
+          items?: unknown;
+          description?: string;
+          enum?: unknown[];
+        }
+      >;
     };
   };
 }
@@ -192,7 +195,7 @@ export interface Mail {
  * Todo item - temporary checklist
  */
 export interface TodoItem {
-  id: number;   // Unique identifier (auto-assigned on creation)
+  id: number; // Unique identifier (auto-assigned on creation)
   name: string;
   done: boolean;
   note?: string;
@@ -285,8 +288,8 @@ export interface Skill {
   description: string;
   keywords: string[];
   content: string;
-  when?: string;  // Natural language hook condition
-  sourceFile?: string;  // Source file path (relative to skills dir)
+  when?: string; // Natural language hook condition
+  sourceFile?: string; // Source file path (relative to skills dir)
   /** Declares this skill CAN be run as a daemon service via `--daemon <name>`.
    *  Absent → not a service. */
   service?: boolean;
@@ -387,14 +390,7 @@ export type TeammateStatus = 'working' | 'idle' | 'holding' | 'shutdown' | 'fail
  * events). In AUTO mode STOP skips its own wait entirely and lets AWAIT own
  * the teammate-event wait.
  */
-export type TeammateWaitReason =
-  | 'all done'
-  | 'failed'
-  | 'holding'
-  | 'mail'
-  | 'steering'
-  | 'esc'
-  | 'timeout';
+export type TeammateWaitReason = 'all done' | 'failed' | 'holding' | 'mail' | 'steering' | 'esc' | 'timeout';
 
 /**
  * Teammate - child process agent
@@ -419,7 +415,13 @@ export interface CoreModule {
   getWorkDir(): string;
   setWorkDir(dir: string): void;
   getName(): string;
-  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire }): void;
+  brief(
+    level: 'info' | 'warn' | 'error',
+    tool: string,
+    message: string,
+    detail?: string,
+    opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire }
+  ): void;
   /**
    * Get current confusion index (0-20 range)
    */
@@ -486,7 +488,12 @@ export interface CoreModule {
    *                     Without it, a cache hit returns cached pairs with no vision call.
    * @returns PictureResult with accumulated pairs and the current cache token
    */
-  readPictureCached(imagePath: string, prompt?: string, cacheToken?: string, signal?: AbortSignal): Promise<PictureResult>;
+  readPictureCached(
+    imagePath: string,
+    prompt?: string,
+    cacheToken?: string,
+    signal?: AbortSignal
+  ): Promise<PictureResult>;
   /**
    * Request grant for sensitive operations (write_file, edit_file, bash)
    * Parent's Core checks mode and worktree ownership internally.
@@ -495,11 +502,14 @@ export interface CoreModule {
    * @param args - Tool arguments (path for file ops, command and intent for bash)
    * @returns Grant result with approval status and optional reason
    */
-  requestGrant(tool: 'write_file' | 'edit_file' | 'bash', args: {
-    path?: string;
-    command?: string;
-    intent?: string;
-  }): Promise<{ approved: boolean; reason?: string }>;
+  requestGrant(
+    tool: 'write_file' | 'edit_file' | 'bash',
+    args: {
+      path?: string;
+      command?: string;
+      intent?: string;
+    }
+  ): Promise<{ approved: boolean; reason?: string }>;
   /**
    * Request access to a file/directory outside the workspace (cwd).
    *
@@ -518,7 +528,7 @@ export interface CoreModule {
    */
   requestExternalPathAccess(
     tool: 'read_file' | 'write_file' | 'edit_file' | 'grep',
-    requestedPath: string,
+    requestedPath: string
   ): Promise<{ approved: boolean; resolvedPath: string; reason?: string }>;
   /**
    * Pre-grant external path access for a directory (session-scoped, no user prompt).
@@ -625,14 +635,14 @@ export interface CoreModule {
   setMindmap(mindmap: Mindmap | null): void;
   /**
    * Wrap a slow operation with ESC-aware quick return
-   * 
+   *
    * When ESC is pressed during a slow operation:
    * - The original promise continues in background
    * - onCleanUp is called immediately
    * - The result of onCleanUp is returned to caller
-   * 
+   *
    * If ESC is not pressed, returns the original promise result.
-   * 
+   *
    * @param operation - A function that receives an AbortController and returns the slow operation promise
    * @param onCleanUp - Called when ESC is pressed, must return the fallback result
    * @returns Original result if not interrupted, or onCleanUp result if ESC pressed
@@ -805,12 +815,15 @@ export interface PeerModule {
    * renders `join failed N× — <reason>` from it. Empty on the child
    * (NoopPeerModule) — children do not poll channels.
    */
-  getChannelJoinFailures(): ReadonlyMap<string, {
-    count: number;
-    lastError: string;
-    lastAttemptAt: number;
-    nextAttemptAt: number;
-  }>;
+  getChannelJoinFailures(): ReadonlyMap<
+    string,
+    {
+      count: number;
+      lastError: string;
+      lastAttemptAt: number;
+      nextAttemptAt: number;
+    }
+  >;
   /**
    * Register a callback fired when a channel is joined (joinChannel sets
    * joined=true and injects the firstQuery). The callback lets the agent loop
@@ -913,7 +926,7 @@ export interface SkillModule {
    */
   compileCondition(
     skillName: string,
-    feedback?: string,
+    feedback?: string
   ): Promise<{ condition?: Condition; validation?: ValidationResult; error?: string }>;
   /**
    * Reload the compiled condition for a skill from disk into the runtime
@@ -971,7 +984,12 @@ export interface IssueModule {
    * claimable again instead of staying in_progress with a dead owner.
    */
   releaseIssuesOwnedBy(owner: string, reason: string): Promise<number[]>;
-  closeIssue(id: number, status: 'completed' | 'failed' | 'abandoned', comment?: string, poster?: string): Promise<void>;
+  closeIssue(
+    id: number,
+    status: 'completed' | 'failed' | 'abandoned',
+    comment?: string,
+    poster?: string
+  ): Promise<void>;
   addComment(id: number, comment: string, poster?: string): Promise<void>;
   createBlockage(blocker: number, blocked: number): Promise<void>;
   removeBlockage(blocker: number, blocked: number): Promise<void>;
@@ -1073,12 +1091,7 @@ export interface BgWaitResult {
  * @param data - Response data on success
  * @param error - Error message on failure
  */
-export type SendResponseCallback = (
-  responseType: string,
-  success: boolean,
-  data?: unknown,
-  error?: string
-) => void;
+export type SendResponseCallback = (responseType: string, success: boolean, data?: unknown, error?: string) => void;
 
 /**
  * IPC message handler function type
@@ -1418,10 +1431,10 @@ export interface SlashCommand {
 export class ResultTooLargeError extends Error {
   constructor(
     public readonly toolName: string,
-    public readonly filePath: string,  // Path in .mycc/longtext/
+    public readonly filePath: string, // Path in .mycc/longtext/
     public readonly size: number,
     public readonly threshold: number,
-    public readonly preview: string    // First N chars for preview
+    public readonly preview: string // First N chars for preview
   ) {
     super(`Tool result too large: ${toolName} returned ${size} chars (threshold: ${threshold})`);
     this.name = 'ResultTooLargeError';

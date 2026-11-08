@@ -8,20 +8,21 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const tmRemoveTool: ToolDefinition = {
   name: 'tm_remove',
-  description: 'Terminate a teammate process. Use tm_await first to let them finish. Set force=true only for stuck teammates.',
+  description:
+    'Terminate a teammate process. Use tm_await first to let them finish. Set force=true only for stuck teammates.',
   input_schema: {
     type: 'object',
     properties: {
       name: {
         type: 'string',
-        description: 'Name of the teammate to remove',
+        description: 'Name of the teammate to remove'
       },
       force: {
         type: 'boolean',
-        description: 'If true, forcefully kill the process; otherwise soft shutdown (default false).',
-      },
+        description: 'If true, forcefully kill the process; otherwise soft shutdown (default false).'
+      }
     },
-    required: ['name'],
+    required: ['name']
   },
   scope: ['main'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
@@ -50,9 +51,7 @@ export const tmRemoveTool: ToolDefinition = {
       // The todo note follows the convention `cwd=<path>`. The actual git
       // worktree directory is left for the lead to remove via bash
       // (e.g., `git worktree remove .worktrees/<name>`).
-      const todos = ctx.todo.getItems().filter(
-        (i) => !i.done && i.note && i.note.startsWith('cwd=')
-      );
+      const todos = ctx.todo.getItems().filter((i) => !i.done && i.note && i.note.startsWith('cwd='));
       for (const todo of todos) {
         // Only close todos whose cwd path basename matches the teammate name
         const cwdVal = todo.note!.substring(4);
@@ -69,5 +68,5 @@ export const tmRemoveTool: ToolDefinition = {
       ctx.core.brief('error', 'tm_remove', err.message);
       return `Error: ${err.message}`;
     }
-  },
+  }
 };

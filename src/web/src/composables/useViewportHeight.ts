@@ -68,7 +68,7 @@ export function installViewportHeight(): () => void {
 
   const events: ManagedEvent[] = [
     { target: window, type: 'resize', handler: apply },
-    { target: window, type: 'orientationchange', handler: apply },
+    { target: window, type: 'orientationchange', handler: apply }
   ];
   const vv = window.visualViewport;
   if (vv) {

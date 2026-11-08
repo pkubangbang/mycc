@@ -12,7 +12,8 @@ import { isCancellation } from '../loop/cancellation.js';
 
 export const readReadTool: ToolDefinition = {
   name: 'read_read',
-  description: 'Summarize long content from .mycc/longtext/ files. Use when tool results are too large for context. Requires file path and focus topic.',
+  description:
+    'Summarize long content from .mycc/longtext/ files. Use when tool results are too large for context. Requires file path and focus topic.',
   input_schema: {
     type: 'object',
     properties: {
@@ -95,13 +96,13 @@ async function twoTurnSummary(
     }
     const messages = [
       { role: 'system', content: systemPrompt1 },
-      { role: 'user', content: i === 0
-        ? chunks[0]
-        : `Previous summary:\n${buffer}\n\nNext chunk:\n${chunks[i]}`
-      }
+      { role: 'user', content: i === 0 ? chunks[0] : `Previous summary:\n${buffer}\n\nNext chunk:\n${chunks[i]}` }
     ];
 
-    const response = await retryChat({ model: MODEL, messages: messages as Array<{ role: string; content: string }> }, { signal });
+    const response = await retryChat(
+      { model: MODEL, messages: messages as Array<{ role: string; content: string }> },
+      { signal }
+    );
     buffer = response.message.content || '';
   }
 
@@ -112,10 +113,13 @@ async function twoTurnSummary(
     }
     const messages = [
       { role: 'system', content: systemPrompt2 },
-      { role: 'user', content: `Previous summary:\n${buffer}\n\nCurrent chunk:\n${chunks[i]}`}
+      { role: 'user', content: `Previous summary:\n${buffer}\n\nCurrent chunk:\n${chunks[i]}` }
     ];
 
-    const response = await retryChat({ model: MODEL, messages: messages as Array<{ role: string; content: string }> }, { signal });
+    const response = await retryChat(
+      { model: MODEL, messages: messages as Array<{ role: string; content: string }> },
+      { signal }
+    );
     buffer = response.message.content || '';
   }
 

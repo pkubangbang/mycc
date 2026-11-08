@@ -47,7 +47,7 @@ async function postWeb(
   config: WebClientConfig,
   path: 'web_search' | 'web_fetch',
   body: Record<string, string>,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<unknown> {
   const directCloud = isDirectOllamaCloud(config.host);
   const route = directCloud ? `/api/${path}` : `/api/experimental/${path}`;
@@ -59,7 +59,7 @@ async function postWeb(
     // self-hosted server authenticates its own web backend (e.g. `ollama
     // signin`); mycc must not leak OLLAMA_API_KEY to it.
     apiKey: directCloud ? config.apiKey : undefined,
-    signal: AbortSignal.any(signals),
+    signal: AbortSignal.any(signals)
   });
 }
 
@@ -71,8 +71,7 @@ function normalizeSearchResponse(data: unknown): WebSearchResult[] {
   if (!Array.isArray(results)) throw new Error('Ollama web_search results must be an array');
   return results.filter(
     (result): result is WebSearchResult =>
-      typeof result === 'object' && result !== null &&
-      typeof (result as { content?: unknown }).content === 'string',
+      typeof result === 'object' && result !== null && typeof (result as { content?: unknown }).content === 'string'
   );
 }
 
@@ -92,7 +91,7 @@ function normalizeFetchResponse(data: unknown, requestedUrl: string): WebFetchRe
     content: response.content,
     links: Array.isArray(response.links)
       ? response.links.filter((link): link is string => typeof link === 'string')
-      : [],
+      : []
   };
 }
 
@@ -109,6 +108,6 @@ export function createOllamaWebClient(config: WebClientConfig): OllamaWebClient 
     async webFetch({ url }, signal) {
       const response = await postWeb(config, 'web_fetch', { url }, signal);
       return normalizeFetchResponse(response, url);
-    },
+    }
   };
 }

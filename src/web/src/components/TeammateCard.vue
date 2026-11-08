@@ -96,9 +96,7 @@ function toolTag(label: string | undefined): string | null {
  * timeStr() helper so the card and drawer render times consistently.
  */
 function timeStr(m: ChatMessage): string {
-  return m.timestamp
-    ? new Date(m.timestamp).toLocaleTimeString('en-GB', { hour12: false })
-    : '';
+  return m.timestamp ? new Date(m.timestamp).toLocaleTimeString('en-GB', { hour12: false }) : '';
 }
 
 /** Group teammate messages by teammate name, preserving first-seen order. */
@@ -117,7 +115,7 @@ const teammates = computed<TeammateSummary[]>(() => {
     const tool = toolTag(m.label);
     lastTool.set(name, tool ?? '—');
   }
-  return order.map(name => {
+  return order.map((name) => {
     const msgs = messagesMap.get(name) ?? [];
     const last = msgs.length > 0 ? msgs[msgs.length - 1] : null;
     return {
@@ -125,7 +123,7 @@ const teammates = computed<TeammateSummary[]>(() => {
       count: msgs.length,
       currentTool: lastTool.get(name) ?? '—',
       done: last !== null && toolTag(last.label) === 'exit',
-      lastTime: last ? timeStr(last) : '',
+      lastTime: last ? timeStr(last) : ''
     };
   });
 });
@@ -138,9 +136,7 @@ const teammates = computed<TeammateSummary[]>(() => {
  * arrives) or a brand-new teammate appears, `allDone` flips false and the
  * full card restores. With zero teammates, allDone is false (nothing to do).
  */
-const allDone = computed(() =>
-  teammates.value.length > 0 && teammates.value.every(t => t.done),
-);
+const allDone = computed(() => teammates.value.length > 0 && teammates.value.every((t) => t.done));
 
 /**
  * Count of ACTIVE (non-retired) teammates — the `x` in the narrow-screen
@@ -148,9 +144,7 @@ const allDone = computed(() =>
  * exit notice (toolTag 'exit'). Retired teammates are excluded so the pill
  * reflects live work, matching how the full card greys-out retired rows.
  */
-const activeCount = computed(() =>
-  teammates.value.filter(t => !t.done).length,
-);
+const activeCount = computed(() => teammates.value.filter((t) => !t.done).length);
 
 function onClick(name: string): void {
   emit('open-teammate', name);
@@ -170,8 +164,7 @@ function onCollapsedClick(): void {
 // can't happen here because the allDone branch renders above this one, but
 // is guarded for safety — it falls back to the first teammate overall.
 function onNarrowClick(): void {
-  const target = teammates.value.find(t => !t.done)?.name
-    ?? teammates.value[0]?.name;
+  const target = teammates.value.find((t) => !t.done)?.name ?? teammates.value[0]?.name;
   if (target) emit('open-teammate', target);
 }
 </script>

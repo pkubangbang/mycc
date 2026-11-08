@@ -108,5 +108,5 @@ export const builtInTools: ToolDefinition[] = [
   recallTool,
   peersTool,
   peerConnectTool,
-  peerDisconnectTool,
+  peerDisconnectTool
 ];

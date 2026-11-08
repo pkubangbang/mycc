@@ -53,10 +53,16 @@ import {
   WIRE_CLOSE_UNAUTHORIZED,
   type AnnounceFrame,
   type MailFrame,
-  type WireFrame,
+  type WireFrame
 } from './wire-registry.js';
 import { readIdentityMap } from './identity.js';
-import { trySyncDispatch, trySyncDataDispatch, handlePeerShares, handleShareChallenge, handleShareProof } from './filesync/wire-codec.js';
+import {
+  trySyncDispatch,
+  trySyncDataDispatch,
+  handlePeerShares,
+  handleShareChallenge,
+  handleShareProof
+} from './filesync/wire-codec.js';
 import { isWireDebugLocal } from '../config.js';
 
 /** Ping cadence + missed-pong tolerance (mirror of the acceptor's).
@@ -119,7 +125,9 @@ let pingTimer: ReturnType<typeof setInterval> | null = null;
 function verbose(message: string, data?: unknown): void {
   try {
     getWireHooks()?.verbose('wire', message, data);
-  } catch { /* never break the wire on a logging error */ }
+  } catch {
+    /* never break the wire on a logging error */
+  }
 }
 
 /** Our announce frame (plan §2 step 3) — mirrors the acceptor's reply shape. */
@@ -132,7 +140,7 @@ function ourAnnounce(): AnnounceFrame {
     ...(hooks.getRole() ? { role: hooks.getRole() } : {}),
     ...(hooks.getDaemon() ? { daemon: true } : {}),
     ...(hooks.getServingEndpoint() ? { endpoint: hooks.getServingEndpoint()! } : {}),
-    ...(hooks.getShares ? { shares: shareTags(hooks.getShares()) } : {}),
+    ...(hooks.getShares ? { shares: shareTags(hooks.getShares()) } : {})
   };
 }
 
@@ -185,7 +193,7 @@ export function parseWireTarget(rawUrl: string): {
   return {
     endpoint,
     probeUrl: `${scheme}://${endpoint}/health`,
-    dialBase: `${wsScheme}://${endpoint}/peer/ws`,
+    dialBase: `${wsScheme}://${endpoint}/peer/ws`
   };
 }
 
@@ -201,7 +209,9 @@ export function probeHealth(probeUrl: string): Promise<{ peer?: { sessionId: str
       }
       let body = '';
       res.setEncoding('utf-8');
-      res.on('data', (chunk: string) => { body += chunk; });
+      res.on('data', (chunk: string) => {
+        body += chunk;
+      });
       res.on('end', () => {
         try {
           resolve(JSON.parse(body) as { peer?: { sessionId: string | null; daemon: boolean } });
@@ -261,7 +271,10 @@ async function attemptRedial(endpoint: string, dialBase: string): Promise<void> 
   if (hasLiveWireForEndpoint(endpoint)) {
     verbose(`redial suppressed for ${endpoint}: live survivor present`);
     const loop = loops.get(endpoint);
-    if (loop) { loop.attempts = 0; loop.active = false; }
+    if (loop) {
+      loop.attempts = 0;
+      loop.active = false;
+    }
     return;
   }
   // Note: MYCC_WIRE_TOKEN is OPTIONAL — its absence no longer cancels the
@@ -330,7 +343,11 @@ function dialSocket(endpoint: string, dialBase: string, epoch0: number, cb: Dial
     // flight (teardownPair bumped the epoch). Abandon — no resurrection.
     if (getEpoch(endpoint) !== epoch0) {
       verbose(`dial to ${endpoint} aborted: epoch changed mid-flight`);
-      try { ws.close(1000, 'epoch changed'); } catch { /* closing */ }
+      try {
+        ws.close(1000, 'epoch changed');
+      } catch {
+        /* closing */
+      }
       fail('pair torn down mid-dial (epoch changed)');
       return;
     }
@@ -344,7 +361,11 @@ function dialSocket(endpoint: string, dialBase: string, epoch0: number, cb: Dial
     // socket half-established; tear it down and let the loop retry.
     replyTimer = setTimeout(() => {
       verbose(`announce reply timeout for ${endpoint}`);
-      try { ws.close(1000, 'announce timeout'); } catch { /* closing */ }
+      try {
+        ws.close(1000, 'announce timeout');
+      } catch {
+        /* closing */
+      }
       fail('no announce reply within 15s');
     }, ANNOUNCE_REPLY_TIMEOUT_MS);
     replyTimer.unref?.();
@@ -397,7 +418,11 @@ function dialSocket(endpoint: string, dialBase: string, epoch0: number, cb: Dial
 
   /** Clear the announce-reply timer; returns true when one was pending. */
   const clearReplyTimer = (): boolean => {
-    if (replyTimer) { clearTimeout(replyTimer); replyTimer = null; return true; }
+    if (replyTimer) {
+      clearTimeout(replyTimer);
+      replyTimer = null;
+      return true;
+    }
     return false;
   };
 
@@ -414,7 +439,11 @@ function dialSocket(endpoint: string, dialBase: string, epoch0: number, cb: Dial
     // nothing settles — connectPeer's promise hangs forever and the TCP handle
     // leaks (verified: no close even past handshakeTimeout).
     refusalStatus.set(ws, res.statusCode ?? 0);
-    try { ws.terminate(); } catch { /* closing */ }
+    try {
+      ws.terminate();
+    } catch {
+      /* closing */
+    }
     if (!req.destroyed) req.destroy();
   });
 
@@ -500,9 +529,8 @@ function dialSocket(endpoint: string, dialBase: string, epoch0: number, cb: Dial
     // endpoint means the peer came back on a different key (restart behind a
     // DHCP change / re-established tunnel). Redialing only the typed endpoint
     // would fail forever while the peer is reachable under the new address.
-    const announced = (findByEndpoint(pairEndpoint)?.sid
-      ? endpointsForSid(findByEndpoint(pairEndpoint)!.sid)
-      : []
+    const announced = (
+      findByEndpoint(pairEndpoint)?.sid ? endpointsForSid(findByEndpoint(pairEndpoint)!.sid) : []
     ).filter((ep) => ep !== pairEndpoint && hasLiveWireForEndpoint(ep));
     if (announced.length > 0) {
       cancelLoop(pairEndpoint);
@@ -531,7 +559,7 @@ function onAnnounceReply(
   frame: AnnounceFrame,
   endpoint: string,
   clearReplyTimer: () => boolean,
-  cb: DialCallbacks,
+  cb: DialCallbacks
 ): void {
   const hooks = getWireHooks();
   if (!hooks) return;
@@ -542,7 +570,11 @@ function onAnnounceReply(
   // self-connect — close 4000 on both ends, surface the error.
   if (frame.sessionId === selfSid) {
     verbose('self-dial backstop fired on announce reply: closing 4000');
-    try { ws.close(WIRE_CLOSE_SUPERSEDED, 'cannot wire to self'); } catch { /* closing */ }
+    try {
+      ws.close(WIRE_CLOSE_SUPERSEDED, 'cannot wire to self');
+    } catch {
+      /* closing */
+    }
     return;
   }
 
@@ -552,7 +584,7 @@ function onAnnounceReply(
     socket: ws,
     sid: frame.sessionId,
     initiatorSid: selfSid, // the dialer's sid — the convergence election input
-    meta: { workDir: frame.workDir, role: frame.role, daemon: frame.daemon },
+    meta: { workDir: frame.workDir, role: frame.role, daemon: frame.daemon }
   });
   // filesync membership gossip (filesync.md §3): record the peer's shares
   // and kick an index exchange for any we also bind.
@@ -571,7 +603,10 @@ function onAnnounceReply(
   if (!established.has(ws)) {
     established.add(ws);
     const loop = loops.get(endpoint);
-    if (loop) { loop.attempts = 0; loop.active = false; } // fresh success resets backoff
+    if (loop) {
+      loop.attempts = 0;
+      loop.active = false;
+    } // fresh success resets backoff
     cb.onEstablished?.(frame.sessionId);
   }
 }
@@ -605,10 +640,18 @@ function startPingTimer(): void {
       state.misses++;
       if (state.misses > MISSED_PONG_LIMIT) {
         verbose('terminating dialed socket: missed-pong limit reached');
-        try { ws.terminate(); } catch { /* ignore */ }
+        try {
+          ws.terminate();
+        } catch {
+          /* ignore */
+        }
         continue;
       }
-      try { ws.ping(); } catch { /* ignore */ }
+      try {
+        ws.ping();
+      } catch {
+        /* ignore */
+      }
     }
   }, pingIntervalMs);
   pingTimer.unref?.();
@@ -618,7 +661,8 @@ function startPingTimer(): void {
 function describeCloseCode(code: number): string {
   if (code === 4000) return 'superseded (4000) — pair torn down mid-dial';
   if (code === 4001) return 'remote hung up (bye 4001) — wire was disconnected, re-run peer_connect';
-  if (code === WIRE_CLOSE_UNAUTHORIZED) return 'unauthorized — the remote enforces a wire token (MYCC_WIRE_TOKEN) that this side did not send or sent differently. Set the SAME value on both instances, or unset it on both to run the wire open (security then delegated to OSI L3). The redial loop is stopped for this endpoint: fix the token, then re-run peer_connect.';
+  if (code === WIRE_CLOSE_UNAUTHORIZED)
+    return 'unauthorized — the remote enforces a wire token (MYCC_WIRE_TOKEN) that this side did not send or sent differently. Set the SAME value on both instances, or unset it on both to run the wire open (security then delegated to OSI L3). The redial loop is stopped for this endpoint: fix the token, then re-run peer_connect.';
   if (code === 1006) return 'abnormal close (connection reset / refused / host down)';
   return `close code ${code}`;
 }
@@ -709,7 +753,7 @@ export async function connectPeer(rawUrl: string): Promise<string> {
   const outcome = await new Promise<{ ok: true; sid: string } | { ok: false; error: string }>((resolve) => {
     dialSocket(endpoint, dialBase, epoch0, {
       onEstablished: (sid) => resolve({ ok: true, sid }),
-      onFailed: (error) => resolve({ ok: false, error }),
+      onFailed: (error) => resolve({ ok: false, error })
     });
     // No explicit timeout here: handshakeTimeout bounds the connect; the
     // announce-reply deadline bounds the exchange. The promise always
@@ -726,7 +770,9 @@ export async function connectPeer(rawUrl: string): Promise<string> {
     return `Error: wire to ${endpoint} not established: ${outcome.error} ${loopNote}`;
   }
 
-  const daemonNote = peerDaemon ? '' : '\nNote: the remote webui is NOT daemon-backed — it auto-shuts-down ~30s after its last human leaves; the wire will drop and this side will keep retrying.';
+  const daemonNote = peerDaemon
+    ? ''
+    : '\nNote: the remote webui is NOT daemon-backed — it auto-shuts-down ~30s after its last human leaves; the wire will drop and this side will keep retrying.';
   return `Wire established to ${outcome.sid} at ${endpoint}. You can now mail_to("${outcome.sid}/lead") — the remote instance can reach you the same way. A pinned reminder todo records the peer.${daemonNote}`;
 }
 
@@ -799,7 +845,9 @@ export async function disconnectPeer(urlOrSid: string): Promise<string> {
         try {
           s.socket.close(WIRE_CLOSE_BYE, 'bye');
           sentBye++;
-        } catch { /* closing */ }
+        } catch {
+          /* closing */
+        }
       }
     }
     // Local teardown: removes the entry, bumps the epoch (mid-flight dial
@@ -809,9 +857,7 @@ export async function disconnectPeer(urlOrSid: string): Promise<string> {
     tornDown++;
   }
 
-  const epList = endpoints.length <= 1
-    ? endpoint
-    : `${endpoints.length} endpoints (${endpoints.join(', ')})`;
+  const epList = endpoints.length <= 1 ? endpoint : `${endpoints.length} endpoints (${endpoints.join(', ')})`;
   return `Wire to ${sid} at ${epList} hung up (resolved by ${via}, bye sent on ${sentBye} socket${sentBye === 1 ? '' : 's'}, ${tornDown} pair${tornDown === 1 ? '' : 's'} torn down). The redial loop is cancelled — re-run peer_connect to reconnect.`;
 }
 
@@ -827,12 +873,24 @@ export function stopWireClient(): void {
     loops.delete(endpoint);
   }
   for (const ws of [...liveness.keys()]) {
-    try { ws.close(); } catch { /* already closing */ }
-    try { ws.terminate(); } catch { /* ignore */ }
+    try {
+      ws.close();
+    } catch {
+      /* already closing */
+    }
+    try {
+      ws.terminate();
+    } catch {
+      /* ignore */
+    }
     // Unref the underlying socket so a ref'd wire cannot keep a shutting-
     // down process alive (the ws WebSocket wrapper exposes the raw socket;
     // unref'ing it releases the event-loop handle, plan §5 exit semantics).
-    try { (ws as unknown as { _socket?: { unref?: () => void } })._socket?.unref?.(); } catch { /* ignore */ }
+    try {
+      (ws as unknown as { _socket?: { unref?: () => void } })._socket?.unref?.();
+    } catch {
+      /* ignore */
+    }
   }
   liveness.clear();
   if (pingTimer) {

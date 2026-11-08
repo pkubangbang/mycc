@@ -212,7 +212,7 @@ export function readTranscript(filePath: string): ReadTranscriptResult {
       records.push({
         ...obj,
         kind: 'new',
-        timestamp: typeof obj.timestamp === 'number' ? obj.timestamp : 0,
+        timestamp: typeof obj.timestamp === 'number' ? obj.timestamp : 0
       } as TranscriptRecord);
     } else {
       // Unknown kind — a forward-format or corrupt line; skip rather than
@@ -234,7 +234,7 @@ export type CollateAnomalyHandler = (anomaly: string) => void;
 
 export function collateMessages(
   records: TranscriptRecord[],
-  onAnomaly?: CollateAnomalyHandler,
+  onAnomaly?: CollateAnomalyHandler
 ): Array<{ role: string; content: string; [key: string]: unknown }> {
   const messages: Array<{ role: string; content: string; [key: string]: unknown }> = [];
   // Positional fold cursor: index of the most recently COLLATED user-role
@@ -276,7 +276,9 @@ export function collateMessages(
     // The spread copies every non-envelope key (role/content/tool_name/
     // tool_call_id/reasoning_content/hook_name/...) in insertion order.
     const { kind: _k, user_origin: _u, timestamp: _ts, ...message } = record;
-    void _k; void _u; void _ts;
+    void _k;
+    void _u;
+    void _ts;
     if (message.role === undefined) continue; // defensive: never push shapeless records
 
     if ((record.kind === 'merge' || record.kind === 'user') && lastUserIndex !== -1) {
@@ -336,7 +338,7 @@ export function collateMessages(
  */
 export function collateEntries(
   records: TranscriptRecord[],
-  onAnomaly?: CollateAnomalyHandler,
+  onAnomaly?: CollateAnomalyHandler
 ): Array<{
   message: { role: string; content: string; [key: string]: unknown };
   timestamp: number;
@@ -374,20 +376,29 @@ export function collateEntries(
     // The user-input journal: one entry per genuine submission.
     if (isUserJournalKind(record.kind)) {
       const { kind: _k, user_origin: _u, timestamp: _ts, ...message } = record;
-      void _k; void _u; void _ts;
+      void _k;
+      void _u;
+      void _ts;
       if (message.role === undefined) {
         emitAnomaly(`${record.kind} journal record without a role — skipped`);
         continue;
       }
-      entries.push({ message: message as unknown as { role: string; content: string; [key: string]: unknown }, timestamp });
+      entries.push({
+        message: message as unknown as { role: string; content: string; [key: string]: unknown },
+        timestamp
+      });
       continue;
     }
 
     const { kind: _k, user_origin, timestamp: _ts, ...message } = record;
-    void _k; void _ts;
+    void _k;
+    void _ts;
     if (message.role === undefined) continue; // defensive
     if (message.role === 'user' && user_origin !== true) continue; // injected note, not input
-    entries.push({ message: message as unknown as { role: string; content: string; [key: string]: unknown }, timestamp });
+    entries.push({
+      message: message as unknown as { role: string; content: string; [key: string]: unknown },
+      timestamp
+    });
   }
 
   return entries;
@@ -465,7 +476,7 @@ export function fileLineSink(filePath: string): LineSink {
     destination: filePath,
     append(line, encoding) {
       fs.appendFileSync(filePath, line, encoding);
-    },
+    }
   };
 }
 
@@ -477,7 +488,7 @@ export function memoryLineSink(): LineSink & { readonly lines: string[] } {
     lines,
     append(line) {
       lines.push(line);
-    },
+    }
   };
 }
 
@@ -491,10 +502,7 @@ export class JsonlTranscriptWriter {
    *   a file path, kept for source compatibility at the existing call sites.
    * @param onError - observed write failures; the writer itself never throws.
    */
-  constructor(
-    sinkOrPath: LineSink | string,
-    onError?: (err: unknown, filePath: string) => void,
-  ) {
+  constructor(sinkOrPath: LineSink | string, onError?: (err: unknown, filePath: string) => void) {
     this.sink = typeof sinkOrPath === 'string' ? fileLineSink(sinkOrPath) : sinkOrPath;
     this.filePath = this.sink.destination;
     this.onError = onError ?? (() => {});
@@ -516,7 +524,7 @@ export class JsonlTranscriptWriter {
       ...messageFields,
       kind: (kind ?? 'new') as PieceKind,
       ...(user_origin !== undefined ? { user_origin: true } : {}),
-      timestamp: Date.now(),
+      timestamp: Date.now()
     };
     try {
       this.sink.append(`${JSON.stringify(record)}\n`, 'utf-8');

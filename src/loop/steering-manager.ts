@@ -87,10 +87,7 @@ export type SteeringListener = (snapshot: SteeringSnapshot) => void;
  * @param sendIds - ids to send; empty/omitted means "discard all".
  * @returns the selected notes in queue order (empty when nothing selected).
  */
-export function resolveSteeringQueue(
-  queue: SteeringNote[],
-  sendIds: number[] = [],
-): SteeringNote[] {
+export function resolveSteeringQueue(queue: SteeringNote[], sendIds: number[] = []): SteeringNote[] {
   return queue.filter((n) => sendIds.includes(n.id));
 }
 
@@ -142,7 +139,9 @@ export class SteeringManager {
    */
   onChange(listener: SteeringListener): () => void {
     this.listeners.add(listener);
-    return () => { this.listeners.delete(listener); };
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   /** Bump the revision and report the post-mutation snapshot to all observers. */
@@ -150,7 +149,11 @@ export class SteeringManager {
     this.revision++;
     const snapshot = this.snapshot();
     for (const listener of this.listeners) {
-      try { listener(snapshot); } catch { /* isolate observer failures */ }
+      try {
+        listener(snapshot);
+      } catch {
+        /* isolate observer failures */
+      }
     }
   }
 

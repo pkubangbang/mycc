@@ -21,7 +21,7 @@ const KNOWN_EDITORS: EditorInfo[] = [
   { id: 'vim', binary: 'vim', isTerminalEditor: true },
   { id: 'neovim', binary: 'nvim', isTerminalEditor: true },
   { id: 'nano', binary: 'nano', isTerminalEditor: true },
-  { id: 'emacs', binary: 'emacs', isTerminalEditor: true },
+  { id: 'emacs', binary: 'emacs', isTerminalEditor: true }
 ];
 
 // Editors that support --goto for line:column
@@ -47,7 +47,7 @@ export function getEditor(editorStr: string): EditorInfo {
   return {
     id: needle,
     binary: trimmed,
-    isTerminalEditor: false,
+    isTerminalEditor: false
   };
 }
 
@@ -59,10 +59,10 @@ export function defaultEditor(): EditorInfo {
   if (!editor) {
     throw new Error(
       '$EDITOR environment variable is not set.\n' +
-      'Please set it to your preferred editor. Add to ~/.mycc-store/.env:\n' +
-      '  export EDITOR=code     # for VS Code\n' +
-      '  export EDITOR=vim     # for Vim\n' +
-      '  export EDITOR=nano    # for Nano'
+        'Please set it to your preferred editor. Add to ~/.mycc-store/.env:\n' +
+        '  export EDITOR=code     # for VS Code\n' +
+        '  export EDITOR=vim     # for Vim\n' +
+        '  export EDITOR=nano    # for Nano'
     );
   }
   return getEditor(editor);
@@ -77,7 +77,7 @@ export function parseFile(file: string): { file: string; line?: number; column?:
   return {
     file: match[1],
     line: match[2] ? parseInt(match[2], 10) : undefined,
-    column: match[3] ? parseInt(match[3], 10) : undefined,
+    column: match[3] ? parseInt(match[3], 10) : undefined
   };
 }
 
@@ -122,9 +122,7 @@ export async function openEditor(files: string[], options?: { editor?: string })
     ? { stdio: 'ignore' as const, detached: true, shell: true }
     : { stdio: 'ignore' as const };
 
-  const termSpawnOptions = isWin
-    ? { stdio: 'inherit' as const, shell: true }
-    : { stdio: 'inherit' as const };
+  const termSpawnOptions = isWin ? { stdio: 'inherit' as const, shell: true } : { stdio: 'inherit' as const };
 
   try {
     if (editor.isTerminalEditor) {
@@ -133,7 +131,7 @@ export async function openEditor(files: string[], options?: { editor?: string })
         // On Windows with shell:true, pass args as a full command string to avoid DEP0190.
         // Quote file paths that contain spaces to ensure proper shell parsing.
         const termCmd = isWin
-          ? [editor.binary, ...args.map(a => a.includes(' ') ? `"${a}"` : a)].join(' ')
+          ? [editor.binary, ...args.map((a) => (a.includes(' ') ? `"${a}"` : a))].join(' ')
           : editor.binary;
         const proc = spawn(termCmd, isWin ? [] : args, termSpawnOptions);
         proc.on('close', (code) => {
@@ -153,7 +151,7 @@ export async function openEditor(files: string[], options?: { editor?: string })
         // On Windows with shell:true, pass args as a full command string to avoid DEP0190.
         // Quote file paths that contain spaces to ensure proper shell parsing.
         const guiCmd = isWin
-          ? [editor.binary, ...args.map(a => a.includes(' ') ? `"${a}"` : a)].join(' ')
+          ? [editor.binary, ...args.map((a) => (a.includes(' ') ? `"${a}"` : a))].join(' ')
           : editor.binary;
         const proc = spawn(guiCmd, isWin ? [] : args, guiSpawnOptions);
         proc.on('spawn', () => {

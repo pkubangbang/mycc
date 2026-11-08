@@ -19,25 +19,14 @@ import type {
   RebuildResult,
   RebuildProgress,
   CoreModule,
-  SkillIndexEntry,
+  SkillIndexEntry
 } from '../../types.js';
 import { getEmbedding, getEmbeddings, EMBEDDING_DIM, NAMESPACE } from '../../engine/rag-provider.js';
 import { getWikiDbDir, ensureDirs } from '../../config.js';
 import { estimateTextTokens } from '../../utils/token.js';
-import {
-  HASH_PATTERN,
-  generateHash,
-  sameDocument,
-  loadDomains,
-  saveDomains,
-} from './wiki-utils.js';
+import { HASH_PATTERN, generateHash, sameDocument, loadDomains, saveDomains } from './wiki-utils.js';
 import { SkillIndexer } from './wiki-skill-index.js';
-import {
-  readWAL,
-  appendWALEntry,
-  appendWALEntries,
-  mergeWALEntries,
-} from './wiki-wal.js';
+import { readWAL, appendWALEntry, appendWALEntries, mergeWALEntries } from './wiki-wal.js';
 
 const DUPLICATE_THRESHOLD = 0.95;
 
@@ -118,7 +107,7 @@ function schemaSentinelRow(): Record<string, unknown> {
     embedding: new Array(EMBEDDING_DIM).fill(0),
     createdAt: new Date().toISOString(),
     [STATE_COLUMN]: WIKI_STATE_PENDING,
-    ['rowId']: '__schema__',
+    ['rowId']: '__schema__'
   };
 }
 
@@ -174,10 +163,7 @@ export class WikiManager implements WikiModule {
   private core: CoreModule;
   private tableName = `wiki_${NAMESPACE}`;
   /** Owns skill re-indexing (cache, batch diff, orphan sweep, cross-instance lock). */
-  private skillIndexer = new SkillIndexer(
-    this,
-    (message) => this.core.verbose('wiki', message),
-  );
+  private skillIndexer = new SkillIndexer(this, (message) => this.core.verbose('wiki', message));
   constructor(core: CoreModule) {
     this.core = core;
   }
@@ -306,7 +292,11 @@ export class WikiManager implements WikiModule {
     const similarity = 1 - Number((rows[0] as Record<string, unknown>)._distance);
     if (similarity > threshold) {
       const r = rows[0] as Record<string, unknown>;
-      this.core.brief('warn', 'wiki', `Duplicate check hit: similarity=${similarity.toFixed(4)} > ${threshold}, colliding doc: domain=${r.domain}, title=${r.title}, hash=${r.hash}`);
+      this.core.brief(
+        'warn',
+        'wiki',
+        `Duplicate check hit: similarity=${similarity.toFixed(4)} > ${threshold}, colliding doc: domain=${r.domain}, title=${r.title}, hash=${r.hash}`
+      );
       return true;
     }
     return false;
@@ -341,10 +331,10 @@ export class WikiManager implements WikiModule {
         domain: r.domain as string,
         title: r.title as string,
         content: r.content as string,
-        references: JSON.parse((r.references as string) || '[]'),
+        references: JSON.parse((r.references as string) || '[]')
       },
       similarity,
-      hash: r.hash as string,
+      hash: r.hash as string
     };
   }
 
@@ -361,21 +351,33 @@ export class WikiManager implements WikiModule {
 
     const contentTokens = estimateTextTokens(document.content);
     if (contentTokens < MIN_CONTENT_TOKENS) {
-      return { accepted: false, reason: `Content too short (minimum ${MIN_CONTENT_TOKENS} tokens, got ${contentTokens})` };
+      return {
+        accepted: false,
+        reason: `Content too short (minimum ${MIN_CONTENT_TOKENS} tokens, got ${contentTokens})`
+      };
     }
 
     if (contentTokens > MAX_CONTENT_TOKENS) {
-      return { accepted: false, reason: `Content too long (maximum ${MAX_CONTENT_TOKENS} tokens, got ${contentTokens})` };
+      return {
+        accepted: false,
+        reason: `Content too long (maximum ${MAX_CONTENT_TOKENS} tokens, got ${contentTokens})`
+      };
     }
 
     // Validate domain against registered domains
     const domains = loadDomains();
     if (domains.length === 0) {
-      return { accepted: false, reason: 'No domains registered. Use /wiki domains add <name> to create a domain first.' };
+      return {
+        accepted: false,
+        reason: 'No domains registered. Use /wiki domains add <name> to create a domain first.'
+      };
     }
-    const domainExists = domains.some(d => d.domain_name === document.domain);
+    const domainExists = domains.some((d) => d.domain_name === document.domain);
     if (!domainExists) {
-      return { accepted: false, reason: `Unknown domain "${document.domain}". Register it first with /wiki domains add ${document.domain} <description>.` };
+      return {
+        accepted: false,
+        reason: `Unknown domain "${document.domain}". Register it first with /wiki domains add ${document.domain} <description>.`
+      };
     }
 
     // Generate hash
@@ -414,11 +416,19 @@ export class WikiManager implements WikiModule {
     // Validate domain against registered domains
     const domains = loadDomains();
     if (domains.length === 0) {
-      return { success: false, hash, error: 'No domains registered. Use /wiki domains add <name> to create a domain first.' };
+      return {
+        success: false,
+        hash,
+        error: 'No domains registered. Use /wiki domains add <name> to create a domain first.'
+      };
     }
-    const domainExists = domains.some(d => d.domain_name === document.domain);
+    const domainExists = domains.some((d) => d.domain_name === document.domain);
     if (!domainExists) {
-      return { success: false, hash, error: `Unknown domain "${document.domain}". Register it first with /wiki domains add ${document.domain} <description>.` };
+      return {
+        success: false,
+        hash,
+        error: `Unknown domain "${document.domain}". Register it first with /wiki domains add ${document.domain} <description>.`
+      };
     }
 
     // Short circuit: if an exact copy already exists, report it. "Exact" means
@@ -467,7 +477,7 @@ export class WikiManager implements WikiModule {
         embedding,
         createdAt: timestamp,
         [STATE_COLUMN]: WIKI_STATE_PENDING,
-        ['rowId']: rowId,
+        ['rowId']: rowId
       };
       await this.table.add([record]);
 
@@ -480,7 +490,7 @@ export class WikiManager implements WikiModule {
         document,
         approved: true,
         namespace: NAMESPACE,
-        id: rowId,
+        id: rowId
       });
 
       // Phase 3: solidify — flip PENDING → LIVE. Keyed on `rowId` (unique to
@@ -490,7 +500,7 @@ export class WikiManager implements WikiModule {
       // is the row readable.
       await this.table.update({
         where: `rowId = '${escapeSqlLiteral(rowId)}' AND ${STATE_COLUMN} = ${WIKI_STATE_PENDING}`,
-        values: { [STATE_COLUMN]: WIKI_STATE_LIVE },
+        values: { [STATE_COLUMN]: WIKI_STATE_LIVE }
       });
 
       this.core.brief('info', 'wiki', `Stored document: ${document.title}`);
@@ -599,7 +609,14 @@ export class WikiManager implements WikiModule {
 
       // Build records, collecting hashes for a single existence scan
       const hashes = new Set<string>();
-      const validEntries: Array<{ document: WikiDocument; embedding: number[]; hash: string; rowId: string; record: Record<string, unknown>; walEntry: WALEntry }> = [];
+      const validEntries: Array<{
+        document: WikiDocument;
+        embedding: number[];
+        hash: string;
+        rowId: string;
+        record: Record<string, unknown>;
+        walEntry: WALEntry;
+      }> = [];
 
       for (const { document, embedding } of entries) {
         const hash = generateHash(document);
@@ -627,7 +644,7 @@ export class WikiManager implements WikiModule {
             embedding,
             createdAt: new Date().toISOString(),
             [STATE_COLUMN]: WIKI_STATE_PENDING,
-            ['rowId']: '', // filled in below (needs the rowId)
+            ['rowId']: '' // filled in below (needs the rowId)
           },
           walEntry: {
             timestamp: new Date().toISOString(),
@@ -635,8 +652,8 @@ export class WikiManager implements WikiModule {
             document,
             approved: true,
             namespace: NAMESPACE,
-            id: '',
-          },
+            id: ''
+          }
         });
       }
 
@@ -678,7 +695,7 @@ export class WikiManager implements WikiModule {
         const insertedIds = toInsert.map((e) => `'${escapeSqlLiteral(e.rowId)}'`).join(', ');
         await this.table.update({
           where: `rowId IN (${insertedIds}) AND ${STATE_COLUMN} = ${WIKI_STATE_PENDING}`,
-          values: { [STATE_COLUMN]: WIKI_STATE_LIVE },
+          values: { [STATE_COLUMN]: WIKI_STATE_LIVE }
         });
 
         this.core.brief('info', 'wiki', `Batch stored ${toInsert.length} documents`);
@@ -690,7 +707,7 @@ export class WikiManager implements WikiModule {
       return validEntries.map((e) =>
         existingHashes.has(e.hash)
           ? { success: true, hash: e.hash, alreadyExisted: true }
-          : { success: true, hash: e.hash },
+          : { success: true, hash: e.hash }
       );
     } catch (err) {
       if (err instanceof WikiSchemaError) throw err;
@@ -731,7 +748,7 @@ export class WikiManager implements WikiModule {
         domain: existing.domain as string,
         title: existing.title as string,
         content: existing.content as string,
-        references: JSON.parse((existing.references as string) || '[]'),
+        references: JSON.parse((existing.references as string) || '[]')
       };
       const timestamp = new Date().toISOString();
 
@@ -744,7 +761,7 @@ export class WikiManager implements WikiModule {
         document,
         approved: true,
         deleted: true,
-        namespace: NAMESPACE,
+        namespace: NAMESPACE
       });
 
       // Phase 2: submerge — flip the row to state 2. It becomes invisible to
@@ -752,7 +769,7 @@ export class WikiManager implements WikiModule {
       // here, keeping the DB write-once-read-many).
       await this.table.update({
         where: `hash = '${escapeSqlLiteral(hash)}'`,
-        values: { [STATE_COLUMN]: WIKI_STATE_SUBMERGED },
+        values: { [STATE_COLUMN]: WIKI_STATE_SUBMERGED }
       });
 
       this.core.brief('info', 'wiki', `Deleted document: ${hash}`);
@@ -797,7 +814,7 @@ export class WikiManager implements WikiModule {
    * generated embeddings with the current NAMESPACE model.
    */
   private async insertRebuildBatch(
-    entries: Array<{ hash: string; document: WikiDocument; embedding: number[]; createdAt: string }>,
+    entries: Array<{ hash: string; document: WikiDocument; embedding: number[]; createdAt: string }>
   ): Promise<number> {
     if (entries.length === 0) return 0;
     await this.initDb();
@@ -812,7 +829,7 @@ export class WikiManager implements WikiModule {
       embedding,
       createdAt,
       [STATE_COLUMN]: WIKI_STATE_LIVE,
-      ['rowId']: newRowId(),
+      ['rowId']: newRowId()
     }));
 
     await this.table.add(records);
@@ -873,7 +890,7 @@ export class WikiManager implements WikiModule {
         try {
           const embeddings = await getEmbeddings(
             batch.map((e) => e.document.content),
-            'document',
+            'document'
           );
 
           // Insert in chunks to bound the in-flight vector payload size.
@@ -884,7 +901,7 @@ export class WikiManager implements WikiModule {
               hash: entry.hash,
               document: entry.document,
               embedding: embeddings[j + k],
-              createdAt: entry.timestamp,
+              createdAt: entry.timestamp
             }));
             documentsProcessed += await this.insertRebuildBatch(putEntries);
           }
@@ -906,7 +923,7 @@ export class WikiManager implements WikiModule {
           total: entries.length,
           batchSize: batch.length,
           batchIndex,
-          batchCount,
+          batchCount
         });
       }
 
@@ -940,7 +957,7 @@ export class WikiManager implements WikiModule {
    */
   async getDomain(name: string): Promise<WikiDomain | undefined> {
     const domains = loadDomains();
-    return domains.find(d => d.domain_name === name);
+    return domains.find((d) => d.domain_name === name);
   }
 
   /**
@@ -948,7 +965,7 @@ export class WikiManager implements WikiModule {
    */
   async registerDomain(name: string, description?: string): Promise<void> {
     const domains = loadDomains();
-    const existing = domains.find(d => d.domain_name === name);
+    const existing = domains.find((d) => d.domain_name === name);
 
     if (existing) {
       return; // Domain already exists
@@ -959,7 +976,7 @@ export class WikiManager implements WikiModule {
       domain_name: name,
       description: description || '',
       created_at: new Date().toISOString(),
-      project_folder: process.cwd(),
+      project_folder: process.cwd()
     });
 
     saveDomains(domains);

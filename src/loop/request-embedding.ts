@@ -53,7 +53,7 @@ export class RequestEmbeddingTracker {
         text,
         embedding,
         tool: toolName,
-        timestamp: Date.now(),
+        timestamp: Date.now()
       });
 
       // Evict oldest if over capacity
@@ -62,7 +62,10 @@ export class RequestEmbeddingTracker {
       }
     } catch (err) {
       // Graceful degradation: if Ollama is down, skip silently
-      agentIO.verbose('embedding', `Failed to embed tool call ${toolName}: ${err instanceof Error ? err.message : String(err)}`);
+      agentIO.verbose(
+        'embedding',
+        `Failed to embed tool call ${toolName}: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
   }
 
@@ -156,7 +159,9 @@ export class RequestEmbeddingTracker {
         const sim = this.cosineSimilarity(latest.embedding, this.buffer[j].embedding);
         if (sim >= 0.7) {
           found = true;
-          lines.push(`  - Call #${i + 1} ("${latest.tool}") similar to Call #${j + 1} ("${this.buffer[j].tool}"): similarity=${sim.toFixed(3)}`);
+          lines.push(
+            `  - Call #${i + 1} ("${latest.tool}") similar to Call #${j + 1} ("${this.buffer[j].tool}"): similarity=${sim.toFixed(3)}`
+          );
         }
       }
     }

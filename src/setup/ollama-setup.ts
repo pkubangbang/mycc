@@ -22,7 +22,7 @@ export function getOllamaBinaryPath(): string {
     // Windows: Check common install locations
     const windowsPaths = [
       path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Ollama', 'ollama.exe'),
-      path.join(process.env.PROGRAMFILES || '', 'Ollama', 'ollama.exe'),
+      path.join(process.env.PROGRAMFILES || '', 'Ollama', 'ollama.exe')
     ];
     for (const p of windowsPaths) {
       if (p && existsSync(p)) return p;
@@ -68,9 +68,7 @@ async function getInstalledModels(): Promise<string[]> {
     const { stdout } = await execAsync(`"${ollamaPath}" list`);
     // Parse output: lines like "NAME\tID\tSIZE\tMODIFIED"
     const lines = stdout.trim().split('\n').slice(1); // Skip header
-    return lines
-      .map((line) => line.split('\t')[0]?.trim())
-      .filter((name): name is string => !!name);
+    return lines.map((line) => line.split('\t')[0]?.trim()).filter((name): name is string => !!name);
   } catch {
     return [];
   }

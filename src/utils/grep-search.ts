@@ -54,10 +54,7 @@ export function shellQuote(s: string): string {
  * Parse a single .gitignore file and merge its patterns into the result.
  * Handles: comments (#), blank lines, negation (!), directory indicators (trailing /).
  */
-function parseGitignoreFile(
-  filePath: string,
-  result: GitignoreResult
-): void {
+function parseGitignoreFile(filePath: string, result: GitignoreResult): void {
   let content: string;
   try {
     content = fs.readFileSync(filePath, 'utf-8');
@@ -81,7 +78,13 @@ function parseGitignoreFile(
     if (line.endsWith('/')) {
       const dirName = line.slice(0, -1);
       // Only simple directory names (no wildcards, no path separators)
-      if (dirName && !dirName.includes('*') && !dirName.includes('?') && !dirName.includes('/') && !dirName.includes('[')) {
+      if (
+        dirName &&
+        !dirName.includes('*') &&
+        !dirName.includes('?') &&
+        !dirName.includes('/') &&
+        !dirName.includes('[')
+      ) {
         result.excludeDirs.add(dirName);
       }
       continue;
@@ -109,7 +112,7 @@ function parseGitignoreFile(
 export function collectGitignores(searchDir: string): GitignoreResult {
   const result: GitignoreResult = {
     excludeDirs: new Set(),
-    excludePatterns: new Set(),
+    excludePatterns: new Set()
   };
 
   // Always exclude common VCS and dependency directories
@@ -181,7 +184,7 @@ function tryNativeRg(
     const stdout = execSync(cmd, {
       encoding: 'utf-8',
       timeout: 15000,
-      maxBuffer: 500 * 1024,
+      maxBuffer: 500 * 1024
       // Use default shell (no /bin/bash hardcoding) for cross-platform compatibility
     });
     const truncated = truncateLines(stdout, maxResults + 1);
@@ -216,10 +219,7 @@ async function tryNpmRipgrep(
   try {
     const rg = await import('ripgrep');
     const gi = collectGitignores(dir);
-    const args: string[] = [
-      '-n', '--no-heading', '--color', 'never',
-      '--no-require-git',
-    ];
+    const args: string[] = ['-n', '--no-heading', '--color', 'never', '--no-require-git'];
     if (include) {
       args.push('--glob', include);
     }
@@ -234,11 +234,11 @@ async function tryNpmRipgrep(
     }
     args.push(pattern, dir);
 
-    const result = await rg.ripgrep(args, {
+    const result = (await rg.ripgrep(args, {
       buffer: true,
       preopens: { '.': dir },
-      returnOnExit: true,
-    }) as { stdout: string; stderr: string; code: number };
+      returnOnExit: true
+    })) as { stdout: string; stderr: string; code: number };
 
     const lines = result.stdout.split('\n').filter(Boolean);
     const truncated = lines.slice(0, maxResults);
@@ -278,17 +278,13 @@ function tryUnixGrep(
   try {
     const gi = collectGitignores(dir);
     const excludeFlags = buildGrepExcludeFlags(gi);
-    const includeArg = include
-      ? `--include=${shellQuote(include)}`
-      : '';
-    const excludeArg = exclude
-      ? `--exclude=${shellQuote(exclude)}`
-      : '';
+    const includeArg = include ? `--include=${shellQuote(include)}` : '';
+    const excludeArg = exclude ? `--exclude=${shellQuote(exclude)}` : '';
     const cmd = `grep -rn ${excludeFlags} ${includeArg} ${excludeArg} -- ${shellQuote(pattern)} ${shellQuote(dir)} 2>/dev/null`;
     const stdout = execSync(cmd, {
       encoding: 'utf-8',
       timeout: 15000,
-      maxBuffer: 500 * 1024,
+      maxBuffer: 500 * 1024
       // Use default shell — no /bin/bash hardcoding
     });
     const truncated = truncateLines(stdout, maxResults);
@@ -337,9 +333,7 @@ function tryPowerShellSelectString(
     const filterPart = include ? `-Filter '${include.replace(/'/g, "''")}'` : '';
 
     // Build file exclusion filter (e.g., exclude "*.min.js")
-    const excludeFilterPart = exclude
-      ? ` | Where-Object { $_.Name -notlike '${exclude.replace(/'/g, "''")}' }`
-      : '';
+    const excludeFilterPart = exclude ? ` | Where-Object { $_.Name -notlike '${exclude.replace(/'/g, "''")}' }` : '';
 
     // Escape single quotes in pattern and dir for PowerShell single-quoted strings
     const psEscapedPattern = pattern.replace(/'/g, "''");
@@ -358,14 +352,11 @@ function tryPowerShellSelectString(
     const fullCmd = `try { chcp 65001 > $null } catch {}; $ProgressPreference = 'SilentlyContinue'; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${psCmd}`;
     const base64Cmd = Buffer.from(fullCmd, 'utf16le').toString('base64');
 
-    const stdout = execSync(
-      `powershell -NoProfile -NonInteractive -EncodedCommand ${base64Cmd}`,
-      {
-        encoding: 'utf-8',
-        timeout: 30000, // PowerShell is slower, give it more time
-        maxBuffer: 500 * 1024,
-      }
-    );
+    const stdout = execSync(`powershell -NoProfile -NonInteractive -EncodedCommand ${base64Cmd}`, {
+      encoding: 'utf-8',
+      timeout: 30000, // PowerShell is slower, give it more time
+      maxBuffer: 500 * 1024
+    });
 
     const lines = stdout.split('\n').filter(Boolean);
     const truncated = lines.slice(0, maxResults);

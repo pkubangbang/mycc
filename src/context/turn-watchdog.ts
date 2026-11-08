@@ -45,11 +45,9 @@ export function composeTurnWatchdog(
   budgetFraction: number,
   fallbackMs: number,
   minMs: number,
-  remainingBudgetMs = Infinity,
+  remainingBudgetMs = Infinity
 ): TurnWatchdog {
-  const remaining = Number.isFinite(remainingBudgetMs)
-    ? Math.max(0, remainingBudgetMs)
-    : Infinity;
+  const remaining = Number.isFinite(remainingBudgetMs) ? Math.max(0, remainingBudgetMs) : Infinity;
 
   // Per-turn cap: a fraction of the remaining budget, bounded to [min, fallback].
   const cap = Number.isFinite(remaining)
@@ -90,6 +88,6 @@ export function composeTurnWatchdog(
     // Order matters: if the deadline fired first this turn is stuck; a process
     // abort that landed first is a shutdown. 'watchdog' wins when both are true
     // because it names the slow call, which is the actionable report.
-    cause: () => (watchdogFired || !processSignal.aborted ? 'watchdog' : 'shutdown'),
+    cause: () => (watchdogFired || !processSignal.aborted ? 'watchdog' : 'shutdown')
   };
 }

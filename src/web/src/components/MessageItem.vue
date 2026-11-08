@@ -57,8 +57,8 @@ const awaitWakeTime = computed(() => {
 // logs (rejections) carry these labels too but have type:'warn'/'error' —
 // they keep their existing styling and are NOT treated as command cards.
 const BASH_COMMAND_LABELS = new Set(['bash', 'bg_create']);
-const isBashCommand = computed(() =>
-  props.message.type === 'log' && !!props.message.label && BASH_COMMAND_LABELS.has(props.message.label)
+const isBashCommand = computed(
+  () => props.message.type === 'log' && !!props.message.label && BASH_COMMAND_LABELS.has(props.message.label)
 );
 
 // Todo tool logs (todo_create / todo_update / todo_pinning) carry the full
@@ -68,8 +68,8 @@ const isBashCommand = computed(() =>
 // ([HH:MM:SS] [label]) and the `detail` summary (e.g. "Created #1: Name")
 // above render — all three todo tools always pass a detail string.
 const TODO_LABELS = new Set(['todo_create', 'todo_update', 'todo_pinning']);
-const isTodoCard = computed(() =>
-  props.message.type === 'log' && !!props.message.label && TODO_LABELS.has(props.message.label)
+const isTodoCard = computed(
+  () => props.message.type === 'log' && !!props.message.label && TODO_LABELS.has(props.message.label)
 );
 
 // PLAN-mode scope reflection (src/loop/plan-scope.ts), emitted by the hook
@@ -80,10 +80,7 @@ const isTodoCard = computed(() =>
 // dedicated PlanScopeCard instead of the generic labeled-log markdown path.
 // The label is the backend contract; matched exactly so no other log whose
 // label merely contains "plan-scope" is hijacked.
-const isPlanScope = computed(() =>
-  props.message.type === 'log'
-  && props.message.label === PLAN_SCOPE_LOG_LABEL
-);
+const isPlanScope = computed(() => props.message.type === 'log' && props.message.label === PLAN_SCOPE_LOG_LABEL);
 
 // Render markdown for conversational content (user + assistant result) and
 // for labeled `log` messages (brief() structured status — e.g. the crossroad
@@ -94,14 +91,13 @@ const isPlanScope = computed(() =>
 // status rather than raw stdout.
 // EXCEPTION: a bash command log (label:'bash', type:'log') renders the
 // command as a monospace terminal block — never markdown.
-const renderMarkdown = computed(() =>
-  !isBashCommand.value
-  && !isPlanScope.value
-  && (
-    props.message.type === 'user'
-    || props.message.type === 'result'
-    || (props.message.type === 'log' && !!props.message.label)
-  )
+const renderMarkdown = computed(
+  () =>
+    !isBashCommand.value &&
+    !isPlanScope.value &&
+    (props.message.type === 'user' ||
+      props.message.type === 'result' ||
+      (props.message.type === 'log' && !!props.message.label))
 );
 
 // markdown-it with html disabled (default) — raw HTML in LLM output is
@@ -118,7 +114,7 @@ const md = new MarkdownIt({
   breaks: true,
   highlight(code, lang): string {
     return highlightCode(code, lang);
-  },
+  }
 });
 
 // Second instance for PATH-BEARING tool messages only (see backslash-policy.ts).
@@ -133,12 +129,9 @@ const mdVerbatim = new MarkdownIt({
   breaks: true,
   highlight(code, lang): string {
     return highlightCode(code, lang);
-  },
+  }
 });
 mdVerbatim.inline.ruler.disable('escape');
-
-
-
 
 // Custom image rule: render markdown images as clickable thumbnails that
 // open the dedicated ImageViewer popup (mounted in App.vue) instead of
@@ -171,10 +164,10 @@ md.renderer.rules.image = (tokens, idx): string => {
 // of crushing columns. The default table_open/table_close rules are
 // undefined (markdown-it falls back to renderToken), so we capture that
 // fallback and prepend/append our wrapper div around it.
-const defaultTableOpen = md.renderer.rules.table_open
-  || ((tokens, idx, opts, _env, self) => self.renderToken(tokens, idx, opts));
-const defaultTableClose = md.renderer.rules.table_close
-  || ((tokens, idx, opts, _env, self) => self.renderToken(tokens, idx, opts));
+const defaultTableOpen =
+  md.renderer.rules.table_open || ((tokens, idx, opts, _env, self) => self.renderToken(tokens, idx, opts));
+const defaultTableClose =
+  md.renderer.rules.table_close || ((tokens, idx, opts, _env, self) => self.renderToken(tokens, idx, opts));
 md.renderer.rules.table_open = (tokens, idx, opts, env, self): string =>
   `<div class="md-table-wrap">\n${defaultTableOpen(tokens, idx, opts, env, self)}`;
 md.renderer.rules.table_close = (tokens, idx, opts, env, self): string =>
@@ -205,9 +198,11 @@ function onMarkdownClick(e: MouseEvent): void {
   if (!target.hasAttribute('data-zoomable')) return;
   e.preventDefault();
   e.stopPropagation();
-  window.dispatchEvent(new CustomEvent('open-image-viewer', {
-    detail: { src: target.currentSrc || target.src, alt: target.alt },
-  }));
+  window.dispatchEvent(
+    new CustomEvent('open-image-viewer', {
+      detail: { src: target.currentSrc || target.src, alt: target.alt }
+    })
+  );
 }
 
 onMounted(() => {
@@ -223,9 +218,7 @@ onBeforeUnmount(() => {
 // highlighter outputs a dual-theme `<pre><code>` (light/dark via CSS vars),
 // so this single render switches colors with the WebUI theme toggle. See
 // highlight.ts for the async-init / sync-use design.
-const bashHtml = computed(() =>
-  isBashCommand.value ? highlightBash(props.message.content) : '',
-);
+const bashHtml = computed(() => (isBashCommand.value ? highlightBash(props.message.content) : ''));
 
 // Pre-wrap preserves tool output formatting (newlines, indentation).
 // Monospace for log/result/error so code/output reads cleanly.
@@ -237,11 +230,7 @@ const bashHtml = computed(() =>
 const isMonospace = computed(() => {
   if (isPlanScope.value) return false;
   if (props.message.type === 'log' && props.message.label) return false;
-  return (
-    props.message.type === 'log' ||
-    props.message.type === 'error' ||
-    props.message.type === 'warn'
-  );
+  return props.message.type === 'log' || props.message.type === 'error' || props.message.type === 'warn';
 });
 
 // Terminal-style [HH:MM:SS] [label] header — shown for non-user messages
@@ -303,7 +292,9 @@ async function copyContent(): Promise<void> {
     await navigator.clipboard.writeText(props.message.content ?? '');
     copied.value = true;
     if (copyResetTimer) clearTimeout(copyResetTimer);
-    copyResetTimer = setTimeout(() => { copied.value = false; }, 1500);
+    copyResetTimer = setTimeout(() => {
+      copied.value = false;
+    }, 1500);
   } catch {
     // Clipboard API can reject in non-secure contexts (plain http on a
     // remote host) or when permissions are denied. Fall back to a hidden
@@ -319,7 +310,9 @@ async function copyContent(): Promise<void> {
       document.body.removeChild(ta);
       copied.value = true;
       if (copyResetTimer) clearTimeout(copyResetTimer);
-      copyResetTimer = setTimeout(() => { copied.value = false; }, 1500);
+      copyResetTimer = setTimeout(() => {
+        copied.value = false;
+      }, 1500);
     } catch {
       /* clipboard unavailable — silently ignore; the button just no-ops */
     }
@@ -337,7 +330,7 @@ function quoteContent(): void {
   const content = props.message.content ?? '';
   const quoted = content
     .split('\n')
-    .map(line => `> ${line}`)
+    .map((line) => `> ${line}`)
     .join('\n');
   // Blank quote line above + blank line below for readability.
   props.onQuote(`> \n${quoted}\n\n`);
@@ -383,7 +376,10 @@ function quoteContent(): void {
   <div v-else class="message-row" :class="{ 'is-user': isUser }">
     <div class="message-col">
       <div v-if="header" class="message-header">{{ header }}</div>
-      <div class="bubble" :class="[message.type, { mono: isMonospace, 'bash-card': isBashCommand, 'plan-scope-bubble': isPlanScope }]">
+      <div
+        class="bubble"
+        :class="[message.type, { mono: isMonospace, 'bash-card': isBashCommand, 'plan-scope-bubble': isPlanScope }]"
+      >
         <div v-if="message.detail" class="bubble-detail">{{ message.detail }}</div>
         <template v-if="isBashCommand">
           <!-- Bash command card: the shell command is syntax-highlighted
@@ -419,40 +415,74 @@ function quoteContent(): void {
              copy it to the clipboard (with "已复制" feedback), or quote it
              into the chat input as a markdown blockquote. -->
         <div v-if="showToolbar" class="bubble-toolbar">
-          <button
-            class="toolbar-btn"
-            title="下载 Markdown 文件"
-            @click="downloadMarkdown"
-          >
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
+          <button class="toolbar-btn" title="下载 Markdown 文件" @click="downloadMarkdown">
+            <svg
+              viewBox="0 0 24 24"
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
             </svg>
             <span>下载</span>
           </button>
-          <button
-            class="toolbar-btn"
-            :title="copied ? '已复制' : '复制内容'"
-            @click="copyContent"
-          >
-            <svg v-if="!copied" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          <button class="toolbar-btn" :title="copied ? '已复制' : '复制内容'" @click="copyContent">
+            <svg
+              v-if="!copied"
+              viewBox="0 0 24 24"
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
             </svg>
-            <svg v-else viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="20 6 9 17 4 12"/>
+            <svg
+              v-else
+              viewBox="0 0 24 24"
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="20 6 9 17 4 12" />
             </svg>
             <span>{{ copied ? '已复制' : '复制' }}</span>
           </button>
-          <button
-            class="toolbar-btn"
-            title="引用内容到输入框"
-            @click="quoteContent"
-          >
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/>
-              <path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-1.25 5v1c0 1 0 1 1 1z"/>
+          <button class="toolbar-btn" title="引用内容到输入框" @click="quoteContent">
+            <svg
+              viewBox="0 0 24 24"
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path
+                d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"
+              />
+              <path
+                d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-1.25 5v1c0 1 0 1 1 1z"
+              />
             </svg>
             <span>引用</span>
           </button>
@@ -479,7 +509,9 @@ function quoteContent(): void {
      a keyframes block in this SFC makes vue-tsc abort with an internal parse
      error, so the flash is expressed as a class toggled by ChatLog that these
      transitions ease back to rest. */
-  transition: background-color 0.9s ease-out, color 0.9s ease-out;
+  transition:
+    background-color 0.9s ease-out,
+    color 0.9s ease-out;
 }
 /* Dot = state: red blocked on an external event, green woken. */
 .await-dot {
@@ -489,8 +521,12 @@ function quoteContent(): void {
   border-radius: 50%;
   transform: translateY(-1px);
 }
-.await-dot.await { background: #e5484d; }
-.await-dot.wake { background: #30a46c; }
+.await-dot.await {
+  background: #e5484d;
+}
+.await-dot.wake {
+  background: #30a46c;
+}
 .await-time {
   flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
@@ -539,7 +575,10 @@ function quoteContent(): void {
   opacity: 0.7;
   cursor: pointer;
   white-space: nowrap;
-  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 /* Drawn chevron: the SVG scales with the label's font size (em units), so the
    icon stays proportionate if the hint's typography ever changes. */
@@ -712,9 +751,15 @@ function quoteContent(): void {
   font-weight: 600;
   line-height: 1.3;
 }
-.markdown-body :deep(h1) { font-size: 1.3em; }
-.markdown-body :deep(h2) { font-size: 1.2em; }
-.markdown-body :deep(h3) { font-size: 1.1em; }
+.markdown-body :deep(h1) {
+  font-size: 1.3em;
+}
+.markdown-body :deep(h2) {
+  font-size: 1.2em;
+}
+.markdown-body :deep(h3) {
+  font-size: 1.1em;
+}
 .markdown-body :deep(ul),
 .markdown-body :deep(ol) {
   margin: 4px 0 8px;
@@ -853,7 +898,9 @@ function quoteContent(): void {
   cursor: zoom-in;
   display: block;
   margin: 8px 0;
-  transition: filter 0.15s, border-color 0.15s;
+  transition:
+    filter 0.15s,
+    border-color 0.15s;
 }
 .markdown-body :deep(img:hover) {
   filter: brightness(1.06);
@@ -909,7 +956,10 @@ function quoteContent(): void {
   line-height: 1;
   color: var(--text-muted);
   cursor: pointer;
-  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  transition:
+    color 0.15s,
+    background 0.15s,
+    border-color 0.15s;
   user-select: none;
 }
 .toolbar-btn svg {

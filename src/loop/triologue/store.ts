@@ -487,7 +487,7 @@ const PROVIDER_MESSAGE_KEYS = [
   'tool_name',
   'tool_call_id',
   'reasoning_content',
-  'imageMime',
+  'imageMime'
 ] as const;
 
 const PROVIDER_MESSAGE_KEY_SET: ReadonlySet<string> = new Set<string>(PROVIDER_MESSAGE_KEYS);

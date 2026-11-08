@@ -12,22 +12,22 @@ export const wikiGetTool: ToolDefinition = {
     properties: {
       query: {
         type: 'string',
-        description: 'The search query - describe what knowledge you are looking for',
+        description: 'The search query - describe what knowledge you are looking for'
       },
       domain: {
         type: 'string',
-        description: 'The domain to search within — one of your project\'s registered wiki domains (never invented).',
+        description: "The domain to search within — one of your project's registered wiki domains (never invented)."
       },
       topK: {
         type: 'number',
-        description: 'Number of results to return (default: 5)',
+        description: 'Number of results to return (default: 5)'
       },
       threshold: {
         type: 'number',
-        description: 'Minimum similarity threshold (0-1, default: 0)',
-      },
+        description: 'Minimum similarity threshold (0-1, default: 0)'
+      }
     },
-    required: ['query', 'domain'],
+    required: ['query', 'domain']
   },
   scope: ['main', 'child'],
   handler: async (ctx, args): Promise<string> => {
@@ -72,5 +72,5 @@ export const wikiGetTool: ToolDefinition = {
       ctx.core.brief('error', 'wiki_get', `Failed: ${err.message}`);
       return `Error: ${err.message}`;
     }
-  },
+  }
 };

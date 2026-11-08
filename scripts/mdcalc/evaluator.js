@@ -14,14 +14,7 @@
 
 import { L1Error, L2Error, L3Error } from './errors.js';
 import { parseCellId, parseArea, parseArea2D, CELL_REF } from './area.js';
-import {
-  DATE_RE,
-  validateDate,
-  validateTime,
-  validateDatetime,
-  asNum,
-  toDate,
-} from './celltype.js';
+import { DATE_RE, validateDate, validateTime, validateDatetime, asNum, toDate } from './celltype.js';
 import { extractOpsSource, locateSections } from './markdown.js';
 import { collectRefs, preprocessFormula } from './formula.js';
 import { FUNCS } from './functions.js';
@@ -43,7 +36,7 @@ export function evaluateFile(filePath) {
     // boundary: the source is the ops array from the file. We restrict by
     // wrapping in a function that only exposes nothing. (Alternative: JSON.parse
     // but ops uses JS array syntax with single quotes / no quotes — not strict JSON.)
-    ops = (new Function(`"use strict"; return (${opsSrc});`))();
+    ops = new Function(`"use strict"; return (${opsSrc});`)();
   } catch (e) {
     throw new L1Error(`ops array is not valid JS/JSON: ${e.message}`);
   }
@@ -61,15 +54,22 @@ export function evaluateFile(filePath) {
       try {
         // temporarily expand with current maxRow guess to learn actual rows
         const a = parseArea(op.area, 100000);
-        for (const c of a.cells) { const m = /(\d+)$/.exec(c); if (m) maxRow = Math.max(maxRow, parseInt(m[1], 10)); }
-      } catch { /* validation error will be reported below */ }
+        for (const c of a.cells) {
+          const m = /(\d+)$/.exec(c);
+          if (m) maxRow = Math.max(maxRow, parseInt(m[1], 10));
+        }
+      } catch {
+        /* validation error will be reported below */
+      }
     }
   }
 
   // --- Pass 1: data pass ---
   for (let i = 0; i < ops.length; i++) {
     const op = ops[i] || {};
-    const opName = op.op, area = op.area, values = op.values;
+    const opName = op.op,
+      area = op.area,
+      values = op.values;
     try {
       if (opName === 'clear') {
         // `clear` targets a 2D block (parseArea2D), wiping a whole rectangle in
@@ -96,26 +96,31 @@ export function evaluateFile(filePath) {
         const colon = area.indexOf(':');
         if (colon < 0) throw new Error('grid: area must be a 2D block like "D2:P33" (single cell not allowed)');
         const [startStr, endStr] = area.split(':');
-        const s = parseCellId(startStr), e = parseCellId(endStr);
+        const s = parseCellId(startStr),
+          e = parseCellId(endStr);
         if (!s || !e) throw new Error(`grid: unparseable area "${area}"`);
         const cols = Math.abs(e.col - s.col) + 1;
         const rows = Math.abs(e.row - s.row) + 1;
-        if (values.length !== rows)
-          throw new Error(`grid: expected ${rows} rows, got ${values.length}`);
+        if (values.length !== rows) throw new Error(`grid: expected ${rows} rows, got ${values.length}`);
         let idx = 0;
         for (let r = 0; r < rows; r++) {
           const row = values[r];
           if (!Array.isArray(row))
             throw new Error(`grid row ${r} is not an array (got ${row === null ? 'null' : typeof row})`);
-          if (row.length !== cols)
-            throw new Error(`grid row ${r}: expected ${cols} cols, got ${row.length}`);
+          if (row.length !== cols) throw new Error(`grid row ${r}: expected ${cols} cols, got ${row.length}`);
           for (let c = 0; c < cols; c++) {
             const v = row[c];
-            if (v === null || v === undefined) { idx++; continue; } // skip cell
+            if (v === null || v === undefined) {
+              idx++;
+              continue;
+            } // skip cell
             const cell = a.cells[idx];
             if (typeof v === 'number') grid.set(cell, { type: 'num', value: v });
             else if (typeof v === 'string') grid.set(cell, { type: 'text', value: v });
-            else throw new Error(`grid cell ${cell}: value is ${v === null ? 'null' : typeof v} (expected number, string, or null)`);
+            else
+              throw new Error(
+                `grid cell ${cell}: value is ${v === null ? 'null' : typeof v} (expected number, string, or null)`
+              );
             idx++;
           }
         }
@@ -195,8 +200,14 @@ export function evaluateFile(filePath) {
             vals.push(fmt(d));
             if (hasTo) {
               const lim = new Date(op.to + 'T00:00:00');
-              if (st > 0 && d > lim) { vals.pop(); break; }
-              if (st < 0 && d < lim) { vals.pop(); break; }
+              if (st > 0 && d > lim) {
+                vals.pop();
+                break;
+              }
+              if (st < 0 && d < lim) {
+                vals.pop();
+                break;
+              }
             }
           }
           if (vals.length !== n)
@@ -220,12 +231,19 @@ export function evaluateFile(filePath) {
             let st = stepVal === undefined ? (hasTo && op.to < fv ? -1 : 1) : stepVal;
             if (typeof st !== 'number') throw new Error(`seq numeric: step must be a number, got ${typeof st}`);
             vals = [];
-            let cur = fv, k = 0;
+            let cur = fv,
+              k = 0;
             for (; k < n; k++) {
               vals.push(cur);
               if (hasTo) {
-                if (st > 0 && cur > op.to) { vals.pop(); break; }
-                if (st < 0 && cur < op.to) { vals.pop(); break; }
+                if (st > 0 && cur > op.to) {
+                  vals.pop();
+                  break;
+                }
+                if (st < 0 && cur < op.to) {
+                  vals.pop();
+                  break;
+                }
               }
               cur += st;
             }
@@ -256,7 +274,12 @@ export function evaluateFile(filePath) {
         const a = parseArea(toArea, maxRow);
         // locate the source formula, if any
         let srcExpr = null;
-        for (const f of formulaCells) { if (f.cell === fromId) { srcExpr = f.expr; break; } }
+        for (const f of formulaCells) {
+          if (f.cell === fromId) {
+            srcExpr = f.expr;
+            break;
+          }
+        }
         const srcCell = grid.get(fromId);
         if (!srcExpr && !srcCell) throw new Error(`copy: source cell ${fromId} is empty (write it first)`);
 
@@ -338,9 +361,9 @@ export function evaluateFile(filePath) {
     try {
       const { code, ranges } = preprocessFormula(expr);
       // resolve ranges to arrays of CellValue (empty cells -> null)
-      const ctxRanges = ranges.map(r => ({ name: r.name, cells: r.cells.map(c => grid.get(c) || null) }));
+      const ctxRanges = ranges.map((r) => ({ name: r.name, cells: r.cells.map((c) => grid.get(c) || null) }));
       // build a range map for the evaluator
-      const rangeMap = new Map(ctxRanges.map(r => [r.name, r.cells]));
+      const rangeMap = new Map(ctxRanges.map((r) => [r.name, r.cells]));
       // evaluate using a custom walk that consults rangeMap
       const result = evaluateWithRanges(code, grid, rangeMap);
       grid.set(cell, result);
@@ -351,7 +374,16 @@ export function evaluateFile(filePath) {
     }
   }
 
-  return { grid, errors, opsCount: ops.length, formulaCount: formulaCells.length, okFormulas, sections, lines, content };
+  return {
+    grid,
+    errors,
+    opsCount: ops.length,
+    formulaCount: formulaCells.length,
+    okFormulas,
+    sections,
+    lines,
+    content
+  };
 }
 
 // Walk a jsep AST for `expr` against `grid` (single cells) and `rangeMap`
@@ -382,13 +414,16 @@ export function evaluateWithRanges(expr, grid, rangeMap) {
         throw new Error(`unknown identifier: ${name}`);
       }
       case 'ArrayExpression':
-        return node.elements.filter(e => e !== null).map(evalNode);
+        return node.elements.filter((e) => e !== null).map(evalNode);
       case 'CallExpression': {
         const fname = node.callee.type === 'Identifier' ? node.callee.name : null;
         if (!fname || !(fname in FUNCS)) throw new Error(`unknown function "${fname}"`);
         const args = node.arguments.map(evalNode);
-        try { return FUNCS[fname](...args); }
-        catch (e) { throw new Error(`${fname}: ${e.message}`); }
+        try {
+          return FUNCS[fname](...args);
+        } catch (e) {
+          throw new Error(`${fname}: ${e.message}`);
+        }
       }
       case 'UnaryExpression': {
         const arg = evalNode(node.argument);
@@ -403,21 +438,29 @@ export function evaluateWithRanges(expr, grid, rangeMap) {
         const right = evalNode(node.right);
         const op = node.operator;
         if (['+', '-', '*', '/', '%'].includes(op)) {
-          const l = asNum(left, op), r = asNum(right, op);
+          const l = asNum(left, op),
+            r = asNum(right, op);
           let v;
           if (op === '+') v = l + r;
           else if (op === '-') v = l - r;
           else if (op === '*') v = l * r;
-          else if (op === '/') { if (r === 0) throw new Error('divide by zero'); v = l / r; }
-          else if (op === '%') { if (r === 0) throw new Error('modulo by zero'); v = l % r; }
+          else if (op === '/') {
+            if (r === 0) throw new Error('divide by zero');
+            v = l / r;
+          } else if (op === '%') {
+            if (r === 0) throw new Error('modulo by zero');
+            v = l % r;
+          }
           return { type: 'num', value: v };
         }
         if (['<', '>', '<=', '>=', '==', '!=', '===', '!=='].includes(op)) {
           let lv, rv;
           if (left && right && left.type === right.type && ['date', 'time', 'datetime'].includes(left.type)) {
-            lv = toDate(left).getTime(); rv = toDate(right).getTime();
+            lv = toDate(left).getTime();
+            rv = toDate(right).getTime();
           } else {
-            lv = asNum(left, op); rv = asNum(right, op);
+            lv = asNum(left, op);
+            rv = asNum(right, op);
           }
           let v;
           if (op === '<') v = lv < rv;
@@ -429,8 +472,9 @@ export function evaluateWithRanges(expr, grid, rangeMap) {
           return { type: 'num', value: v ? 1 : 0 };
         }
         if (op === '&&' || op === '||') {
-          const l = asNum(left, op), r = asNum(right, op);
-          return { type: 'num', value: (op === '&&' ? (l && r) : (l || r)) ? 1 : 0 };
+          const l = asNum(left, op),
+            r = asNum(right, op);
+          return { type: 'num', value: (op === '&&' ? l && r : l || r) ? 1 : 0 };
         }
         throw new Error(`unsupported binary operator ${op}`);
       }
@@ -451,6 +495,7 @@ export function evaluateWithRanges(expr, grid, rangeMap) {
   }
   const result = evalNode(ast);
   if (Array.isArray(result)) throw new Error('formula result is a range, not a single value');
-  if (!result || typeof result !== 'object' || !('type' in result)) throw new Error('formula did not produce a cell value');
+  if (!result || typeof result !== 'object' || !('type' in result))
+    throw new Error('formula did not produce a cell value');
   return result;
 }

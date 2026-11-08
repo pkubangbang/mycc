@@ -33,7 +33,9 @@ export const channelCommand: SlashCommand = {
     if (sub === 'list') {
       const channels = ctx.peer.listChannels();
       if (channels.length === 0) {
-        console.log(chalk.gray('No channels. A mediator must create channel files in ~/.mycc-store/discovery/channels/ first.'));
+        console.log(
+          chalk.gray('No channels. A mediator must create channel files in ~/.mycc-store/discovery/channels/ first.')
+        );
         return;
       }
       console.log(chalk.cyan(`Channels (${channels.length}):`));
@@ -44,11 +46,16 @@ export const channelCommand: SlashCommand = {
       for (const ch of channels) {
         const fresh = ch.peerSessionId ? ctx.peer.isFresh(ch.peerSessionId) : false;
         const failure = joinFailures.get(ch.channelId);
-        const state = failure && !ch.joined
-          ? chalk.red(`join failed ${failure.count}× — ${failure.lastError}`)
-          : ch.joined
-            ? (ch.peerSessionId ? (fresh ? chalk.green('active') : chalk.yellow('joined (peer stale)')) : chalk.yellow('joined (no peer)'))
-            : chalk.gray('not joined');
+        const state =
+          failure && !ch.joined
+            ? chalk.red(`join failed ${failure.count}× — ${failure.lastError}`)
+            : ch.joined
+              ? ch.peerSessionId
+                ? fresh
+                  ? chalk.green('active')
+                  : chalk.yellow('joined (peer stale)')
+                : chalk.yellow('joined (no peer)')
+              : chalk.gray('not joined');
         console.log(`  ${chalk.bold(ch.channelId)}  peer=${ch.peerSessionId ?? '—'}  ${state}  title="${ch.title}"`);
       }
       return;
@@ -66,11 +73,11 @@ export const channelCommand: SlashCommand = {
         // sessionId is not directly available here; re-derive from the
         // existing channel list to find the owned file.
         (() => {
-          const owned = ctx.peer.listChannels().find(c => c.channelId === channelId);
+          const owned = ctx.peer.listChannels().find((c) => c.channelId === channelId);
           // owned?.ownerSessionId is the local session id (files are named by owner)
           return owned ? owned.ownerSessionId : '';
         })(),
-        channelId,
+        channelId
       );
       if (!filePath || !fs.existsSync(filePath)) {
         console.log(chalk.yellow(`Channel ${channelId} not found.`));
@@ -97,5 +104,5 @@ export const channelCommand: SlashCommand = {
 
     console.log(chalk.yellow(`Unknown sub-command: ${sub}`));
     console.log(chalk.gray('Usage: /channel list|disconnect <id>'));
-  },
+  }
 };

@@ -65,7 +65,7 @@ function getPlatformInfo(): {
     pathSep: info.isWin ? 'backslash (\\)' : 'forward slash (/)',
     home: os.homedir(),
     escapeChar: info.isWin ? 'backtick (`)' : 'backslash (\\)',
-    shellKind: info.shell,
+    shellKind: info.shell
   };
 }
 
@@ -92,9 +92,11 @@ function buildPlatformSection(): string {
   // prompt branch fails loudly instead of emitting generic/wrong guidance.
   let shellCommands: string;
   if (info.shellKind === 'pwsh7') {
-    shellCommands = '- Use PowerShell 7 (pwsh) syntax: `Get-Content file`, `Copy-Item src dest`\n- The bash tool executes commands via pwsh (not cmd). Multiple commands should be concatenated using ";"; `&&`/`||` chaining also works in pwsh 7.\n- pwsh 7 defaults to UTF-8 without BOM for both file reads and writes, so `Get-Content`/`Set-Content`/`Out-File` are UTF-8-safe by default (no mojibake, no BOM). Prefer the built-in `read_file`/`edit_file` tools which handle UTF-8 automatically.';
+    shellCommands =
+      '- Use PowerShell 7 (pwsh) syntax: `Get-Content file`, `Copy-Item src dest`\n- The bash tool executes commands via pwsh (not cmd). Multiple commands should be concatenated using ";"; `&&`/`||` chaining also works in pwsh 7.\n- pwsh 7 defaults to UTF-8 without BOM for both file reads and writes, so `Get-Content`/`Set-Content`/`Out-File` are UTF-8-safe by default (no mojibake, no BOM). Prefer the built-in `read_file`/`edit_file` tools which handle UTF-8 automatically.';
   } else if (info.shellKind === 'powershell5') {
-    shellCommands = '- Use Windows PowerShell 5.1 syntax: `Get-Content file`, `Copy-Item src dest`\n- The bash tool executes commands via Windows PowerShell 5.1 (not cmd). Note that multiple commands should be concatenated using ";", not "&&" (5.1 lacks `&&`/`||` pipeline operators).\n- **File encoding (avoid mojibake):** `Get-Content`/`Set-Content` default to the system ANSI codepage on Windows PowerShell 5.1, garbling UTF-8 files with non-ASCII chars. ALWAYS pass `-Encoding UTF8` when reading/writing source files (e.g. `Get-Content file -Encoding UTF8`). Prefer the built-in `read_file`/`edit_file` tools which handle UTF-8 automatically.\n- **BOM trap (PowerShell 5.1):** `Set-Content -Encoding UTF8` prepends a UTF-8 BOM (EF BB BF) that corrupts formats needing pure ASCII headers (e.g. `jar cfm` fails with `invalid header field name`). For no-BOM writes use `[IO.File]::WriteAllText($path, $content, [Text.UTF8Encoding]::new($false))`. The `write_file` tool already writes UTF-8 without a BOM (pass `bom: true` only when needed).\n- Note: the bash tool already sets the default write encoding of `Set-Content`/`Add-Content`/`Out-File` to no-BOM UTF-8 via `$PSDefaultParameterValues`; an explicit `-Encoding UTF8` still writes a BOM, so prefer `[IO.File]::WriteAllText` or the built-in tools for no-BOM writes.';
+    shellCommands =
+      '- Use Windows PowerShell 5.1 syntax: `Get-Content file`, `Copy-Item src dest`\n- The bash tool executes commands via Windows PowerShell 5.1 (not cmd). Note that multiple commands should be concatenated using ";", not "&&" (5.1 lacks `&&`/`||` pipeline operators).\n- **File encoding (avoid mojibake):** `Get-Content`/`Set-Content` default to the system ANSI codepage on Windows PowerShell 5.1, garbling UTF-8 files with non-ASCII chars. ALWAYS pass `-Encoding UTF8` when reading/writing source files (e.g. `Get-Content file -Encoding UTF8`). Prefer the built-in `read_file`/`edit_file` tools which handle UTF-8 automatically.\n- **BOM trap (PowerShell 5.1):** `Set-Content -Encoding UTF8` prepends a UTF-8 BOM (EF BB BF) that corrupts formats needing pure ASCII headers (e.g. `jar cfm` fails with `invalid header field name`). For no-BOM writes use `[IO.File]::WriteAllText($path, $content, [Text.UTF8Encoding]::new($false))`. The `write_file` tool already writes UTF-8 without a BOM (pass `bom: true` only when needed).\n- Note: the bash tool already sets the default write encoding of `Set-Content`/`Add-Content`/`Out-File` to no-BOM UTF-8 via `$PSDefaultParameterValues`; an explicit `-Encoding UTF8` still writes a BOM, so prefer `[IO.File]::WriteAllText` or the built-in tools for no-BOM writes.';
   } else if (info.shellKind === 'zsh' || info.shellKind === 'bash') {
     shellCommands = '- Use bash/zsh syntax: `cat file`, `cp src dest`';
   } else {
@@ -116,24 +118,20 @@ function buildPlatformSection(): string {
   // commands. The coordinator PID is injected by index.ts via env var; the
   // lead's own PID is available via process.pid.
   const coordinatorPid = process.env.MYCC_COORDINATOR_PID;
-  const pidLines: string[] = [
-    '',
-    '### Process PIDs',
-    `Your own process PID: ${process.pid}`,
-  ];
+  const pidLines: string[] = ['', '### Process PIDs', `Your own process PID: ${process.pid}`];
   if (coordinatorPid) {
     pidLines.push(
       `Coordinator (parent) PID: ${coordinatorPid}`,
       '',
       '**WARNING**: Never kill the coordinator PID or your own PID. Killing the coordinator',
       'will terminate your own process as well. When stopping dev servers or running broad',
-      'kill commands (e.g. `taskkill /F`, `kill $(lsof -t -i:PORT)`), always exclude these PIDs.',
+      'kill commands (e.g. `taskkill /F`, `kill $(lsof -t -i:PORT)`), always exclude these PIDs.'
     );
   } else {
     pidLines.push(
       '',
       'NOTE: Coordinator PID is not available. Be cautious when running broad kill commands',
-      '— avoid killing processes you did not start.',
+      '— avoid killing processes you did not start.'
     );
   }
 
@@ -154,7 +152,7 @@ function buildPlatformSection(): string {
     escaping,
     '- For JSON/strings: use double quotes and escape inner quotes with backslash',
     '- When in doubt: use single quotes for literal strings in bash/zsh, double quotes in PowerShell',
-    ...pidLines,
+    ...pidLines
   ].join('\n');
 }
 
@@ -172,17 +170,13 @@ function buildPlatformSection(): string {
  * Calendar.
  */
 export function buildPlatformCalendarMessages(): Message[] {
-  const content =
-    `[System - Platform & Calendar]\n\n` +
-    `${buildPlatformSection()}\n\n` +
-    `${buildCalendarSection()}`;
+  const content = `[System - Platform & Calendar]\n\n` + `${buildPlatformSection()}\n\n` + `${buildCalendarSection()}`;
   return [
     { role: 'user', content },
     {
       role: 'assistant',
-      content:
-        'Understood. I have noted the current date and platform/shell environment.',
-    },
+      content: 'Understood. I have noted the current date and platform/shell environment.'
+    }
   ];
 }
 
@@ -250,8 +244,8 @@ export function buildNodeModulesReminderMessages(): Message[] {
       role: 'assistant',
       content:
         'Understood. I will exclude node_modules from ls and grep commands ' +
-        'to avoid listing or searching installed dependencies.',
-    },
+        'to avoid listing or searching installed dependencies.'
+    }
   ];
 }
 
@@ -278,9 +272,7 @@ export function buildNodeModulesReminderMessages(): Message[] {
  * Returns an empty array when there are no domains, so nothing is injected for
  * a project that has not registered any wiki domain yet (a zero-cost no-op).
  */
-export function buildWikiDomainsMessages(
-  domains: Array<{ domain_name: string; description?: string }>,
-): Message[] {
+export function buildWikiDomainsMessages(domains: Array<{ domain_name: string; description?: string }>): Message[] {
   if (domains.length === 0) return [];
 
   const lines = domains.map((d) => {
@@ -299,8 +291,8 @@ export function buildWikiDomainsMessages(
     { role: 'user', content },
     {
       role: 'assistant',
-      content: 'Understood. I will only query wiki_get with one of these registered domains.',
-    },
+      content: 'Understood. I will only query wiki_get with one of these registered domains.'
+    }
   ];
 }
 
@@ -374,7 +366,7 @@ export function buildCollaborationMessages(): Message[] {
         '(same-session child), peer (local cross-session), remote ' +
         '(cross-machine via peer_connect), and compose (a declarative ' +
         'topology file) — and I will load the matching skill (coordination / ' +
-        'mediator / mycc-compose) when I need to wire agents together.',
-    },
+        'mediator / mycc-compose) when I need to wire agents together.'
+    }
   ];
 }

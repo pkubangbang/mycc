@@ -23,15 +23,15 @@ export const todoPinningTool: ToolDefinition = {
     properties: {
       id: {
         type: 'integer',
-        description: 'Todo item ID to pin/unpin',
+        description: 'Todo item ID to pin/unpin'
       },
       hash: {
         type: 'string',
-        description: 'Current hash of the item (from todo_create output or the todo list). Must match the stored hash.',
+        description: 'Current hash of the item (from todo_create output or the todo list). Must match the stored hash.'
       },
       pinned: {
         type: 'boolean',
-        description: 'true to pin (persist after completion), false to unpin',
+        description: 'true to pin (persist after completion), false to unpin'
       },
       preventStop: {
         type: 'string',
@@ -39,10 +39,10 @@ export const todoPinningTool: ToolDefinition = {
           'STOP-GUARD condition (only meaningful when pinned=true): a statement ' +
           'about the state the work must reach. While it holds you cannot end your ' +
           'turn — the system re-checks it at every STOP and sends you back to COLLECT. ' +
-          'Example: "tests for the todo module pass and lint is clean".',
-      },
+          'Example: "tests for the todo module pass and lint is clean".'
+      }
     },
-    required: ['id', 'hash', 'pinned'],
+    required: ['id', 'hash', 'pinned']
   },
   scope: ['main'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
@@ -65,12 +65,7 @@ export const todoPinningTool: ToolDefinition = {
       return 'Error: preventStop must be a non-empty string when provided.';
     }
 
-    const updated = ctx.todo.pinTodo(
-      id,
-      hash.trim(),
-      pinned,
-      preventStop?.trim() || undefined,
-    );
+    const updated = ctx.todo.pinTodo(id, hash.trim(), pinned, preventStop?.trim() || undefined);
 
     if (!updated) {
       const items = ctx.todo.getItems();
@@ -83,16 +78,11 @@ export const todoPinningTool: ToolDefinition = {
 
     const action = pinned ? 'pinned' : 'unpinned';
     const guardInfo = updated.preventStop ? `\n  preventStop: ${updated.preventStop}` : '';
-    ctx.core.brief(
-      'info',
-      'todo_pinning',
-      ctx.todo.printTodoList(),
-      `${action} #${updated.id}: ${updated.name}`,
-    );
+    ctx.core.brief('info', 'todo_pinning', ctx.todo.printTodoList(), `${action} #${updated.id}: ${updated.name}`);
 
     return `${action === 'pinned' ? 'Pinned' : 'Unpinned'} todo #${updated.id}
   name: ${updated.name}
   pinned: ${updated.pinned}${guardInfo}
   hash: ${updated.hash}`;
-  },
+  }
 };

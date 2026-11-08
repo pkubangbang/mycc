@@ -27,19 +27,40 @@ export function extractOpsSource(content) {
   // from the '[' after '=', find the matching ']' respecting nested brackets and strings
   const bracketStart = block.indexOf('[', idLine);
   if (bracketStart === -1) throw new L1Error('no "[" after "const ops ="');
-  let depth = 0, inStr = false, strCh = '', escaped = false;
+  let depth = 0,
+    inStr = false,
+    strCh = '',
+    escaped = false;
   let end = -1;
   for (let i = bracketStart; i < block.length; i++) {
     const ch = block[i];
     if (inStr) {
-      if (escaped) { escaped = false; continue; }
-      if (ch === '\\') { escaped = true; continue; }
-      if (ch === strCh) { inStr = false; }
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (ch === strCh) {
+        inStr = false;
+      }
       continue;
     }
-    if (ch === '"' || ch === "'" || ch === '`') { inStr = true; strCh = ch; continue; }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      inStr = true;
+      strCh = ch;
+      continue;
+    }
     if (ch === '[') depth++;
-    else if (ch === ']') { depth--; if (depth === 0) { end = i; break; } }
+    else if (ch === ']') {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
   }
   if (end === -1) throw new L1Error('no matching "]" for ops array');
   return block.slice(bracketStart, end + 1); // includes [ and ]

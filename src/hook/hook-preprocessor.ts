@@ -23,9 +23,9 @@ function isDestructiveCommand(command: string): boolean {
     /truncate\s+table/i,
     /delete\s+from/i,
     /\bsudo\s+rm\b/,
-    />\s*\/dev\/(sda|hda|nvme)/,
+    />\s*\/dev\/(sda|hda|nvme)/
   ];
-  return destructivePatterns.some(p => p.test(command));
+  return destructivePatterns.some((p) => p.test(command));
 }
 
 /**
@@ -74,5 +74,5 @@ export function augmentCall(call: ToolCall): AugmentedToolCall {
  * Augment an array of tool calls with metadata for hook evaluation
  */
 export function augmentToolCalls(calls: ToolCall[]): AugmentedToolCall[] {
-  return calls.map(call => augmentCall(call));
+  return calls.map((call) => augmentCall(call));
 }

@@ -41,7 +41,7 @@ export class ChildTeam implements TeamModule {
         `Reason/Prompt:`,
         prompt,
         ``,
-        `Please decide if this is appropriate.`,
+        `Please decide if this is appropriate.`
       ].join('\n')
     );
     return `Suggestion sent to lead via mail. Lead will evaluate and decide.`;

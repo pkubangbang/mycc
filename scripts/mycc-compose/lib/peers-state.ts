@@ -20,7 +20,7 @@ import {
   resolveLivePeer,
   lastBrief,
   FRESHNESS_WINDOW_MS,
-  IDENTITY_FILE,
+  IDENTITY_FILE
 } from './discovery.js';
 import type { IdentityEntry } from './discovery.js';
 import path from 'path';
@@ -35,7 +35,11 @@ import type { Peer, PeerStatusRow } from './peers-types.js';
 /** Compare two workdirs, tolerant of separators and trailing slash. */
 export function sameWorkdir(a: unknown, b: unknown): boolean {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
-  const norm = (p: string) => path.resolve(p).replace(/[\\/]+$/, '').toLowerCase();
+  const norm = (p: string) =>
+    path
+      .resolve(p)
+      .replace(/[\\/]+$/, '')
+      .toLowerCase();
   return norm(a) === norm(b);
 }
 
@@ -150,7 +154,7 @@ export function repairIdentity(peers: Peer[]): number {
       // Publish the durable NAME so a backfilled entry is resolvable by name —
       // without it the next `up` could not re-find this peer (resolveLivePeer
       // scans by name), turning every repair into a phantom it must re-mint.
-      ...((peer.identityName ?? peer.name) ? { name: peer.identityName ?? peer.name } : {}),
+      ...((peer.identityName ?? peer.name) ? { name: peer.identityName ?? peer.name } : {})
     });
   }
   if (pending.size === 0) return 0;
@@ -208,7 +212,7 @@ export function repairIdentity(peers: Peer[]): number {
     if (!(err instanceof FileLockTimeoutError)) throw err;
     console.warn(
       `[mycc-compose] WARNING: could not acquire the identity.json lock (${err.message}); ` +
-      'identity repair skipped to avoid an unlocked whole-map write. Re-run up to retry.',
+        'identity repair skipped to avoid an unlocked whole-map write. Re-run up to retry.'
     );
     return 0;
   }
@@ -302,7 +306,7 @@ export function cullStoppedPeers(peers: Peer[]): number {
     if (!(err instanceof FileLockTimeoutError)) throw err;
     console.warn(
       `[mycc-compose] WARNING: could not acquire the identity.json lock (${err.message}); ` +
-      'identity culling skipped to avoid deleting a concurrent registration. Re-run down to retry.',
+        'identity culling skipped to avoid deleting a concurrent registration. Re-run down to retry.'
     );
     return 0;
   }
@@ -335,11 +339,7 @@ export function cullStoppedPeers(peers: Peer[]): number {
  * @returns true when the holder is demonstrably gone within `timeoutMs`; false
  *   on timeout (the caller must fail the restart explicitly, never launch).
  */
-export async function waitForPeerGone(
-  peer: Peer,
-  timeoutMs: number,
-  pollMs = 100,
-): Promise<boolean> {
+export async function waitForPeerGone(peer: Peer, timeoutMs: number, pollMs = 100): Promise<boolean> {
   // Capture the holder's sid BEFORE the wait: once the old process exits, the
   // name resolves to null and we would no longer know WHICH heartbeat to probe.
   const sid = (peer.sessionId as string | null | undefined) ?? resolveLivePeer(peer) ?? null;
@@ -355,8 +355,7 @@ export async function waitForPeerGone(
     // for this release question: an ABSENT entry means the holder already let
     // go, so we must NOT keep waiting for positive death evidence that can
     // never arrive once the entry is gone.
-    const holderDead =
-      sid === null || peerPid(sid) === undefined || isSessionHolderDead(sid);
+    const holderDead = sid === null || peerPid(sid) === undefined || isSessionHolderDead(sid);
     if (!nameLive && holderDead) return true;
     if (Date.now() >= deadline) return false;
     await sleep(pollMs);
@@ -383,6 +382,6 @@ export function peerStatus(peer: Peer): PeerStatusRow {
     // pid), not merely a not-yet-expired heartbeat file.
     live: isPeerRunning({ sessionId: sid, workdir: peer.workdir }),
     matching: findMatchingLiveEntry(peer) !== null,
-    lastBrief: sid ? lastBrief(sid) : null,
+    lastBrief: sid ? lastBrief(sid) : null
   };
 }

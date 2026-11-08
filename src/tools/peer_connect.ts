@@ -42,16 +42,20 @@ export const peerConnectTool: ToolDefinition = {
         type: 'string',
         description:
           'The remote instance\'s serve URL: "host:port", "http://host:port", or "ws://host:port" (no path). ' +
-          'The remote must be running its web UI. Set MYCC_WIRE_TOKEN on both instances for the optional auth gate.',
-      },
+          'The remote must be running its web UI. Set MYCC_WIRE_TOKEN on both instances for the optional auth gate.'
+      }
     },
-    required: ['url'],
+    required: ['url']
   },
   scope: ['main'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const url = typeof args.url === 'string' ? args.url : '';
     if (!url) {
-      ctx.core.brief('error', 'peer_connect', 'url is required — pass the remote instance\'s serve base (e.g. "192.168.1.20:3191").');
+      ctx.core.brief(
+        'error',
+        'peer_connect',
+        'url is required — pass the remote instance\'s serve base (e.g. "192.168.1.20:3191").'
+      );
       return 'Error: url is required — the remote instance\'s serve base (e.g. "192.168.1.20:3191").';
     }
     ctx.core.brief('info', 'peer_connect', `Dialing remote peer ${chalk.cyan(url)} …`);
@@ -67,5 +71,5 @@ export const peerConnectTool: ToolDefinition = {
       ctx.core.brief('error', 'peer_connect', chalk.red(`failed unexpectedly: ${(err as Error).message}`));
       return `Error: peer_connect failed unexpectedly: ${(err as Error).message}`;
     }
-  },
+  }
 };

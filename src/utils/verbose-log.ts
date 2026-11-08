@@ -81,8 +81,10 @@ export function installVerboseLog(role: 'coordinator' | 'lead'): string | null {
   // writeChunk's one-time failure warning must write to the real stderr, not
   // the tee wrapper we install below — otherwise the warning would be fed
   // right back into the broken fd and be swallowed.
-  const realStderrWrite = process.stderr.write.bind(process.stderr) as
-    (chunk: string | Uint8Array, cb?: (err?: Error | null) => void) => boolean;
+  const realStderrWrite = process.stderr.write.bind(process.stderr) as (
+    chunk: string | Uint8Array,
+    cb?: (err?: Error | null) => void
+  ) => boolean;
 
   let verboseWriteFailed = false;
 
@@ -100,19 +102,16 @@ export function installVerboseLog(role: 'coordinator' | 'lead'): string | null {
       // unambiguously selected (the Buffer/ArrayBufferView overload cannot
       // accept a plain string, and TS rejects the union). Decoding a Buffer
       // to utf-8 is lossless for the log's text content.
-      const data =
-        typeof chunk === 'string'
-          ? chunk
-          : Buffer.isBuffer(chunk)
-            ? chunk.toString('utf-8')
-            : String(chunk);
+      const data = typeof chunk === 'string' ? chunk : Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : String(chunk);
       fs.writeSync(fd, data);
     } catch (err) {
       // Don't crash the process, but warn ONCE so disk-full / permission /
       // closed-fd errors are not silently lost.
       verboseWriteFailed = true;
       try {
-        realStderrWrite(`[verbose-log] Write to ${logPath} failed, logging disabled: ${err instanceof Error ? err.message : String(err)}\n`);
+        realStderrWrite(
+          `[verbose-log] Write to ${logPath} failed, logging disabled: ${err instanceof Error ? err.message : String(err)}\n`
+        );
       } catch {
         // last-resort: even the warning failed; nothing more we can do
       }
@@ -122,16 +121,20 @@ export function installVerboseLog(role: 'coordinator' | 'lead'): string | null {
   // Intercept stdout. We wrap process.stdout.write so every byte written
   // (console.log, console.error, direct process.stdout.write) is mirrored
   // to the log file before reaching the real stream.
-  const origStdoutWrite = process.stdout.write.bind(process.stdout) as
-    (chunk: string | Uint8Array, cb?: (err?: Error | null) => void) => boolean;
+  const origStdoutWrite = process.stdout.write.bind(process.stdout) as (
+    chunk: string | Uint8Array,
+    cb?: (err?: Error | null) => void
+  ) => boolean;
   (process.stdout.write as typeof process.stdout.write) = ((chunk: unknown, ...rest: unknown[]) => {
     writeChunk(chunk);
     return origStdoutWrite(chunk as string | Uint8Array, rest[0] as ((err?: Error | null) => void) | undefined);
   }) as typeof process.stdout.write;
 
   // Intercept stderr
-  const origStderrWrite = process.stderr.write.bind(process.stderr) as
-    (chunk: string | Uint8Array, cb?: (err?: Error | null) => void) => boolean;
+  const origStderrWrite = process.stderr.write.bind(process.stderr) as (
+    chunk: string | Uint8Array,
+    cb?: (err?: Error | null) => void
+  ) => boolean;
   (process.stderr.write as typeof process.stderr.write) = ((chunk: unknown, ...rest: unknown[]) => {
     writeChunk(chunk);
     return origStderrWrite(chunk as string | Uint8Array, rest[0] as ((err?: Error | null) => void) | undefined);
@@ -144,7 +147,7 @@ export function installVerboseLog(role: 'coordinator' | 'lead'): string | null {
     writeChunk(`\n[uncaughtException] ${err.stack || err.message || String(err)}\n`);
   });
   process.on('unhandledRejection', (reason) => {
-    const msg = reason instanceof Error ? (reason.stack || reason.message) : String(reason);
+    const msg = reason instanceof Error ? reason.stack || reason.message : String(reason);
     writeChunk(`\n[unhandledRejection] ${msg}\n`);
   });
 

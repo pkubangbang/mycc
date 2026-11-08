@@ -50,7 +50,7 @@ let wrapUpState: WrapUpState = {
   content: null,
   completedAt: null,
   shown: false,
-  triologue: null,
+  triologue: null
 };
 
 /**
@@ -59,12 +59,10 @@ let wrapUpState: WrapUpState = {
  * Injected — this module stays framework-free and importable from tests that
  * mock config/agent-io.
  */
-let wrapUpReporter:
-  | ((level: 'info' | 'warn' | 'error', tool: string, message: string) => void)
-  | null = null;
+let wrapUpReporter: ((level: 'info' | 'warn' | 'error', tool: string, message: string) => void) | null = null;
 
 export function setWrapUpStateReporter(
-  fn: ((level: 'info' | 'warn' | 'error', tool: string, message: string) => void) | null,
+  fn: ((level: 'info' | 'warn' | 'error', tool: string, message: string) => void) | null
 ): void {
   wrapUpReporter = fn;
 }
@@ -109,7 +107,7 @@ export function clearWrapUp(): void {
     content: null,
     completedAt: null,
     shown: false,
-    triologue: null,
+    triologue: null
   };
 }
 
@@ -132,7 +130,7 @@ export function abortWrapUpCapsule(reason: string): void {
     content: null,
     completedAt: null,
     shown: false,
-    triologue: null,
+    triologue: null
   };
 }
 
@@ -148,7 +146,7 @@ export function beginWrapUpState(promise: Promise<string>, triologue: Triologue)
     content: null,
     completedAt: null,
     shown: false,
-    triologue,
+    triologue
   };
 }
 

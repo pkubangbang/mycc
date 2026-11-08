@@ -32,7 +32,12 @@ export function rewriteFile(filePath, content, grid, errors, sections) {
 
   const before = lines.slice(0, resultStart).join('\n');
   const after = lines.slice(cutEnd).join('\n');
-  let newContent = before + (before.endsWith('\n') || before.length === 0 ? '' : '\n') + replacement + (after.startsWith('\n') ? '' : '\n') + after;
+  let newContent =
+    before +
+    (before.endsWith('\n') || before.length === 0 ? '' : '\n') +
+    replacement +
+    (after.startsWith('\n') ? '' : '\n') +
+    after;
   // normalize: ensure single trailing newline
   newContent = newContent.replace(/\n+$/, '\n');
 

@@ -137,11 +137,17 @@ function spawnForShell(cwd: string, command: string): { proc: ChildProcess; isWi
       // PYTHONUTF8=1 forces Python's UTF-8 mode (3.7+, also fixes -c arg
       // decoding); PYTHONIOENCODING=utf-8 forces stdio encoding for older
       // interpreters. Mirrors the bg.ts fix (commit e492e35).
-      proc: spawn(shellInfo.path!, [
-        '-NoProfile', '-NonInteractive', '-EncodedCommand',
-        Buffer.from(effectiveCommand, 'utf16le').toString('base64'),
-      ], { cwd, windowsHide: true, env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' } }),
-      isWin: true,
+      proc: spawn(
+        shellInfo.path!,
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-EncodedCommand',
+          Buffer.from(effectiveCommand, 'utf16le').toString('base64')
+        ],
+        { cwd, windowsHide: true, env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' } }
+      ),
+      isWin: true
     };
   }
 
@@ -157,18 +163,24 @@ function spawnForShell(cwd: string, command: string): { proc: ChildProcess; isWi
       // Native exes bypass the preamble's UTF-8 settings (see pwsh7 branch
       // comment). PYTHONUTF8/PYTHONIOENCODING force UTF-8 stdio for Python
       // and other native exes that respect these vars.
-      proc: spawn(shellInfo.path!, [
-        '-NoProfile', '-NonInteractive', '-EncodedCommand',
-        Buffer.from(effectiveCommand, 'utf16le').toString('base64'),
-      ], { cwd, windowsHide: true, env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' } }),
-      isWin: true,
+      proc: spawn(
+        shellInfo.path!,
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-EncodedCommand',
+          Buffer.from(effectiveCommand, 'utf16le').toString('base64')
+        ],
+        { cwd, windowsHide: true, env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' } }
+      ),
+      isWin: true
     };
   }
 
   if (shellInfo.shell === 'bash' || shellInfo.shell === 'zsh') {
     return {
       proc: spawn('bash', ['-c', command], { cwd, detached: true }),
-      isWin: false,
+      isWin: false
     };
   }
 
@@ -202,7 +214,7 @@ function killProcessTree(pid: number, isWin: boolean): void {
  */
 export function runExec(
   options: ExecOptions,
-  onNeglected: (cb: () => void) => void | (() => void),
+  onNeglected: (cb: () => void) => void | (() => void)
 ): Promise<ExecResult> {
   const { cwd, command, timeout } = options;
 
@@ -276,7 +288,7 @@ export function runExec(
           stderr: stderrBuffer.getString(),
           interrupted: false,
           exitCode: 137,
-          timedOut: true,
+          timedOut: true
         });
       }
     }, timeoutMs);
@@ -294,7 +306,7 @@ export function runExec(
           stderr: stderrBuffer.getString(),
           interrupted: true,
           exitCode: -1, // Unknown - subprocess still running
-          timedOut: false,
+          timedOut: false
         });
       }
     });
@@ -321,7 +333,7 @@ export function runExec(
           interrupted: false,
           // Prefer the real exit code; fall back to 'close'-reported code.
           exitCode: exitCodeFromExit ?? 1,
-          timedOut: false,
+          timedOut: false
         });
       }
     });
@@ -338,7 +350,7 @@ export function runExec(
           stderr: err.message,
           interrupted: false,
           exitCode: 1,
-          timedOut: false,
+          timedOut: false
         });
       }
     });

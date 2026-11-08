@@ -64,7 +64,7 @@ export async function runSetup(): Promise<void> {
   } else {
     console.log(chalk.cyan('\nNo existing configuration found.\n'));
     console.log(chalk.dim('  This appears to be a fresh installation.'));
-    console.log(chalk.dim('  Let\'s configure your environment.\n'));
+    console.log(chalk.dim("  Let's configure your environment.\n"));
   }
 
   // Step 2: Run the wizard (includes provider selection)
@@ -126,9 +126,7 @@ export async function runSetup(): Promise<void> {
   // Provider-specific next steps
   // Resolve the host from what the user typed, falling back to the written config
   // and finally the default — pressing Enter on OLLAMA_HOST leaves `config` without it.
-  const ollamaHost = (
-    config['OLLAMA_HOST'] || mergedConfig['OLLAMA_HOST'] || 'http://127.0.0.1:11434'
-  ).toLowerCase();
+  const ollamaHost = (config['OLLAMA_HOST'] || mergedConfig['OLLAMA_HOST'] || 'http://127.0.0.1:11434').toLowerCase();
   const isLocalOllama = ollamaHost.includes('127.0.0.1') || ollamaHost.includes('localhost');
 
   if (provider === 'ollama' && isLocalOllama) {

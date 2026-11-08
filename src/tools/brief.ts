@@ -20,22 +20,24 @@ import { BRIEF_OK } from '../loop/triologue/recap-note.js';
  */
 export const briefTool: ToolDefinition = {
   name: 'brief',
-  description: 'Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence score (0-10) indicating your certainty about the current state. State the conclusion first, then the evidence.',
+  description:
+    'Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence score (0-10) indicating your certainty about the current state. State the conclusion first, then the evidence.',
   input_schema: {
     type: 'object',
     properties: {
       message: {
         type: 'string',
-        description: 'The status message to display to the user',
+        description: 'The status message to display to the user'
       },
       confidence: {
         type: 'number',
-        description: 'Your confidence level (0-10): 10 = completed; 8-9 = confident progress; 5-7 = moderate certainty; 0-4 = uncertain or blocked.',
+        description:
+          'Your confidence level (0-10): 10 = completed; 8-9 = confident progress; 5-7 = moderate certainty; 0-4 = uncertain or blocked.',
         minimum: 0,
-        maximum: 10,
-      },
+        maximum: 10
+      }
     },
-    required: ['message', 'confidence'],
+    required: ['message', 'confidence']
   },
   scope: ['main', 'child'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
@@ -47,8 +49,10 @@ export const briefTool: ToolDefinition = {
     }
 
     if (typeof confidence !== 'number' || confidence < 0 || confidence > 10) {
-      return 'Error: confidence parameter is required and must be a number between 0 and 10. ' +
-        'Provide all required args in one call, e.g. brief(message="<status>", confidence=7).';
+      return (
+        'Error: confidence parameter is required and must be a number between 0 and 10. ' +
+        'Provide all required args in one call, e.g. brief(message="<status>", confidence=7).'
+      );
     }
 
     // Update confusion index based on confidence
@@ -78,5 +82,5 @@ export const briefTool: ToolDefinition = {
     // by the TOOL stage in plan mode, never here: the tool stays a reporter,
     // the loop owns the enhancement.
     return `${BRIEF_OK}.`;
-  },
+  }
 };

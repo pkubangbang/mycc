@@ -130,7 +130,11 @@ export function registerServeHubFactory(getInstance: () => ServeHubLike): void {
     if (hub) {
       const pending = readyCallbacks.splice(0, readyCallbacks.length);
       for (const cb of pending) {
-        try { cb(hub); } catch { /* best-effort: a bad provider must not break hub init */ }
+        try {
+          cb(hub);
+        } catch {
+          /* best-effort: a bad provider must not break hub init */
+        }
       }
     }
   }
@@ -163,7 +167,10 @@ export function registerServeHubFactory(getInstance: () => ServeHubLike): void {
  */
 export function onServeHubReady(cb: (hub: ServeHubLike) => void): void {
   const hub = tryGetServeHub();
-  if (hub) { cb(hub); return; }
+  if (hub) {
+    cb(hub);
+    return;
+  }
   readyCallbacks.push(cb);
 }
 
@@ -189,8 +196,8 @@ export function getServeHub(): ServeHubLike {
   if (!hub) {
     throw new Error(
       'ServeHub is not available: the serve layer has not been loaded. ' +
-      'This accessor lives on a serve-only path — use ensureServeHub() to ' +
-      'materialize the hub first, or tryGetServeHub() for a best-effort read.',
+        'This accessor lives on a serve-only path — use ensureServeHub() to ' +
+        'materialize the hub first, or tryGetServeHub() for a best-effort read.'
     );
   }
   return hub;

@@ -35,10 +35,10 @@ export type SkillLayer = 'user' | 'project' | 'built-in';
  */
 interface ParsedSkillPath {
   layer: SkillLayer;
-  skillName: string;      // The skill name (from frontmatter, not filename)
-  filename: string;       // The file name: "skill.md" or "SKILL.md"
-  relativePath: string;   // Full relative path from layer base dir
-  absolutePath: string;   // Absolute path to the skill file
+  skillName: string; // The skill name (from frontmatter, not filename)
+  filename: string; // The file name: "skill.md" or "SKILL.md"
+  relativePath: string; // Full relative path from layer base dir
+  absolutePath: string; // Absolute path to the skill file
 }
 
 // Cache for package root (computed once)
@@ -135,7 +135,7 @@ function parseSkillPath(skillPath: string): ParsedSkillPath | null {
     skillName,
     filename,
     relativePath,
-    absolutePath,
+    absolutePath
   };
 }
 

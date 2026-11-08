@@ -116,7 +116,9 @@ function fixOrphanedToolCalls(messages: Message[]): Message[] {
 
   // Found orphaned tool calls - inject synthetic results
   const fixed = [...messages];
-  console.log(chalk.yellow(`[restoration] Found ${pendingCalls.size} orphaned tool call(s) - adding interrupt markers`));
+  console.log(
+    chalk.yellow(`[restoration] Found ${pendingCalls.size} orphaned tool call(s) - adding interrupt markers`)
+  );
 
   for (const [id, tc] of pendingCalls) {
     const toolName = tc.function.name;
@@ -129,14 +131,15 @@ function fixOrphanedToolCalls(messages: Message[]): Message[] {
       role: 'tool',
       tool_name: toolName,
       tool_call_id: id,
-      content: `[INTERRUPTED] This tool call was interrupted before completion. The session was likely terminated during execution. Consider retrying if needed.`,
+      content: `[INTERRUPTED] This tool call was interrupted before completion. The session was likely terminated during execution. Consider retrying if needed.`
     });
   }
 
   // Add assistant acknowledgment
   fixed.push({
     role: 'assistant',
-    content: 'I was interrupted during tool execution. The interrupted tool call(s) have been marked. How would you like to proceed?',
+    content:
+      'I was interrupted during tool execution. The interrupted tool call(s) have been marked. How would you like to proceed?'
   });
 
   return fixed;
@@ -228,7 +231,7 @@ function messagesToText(messages: Message[]): string {
   return minifyMessages(messages, {
     maxContentLength: 1000,
     maxArgsLength: 300,
-    truncateToolOutput: true,
+    truncateToolOutput: true
   });
 }
 
@@ -245,16 +248,11 @@ const SUMMARY_PROMPT_PREFIX =
  * Optionally prepended with prior-context (the previous batch's summary,
  * for iterative fold-forward).
  */
-async function summarizeText(
-  chunkText: string,
-  priorContext?: string,
-): Promise<string> {
-  const text = priorContext
-    ? `${priorContext}\n\n--- Continued ---\n\n${chunkText}`
-    : chunkText;
+async function summarizeText(chunkText: string, priorContext?: string): Promise<string> {
+  const text = priorContext ? `${priorContext}\n\n--- Continued ---\n\n${chunkText}` : chunkText;
   const response = await retryChat({
     model: MODEL,
-    messages: [{ role: 'user', content: `${SUMMARY_PROMPT_PREFIX}${text}` }],
+    messages: [{ role: 'user', content: `${SUMMARY_PROMPT_PREFIX}${text}` }]
   });
   return response.message.content || '(no summary)';
 }
@@ -279,7 +277,7 @@ async function summarizeTextIterative(text: string): Promise<SummaryPair> {
   if (!text.trim()) {
     return [
       { role: 'user', content: '[Empty conversation]' },
-      { role: 'assistant', content: 'Understood.' },
+      { role: 'assistant', content: 'Understood.' }
     ];
   }
 
@@ -288,14 +286,14 @@ async function summarizeTextIterative(text: string): Promise<SummaryPair> {
     const summary = await summarizeText(text);
     return [
       { role: 'user', content: `[Context from previous conversation]\n\n${summary}` },
-      { role: 'assistant', content: 'Understood. I have the context from the summary.' },
+      { role: 'assistant', content: 'Understood. I have the context from the summary.' }
     ];
   }
 
   // Split body at ux| boundaries, respecting token limit per batch.
   const lines = text.split('\n');
-  const headerLines = lines.filter(l => l.startsWith('>'));
-  const bodyLines = lines.filter(l => !l.startsWith('>'));
+  const headerLines = lines.filter((l) => l.startsWith('>'));
+  const bodyLines = lines.filter((l) => !l.startsWith('>'));
   const headerStr = headerLines.join('\n');
   const threshold = getTokenThreshold();
 
@@ -304,8 +302,7 @@ async function summarizeTextIterative(text: string): Promise<SummaryPair> {
   let currentTokens = 0;
   for (const line of bodyLines) {
     const lineTokens = estimateTextTokens(line);
-    if (line.startsWith('ux|') && current.length > 0 &&
-        currentTokens + lineTokens > threshold) {
+    if (line.startsWith('ux|') && current.length > 0 && currentTokens + lineTokens > threshold) {
       batches.push(current.join('\n'));
       current = [line];
       currentTokens = lineTokens;
@@ -325,7 +322,7 @@ async function summarizeTextIterative(text: string): Promise<SummaryPair> {
 
   return [
     { role: 'user', content: `[Context from previous conversation]\n\n${priorSummary}` },
-    { role: 'assistant', content: 'Understood. I have the context from the summary.' },
+    { role: 'assistant', content: 'Understood. I have the context from the summary.' }
   ];
 }
 
@@ -359,7 +356,9 @@ async function summarizeChildTriologue(messages: Message[]): Promise<string> {
  */
 async function summarizeChildByPath(name: string, triologuePath: string): Promise<string> {
   if (!fs.existsSync(triologuePath)) {
-    console.warn(chalk.yellow(`[restoration] Child triologue not found for ${name}, injecting placeholder: ${triologuePath}`));
+    console.warn(
+      chalk.yellow(`[restoration] Child triologue not found for ${name}, injecting placeholder: ${triologuePath}`)
+    );
     return `[${name} summary]\n[Teammate triologue file was missing or unreadable. No conversation summary available.]`;
   }
   const triologue = readTriologue(triologuePath);
@@ -431,7 +430,7 @@ async function summarizeLeadTriologue(messages: Message[]) {
   if (messages.length === 0) {
     return [
       { role: 'user', content: '[Empty conversation]' },
-      { role: 'assistant', content: 'OK' },
+      { role: 'assistant', content: 'OK' }
     ] as SummaryPair;
   }
 
@@ -460,7 +459,6 @@ async function summarizeLeadTriologue(messages: Message[]) {
   // 4. Iteratively summarize the woven text with fold-forward.
   return summarizeTextIterative(woven);
 }
-
 
 /**
  * Generate DOSQ markdown content from a single summary pair.
@@ -511,7 +509,7 @@ function generateDosq(session: Session, pair: SummaryPair): string {
     'Teammates from the source appear only as context narratives below; they do',
     'NOT carry over as live processes in this new session.',
     '-->',
-    '',
+    ''
   ];
 
   return lines.join('\n');
@@ -584,10 +582,16 @@ export async function prepareRestoration(session: Session): Promise<{ pair: Summ
   // empty-context pair instead of throwing — the user can still continue.
   let combined: SummaryPair;
   if (!fs.existsSync(session.lead_triologue)) {
-    console.warn(chalk.yellow(`[restoration] Lead triologue not found, restoring with empty context: ${session.lead_triologue}`));
+    console.warn(
+      chalk.yellow(`[restoration] Lead triologue not found, restoring with empty context: ${session.lead_triologue}`)
+    );
     combined = [
-      { role: 'user', content: '[Context from previous conversation]\n\nThe lead triologue file was missing or unreadable. No prior context could be restored.' },
-      { role: 'assistant', content: 'Understood. Starting fresh since the prior session record is unavailable.' },
+      {
+        role: 'user',
+        content:
+          '[Context from previous conversation]\n\nThe lead triologue file was missing or unreadable. No prior context could be restored.'
+      },
+      { role: 'assistant', content: 'Understood. Starting fresh since the prior session record is unavailable.' }
     ];
   } else {
     // Read lead triologue, fix orphaned tool calls. Child summaries are

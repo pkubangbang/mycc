@@ -35,7 +35,14 @@ import type { CrossroadCardWire } from '../loop/crossroad-card.js';
  * types erase at compile time and cost nothing at runtime.
  */
 type OutputMirroringHub = {
-  broadcast(type: string, content: string, label?: string, detail?: string, synthetic?: boolean, crossroad?: CrossroadCardWire): void;
+  broadcast(
+    type: string,
+    content: string,
+    label?: string,
+    detail?: string,
+    synthetic?: boolean,
+    crossroad?: CrossroadCardWire
+  ): void;
 };
 
 type ActivateHub = OutputMirroringHub & {
@@ -59,7 +66,7 @@ type ActivateHub = OutputMirroringHub & {
  */
 export function wireOutputMirroring(hub: OutputMirroringHub): void {
   agentIO.setOutputCallback((method, args, label, detail, synthetic, crossroad) => {
-    const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+    const text = args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
     hub.broadcast(method, text, label, detail, synthetic, crossroad);
   });
   setResultCallback((content) => hub.broadcast('result', content, 'assistant'));
@@ -131,7 +138,11 @@ export async function activateServe(port: number, host?: string | null): Promise
     console.log(chalk.yellow(`  ⚠  Windows Firewall may block access from other devices.`));
     console.log(chalk.yellow(`     If the Web UI is unreachable from another machine, run this once`));
     console.log(chalk.yellow(`     in an elevated PowerShell (Run as Administrator):`));
-    console.log(chalk.gray(`       netsh advfirewall firewall add rule name="mycc serve" dir=in action=allow protocol=TCP localport=${port}`));
+    console.log(
+      chalk.gray(
+        `       netsh advfirewall firewall add rule name="mycc serve" dir=in action=allow protocol=TCP localport=${port}`
+      )
+    );
   }
 
   console.log(chalk.gray('Terminal input disabled. Press ESC to return to CLI, or use the exit button in the web UI.'));

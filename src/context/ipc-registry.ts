@@ -78,5 +78,4 @@ export class IpcRegistry {
       sendResponse('error', false, undefined, errorMessage);
     }
   }
-
 }

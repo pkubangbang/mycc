@@ -162,7 +162,7 @@ function withIdentityLock<T>(fn: () => T): T {
     if (!(err instanceof FileLockTimeoutError)) throw err;
     console.warn(
       `[identity] WARNING: could not acquire the identity.json lock (${err.message}); ` +
-      'proceeding WITHOUT cross-process exclusion — a concurrent register/unregister may be lost.',
+        'proceeding WITHOUT cross-process exclusion — a concurrent register/unregister may be lost.'
     );
     return fn();
   }
@@ -301,11 +301,12 @@ function pruneStaleEntries(map: Record<string, IdentityEntry>, selfSessionId: st
     const pid = heartbeatPid ?? entryPid;
     if (typeof pid !== 'number') continue; // no positive process evidence → preserve
 
-    const evidenceTime = heartbeatPid !== undefined
-      ? heartbeatMtimeMs(getHeartbeatFile(sid))
-      : typeof entry?.startedAt === 'number'
-        ? entry.startedAt
-        : 0;
+    const evidenceTime =
+      heartbeatPid !== undefined
+        ? heartbeatMtimeMs(getHeartbeatFile(sid))
+        : typeof entry?.startedAt === 'number'
+          ? entry.startedAt
+          : 0;
     if (isOriginalHolderAlive(pid, evidenceTime)) continue;
 
     delete map[sid];
@@ -337,7 +338,7 @@ function readHeartbeatData(sessionId: string): HeartbeatData {
         heartbeats: ts as number[],
         briefs: Array.isArray(parsed.briefs) ? (parsed.briefs as BriefEntry[]) : [],
         pid,
-        ...(tombstone !== undefined ? { tombstone } : {}),
+        ...(tombstone !== undefined ? { tombstone } : {})
       };
     }
     // Current schema: { heartbeats: number[], briefs: BriefEntry[] }
@@ -346,7 +347,7 @@ function readHeartbeatData(sessionId: string): HeartbeatData {
       heartbeats: Array.isArray(hb) ? (hb as number[]) : [],
       briefs: Array.isArray(parsed.briefs) ? (parsed.briefs as BriefEntry[]) : [],
       pid,
-      ...(tombstone !== undefined ? { tombstone } : {}),
+      ...(tombstone !== undefined ? { tombstone } : {})
     };
   } catch {
     return { heartbeats: [], briefs: [] };
@@ -383,7 +384,7 @@ function writeHeartbeats(sessionId: string, heartbeats: number[], pid: number): 
     heartbeats,
     briefs: existing.briefs,
     pid,
-    ...(existing.tombstone !== undefined ? { tombstone: existing.tombstone } : {}),
+    ...(existing.tombstone !== undefined ? { tombstone: existing.tombstone } : {})
   };
   atomicWrite(getHeartbeatFile(sessionId), JSON.stringify(data, null, 2));
 }
@@ -399,7 +400,7 @@ function writeBrief(sessionId: string, entry: BriefEntry): void {
   const truncated: BriefEntry = {
     time: entry.time,
     content: truncateToTokens(entry.content, MAX_BRIEF_TOKENS),
-    confidence: entry.confidence,
+    confidence: entry.confidence
   };
   data.briefs.push(truncated);
   data.briefs = data.briefs.slice(-MAX_BRIEFS);
@@ -407,7 +408,7 @@ function writeBrief(sessionId: string, entry: BriefEntry): void {
   // explicit spread below documents the invariant and guards a future refactor.
   atomicWrite(
     getHeartbeatFile(sessionId),
-    JSON.stringify({ ...data, ...(data.tombstone !== undefined ? { tombstone: data.tombstone } : {}) }, null, 2),
+    JSON.stringify({ ...data, ...(data.tombstone !== undefined ? { tombstone: data.tombstone } : {}) }, null, 2)
   );
 }
 
@@ -436,7 +437,7 @@ export function writeTombstone(sessionId: string, when: number = Date.now()): bo
       heartbeats: existing.heartbeats,
       briefs: existing.briefs,
       ...(existing.pid !== undefined ? { pid: existing.pid } : {}),
-      tombstone: when,
+      tombstone: when
     };
     atomicWrite(getHeartbeatFile(sessionId), JSON.stringify(data, null, 2));
     return true;
@@ -508,20 +509,19 @@ export class IdentityManager {
       const entryPid = typeof entry.pid === 'number' ? entry.pid : undefined;
       if (beatPid !== undefined && entryPid !== undefined && beatPid !== entryPid) {
         throw new Error(
-          `[identity] refusing to guess process ownership for peer name "${name}" (session ${sid}: heartbeat PID and identity PID differ)`,
+          `[identity] refusing to guess process ownership for peer name "${name}" (session ${sid}: heartbeat PID and identity PID differ)`
         );
       }
       const pid = beatPid ?? entryPid;
       // A stale beat means unhealthy, not unowned. Only positive evidence the
       // original process is gone frees its durable name. Missing PID evidence
       // fails closed, so launch/retry is an explicit operator decision.
-      if (typeof pid === 'number' &&
-          !isOriginalHolderAlive(pid, heartbeatMtimeMs(getHeartbeatFile(sid)))) {
+      if (typeof pid === 'number' && !isOriginalHolderAlive(pid, heartbeatMtimeMs(getHeartbeatFile(sid)))) {
         continue;
       }
       throw new Error(
         `[identity] refusing to start: peer name "${name}" is already held or its release cannot be proven ` +
-        `(session ${sid}, pid ${pid ?? 'unknown'}). Inspect the holder, stop it, then retry.`,
+          `(session ${sid}, pid ${pid ?? 'unknown'}). Inspect the holder, stop it, then retry.`
       );
     }
   }
@@ -572,7 +572,7 @@ export class IdentityManager {
           args: getLaunchArgs(),
           ...(this.name ? { name: this.name } : {}),
           ...(this.role ? { role: this.role } : {}),
-          ...(this.daemon ? { daemon: true } : {}),
+          ...(this.daemon ? { daemon: true } : {})
         };
         writeIdentityMap(map);
         // Re-read to verify our entry survived. Under the lock this always
@@ -716,7 +716,7 @@ export class IdentityManager {
       writeBrief(this.sessionId, {
         time: Date.now(),
         content: message,
-        confidence,
+        confidence
       });
     } catch {
       // Swallow — heartbeat/brief is best-effort.
@@ -825,9 +825,7 @@ export class IdentityManager {
 
     // 5. Compute localOldest
     const localTimestamps = this.getOwnHeartbeat();
-    const localOldest = localTimestamps.length > 0
-      ? localTimestamps[0]
-      : -Infinity;
+    const localOldest = localTimestamps.length > 0 ? localTimestamps[0] : -Infinity;
 
     // 6. Relative check: remote's latest beat must be newer than the local
     //    oldest beat, so a peer that died before the local instance started

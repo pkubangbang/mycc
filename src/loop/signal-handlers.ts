@@ -33,7 +33,10 @@ import type { Cron } from 'croner';
  *   a `tombstone` written by a stopper, and the reaction must run the SAME
  *   ordered teardown as SIGTERM.
  */
-export function registerSignalHandlers(ctx: AgentContext, daemonCronJob: Cron | null): (trigger: string) => Promise<void> {
+export function registerSignalHandlers(
+  ctx: AgentContext,
+  daemonCronJob: Cron | null
+): (trigger: string) => Promise<void> {
   /**
    * Graceful teardown shared by SIGTERM and the tombstone reaction (§6.7).
    * Ordered, each step best-effort, verbose-logged so "which step is stuck" is
@@ -52,7 +55,11 @@ export function registerSignalHandlers(ctx: AgentContext, daemonCronJob: Cron | 
     agentIO.verbose('signal', `${trigger}: killing background tasks`);
     await ctx.bg.killAllRunning(); // best-effort tree-kill of running tasks
     agentIO.verbose('signal', `${trigger}: stopping ServeHub (Vite + HTTP port)`);
-    try { await tryGetServeHub()?.stop(); } catch { /* stop() already best-effort internally */ }
+    try {
+      await tryGetServeHub()?.stop();
+    } catch {
+      /* stop() already best-effort internally */
+    }
     // Keep identity + heartbeat discoverable through the last potentially
     // blocking shutdown step above. If ServeHub teardown stalls, a subsequent
     // mycc-stop/down must still be able to resolve this process and request

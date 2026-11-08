@@ -21,7 +21,8 @@ export function renderCell(cell) {
 
 export function renderResultTable(grid) {
   // determine grid extents from all cells present
-  let maxCol = 0, maxRow = 0;
+  let maxCol = 0,
+    maxRow = 0;
   for (const id of grid.keys()) {
     const m = /^([A-Z]+)(\d+)$/.exec(id);
     if (!m) continue;
@@ -40,7 +41,7 @@ export function renderResultTable(grid) {
   // Render every row verbatim, row 1..maxRow, first column is the row number.
   // A header row (text in row 1) is just ordinary content displayed as-is.
   for (let r = 1; r <= maxRow; r++) {
-    const cells = cols.map(c => renderCell(grid.get(`${c}${r}`)));
+    const cells = cols.map((c) => renderCell(grid.get(`${c}${r}`)));
     rows.push(`| ${r} | ` + cells.join(' | ') + ' |');
   }
   return rows.join('\n') + '\n';

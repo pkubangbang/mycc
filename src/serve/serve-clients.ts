@@ -52,7 +52,11 @@ export class ClientRegistry {
   forEachOpen(fn: (ws: WebSocket) => void): void {
     for (const ws of this.clients) {
       if (ws.readyState === WebSocket.OPEN) {
-        try { fn(ws); } catch { /* ignore individual send errors */ }
+        try {
+          fn(ws);
+        } catch {
+          /* ignore individual send errors */
+        }
       }
     }
   }
@@ -80,7 +84,11 @@ export class ClientRegistry {
   /** Close every connection and clear the set (stop / suspend-resume). */
   closeAll(): void {
     for (const ws of this.clients) {
-      try { ws.close(); } catch { /* ignore */ }
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
     }
     this.clients.clear();
   }
@@ -88,7 +96,11 @@ export class ClientRegistry {
   /** Send a raw JSON string to a single client (no stripping, no logging). */
   sendTo(ws: WebSocket, payload: string): void {
     if (ws.readyState === WebSocket.OPEN) {
-      try { ws.send(payload); } catch { /* ignore */ }
+      try {
+        ws.send(payload);
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -112,7 +124,7 @@ export class ClientRegistry {
     detail?: string,
     synthetic?: boolean,
     log?: MessageLogHolder,
-    crossroad?: CrossroadCardWire,
+    crossroad?: CrossroadCardWire
   ): void {
     const cleanContent = stripAnsi(content);
     // detail also carries chalk
@@ -138,12 +150,15 @@ export class ClientRegistry {
       }
     }
     const payload = JSON.stringify({
-      type, content: cleanContent, label, timestamp,
+      type,
+      content: cleanContent,
+      label,
+      timestamp,
       detail: cleanDetail || undefined,
       synthetic: synthetic || undefined,
       // Structured crossroad card (see LogEntry.crossroad). Omitted when absent
       // so every other message keeps its exact wire shape.
-      crossroad,
+      crossroad
     });
     for (const ws of this.clients) {
       this.sendTo(ws, payload);
@@ -161,13 +176,7 @@ export class ClientRegistry {
    * logging here would duplicate them on /history (messageLog + transcript
    * merge).
    */
-  broadcastExcept(
-    sender: WebSocket,
-    type: string,
-    content: string,
-    label?: string,
-    detail?: string,
-  ): void {
+  broadcastExcept(sender: WebSocket, type: string, content: string, label?: string, detail?: string): void {
     const cleanContent = stripAnsi(content);
     const cleanDetail = detail ? stripAnsi(detail) : detail;
     const timestamp = Date.now();

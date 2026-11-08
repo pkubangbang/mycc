@@ -64,11 +64,7 @@ function isEntryPidAlive(ctx: AgentContext, entry: IdentityEntry): boolean {
  *   it on shutdown), or null when not in daemon mode or the skill declared
  *   no `service_cron` (passive daemon).
  */
-export function initDaemonMode(
-  ctx: AgentContext,
-  loader: SkillLookup,
-  triologue: Triologue,
-): Cron | null {
+export function initDaemonMode(ctx: AgentContext, loader: SkillLookup, triologue: Triologue): Cron | null {
   if (!shouldDaemon()) return null;
 
   // Force auto mode on (daemon is always headless auto).
@@ -143,7 +139,7 @@ export function initDaemonMode(
       'SYSTEM',
       `Daemon started with skill '${daemonSkill}'${hasCron ? '' : ' (no service_cron — no cron ticks)'}. ` +
         `Load it via skill_load(name="${daemonSkill}") and follow its workflow. ` +
-        `There is no terminal here — you are woken by ${wakeSources}.`,
+        `There is no terminal here — you are woken by ${wakeSources}.`
     );
 
     // Start cron timer if the skill declares service_cron.
@@ -164,7 +160,9 @@ export function initDaemonMode(
         console.error(chalk.red(`[cron] Failed to start: ${(err as Error).message}`));
       }
     } else {
-      console.log(chalk.gray(`[daemon] Skill '${daemonSkill}' has no service_cron — passive daemon (waits for external mail).`));
+      console.log(
+        chalk.gray(`[daemon] Skill '${daemonSkill}' has no service_cron — passive daemon (waits for external mail).`)
+      );
     }
   } else {
     console.log(chalk.gray(`[daemon] No skill specified — passive daemon (waits for external mail).`));
@@ -173,7 +171,7 @@ export function initDaemonMode(
     // give; only the wake sources.
     triologue.note(
       'SYSTEM',
-      'Daemon started with no skill and no cron ticks. There is no terminal here — you are woken by incoming mail, or browser input if this daemon is serving a Web UI.',
+      'Daemon started with no skill and no cron ticks. There is no terminal here — you are woken by incoming mail, or browser input if this daemon is serving a Web UI.'
     );
   }
 

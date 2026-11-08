@@ -9,16 +9,17 @@ import { isCancellation } from '../loop/cancellation.js';
 
 export const webSearchTool: ToolDefinition = {
   name: 'web_search',
-  description: 'Search the web for information. Returns titles, URLs, and snippets. Use for current information, documentation, or research.',
+  description:
+    'Search the web for information. Returns titles, URLs, and snippets. Use for current information, documentation, or research.',
   input_schema: {
     type: 'object',
     properties: {
       query: {
         type: 'string',
-        description: 'The search query',
-      },
+        description: 'The search query'
+      }
     },
-    required: ['query'],
+    required: ['query']
   },
   scope: ['main', 'child'],
 
@@ -59,5 +60,5 @@ export const webSearchTool: ToolDefinition = {
       ctx.core.brief('error', 'web_search', `Failed: ${err.message}`);
       return `Error: ${err.message}`;
     }
-  },
+  }
 };

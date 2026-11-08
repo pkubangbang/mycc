@@ -70,7 +70,9 @@ export class ParentContext implements AgentContext {
     this.peerModule.setVerboseLogger((tool, message) => {
       try {
         agentIO.verbose(tool, message);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     });
     // Remote peer wire hooks (docs/peers/remote-peer-protocol.md §2 step 3, G3):
     // the wire plane (acceptor in src/serve/peer-wire.ts + dialer in
@@ -91,7 +93,9 @@ export class ParentContext implements AgentContext {
       getShares: () => {
         try {
           return getFilesyncManager()?.shares() ?? getFilesyncShareIds();
-        } catch { return []; }
+        } catch {
+          return [];
+        }
       },
       // filesync dispatch target (R5, architect review): the wire-codec
       // dispatch helpers (trySyncDispatch/trySyncDataDispatch/handlePeerShares)
@@ -99,7 +103,11 @@ export class ParentContext implements AgentContext {
       // manager at call time (the getShares precedent), so boot order never
       // matters and the wire site never names manager methods.
       getSyncDispatchTarget: () => {
-        try { return getFilesyncManager(); } catch { return null; }
+        try {
+          return getFilesyncManager();
+        } catch {
+          return null;
+        }
       },
       // Our serving endpoint for the announce frame: the webui's bound
       // host (LAN IP when bound to all interfaces) + port; null when the
@@ -131,7 +139,13 @@ export class ParentContext implements AgentContext {
           const existing = this.wireRemoteTodoIds.get(endpoint);
           if (reconnecting) {
             if (!existing) return;
-            const updated = this.todoModule.updateTodo(existing.id, existing.hash, reconnectingName, false, 'wire dropped — retrying');
+            const updated = this.todoModule.updateTodo(
+              existing.id,
+              existing.hash,
+              reconnectingName,
+              false,
+              'wire dropped — retrying'
+            );
             if (updated) this.wireRemoteTodoIds.set(endpoint, { id: updated.id, hash: updated.hash });
             return;
           }
@@ -142,7 +156,13 @@ export class ParentContext implements AgentContext {
             return;
           }
           if (existing) {
-            const refreshed = this.todoModule.updateTodo(existing.id, existing.hash, openName, false, 'cross-machine peer wire — pinned reminder');
+            const refreshed = this.todoModule.updateTodo(
+              existing.id,
+              existing.hash,
+              openName,
+              false,
+              'cross-machine peer wire — pinned reminder'
+            );
             if (refreshed) {
               this.wireRemoteTodoIds.set(endpoint, { id: refreshed.id, hash: refreshed.hash });
               return;
@@ -154,7 +174,9 @@ export class ParentContext implements AgentContext {
           const pinned = this.todoModule.pinTodo(created.id, created.hash, true);
           const item = pinned ?? created;
           this.wireRemoteTodoIds.set(endpoint, { id: item.id, hash: item.hash });
-        } catch { /* best-effort — never break the wire */ }
+        } catch {
+          /* best-effort — never break the wire */
+        }
       },
       // Single mailbox writer (plan §5): inbound wire mail appends via
       // MailBox.appendMail — never a hand-rolled writer. The existing 1s
@@ -162,13 +184,17 @@ export class ParentContext implements AgentContext {
       appendLocalMail: (from, title, content) => {
         try {
           this.mailModule.appendMail(from, title, content);
-        } catch { /* never break the wire */ }
+        } catch {
+          /* never break the wire */
+        }
       },
       // Verbose-only logging (agentIO is process-global, no ctx needed).
       verbose: (tool, message, data) => {
         try {
           agentIO.verbose(tool, message, data);
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       },
       // A refused upgrade caused by a WIRE-TOKEN mismatch is an operator
       // misconfiguration, so it must be visible from the ACCEPTING side too
@@ -181,10 +207,12 @@ export class ParentContext implements AgentContext {
             'warn',
             'peer',
             `Refused a peer wire upgrade: ${reason}. ` +
-            'MYCC_WIRE_TOKEN must be identical on both instances (or unset on both to run the wire open).',
+              'MYCC_WIRE_TOKEN must be identical on both instances (or unset on both to run the wire open).'
           );
-        } catch { /* ignore */ }
-      },
+        } catch {
+          /* ignore */
+        }
+      }
     };
     setWireHooks(wireHooks);
 
@@ -194,51 +222,74 @@ export class ParentContext implements AgentContext {
     // manager is a module singleton the wire-plane dispatch (wire-client /
     // peer-wire) reaches via getFilesyncManager().
     // The host's PeerPort (engine message → wire frame) lives in wire-codec.
-    const filesyncMgr = new FilesyncManager({
-      appendLocalMail: (from, title, content) => { try { this.mailModule.appendMail(from, title, content); } catch { /* best-effort */ } },
-      verbose: (tool, message) => { try { agentIO.verbose(tool, message); } catch { /* ignore */ } },
-      getSelfSid: () => peerSessionId,
-      getWorkDir: () => peerWorkDir,
-      debugFilesync: () => isDebugFilesync(),
-      // POPULATOR: a bound share must be VISIBLE to the LLM. Without this the
-      // engine syncs a folder the model has never been told about, so a file
-      // that lands there is never read. The pinned todo states the folder and
-      // how files arrive; it is never auto-cleared (pinned) so it survives
-      // auto-compact, and `--unbind` closes it.
-      pinShareTodo: (share, rootDir) => {
-        const existing = this.filesyncTodoIds.get(share);
-        if (existing) return;
-        const name =
-          `filesync share ${share} — syncs with wired peers. Root: ${rootDir}. ` +
-          'Files from partners land here; check it when told of a change.';
-        try {
-          const created = this.todoModule.createTodo(name, 'filesync — pinned share reminder');
-          const pinned = this.todoModule.pinTodo(created.id, created.hash, true);
-          const item = pinned ?? created;
-          this.filesyncTodoIds.set(share, { id: item.id, hash: item.hash });
-        } catch { /* best-effort */ }
+    const filesyncMgr = new FilesyncManager(
+      {
+        appendLocalMail: (from, title, content) => {
+          try {
+            this.mailModule.appendMail(from, title, content);
+          } catch {
+            /* best-effort */
+          }
+        },
+        verbose: (tool, message) => {
+          try {
+            agentIO.verbose(tool, message);
+          } catch {
+            /* ignore */
+          }
+        },
+        getSelfSid: () => peerSessionId,
+        getWorkDir: () => peerWorkDir,
+        debugFilesync: () => isDebugFilesync(),
+        // POPULATOR: a bound share must be VISIBLE to the LLM. Without this the
+        // engine syncs a folder the model has never been told about, so a file
+        // that lands there is never read. The pinned todo states the folder and
+        // how files arrive; it is never auto-cleared (pinned) so it survives
+        // auto-compact, and `--unbind` closes it.
+        pinShareTodo: (share, rootDir) => {
+          const existing = this.filesyncTodoIds.get(share);
+          if (existing) return;
+          const name =
+            `filesync share ${share} — syncs with wired peers. Root: ${rootDir}. ` +
+            'Files from partners land here; check it when told of a change.';
+          try {
+            const created = this.todoModule.createTodo(name, 'filesync — pinned share reminder');
+            const pinned = this.todoModule.pinTodo(created.id, created.hash, true);
+            const item = pinned ?? created;
+            this.filesyncTodoIds.set(share, { id: item.id, hash: item.hash });
+          } catch {
+            /* best-effort */
+          }
+        },
+        unpinShareTodo: (share) => {
+          const existing = this.filesyncTodoIds.get(share);
+          if (!existing) return;
+          try {
+            this.todoModule.updateTodo(existing.id, existing.hash, `filesync share ${share} — unbound`, true, 'unbind');
+          } catch {
+            /* best-effort */
+          }
+          this.filesyncTodoIds.delete(share);
+        },
+        // The only sync traffic that reaches the chat: one note per burst, and
+        // it NAMES the changed files (a bare "something changed" forces the
+        // agent to list and diff the whole folder to find out what).
+        notifyShareChange: (share, rootDir, changes) => {
+          try {
+            this.mailModule.appendMail(
+              'filesync',
+              `[Note] you have new file(s) in filesync share "${share}" — check ${rootDir}`,
+              `${changes.length} change(s) synced in share "${share}":\n${changes.map((c) => `  ${c}`).join('\n')}` +
+                `\n\nRead them under ${rootDir}. Files you add there sync to peers; ` +
+                'deleting one deletes it for them too.'
+            );
+          } catch {
+            /* best-effort */
+          }
+        }
       },
-      unpinShareTodo: (share) => {
-        const existing = this.filesyncTodoIds.get(share);
-        if (!existing) return;
-        try { this.todoModule.updateTodo(existing.id, existing.hash, `filesync share ${share} — unbound`, true, 'unbind'); } catch { /* best-effort */ }
-        this.filesyncTodoIds.delete(share);
-      },
-      // The only sync traffic that reaches the chat: one note per burst, and
-      // it NAMES the changed files (a bare "something changed" forces the
-      // agent to list and diff the whole folder to find out what).
-      notifyShareChange: (share, rootDir, changes) => {
-        try {
-          this.mailModule.appendMail(
-            'filesync',
-            `[Note] you have new file(s) in filesync share "${share}" — check ${rootDir}`,
-            `${changes.length} change(s) synced in share "${share}":\n${changes.map((c) => `  ${c}`).join('\n')}` +
-            `\n\nRead them under ${rootDir}. Files you add there sync to peers; ` +
-            'deleting one deletes it for them too.',
-          );
-        } catch { /* best-effort */ }
-      },
-    }, wirePort);
+      wirePort
+    );
     setFilesyncManager(filesyncMgr);
 
     // A share that fails to bind must SAY SO: the old code had no catch at all
@@ -246,27 +297,50 @@ export class ParentContext implements AgentContext {
     // manager with no engines — `--share` looked accepted while nothing
     // synced). Per-share catch + an always-visible summary line.
     for (const share of getFilesyncShareIds()) {
-      try { filesyncMgr.bind(share); } catch (err) {
+      try {
+        filesyncMgr.bind(share);
+      } catch (err) {
         agentIO.verbose('filesync', `could not bind share ${share}: ${String(err)}`);
       }
     }
     const configured = getFilesyncShareIds();
     const unbound = configured.filter((s) => !filesyncMgr.shares().includes(s));
     if (unbound.length) {
-      agentIO.verbose('filesync', `shares configured but NOT bound: ${unbound.join(', ')} — check the root/state paths`);
+      agentIO.verbose(
+        'filesync',
+        `shares configured but NOT bound: ${unbound.join(', ')} — check the root/state paths`
+      );
     }
   }
 
   // Getters for each module
-  get core(): CoreModule { return this.coreModule; }
-  get todo(): TodoModule { return this.todoModule; }
-  get mail(): MailModule { return this.mailModule; }
-  get skill(): SkillModule { return this.skillModule; }
-  get issue(): IssueModule { return this.issueModule; }
-  get bg(): BgModule { return this.bgModule; }
-  get team(): TeamModule { return this.teamModule; }
-  get wiki(): WikiModule { return this.wikiModule; }
-  get peer(): PeerModule { return this.peerModule; }
+  get core(): CoreModule {
+    return this.coreModule;
+  }
+  get todo(): TodoModule {
+    return this.todoModule;
+  }
+  get mail(): MailModule {
+    return this.mailModule;
+  }
+  get skill(): SkillModule {
+    return this.skillModule;
+  }
+  get issue(): IssueModule {
+    return this.issueModule;
+  }
+  get bg(): BgModule {
+    return this.bgModule;
+  }
+  get team(): TeamModule {
+    return this.teamModule;
+  }
+  get wiki(): WikiModule {
+    return this.wikiModule;
+  }
+  get peer(): PeerModule {
+    return this.peerModule;
+  }
 
   /**
    * Initialize IPC handlers for child process communication
@@ -283,7 +357,7 @@ export class ParentContext implements AgentContext {
           const { id } = payload as { id: number };
           const issue = await ctx.issue.getIssue(id);
           sendResponse('db_result', true, issue);
-        },
+        }
       },
       {
         messageType: 'db_issue_list',
@@ -291,20 +365,24 @@ export class ParentContext implements AgentContext {
         handler: async (_sender, _payload, ctx, sendResponse) => {
           const issues = await ctx.issue.listIssues();
           sendResponse('db_result', true, issues);
-        },
+        }
       },
       {
         messageType: 'db_issue_create',
         module: 'issue',
         handler: async (_sender, payload, ctx, sendResponse) => {
-          const { title, content, blockedBy = [] } = payload as {
+          const {
+            title,
+            content,
+            blockedBy = []
+          } = payload as {
             title: string;
             content: string;
             blockedBy?: number[];
           };
           const id = await ctx.issue.createIssue(title, content, blockedBy);
           sendResponse('db_result', true, { id });
-        },
+        }
       },
       {
         messageType: 'db_issue_claim',
@@ -313,7 +391,7 @@ export class ParentContext implements AgentContext {
           const { id, owner } = payload as { id: number; owner: string };
           const claimed = await ctx.issue.claimIssue(id, owner);
           sendResponse('db_result', true, { claimed });
-        },
+        }
       },
       {
         messageType: 'db_issue_publish',
@@ -322,7 +400,7 @@ export class ParentContext implements AgentContext {
           const { id } = payload as { id: number };
           const published = await ctx.issue.publishIssue(id);
           sendResponse('db_result', true, { published });
-        },
+        }
       },
       {
         messageType: 'db_issue_close',
@@ -336,7 +414,7 @@ export class ParentContext implements AgentContext {
           };
           await ctx.issue.closeIssue(id, status, comment, poster);
           sendResponse('db_result', true);
-        },
+        }
       },
       {
         messageType: 'db_issue_comment',
@@ -345,7 +423,7 @@ export class ParentContext implements AgentContext {
           const { id, comment, poster } = payload as { id: number; comment: string; poster?: string };
           await ctx.issue.addComment(id, comment, poster);
           sendResponse('db_result', true);
-        },
+        }
       },
       {
         messageType: 'db_block_add',
@@ -354,7 +432,7 @@ export class ParentContext implements AgentContext {
           const { blocker, blocked } = payload as { blocker: number; blocked: number };
           await ctx.issue.createBlockage(blocker, blocked);
           sendResponse('db_result', true);
-        },
+        }
       },
       {
         messageType: 'db_block_remove',
@@ -363,7 +441,7 @@ export class ParentContext implements AgentContext {
           const { blocker, blocked } = payload as { blocker: number; blocked: number };
           await ctx.issue.removeBlockage(blocker, blocked);
           sendResponse('db_result', true);
-        },
+        }
       },
       {
         messageType: 'db_issue_clear_all',
@@ -371,7 +449,7 @@ export class ParentContext implements AgentContext {
         handler: async (_sender, _payload, ctx, sendResponse) => {
           ctx.issue.clearAll();
           sendResponse('db_result', true);
-        },
+        }
       },
       // Team handlers
       {
@@ -384,7 +462,7 @@ export class ParentContext implements AgentContext {
           } catch (err) {
             sendResponse('team_result', false, undefined, (err as Error).message);
           }
-        },
+        }
       },
       // Wiki handlers
       {
@@ -394,7 +472,7 @@ export class ParentContext implements AgentContext {
           const { document } = payload as { document: Parameters<WikiModule['prepare']>[0] };
           const result = await ctx.wiki.prepare(document);
           sendResponse('wiki_result', true, result);
-        },
+        }
       },
       {
         messageType: 'wiki_put',
@@ -403,7 +481,7 @@ export class ParentContext implements AgentContext {
           const { hash, document } = payload as { hash: string; document: Parameters<WikiModule['put']>[1] };
           const result = await ctx.wiki.put(hash, document);
           sendResponse('wiki_result', true, result);
-        },
+        }
       },
       {
         messageType: 'wiki_get',
@@ -412,7 +490,7 @@ export class ParentContext implements AgentContext {
           const { query, options } = payload as { query: string; options?: Parameters<WikiModule['get']>[1] };
           const results = await ctx.wiki.get(query, options);
           sendResponse('wiki_result', true, results);
-        },
+        }
       },
       {
         messageType: 'wiki_delete',
@@ -421,7 +499,7 @@ export class ParentContext implements AgentContext {
           const { hash } = payload as { hash: string };
           const result = await ctx.wiki.delete(hash);
           sendResponse('wiki_result', true, result);
-        },
+        }
       },
       {
         messageType: 'wiki_get_by_domain',
@@ -430,7 +508,7 @@ export class ParentContext implements AgentContext {
           const { domain } = payload as { domain: string };
           const results = await ctx.wiki.getByDomain(domain);
           sendResponse('wiki_result', true, results);
-        },
+        }
       },
       {
         messageType: 'wiki_batch_put',
@@ -441,7 +519,7 @@ export class ParentContext implements AgentContext {
           };
           const results = await ctx.wiki.batchPut(entries);
           sendResponse('wiki_result', true, results);
-        },
+        }
       },
       {
         messageType: 'wiki_wal_get',
@@ -450,7 +528,7 @@ export class ParentContext implements AgentContext {
           const { date } = payload as { date?: string };
           const entries = await ctx.wiki.getWAL(date);
           sendResponse('wiki_result', true, entries);
-        },
+        }
       },
       {
         messageType: 'wiki_wal_append',
@@ -459,7 +537,7 @@ export class ParentContext implements AgentContext {
           const { entry } = payload as { entry: Parameters<WikiModule['appendWAL']>[0] };
           await ctx.wiki.appendWAL(entry);
           sendResponse('wiki_result', true);
-        },
+        }
       },
       {
         messageType: 'wiki_rebuild',
@@ -467,7 +545,7 @@ export class ParentContext implements AgentContext {
         handler: async (_sender, _payload, ctx, sendResponse) => {
           const result = await ctx.wiki.rebuild();
           sendResponse('wiki_result', true, result);
-        },
+        }
       },
       // Domain handlers
       {
@@ -476,7 +554,7 @@ export class ParentContext implements AgentContext {
         handler: async (_sender, _payload, ctx, sendResponse) => {
           const domains = await ctx.wiki.listDomains();
           sendResponse('wiki_result', true, domains);
-        },
+        }
       },
       {
         messageType: 'wiki_domain_get',
@@ -485,7 +563,7 @@ export class ParentContext implements AgentContext {
           const { name } = payload as { name: string };
           const domain = await ctx.wiki.getDomain(name);
           sendResponse('wiki_result', true, domain);
-        },
+        }
       },
       {
         messageType: 'wiki_domain_register',
@@ -494,7 +572,7 @@ export class ParentContext implements AgentContext {
           const { name, description } = payload as { name: string; description?: string };
           await ctx.wiki.registerDomain(name, description);
           sendResponse('wiki_result', true);
-        },
+        }
       },
       // Core handlers
       {
@@ -507,15 +585,13 @@ export class ParentContext implements AgentContext {
             // imgDescribe signal). When set, create a pre-aborted signal so
             // the engine's retryChat rejects immediately via StreamAbortedError
             // rather than issuing a vision call that will be thrown away.
-            const signal: AbortSignal | undefined = aborted
-              ? AbortSignal.abort()
-              : undefined;
+            const signal: AbortSignal | undefined = aborted ? AbortSignal.abort() : undefined;
             const result = await ctx.core.imgDescribe(image, prompt, signal);
             sendResponse('core_result', true, { description: result });
           } catch (err) {
             sendResponse('core_result', false, undefined, (err as Error).message);
           }
-        },
+        }
       },
       {
         messageType: 'core_read_picture_cached',
@@ -532,15 +608,13 @@ export class ParentContext implements AgentContext {
             // readPictureCached signal). Pre-abort the signal so the engine's
             // retryChat rejects via StreamAbortedError instead of issuing a
             // vision call that will be thrown away.
-            const signal: AbortSignal | undefined = aborted
-              ? AbortSignal.abort()
-              : undefined;
+            const signal: AbortSignal | undefined = aborted ? AbortSignal.abort() : undefined;
             const result = await ctx.core.readPictureCached(imagePath, prompt, cacheToken, signal);
             sendResponse('core_result', true, result);
           } catch (err) {
             sendResponse('core_result', false, undefined, (err as Error).message);
           }
-        },
+        }
       },
       // Grant handler
       {
@@ -563,7 +637,7 @@ export class ParentContext implements AgentContext {
             core.recordChildDenial(sender, tool, { path, command, intent }, result.reason);
           }
           sendResponse('grant_result', true, result);
-        },
+        }
       },
       // External path access handler (for read/write/edit outside workspace)
       {
@@ -578,8 +652,8 @@ export class ParentContext implements AgentContext {
           const core = ctx.core as Core;
           const result = await core.requestExternalPathAccess(tool, requestedPath);
           sendResponse('grant_result', true, result);
-        },
-      },
+        }
+      }
     ];
 
     for (const handler of handlers) {

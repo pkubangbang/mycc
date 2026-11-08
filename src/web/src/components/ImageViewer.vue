@@ -105,9 +105,8 @@ function toggleMode(): void {
 
 /** Whether the image is larger than the viewport in fit mode — controls the
  *  "click to view full size" hint affordance. */
-const isLargerThanViewport = computed(() =>
-  naturalSize.value.w > viewport.value.w * 0.9 ||
-  naturalSize.value.h > viewport.value.h * 0.9
+const isLargerThanViewport = computed(
+  () => naturalSize.value.w > viewport.value.w * 0.9 || naturalSize.value.h > viewport.value.h * 0.9
 );
 
 function download(): void {
@@ -185,32 +184,58 @@ onBeforeUnmount(() => {
           :disabled="loadError"
           @click.stop="toggleMode"
         >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path v-if="naturalMode" d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>
-            <path v-else d="M3 8V5a2 2 0 0 1 2-2h3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>
+          <svg
+            viewBox="0 0 24 24"
+            width="18"
+            height="18"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path
+              v-if="naturalMode"
+              d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"
+            />
+            <path
+              v-else
+              d="M3 8V5a2 2 0 0 1 2-2h3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"
+            />
           </svg>
         </button>
-        <button
-          class="iv-btn"
-          title="下载图片"
-          :disabled="loadError"
-          @click.stop="download"
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="7 10 12 15 17 10"/>
-            <line x1="12" y1="15" x2="12" y2="3"/>
+        <button class="iv-btn" title="下载图片" :disabled="loadError" @click.stop="download">
+          <svg
+            viewBox="0 0 24 24"
+            width="18"
+            height="18"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
           </svg>
         </button>
-        <button
-          ref="closeBtn"
-          class="iv-btn"
-          title="关闭 (Esc)"
-          @click.stop="close"
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <line x1="18" y1="6" x2="6" y2="18"/>
-            <line x1="6" y1="6" x2="18" y2="18"/>
+        <button ref="closeBtn" class="iv-btn" title="关闭 (Esc)" @click.stop="close">
+          <svg
+            viewBox="0 0 24 24"
+            width="18"
+            height="18"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
           </svg>
         </button>
       </div>
@@ -220,11 +245,7 @@ onBeforeUnmount(() => {
            .iv-stage-natural switches alignment to flex-start so an
            oversized 1:1 image's top-left stays reachable by scroll
            (flex centering + overflow:auto would clip it permanently). -->
-      <div
-        class="iv-stage"
-        :class="{ 'iv-stage-natural': naturalMode }"
-        @click.self="close"
-      >
+      <div class="iv-stage" :class="{ 'iv-stage-natural': naturalMode }" @click.self="close">
         <img
           v-if="!loadError"
           :src="src"
@@ -237,9 +258,7 @@ onBeforeUnmount(() => {
         />
         <div v-else class="iv-error">图片加载失败</div>
         <div v-if="alt && !loadError" class="iv-caption">{{ alt }}</div>
-        <div v-if="isLargerThanViewport && !naturalMode && !loadError" class="iv-hint">
-          点击图片查看原始尺寸
-        </div>
+        <div v-if="isLargerThanViewport && !naturalMode && !loadError" class="iv-hint">点击图片查看原始尺寸</div>
       </div>
     </div>
   </Teleport>
@@ -258,8 +277,12 @@ onBeforeUnmount(() => {
   animation: iv-fade-in 0.15s ease-out;
 }
 @keyframes iv-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 .iv-controls {
   position: absolute;
@@ -280,7 +303,10 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.08);
   color: rgba(255, 255, 255, 0.9);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
 }
 .iv-btn:hover {
   background: rgba(255, 255, 255, 0.2);
@@ -310,7 +336,9 @@ onBeforeUnmount(() => {
   object-fit: contain;
   border-radius: 4px;
   cursor: zoom-in;
-  transition: max-width 0.2s, max-height 0.2s;
+  transition:
+    max-width 0.2s,
+    max-height 0.2s;
   user-select: none;
 }
 .iv-stage img.iv-natural {

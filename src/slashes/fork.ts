@@ -191,5 +191,5 @@ export const forkCommand: SlashCommand = {
       const message = err instanceof Error ? err.message : String(err);
       console.error(chalk.red(`Failed to fork session: ${message}`));
     }
-  },
+  }
 };

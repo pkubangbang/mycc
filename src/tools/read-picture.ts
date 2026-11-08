@@ -45,35 +45,37 @@ function safePath(p: string, workdir: string): string {
 function formatResult(
   imagePath: string,
   pairs: Array<{ focus: string; description: string }>,
-  cacheToken: string,
+  cacheToken: string
 ): string {
-  const pairsBlock = pairs
-    .map(p => `[${p.focus}]: ${p.description}`)
-    .join('\n\n');
+  const pairsBlock = pairs.map((p) => `[${p.focus}]: ${p.description}`).join('\n\n');
   const hint = `To ask a question about this image, call read_picture again with cache="${cacheToken}" and your new prompt. The new focus will be merged into the cache.`;
   return `## Image: ${imagePath}\n\n${pairsBlock}\n\n---\n💡 Cache token: ${cacheToken}\n${hint}`;
 }
 
 export const readPictureTool: ToolDefinition = {
   name: 'read_picture',
-  description: 'Read and describe an image file using the vision model. Returns accumulated [focus, description] pairs and a cache token (M). Reading the same image again without the token returns cached pairs without re-invoking the vision model. Pass the token back with a new prompt to add a new focus.',
+  description:
+    'Read and describe an image file using the vision model. Returns accumulated [focus, description] pairs and a cache token (M). Reading the same image again without the token returns cached pairs without re-invoking the vision model. Pass the token back with a new prompt to add a new focus.',
   input_schema: {
     type: 'object',
     properties: {
       path: {
         type: 'string',
-        description: 'Path to the image file (forward slashes), e.g. "screenshots/image.png". Supports PNG, JPG, GIF, WEBP.',
+        description:
+          'Path to the image file (forward slashes), e.g. "screenshots/image.png". Supports PNG, JPG, GIF, WEBP.'
       },
       prompt: {
         type: 'string',
-        description: 'Optional custom prompt for the vision model (e.g., "What text is visible?"). The prompt becomes the focus label in the cache.',
+        description:
+          'Optional custom prompt for the vision model (e.g., "What text is visible?"). The prompt becomes the focus label in the cache.'
       },
       cache: {
         type: 'string',
-        description: 'Cache token (M) from a previous read_picture call on the same image. Pass it back with a new prompt to add a focus without re-reading from scratch. If omitted on a cached image, cached pairs are returned with no vision call.',
-      },
+        description:
+          'Cache token (M) from a previous read_picture call on the same image. Pass it back with a new prompt to add a focus without re-reading from scratch. If omitted on a cached image, cached pairs are returned with no vision call.'
+      }
     },
-    required: ['path'],
+    required: ['path']
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> => {
@@ -126,5 +128,5 @@ export const readPictureTool: ToolDefinition = {
       ctx.core.brief('error', 'read_picture', err.message);
       return `Error: ${err.message}`;
     }
-  },
+  }
 };

@@ -9,28 +9,30 @@ import path from 'path';
 
 export const tmCreateTool: ToolDefinition = {
   name: 'tm_create',
-  description: 'Spawn a new teammate agent with a specific role. Assign work via mail_to after creation. Only available to the lead agent.',
+  description:
+    'Spawn a new teammate agent with a specific role. Assign work via mail_to after creation. Only available to the lead agent.',
   input_schema: {
     type: 'object',
     properties: {
       name: {
         type: 'string',
-        description: 'Unique teammate name, used to reference it in other commands.',
+        description: 'Unique teammate name, used to reference it in other commands.'
       },
       role: {
         type: 'string',
-        description: 'Role for the teammate (e.g. "coder", "reviewer", "tester").',
+        description: 'Role for the teammate (e.g. "coder", "reviewer", "tester").'
       },
       prompt: {
         type: 'string',
-        description: 'Initial instructions and context for the teammate.',
+        description: 'Initial instructions and context for the teammate.'
       },
       cwd: {
         type: 'string',
-        description: 'Working directory for the teammate, e.g. a worktree path like ".worktrees/<name>" (its dir name must match the teammate name). Defaults to the lead\'s current working directory.',
-      },
+        description:
+          'Working directory for the teammate, e.g. a worktree path like ".worktrees/<name>" (its dir name must match the teammate name). Defaults to the lead\'s current working directory.'
+      }
     },
-    required: ['name', 'role', 'prompt'],
+    required: ['name', 'role', 'prompt']
   },
   scope: ['main'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -73,21 +75,20 @@ export const tmCreateTool: ToolDefinition = {
       // the lead remembers to remove the worktree. The worktree itself is
       // tracked via `git worktree list` — no JSON persistence needed.
       if (cwd) {
-        ctx.todo.createTodo(
-          `Remove worktree for teammate '${name}'`,
-          `cwd=${cwd}`
-        );
+        ctx.todo.createTodo(`Remove worktree for teammate '${name}'`, `cwd=${cwd}`);
       }
 
       // Check if this is the first teammate created
       const teammates = ctx.team.listTeammates();
       if (teammates.length === 1) {
         // First teammate - provide kickoff instructions
-        return `${result  }\n\n` +
+        return (
+          `${result}\n\n` +
           `KICKOFF REQUIRED: You just created your first teammate. Your next steps:\n` +
           `1. Create more teammates if needed (you can continue using tm_create)\n` +
           `2. Write a kickoff todo list using todo_create to coordinate team work\n` +
-          `3. Distribute tasks to teammates using mail_to`;
+          `3. Distribute tasks to teammates using mail_to`
+        );
       }
 
       return result;
@@ -96,5 +97,5 @@ export const tmCreateTool: ToolDefinition = {
       ctx.core.brief('error', 'tm_create', err.message);
       return `Error: ${err.message}`;
     }
-  },
+  }
 };

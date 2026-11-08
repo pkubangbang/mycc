@@ -120,7 +120,7 @@ export function buildChannelFile(args: BuildChannelFileArgs): ChannelFile {
     firstQuery: prompt,
     joined: existing?.joined === true,
     firstQuerySent: existing?.firstQuerySent === true,
-    createdAt: typeof existing?.createdAt === 'number' ? existing.createdAt : Date.now(),
+    createdAt: typeof existing?.createdAt === 'number' ? existing.createdAt : Date.now()
   };
 }
 
@@ -138,7 +138,7 @@ export function readChannelFile(file: string): ChannelFile | null {
 /** Atomic write (tmp + rename) with a read-back verify of channelId/ownerSessionId/peerSessionId. */
 export function writeChannelFileAtomic(
   file: string,
-  data: Partial<ChannelFile> & Pick<ChannelFile, 'channelId' | 'ownerSessionId' | 'peerSessionId'>,
+  data: Partial<ChannelFile> & Pick<ChannelFile, 'channelId' | 'ownerSessionId' | 'peerSessionId'>
 ): void {
   if (!fs.existsSync(CHANNELS_DIR)) fs.mkdirSync(CHANNELS_DIR, { recursive: true });
   const tmp = `${file}.mycc-compose.${process.pid}.tmp`;
@@ -150,9 +150,11 @@ export function writeChannelFileAtomic(
     // on Windows, so channelId/ownerSessionId alone could not catch a collision
     // that clobbered the cross-reference.
     const back = JSON.parse(fs.readFileSync(file, 'utf-8'));
-    if (back.channelId !== data.channelId ||
-        back.ownerSessionId !== data.ownerSessionId ||
-        back.peerSessionId !== data.peerSessionId) {
+    if (
+      back.channelId !== data.channelId ||
+      back.ownerSessionId !== data.ownerSessionId ||
+      back.peerSessionId !== data.peerSessionId
+    ) {
       throw new Error(`channel read-back mismatch after writing ${file}`);
     }
   } catch (err) {
@@ -203,7 +205,7 @@ export function materializeChannels(spec: ChannelSpecInput): MaterializeResult[]
       from: fromPeer.name,
       to: toPeer.name,
       peer: toPeer.name,
-      label: ch.label,
+      label: ch.label
     });
     const fileA = path.join(CHANNELS_DIR, `${fromSid}-${channelId}.json`);
     writeChannelFileAtomic(
@@ -216,8 +218,8 @@ export function materializeChannels(spec: ChannelSpecInput): MaterializeResult[]
         peerName: toName,
         title,
         prompt: withReplyContract(promptA, toSid, ch.label),
-        existing: readChannelFile(fileA),
-      }),
+        existing: readChannelFile(fileA)
+      })
     );
 
     // Side B (to) — its peer is `from`.
@@ -225,7 +227,7 @@ export function materializeChannels(spec: ChannelSpecInput): MaterializeResult[]
       from: toPeer.name,
       to: fromPeer.name,
       peer: fromPeer.name,
-      label: ch.label,
+      label: ch.label
     });
     const fileB = path.join(CHANNELS_DIR, `${toSid}-${channelId}.json`);
     writeChannelFileAtomic(
@@ -238,8 +240,8 @@ export function materializeChannels(spec: ChannelSpecInput): MaterializeResult[]
         peerName: fromName,
         title,
         prompt: withReplyContract(promptB, fromSid, ch.label),
-        existing: readChannelFile(fileB),
-      }),
+        existing: readChannelFile(fileB)
+      })
     );
 
     results.push({ label: ch.label, ok: true, title, files: [fileA, fileB] });
@@ -337,8 +339,8 @@ export function channelStatus(spec: ChannelSpecInput): ChannelStatusRow[] {
     }
     // Both endpoints must be RESOLVED and their exact files present; an
     // unresolved endpoint is 'absent', never guessed from another sid's file.
-    const present = sids.length === 2 &&
-      sids.every((sid) => fs.existsSync(path.join(CHANNELS_DIR, `${sid}-${ch.label}.json`)));
+    const present =
+      sids.length === 2 && sids.every((sid) => fs.existsSync(path.join(CHANNELS_DIR, `${sid}-${ch.label}.json`)));
     return { label: ch.label, bothFilesPresent: present, attribution: present ? 'present' : 'absent' };
   });
 }

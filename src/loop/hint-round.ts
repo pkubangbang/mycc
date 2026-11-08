@@ -72,7 +72,7 @@ const CONFUSION_THRESHOLD = 10;
 // Minimum message count before hint generation
 const MIN_MESSAGES_FOR_HINT = 6;
 
-const ANALYSIS_INSTRUCTION = 'Analyze the gap between the user\'s intent and current progress.';
+const ANALYSIS_INSTRUCTION = "Analyze the gap between the user's intent and current progress.";
 const MAX_HINT_ATTEMPTS = 3;
 
 /**
@@ -101,26 +101,30 @@ const HINT_SCHEMA = {
   properties: {
     blocker: {
       type: 'string',
-      description: 'What is preventing progress. Use "no blockers" if there are no real blockers. Be specific and concise.',
+      description:
+        'What is preventing progress. Use "no blockers" if there are no real blockers. Be specific and concise.'
     },
     next_step: {
       type: 'string',
-      description: 'Concrete, actionable next step describing what the remaining task IS (not a "Continue ..." authorization to progress past a review point). May also carry efficiency guidance (e.g. batch independent tool calls) when the agent is making cautious single-tool turns.',
+      description:
+        'Concrete, actionable next step describing what the remaining task IS (not a "Continue ..." authorization to progress past a review point). May also carry efficiency guidance (e.g. batch independent tool calls) when the agent is making cautious single-tool turns.'
     },
     focus_on: {
       type: 'string',
-      description: 'Key area or priority to focus on.',
+      description: 'Key area or priority to focus on.'
     },
     wiki_domain: {
       type: 'string',
-      description: 'One domain name copied EXACTLY from the "Available Wiki Domains" list in the prompt. NEVER invent a domain name — a domain not in that list has no documents.',
+      description:
+        'One domain name copied EXACTLY from the "Available Wiki Domains" list in the prompt. NEVER invent a domain name — a domain not in that list has no documents.'
     },
     wiki_query: {
       type: 'string',
-      description: 'Search query for the wiki knowledge base. Use 3-8 keywords describing the specific knowledge gap, NOT a full sentence. Base the query on the actual error messages, tool names, or concepts visible in the conversation. Examples: "intent language verb object table", "ollama retry timeout configuration", "worktree branch switching git". Guessing is encouraged — a rough keyword query is far better than leaving this empty. Never output null or an empty string.',
-    },
+      description:
+        'Search query for the wiki knowledge base. Use 3-8 keywords describing the specific knowledge gap, NOT a full sentence. Base the query on the actual error messages, tool names, or concepts visible in the conversation. Examples: "intent language verb object table", "ollama retry timeout configuration", "worktree branch switching git". Guessing is encouraged — a rough keyword query is far better than leaving this empty. Never output null or an empty string.'
+    }
   },
-  required: ['blocker', 'next_step', 'focus_on', 'wiki_domain', 'wiki_query'],
+  required: ['blocker', 'next_step', 'focus_on', 'wiki_domain', 'wiki_query']
 } as const;
 
 const HINT_SYSTEM_PROMPT = `You are a problem-analysis assistant. Your task is to analyze the gap between the user's intent and the agent's current progress, then output a structured JSON analysis.
@@ -206,7 +210,7 @@ export function detectRepeatedActions(events: SequenceEvent[]): string | null {
   let best: { tool: string; count: number; prefix: string } | null = null;
   for (const g of groups) {
     if (g.events.length < 3) continue;
-    const prefix = commonErrorPrefix(g.events.map(e => e.result || ''));
+    const prefix = commonErrorPrefix(g.events.map((e) => e.result || ''));
     if (prefix) {
       const candidate = { tool: g.tool, count: g.events.length, prefix };
       if (!best || candidate.count > best.count) best = candidate;
@@ -222,16 +226,21 @@ export function detectRepeatedActions(events: SequenceEvent[]): string | null {
  * 3 share a prefix, returns null (not a dead-loop signal).
  */
 function commonErrorPrefix(results: string[]): string | null {
-  const errorish = results.filter(r => {
+  const errorish = results.filter((r) => {
     const lower = r.toLowerCase();
-    return lower.startsWith('error:') || lower.startsWith('error ') ||
-      lower.startsWith('failed') || lower.includes('not found') ||
-      lower.includes('no such') || lower.includes('does not match');
+    return (
+      lower.startsWith('error:') ||
+      lower.startsWith('error ') ||
+      lower.startsWith('failed') ||
+      lower.includes('not found') ||
+      lower.includes('no such') ||
+      lower.includes('does not match')
+    );
   });
   if (errorish.length < 3) return null;
   // Longest common prefix of the first 40 chars (enough to identify the
   // repeated error class without dumping a whole message into the breakdown).
-  const snippets = errorish.map(r => r.slice(0, 40));
+  const snippets = errorish.map((r) => r.slice(0, 40));
   let prefix = snippets[0];
   for (const s of snippets) {
     while (prefix && !s.startsWith(prefix)) {
@@ -343,7 +352,11 @@ export class HintRound {
     // per-call burst is already bounded by MAX_HINT_ATTEMPTS in generate(),
     // so preserving the signal cannot spin an unbounded malformed-output loop.
     if (result === 'failed') {
-      ctx.core.brief('warn', 'loop', 'Hint analysis failed (malformed output); preserving confusion signal to retry later.');
+      ctx.core.brief(
+        'warn',
+        'loop',
+        'Hint analysis failed (malformed output); preserving confusion signal to retry later.'
+      );
       return 'continue';
     }
     // Reset confusion after a hint that actually landed (success). 'aborted'
@@ -369,7 +382,7 @@ export class HintRound {
   private async generate(
     abortController: AbortController,
     turn: TurnVars,
-    pendingSkills?: string[],
+    pendingSkills?: string[]
   ): Promise<'aborted' | 'failed' | { status: 'success'; focusOn: string }> {
     const env = this.env;
     if (!env) return 'aborted';
@@ -391,7 +404,7 @@ export class HintRound {
     // the same blocker every cycle (B-2). A skill-suggestion hint is NOT problem
     // analysis; feeding it in would make the analyzer mistake a skill nudge for
     // its own earlier advice.
-    const filteredMessages = messages.filter(msg => {
+    const filteredMessages = messages.filter((msg) => {
       if (msg.role === 'system') return false;
       if (msg.role === 'user' && msg.content) {
         if (/^\[(?:REMINDER|WRAP_UP)\]/.test(msg.content)) return false;
@@ -400,7 +413,11 @@ export class HintRound {
       return true;
     });
 
-    const compactContext = minifyMessages(filteredMessages, { maxContentLength: 300, maxArgsLength: 100, truncateToolOutput: true });
+    const compactContext = minifyMessages(filteredMessages, {
+      maxContentLength: 300,
+      maxArgsLength: 100,
+      truncateToolOutput: true
+    });
 
     // Derive wiki domains from the live wiki module. Guarded: in a child
     // process listDomains() is an IPC round-trip that can reject — a failed
@@ -411,13 +428,17 @@ export class HintRound {
       try {
         domains = await env.ctx.wiki.listDomains();
       } catch (err) {
-        agentIO.verbose('triologue', `Hint wiki listDomains failed; proceeding with no domains: ${err instanceof Error ? err.message : String(err)}`);
+        agentIO.verbose(
+          'triologue',
+          `Hint wiki listDomains failed; proceeding with no domains: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     }
-    const wikiDomainNames = new Set(domains.map(d => d.domain_name));
-    const domainInfo = domains.length > 0
-      ? domains.map(d => `- ${d.domain_name}${d.description ? `: ${d.description}` : ''}`).join('\n')
-      : 'No domains available';
+    const wikiDomainNames = new Set(domains.map((d) => d.domain_name));
+    const domainInfo =
+      domains.length > 0
+        ? domains.map((d) => `- ${d.domain_name}${d.description ? `: ${d.description}` : ''}`).join('\n')
+        : 'No domains available';
 
     const duplicationReport = env.requestEmbeddingTracker.getDuplicationReport();
 
@@ -431,7 +452,7 @@ export class HintRound {
       '',
       duplicationReport,
       '',
-      ANALYSIS_INSTRUCTION,
+      ANALYSIS_INSTRUCTION
     ].join('\n');
 
     // Malformed output is retryable but must be bounded. retryLoop owns one
@@ -469,7 +490,7 @@ export class HintRound {
     abortController: AbortController,
     userPrompt: string,
     wikiDomainNames: Set<string>,
-    pendingSkills?: string[],
+    pendingSkills?: string[]
   ): Promise<'aborted' | 'retry' | { status: 'success'; focusOn: string }> {
     try {
       agentIO.verbose('triologue', 'Hint round request');
@@ -481,12 +502,12 @@ export class HintRound {
           model: MODEL,
           messages: [
             { role: 'system', content: HINT_SYSTEM_PROMPT },
-            { role: 'user', content: userPrompt },
+            { role: 'user', content: userPrompt }
           ],
           format: HINT_SCHEMA,
-          think: true,
+          think: true
         },
-        { signal: abortController.signal, neglected: agentIO.isNeglectedMode() },
+        { signal: abortController.signal, neglected: agentIO.isNeglectedMode() }
       );
 
       const rawContent = response.message.content || '{}';
@@ -536,10 +557,14 @@ export class HintRound {
       hintLines.push(`**Next Step:** ${hintData.next_step}`);
       hintLines.push(`**Focus On:** ${hintData.focus_on}`);
       if (hintData.wiki_domain && hintData.wiki_query) {
-        hintLines.push(`**Wiki Search:** call \`wiki_get(domain="${hintData.wiki_domain}", query="${hintData.wiki_query}")\` to check the knowledge base for background on this blocker.`);
+        hintLines.push(
+          `**Wiki Search:** call \`wiki_get(domain="${hintData.wiki_domain}", query="${hintData.wiki_query}")\` to check the knowledge base for background on this blocker.`
+        );
       }
       if (pendingSkills && pendingSkills.length > 0) {
-        hintLines.push(`**Also:** ${pendingSkills.map(s => `'${s}'`).join(', ')} ${pendingSkills.length === 1 ? 'needs' : 'need'} compiling via \`skill_compile\` before the hook system can process ${pendingSkills.length === 1 ? 'it' : 'them'}.`);
+        hintLines.push(
+          `**Also:** ${pendingSkills.map((s) => `'${s}'`).join(', ')} ${pendingSkills.length === 1 ? 'needs' : 'need'} compiling via \`skill_compile\` before the hook system can process ${pendingSkills.length === 1 ? 'it' : 'them'}.`
+        );
       }
       hintLines.push('');
       hintLines.push('Use the `brief` tool to post a status update.');
@@ -587,7 +612,7 @@ export class HintRound {
   private async preFilterWikiSuggestion(
     hintData: HintData,
     wikiDomainNames: Set<string>,
-    abortController: AbortController,
+    abortController: AbortController
   ): Promise<void> {
     if (!hintData.wiki_domain || !hintData.wiki_query) return;
     const wiki = this.env?.ctx.wiki;
@@ -615,7 +640,10 @@ export class HintRound {
       }
     } catch (err) {
       // A failed search must NOT fail the hint — mute the line and keep going.
-      agentIO.verbose('triologue', `Hint wiki pre-filter search failed; muting suggestion: ${err instanceof Error ? err.message : String(err)}`);
+      agentIO.verbose(
+        'triologue',
+        `Hint wiki pre-filter search failed; muting suggestion: ${err instanceof Error ? err.message : String(err)}`
+      );
       hintData.wiki_domain = '';
       hintData.wiki_query = '';
       return;
@@ -778,13 +806,15 @@ export function readRecentBriefs(env: MachineEnv): RecentBriefLine[] {
     if (!selfId) return [];
     const briefs = env.ctx.peer.getBriefs(selfId);
     if (!Array.isArray(briefs) || briefs.length === 0) return [];
-    return briefs
-      .filter((b) => b && typeof b.content === 'string' && b.content.trim() !== '')
-      // Heartbeat files are append-ordered, but sort defensively: a peer listing
-      // must never present a brief as "the latest" when it is not.
-      .slice()
-      .sort((a, b) => a.time - b.time)
-      .slice(-RECENT_BRIEF_LIMIT);
+    return (
+      briefs
+        .filter((b) => b && typeof b.content === 'string' && b.content.trim() !== '')
+        // Heartbeat files are append-ordered, but sort defensively: a peer listing
+        // must never present a brief as "the latest" when it is not.
+        .slice()
+        .sort((a, b) => a.time - b.time)
+        .slice(-RECENT_BRIEF_LIMIT)
+    );
   } catch {
     return [];
   }
@@ -803,7 +833,7 @@ function formatRecentBriefs(briefs: RecentBriefLine[]): string | null {
   const lines: string[] = [
     '## Recent Briefs (this session)',
     `The last ${briefs.length} status update${briefs.length === 1 ? '' : 's'} your agent posted, newest last.`,
-    'These are its SELF-REPORTED intent, in order: the last one is what it is working on now, and the order reveals whether its direction has drifted from the user\'s request. Judge the gap against THEM — do not restate them as your next_step.',
+    "These are its SELF-REPORTED intent, in order: the last one is what it is working on now, and the order reveals whether its direction has drifted from the user's request. Judge the gap against THEM — do not restate them as your next_step."
   ];
   for (const b of briefs) {
     const conf = Math.round((typeof b.confidence === 'number' ? b.confidence : 0) * 10);
@@ -822,7 +852,7 @@ function formatDenials(denials: RecordedDenial[]): string | null {
   if (denials.length === 0) return null;
   const lines: string[] = [
     '## Recent Permission Blocks',
-    'Recorded at the grant gate (exact tool, target and rule). Fix the REQUEST, not the goal:',
+    'Recorded at the grant gate (exact tool, target and rule). Fix the REQUEST, not the goal:'
   ];
   for (const d of denials.slice(-6)) {
     lines.push(`- ${d.tool} → ${sanitizeField(d.target)} [${d.kind}]: ${sanitizeField(d.reason)}`);
@@ -961,10 +991,12 @@ function buildStateSections(env: MachineEnv, turn: TurnVars): string[] {
     } catch {
       allowed = undefined;
     }
-    parts.push([
-      '## Mode & Write Scope',
-      `plan mode — writes are blocked except: ${allowed ? sanitizeField(allowed) : '(no file allowed)'}`,
-    ].join('\n'));
+    parts.push(
+      [
+        '## Mode & Write Scope',
+        `plan mode — writes are blocked except: ${allowed ? sanitizeField(allowed) : '(no file allowed)'}`
+      ].join('\n')
+    );
   }
 
   // ── Recent Permission Blocks ──
@@ -989,7 +1021,7 @@ function buildStateSections(env: MachineEnv, turn: TurnVars): string[] {
         ? 'STALL (backward-ask with the goal unmet) — act on a stated assumption or declare a hard blocker'
         : 'goal unmet — satisfy the guard with concrete, verifiable evidence';
       guardLines.push(
-        `- #${g.id} "${sanitizeField(g.name)}" — guard: ${sanitizeField(g.condition)} — held ${g.holds}× — ${cause}`,
+        `- #${g.id} "${sanitizeField(g.name)}" — guard: ${sanitizeField(g.condition)} — held ${g.holds}× — ${cause}`
       );
     }
     parts.push(guardLines.join('\n'));
@@ -998,10 +1030,7 @@ function buildStateSections(env: MachineEnv, turn: TurnVars): string[] {
   // detectRepeatedActions() names the tool, the repeat count and the shared
   // error prefix — evidence, not a metric. It is the ONE piece of the old
   // breakdown that survives: dead loops are the hint round's documented job.
-  parts.push([
-    '## Loop Evidence',
-    detectRepeatedActions(env.sequence.getEvents()) ?? NO_LOOP_EVIDENCE,
-  ].join('\n'));
+  parts.push(['## Loop Evidence', detectRepeatedActions(env.sequence.getEvents()) ?? NO_LOOP_EVIDENCE].join('\n'));
 
   return [...parts, ''];
 }

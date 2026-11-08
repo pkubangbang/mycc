@@ -41,7 +41,7 @@ export const VERB_MEANINGS: Record<string, string> = {
   BUILD: 'Compile, transpile, or transform source',
   TEST: 'Verify correctness or behavior',
   INSTALL: 'Fetch and set up dependencies',
-  RUN: 'Execute a command or process',
+  RUN: 'Execute a command or process'
 };
 
 export const OBJECT_MEANINGS: Record<string, string> = {
@@ -52,7 +52,7 @@ export const OBJECT_MEANINGS: Record<string, string> = {
   SYSTEM: 'OS-level operations and environment state',
   DATA: 'Data files, databases, and structured content',
   TEMP: 'Temporary or intermediate files',
-  USER: 'User interaction and terminal sessions',
+  USER: 'User interaction and terminal sessions'
 };
 
 // ============================================================================
@@ -120,8 +120,8 @@ function tokenizeParams(paramRegion: string): TokenizeResult {
         wellFormed,
         malformed: {
           token,
-          issue: `has an uppercase key — PARAM keys must be lowercase (snake_case)`,
-        },
+          issue: `has an uppercase key — PARAM keys must be lowercase (snake_case)`
+        }
       };
     }
 
@@ -131,8 +131,8 @@ function tokenizeParams(paramRegion: string): TokenizeResult {
         wellFormed,
         malformed: {
           token,
-          issue: `uses ':' separator — PARAMs must use 'key=value' (equals, no spaces)`,
-        },
+          issue: `uses ':' separator — PARAMs must use 'key=value' (equals, no spaces)`
+        }
       };
     }
 
@@ -142,8 +142,8 @@ function tokenizeParams(paramRegion: string): TokenizeResult {
         wellFormed,
         malformed: {
           token,
-          issue: `has empty value — PARAMs must be 'key=value' with a non-empty value`,
-        },
+          issue: `has empty value — PARAMs must be 'key=value' with a non-empty value`
+        }
       };
     }
 
@@ -153,8 +153,8 @@ function tokenizeParams(paramRegion: string): TokenizeResult {
         wellFormed,
         malformed: {
           token,
-          issue: `is missing a key — PARAMs must be 'key=value'`,
-        },
+          issue: `is missing a key — PARAMs must be 'key=value'`
+        }
       };
     }
 
@@ -164,8 +164,8 @@ function tokenizeParams(paramRegion: string): TokenizeResult {
         wellFormed,
         malformed: {
           token,
-          issue: `is malformed — PARAMs must be a single 'key=value' (one '=', no spaces)`,
-        },
+          issue: `is malformed — PARAMs must be a single 'key=value' (one '=', no spaces)`
+        }
       };
     }
 
@@ -181,8 +181,8 @@ function tokenizeParams(paramRegion: string): TokenizeResult {
         wellFormed,
         malformed: {
           token: `${token} ${nextToken}`,
-          issue: `is missing '=' between key and value — PARAMs must be 'key=value'`,
-        },
+          issue: `is missing '=' between key and value — PARAMs must be 'key=value'`
+        }
       };
     }
 
@@ -195,8 +195,8 @@ function tokenizeParams(paramRegion: string): TokenizeResult {
       wellFormed,
       malformed: {
         token,
-        issue: `is a bare token missing '=' (not a 'key=value' PARAM) — a single word is not a key/value pair; write it as 'key=value'`,
-      },
+        issue: `is a bare token missing '=' (not a 'key=value' PARAM) — a single word is not a key/value pair; write it as 'key=value'`
+      }
     };
   }
 
@@ -310,7 +310,7 @@ export function validateIntent(parsed: ParsedIntent | null, raw?: string): Inten
     return {
       valid: false,
       error: `Malformed PARAM: "${malformed.token}" ${malformed.issue}`,
-      hint: `Use format: key=value (lowercase snake_case key, no spaces). Example: READ SOURCE path=src/utils.ts TO verify imports`,
+      hint: `Use format: key=value (lowercase snake_case key, no spaces). Example: READ SOURCE path=src/utils.ts TO verify imports`
     };
   }
 
@@ -319,27 +319,27 @@ export function validateIntent(parsed: ParsedIntent | null, raw?: string): Inten
     return {
       valid: false,
       error: 'Intent format is invalid or missing',
-      hint: 'Use format: VERB OBJECT TO PURPOSE. Example: READ SOURCE TO check dependencies',
+      hint: 'Use format: VERB OBJECT TO PURPOSE. Example: READ SOURCE TO check dependencies'
     };
   }
 
   // --- Verb validation ---
-  if (!VALID_VERBS.includes(parsed.verb as typeof VALID_VERBS[number])) {
+  if (!VALID_VERBS.includes(parsed.verb as (typeof VALID_VERBS)[number])) {
     const verbList = VALID_VERBS.join(', ');
     return {
       valid: false,
       error: `Unknown verb: "${parsed.verb}"`,
-      hint: `Use one of: ${verbList}. Example: READ SOURCE TO check dependencies`,
+      hint: `Use one of: ${verbList}. Example: READ SOURCE TO check dependencies`
     };
   }
 
   // --- Object validation ---
-  if (!VALID_OBJECTS.includes(parsed.object as typeof VALID_OBJECTS[number])) {
+  if (!VALID_OBJECTS.includes(parsed.object as (typeof VALID_OBJECTS)[number])) {
     const objectList = VALID_OBJECTS.join(', ');
     return {
       valid: false,
       error: `Unknown object: "${parsed.object}"`,
-      hint: `Use one of: ${objectList}. Example: ${parsed.verb} SOURCE TO ...`,
+      hint: `Use one of: ${objectList}. Example: ${parsed.verb} SOURCE TO ...`
     };
   }
 
@@ -348,7 +348,7 @@ export function validateIntent(parsed: ParsedIntent | null, raw?: string): Inten
     return {
       valid: false,
       error: 'Missing purpose clause',
-      hint: 'Add TO purpose at the end. Example: READ SOURCE TO check dependencies',
+      hint: 'Add TO purpose at the end. Example: READ SOURCE TO check dependencies'
     };
   }
 
@@ -363,12 +363,12 @@ export function validateIntent(parsed: ParsedIntent | null, raw?: string): Inten
  * Check if verb is read-only (safe in plan mode).
  */
 export function isReadOnlyVerb(verb: string): boolean {
-  return READ_ONLY_VERBS.includes(verb.toUpperCase() as typeof READ_ONLY_VERBS[number]);
+  return READ_ONLY_VERBS.includes(verb.toUpperCase() as (typeof READ_ONLY_VERBS)[number]);
 }
 
 /**
  * Check if verb is a mutation (blocked in plan mode).
  */
 export function isMutationVerb(verb: string): boolean {
-  return MUTATION_VERBS.includes(verb.toUpperCase() as typeof MUTATION_VERBS[number]);
+  return MUTATION_VERBS.includes(verb.toUpperCase() as (typeof MUTATION_VERBS)[number]);
 }

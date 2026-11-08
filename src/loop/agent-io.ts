@@ -56,7 +56,14 @@ export class PromptAbortError extends Error {
  *               [HH:MM:SS] [tool] header as the terminal. Plain log/warn/error
  *               leave it undefined (treated as a raw verbose log line).
  */
-type OutputCallback = (method: 'log' | 'warn' | 'error', args: unknown[], label?: string, detail?: string, synthetic?: boolean, crossroad?: CrossroadCardWire) => void;
+type OutputCallback = (
+  method: 'log' | 'warn' | 'error',
+  args: unknown[],
+  label?: string,
+  detail?: string,
+  synthetic?: boolean,
+  crossroad?: CrossroadCardWire
+) => void;
 
 /**
  * Subcommand hints for slash commands.
@@ -64,16 +71,23 @@ type OutputCallback = (method: 'log' | 'warn' | 'error', args: unknown[], label?
  * Commands not listed here have no subcommand hints.
  */
 const COMMAND_SUBCOMMANDS: Record<string, string[]> = {
-  wiki:      ['edit [date]', 'rebuild', 'delete <hash>', 'domains [add|remove]', 'export [--domain d] [file]', 'import <file>'],
-  todos:     ['add', 'clear', 'done', 'undone'],
-  issues:    ['[id]'],
-  load:      ['[id]'],
-  compact:   ['[focus]'],
-  mode:      ['plan', 'normal'],
-  plan:      ['on', 'off'],
-  skills:    ['build'],
-  mindmap:   ['compile', 'get', 'patch', 'validate'],
-  domain:    ['add'],
+  wiki: [
+    'edit [date]',
+    'rebuild',
+    'delete <hash>',
+    'domains [add|remove]',
+    'export [--domain d] [file]',
+    'import <file>'
+  ],
+  todos: ['add', 'clear', 'done', 'undone'],
+  issues: ['[id]'],
+  load: ['[id]'],
+  compact: ['[focus]'],
+  mode: ['plan', 'normal'],
+  plan: ['on', 'off'],
+  skills: ['build'],
+  mindmap: ['compile', 'get', 'patch', 'validate'],
+  domain: ['add']
 };
 
 /**
@@ -103,7 +117,6 @@ export interface AskOptions {
    *  terminal path this flag is inert (Enter-on-empty still resolves to
    *  onEnter or '' as usual); it only changes the webui card kind. */
   notice?: boolean;
-
 }
 
 /**
@@ -157,10 +170,14 @@ class AgentIO {
   // LineEditor management
   private activeLineEditor: LineEditor | null = null;
   // Default history with common slash commands for easy access
-  private lineHistory: string[] = ['/mindmap compile MYCC.md', '/mode plan', 'show me all the tools and skills that you can use'];
+  private lineHistory: string[] = [
+    '/mindmap compile MYCC.md',
+    '/mode plan',
+    'show me all the tools and skills that you can use'
+  ];
 
   // Double Ctrl+L detection (clear conversation history)
-  private static readonly CTRL_L_DOUBLE_PRESS_MS = 3000;  // 3 seconds for double press
+  private static readonly CTRL_L_DOUBLE_PRESS_MS = 3000; // 3 seconds for double press
   private lastCtrlLTime: number | null = null;
   private onDoubleCtrlLCallback: (() => void) | null = null;
   private onConditionReloadCallback: (() => Promise<void>) | null = null;
@@ -187,7 +204,9 @@ class AgentIO {
   // clean (non-chalk-formatted) message.
   private briefDepth = 0;
   /** True while any brief() is mid-flight (see briefDepth). */
-  private get inBrief(): boolean { return this.briefDepth > 0; }
+  private get inBrief(): boolean {
+    return this.briefDepth > 0;
+  }
 
   // ESC-during-ask() cancellation support
   private askResolver: ((value: string) => void) | null = null;
@@ -269,7 +288,8 @@ class AgentIO {
         const hub = tryGetServeHub();
         if (hub?.isRunning()) {
           this.serveEscShutdownInProgress = true;
-          void hub.gracefulShutdown()
+          void hub
+            .gracefulShutdown()
             .catch((err) => {
               agentIO.verbose('serve', `ESC shutdown error: ${String(err)}`);
             })
@@ -305,7 +325,11 @@ class AgentIO {
         // TerminateProcess — the SIGTERM handler never runs.
         (async () => {
           const hub = tryGetServeHub();
-          try { if (hub?.isRunning()) await hub.stop(); } catch { /* best effort */ }
+          try {
+            if (hub?.isRunning()) await hub.stop();
+          } catch {
+            /* best effort */
+          }
           this.setOutputCallback(null);
           setResultCallback(null);
           sendToParent({ type: 'serve_shutdown_done' });
@@ -432,8 +456,11 @@ class AgentIO {
     // serve never received. "Inside brief()" and "no callback yet" are
     // different facts: brief() mirrors its own clean message, so replaying its
     // chalk-formatted body would duplicate it as garbled ANSI (row lead-044).
-    const mirror: 'sent' | 'no-sink' | 'suppressed' =
-      this.outputCallback ? (this.inBrief ? 'suppressed' : 'sent') : 'no-sink';
+    const mirror: 'sent' | 'no-sink' | 'suppressed' = this.outputCallback
+      ? this.inBrief
+        ? 'suppressed'
+        : 'sent'
+      : 'no-sink';
     if (this.isInteractionMode()) {
       this.outputBuffer.push({ method: 'log', args, mirror });
     } else {
@@ -448,8 +475,11 @@ class AgentIO {
    * Console replacement: warn (buffers if in interaction mode)
    */
   warn(...args: unknown[]): void {
-    const mirror: 'sent' | 'no-sink' | 'suppressed' =
-      this.outputCallback ? (this.inBrief ? 'suppressed' : 'sent') : 'no-sink';
+    const mirror: 'sent' | 'no-sink' | 'suppressed' = this.outputCallback
+      ? this.inBrief
+        ? 'suppressed'
+        : 'sent'
+      : 'no-sink';
     if (this.isInteractionMode()) {
       this.outputBuffer.push({ method: 'warn', args, mirror });
     } else {
@@ -464,8 +494,11 @@ class AgentIO {
    * Console replacement: error (buffers if in interaction mode)
    */
   error(...args: unknown[]): void {
-    const mirror: 'sent' | 'no-sink' | 'suppressed' =
-      this.outputCallback ? (this.inBrief ? 'suppressed' : 'sent') : 'no-sink';
+    const mirror: 'sent' | 'no-sink' | 'suppressed' = this.outputCallback
+      ? this.inBrief
+        ? 'suppressed'
+        : 'sent'
+      : 'no-sink';
     if (this.isInteractionMode()) {
       this.outputBuffer.push({ method: 'error', args, mirror });
     } else {
@@ -485,7 +518,13 @@ class AgentIO {
    * @param message - Main message text
    * @param detail - Optional greyed detail shown after the tool tag
    */
-  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire }): void {
+  brief(
+    level: 'info' | 'warn' | 'error',
+    tool: string,
+    message: string,
+    detail?: string,
+    opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire }
+  ): void {
     const now = new Date();
     const timestamp = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     const colorFn = getToolColor(tool);
@@ -630,9 +669,7 @@ class AgentIO {
     // Return/enter keys are mapped to \n (line feed) for insertion
     // into the editor content, so pasted multi-line text renders
     // correctly with visible line breaks.
-    const text = keys.map(k =>
-      (k.name === 'return' || k.name === 'enter') ? '\n' : k.sequence
-    ).join('');
+    const text = keys.map((k) => (k.name === 'return' || k.name === 'enter' ? '\n' : k.sequence)).join('');
     if (text.length === 0) return;
 
     // Insert at current cursor position in the line editor
@@ -849,7 +886,7 @@ class AgentIO {
             return {
               label: labelFor(tok),
               value: tok.toLowerCase(),
-              isDefault,
+              isDefault
             };
           });
           kind = 'choice';
@@ -857,7 +894,7 @@ class AgentIO {
           kind = 'confirm';
           cardOptions = [
             { label: 'Continue', value: options.onEnter },
-            { label: 'Cancel', value: options.onEsc ?? '' },
+            { label: 'Cancel', value: options.onEsc ?? '' }
           ];
         }
       }
@@ -868,7 +905,7 @@ class AgentIO {
         query,
         kind,
         options: cardOptions,
-        initialContent: options?.initialContent,
+        initialContent: options?.initialContent
       });
 
       const result = await hub.waitForCardResponse(cardId);
@@ -963,7 +1000,7 @@ class AgentIO {
             // Save history
             this.lineHistory = this.activeLineEditor?.getHistory() || [];
             this.activeLineEditor?.close();
-            this.activeLineEditor = null;  // Clear FIRST - so isInteractionMode() returns false
+            this.activeLineEditor = null; // Clear FIRST - so isInteractionMode() returns false
 
             // Clear ask cancellation state
             this.askResolver = null;
@@ -985,9 +1022,7 @@ class AgentIO {
             // Enter meant No).
             let finalValue = value;
             if (value === '') {
-              finalValue = options?.onEnter !== undefined
-                ? options.onEnter
-                : (parseBracketDefault(query) ?? value);
+              finalValue = options?.onEnter !== undefined ? options.onEnter : (parseBracketDefault(query) ?? value);
             }
             resolve(finalValue);
 
@@ -1017,7 +1052,7 @@ class AgentIO {
                     this.activeLineEditor?.setWhisper(`/${resolvedName} → ${subs.join(', ')}`);
                   } else {
                     // State 5/6: user typing subcommand — filter by prefix
-                    const matching = subs.filter(s => s.startsWith(afterSpace));
+                    const matching = subs.filter((s) => s.startsWith(afterSpace));
                     if (matching.length > 0) {
                       // State 5: partial subcommand match
                       this.activeLineEditor?.setWhisper(`/${resolvedName} → ${matching.join(', ')}`);
@@ -1041,9 +1076,9 @@ class AgentIO {
                 } else {
                   // Partial match — filter command names by prefix
                   const all = slashRegistry.list();
-                  const matches = all.filter(n => n.startsWith(trimmed));
+                  const matches = all.filter((n) => n.startsWith(trimmed));
                   if (matches.length > 0) {
-                    this.activeLineEditor?.setWhisper(`/${  matches.join(', /')}`);
+                    this.activeLineEditor?.setWhisper(`/${matches.join(', /')}`);
                   }
                 }
               }
@@ -1053,7 +1088,7 @@ class AgentIO {
               // Clear whisper when leaving / or ! prefix
               this.activeLineEditor?.setWhisper(null);
             }
-          },
+          }
         });
 
         // Pre-fill content if provided
@@ -1122,7 +1157,3 @@ class AgentIO {
 
 // Simple singleton - just export a new instance
 export const agentIO = new AgentIO();
-
-
-
-

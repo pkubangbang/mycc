@@ -21,12 +21,7 @@
 
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import type {
-  ChatMessage,
-  SteeringNote,
-  FileInfo,
-  ConnectionStatus,
-} from '../types';
+import type { ChatMessage, SteeringNote, FileInfo, ConnectionStatus } from '../types';
 
 /** The 6 phases of the web UI interaction state machine.
  *
@@ -99,30 +94,20 @@ export const useChatStore = defineStore('chat', () => {
    *  Set by `wsSend` in main.ts; not part of the phase FSM. */
   const connectionError = ref<string | undefined>(undefined);
   // localStorage is only available in the browser; guard for SSR/node tests.
-  const darkMode = ref(
-    typeof localStorage !== 'undefined'
-      ? localStorage.getItem('mycc-theme') === 'dark'
-      : false,
-  );
+  const darkMode = ref(typeof localStorage !== 'undefined' ? localStorage.getItem('mycc-theme') === 'dark' : false);
   const debugMode = ref(false);
   const lastServerMsg = ref<{ type: string; at: number } | undefined>(undefined);
 
   // ── Derived flags (projections of `phase` — can never be invalid) ──
   /** True when a prompt OR card is pending user input (input box enabled). */
-  const isWaiting = computed(
-    () => phase.value === 'prompt' || phase.value === 'card',
-  );
+  const isWaiting = computed(() => phase.value === 'prompt' || phase.value === 'card');
   /** True while the agent is actively working (between submit and next prompt),
    *  INCLUDING the send→running gap (`submitted`). */
-  const isRunning = computed(
-    () => phase.value === 'working' || phase.value === 'submitted',
-  );
+  const isRunning = computed(() => phase.value === 'working' || phase.value === 'submitted');
   /** True when an interactive card (ask()) is pending a response. */
   const hasPendingCard = computed(() => phase.value === 'card');
   /** True when the steering review "继续…" card has notes pending. */
-  const hasReview = computed(
-    () => pendingSteeringReview.value.length > 0,
-  );
+  const hasReview = computed(() => pendingSteeringReview.value.length > 0);
 
   // ── Store actions (single mutation surface — see §2.7) ──
   // Both `applyServerMessage` (server-driven) and `chatApi` (client-initiated
@@ -170,9 +155,7 @@ export const useChatStore = defineStore('chat', () => {
     steeringRevision.value = revision;
     steeringQueue.value = notes.slice();
     const liveIds = new Set(notes.map((n) => n.id));
-    const inReview = new Set(
-      pendingSteeringReview.value.filter((n) => liveIds.has(n.id)).map((n) => n.id),
-    );
+    const inReview = new Set(pendingSteeringReview.value.filter((n) => liveIds.has(n.id)).map((n) => n.id));
     pendingSteeringReview.value = pendingSteeringReview.value.filter((n) => inReview.has(n.id));
     steeringBuffer.value = steeringQueue.value.filter((n) => !inReview.has(n.id));
     return true;
@@ -214,11 +197,8 @@ export const useChatStore = defineStore('chat', () => {
       seen.add(note.id);
       pendingSteeringReview.value.push(note);
     }
-    steeringBuffer.value = steeringQueue.value.filter(
-      (n) => !seen.has(n.id),
-    );
+    steeringBuffer.value = steeringQueue.value.filter((n) => !seen.has(n.id));
   }
-
 
   return {
     // source of truth
@@ -255,7 +235,7 @@ export const useChatStore = defineStore('chat', () => {
     setPlanMode,
     adoptSteering,
     resetSteering,
-    populateSteeringReview,
+    populateSteeringReview
   };
 });
 

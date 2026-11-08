@@ -25,23 +25,28 @@ export const peerDisconnectTool: ToolDefinition = {
   description:
     'Hang up a remote peer added via peer_connect (terminal — it will not automatically reconnect). ' +
     'After this the peer is no longer in your peer list; run peer_connect again to reconnect later. ' +
-    'Pass the remote peer\'s session-id (the form peer_list displays) or the URL you used with peer_connect. ' +
+    "Pass the remote peer's session-id (the form peer_list displays) or the URL you used with peer_connect. " +
     'Only affects REMOTE (cross-machine) peers.',
   input_schema: {
     type: 'object',
     properties: {
       peer: {
         type: 'string',
-        description: 'The remote peer\'s session-id (preferred — as shown by peer_list) or the URL passed to peer_connect.',
-      },
+        description:
+          "The remote peer's session-id (preferred — as shown by peer_list) or the URL passed to peer_connect."
+      }
     },
-    required: ['peer'],
+    required: ['peer']
   },
   scope: ['main'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const peer = typeof args.peer === 'string' ? args.peer : '';
     if (!peer) {
-      ctx.core.brief('error', 'peer_disconnect', 'peer is required — the remote sessionId (see peer_list) or the url used for peer_connect.');
+      ctx.core.brief(
+        'error',
+        'peer_disconnect',
+        'peer is required — the remote sessionId (see peer_list) or the url used for peer_connect.'
+      );
       return 'Error: peer is required — the remote sessionId (see peer_list) or the url used for peer_connect.';
     }
     ctx.core.brief('info', 'peer_disconnect', `Hanging up remote peer ${chalk.cyan(peer)} …`);
@@ -57,5 +62,5 @@ export const peerDisconnectTool: ToolDefinition = {
       ctx.core.brief('error', 'peer_disconnect', chalk.red(`failed unexpectedly: ${(err as Error).message}`));
       return `Error: peer_disconnect failed unexpectedly: ${(err as Error).message}`;
     }
-  },
+  }
 };

@@ -144,7 +144,7 @@ export const peerCommand: SlashCommand = {
       // Hard cutoff: skip peers whose latest heartbeat is older than 1h, even
       // with --all, so dead instances' briefs don't bloat the listing.
       const latest = ctx.peer.getLatestHeartbeat(id.sessionId);
-      if (latest !== null && (now - latest) > PEER_LISTING_CUTOFF_MS) {
+      if (latest !== null && now - latest > PEER_LISTING_CUTOFF_MS) {
         omitted++;
         continue;
       }
@@ -155,11 +155,12 @@ export const peerCommand: SlashCommand = {
       if (fresh) online++;
 
       const ageMs = now - id.startedAt;
-      const age = ageMs < 60_000
-        ? `${Math.round(ageMs / 1000)}s ago`
-        : ageMs < PEER_LISTING_CUTOFF_MS
-          ? `${Math.round(ageMs / 60_000)}m ago`
-          : `${Math.round(ageMs / PEER_LISTING_CUTOFF_MS)}h ago`;
+      const age =
+        ageMs < 60_000
+          ? `${Math.round(ageMs / 1000)}s ago`
+          : ageMs < PEER_LISTING_CUTOFF_MS
+            ? `${Math.round(ageMs / 60_000)}m ago`
+            : `${Math.round(ageMs / PEER_LISTING_CUTOFF_MS)}h ago`;
 
       rows.push({
         sid: id.sessionId,
@@ -180,7 +181,7 @@ export const peerCommand: SlashCommand = {
         age,
         started: formatLocalDateTime(id.startedAt),
         // Surface recent briefs so the lead can monitor peer progress.
-        briefs: ctx.peer.getBriefs(id.sessionId),
+        briefs: ctx.peer.getBriefs(id.sessionId)
       });
     }
 
@@ -210,32 +211,38 @@ export const peerCommand: SlashCommand = {
         dialed: pair.dialed,
         daemon: meta?.daemon === true,
         role: meta?.role,
-        workDir: meta?.workDir,
+        workDir: meta?.workDir
       });
     }
 
     // ── Empty result handling ────────────────────────────────────────────────
     if (rows.length === 0 && remoteRows.length === 0) {
       if (omitted > 0) {
-        console.log(chalk.gray(
-          includeAll
-            ? `No mycc instances listed; ${omitted} registered peer${omitted === 1 ? ' is' : 's are'} older than 1h and omitted.`
-            : `No online mycc instances found; ${omitted} older than 1h omitted.`,
-        ));
+        console.log(
+          chalk.gray(
+            includeAll
+              ? `No mycc instances listed; ${omitted} registered peer${omitted === 1 ? ' is' : 's are'} older than 1h and omitted.`
+              : `No online mycc instances found; ${omitted} older than 1h omitted.`
+          )
+        );
         if (!includeAll) {
           console.log(chalk.gray('  Use /peer --all to include recent offline/stale instances.'));
         }
       } else {
-        console.log(chalk.gray(
-          includeAll
-            ? 'No mycc instances registered for peer discovery, and no remote wire peers connected.'
-            : 'No other online mycc instances found.',
-        ));
+        console.log(
+          chalk.gray(
+            includeAll
+              ? 'No mycc instances registered for peer discovery, and no remote wire peers connected.'
+              : 'No other online mycc instances found.'
+          )
+        );
         if (!includeAll) {
-          console.log(chalk.gray(
-            '  Use /peer --all to include offline/stale instances; '
-            + 'use peer_connect to reach a cross-machine instance.',
-          ));
+          console.log(
+            chalk.gray(
+              '  Use /peer --all to include offline/stale instances; ' +
+                'use peer_connect to reach a cross-machine instance.'
+            )
+          );
         }
       }
       return;
@@ -251,7 +258,7 @@ export const peerCommand: SlashCommand = {
     if (remoteRows.length > 0) {
       renderRemote(remoteRows, remoteLive);
     }
-  },
+  }
 };
 
 /**
@@ -271,12 +278,9 @@ function renderLocal(
     started: string;
     briefs: Array<{ time: number; content: string; confidence: number }>;
   }>,
-  meta: { online: number; omitted: number },
+  meta: { online: number; omitted: number }
 ): void {
-  const summary = [
-    `${meta.online} online`,
-    `${rows.length} listed`,
-  ];
+  const summary = [`${meta.online} online`, `${rows.length} listed`];
   if (meta.omitted > 0) summary.push(`${meta.omitted} registered >1h hidden`);
   console.log(`${chalk.cyan.bold('Peers')} ${chalk.gray(`— ${summary.join(', ')}`)}`);
 
@@ -295,9 +299,10 @@ function renderLocal(
     // background Lead with no terminal). For an ordinary interactive instance
     // the operator already owns its terminal, so repeating "kill via …" on
     // every row is noise that bloats the listing.
-    const kill = r.daemon && r.pid !== null
-      ? chalk.gray(`  (stop: ${process.platform === 'win32' ? `taskkill /PID ${r.pid}` : `kill ${r.pid}`})`)
-      : '';
+    const kill =
+      r.daemon && r.pid !== null
+        ? chalk.gray(`  (stop: ${process.platform === 'win32' ? `taskkill /PID ${r.pid}` : `kill ${r.pid}`})`)
+        : '';
 
     console.log();
     console.log(`${chalk.bold(r.sid)}${name}  ${state}${facts.length > 0 ? `  ${facts.join('  ')}` : ''}${kill}`);
@@ -330,14 +335,10 @@ function renderRemote(
     role?: string;
     workDir?: string;
   }>,
-  remoteLive: number,
+  remoteLive: number
 ): void {
-  console.log(
-    chalk.magenta.bold(`Remote wire peers — ${remoteLive}/${rows.length} connected`),
-  );
-  console.log(
-    chalk.gray('  mail_to("<session-id>/lead") works the same; hang up with peer_disconnect.'),
-  );
+  console.log(chalk.magenta.bold(`Remote wire peers — ${remoteLive}/${rows.length} connected`));
+  console.log(chalk.gray('  mail_to("<session-id>/lead") works the same; hang up with peer_disconnect.'));
 
   for (const r of rows) {
     const state = r.alive
