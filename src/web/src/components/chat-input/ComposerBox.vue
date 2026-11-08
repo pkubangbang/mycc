@@ -81,7 +81,7 @@ function onPaste(event: ClipboardEvent): void {
 // row, which replaces the old CSS `clamp()` over a registered custom property:
 // the arithmetic lives in one TypeScript expression instead of a
 // `@property` + `clamp(min, raw, max)` triple spread across the stylesheet.
-const COMPOSER_MIN_H = 60;
+const COMPOSER_MIN_H = 70;
 const COMPOSER_MAX_H = 320;
 const bandHeight = computed(() => {
   const h = Number.isFinite(props.height) ? props.height : COMPOSER_MIN_H;
@@ -90,25 +90,16 @@ const bandHeight = computed(() => {
 
 // ── Mode-label visibility (NORMAL / PLAN under 发送) ──
 //
-// The label sits under the button inside the send column, which stretches to
-// the composer band. The band height now arrives as the `height` PROP (the
-// shell owns it), so visibility is a pure computed over `bandHeight` — no
-// ResizeObserver, no container query, no DOM measurement at all.
+// The label is ALWAYS visible: the band floor (COMPOSER_MIN_H = 70px) is above
+// the label's natural requirement (40px button + 4px gap + 12px line = 56px of
+// content box, plus the row's 8px top padding), so there is no height at which
+// it would spill past the send column's bottom edge. No visibility computed, no
+// ResizeObserver, no container query.
 //
 // WHY NOT A CONTAINER QUERY: `container-type: size` on the send column implies
 // `contain: size`, so the column's own size would ignore its contents; combined
 // with `justify-self: end` it collapsed to width 0, pushing 发送 out of the band
 // and hiding both the button and the label.
-//
-// THE THRESHOLD (X): the label's stack needs 40px button + 4px gap + 12px
-// line = 56px of content box, plus the row's 8px top padding and ~3px of slack
-// so the descenders never touch the wrapper's border ⇒ 67px of BAND height.
-// Below that the label would spill past the column's bottom edge, so it hides
-// (`display: none`, reserving no space).
-const MODE_LABEL_MIN_BAND_PX = 67;
-
-/** Show the label only when the band can hold button + gap + line. */
-const hasRoomForMode = computed(() => bandHeight.value >= MODE_LABEL_MIN_BAND_PX);
 </script>
 
 <template>
@@ -177,10 +168,9 @@ const hasRoomForMode = computed(() => bandHeight.value >= MODE_LABEL_MIN_BAND_PX
           >发送</button>
           <!-- Mode text: DIRECTLY below 发送, inside the send column. Plain
                text (no capsule/pill), uppercase, muted, so it reads as state
-               rather than an action. Hidden when the composer height is below
-               MODE_LABEL_MIN_BAND_PX (see the computed above). -->
+               rather than an action. Always visible — the band floor (70px)
+               always has room for it (see the script comment). -->
           <span
-            v-show="hasRoomForMode"
             class="mode-text"
             :class="{ 'mode-text--plan': props.planMode }"
             :title="props.planMode ? '计划模式：只读探索，不修改代码' : '普通模式'"
@@ -277,7 +267,7 @@ const hasRoomForMode = computed(() => bandHeight.value >= MODE_LABEL_MIN_BAND_PX
      row's 8px top padding — the band would end 8px below the row's clip edge
      and the bottom-anchored icon strip would sink into the shell's bottom
      padding at maximum drag. */
-  height: var(--band-h, 58px);
+  height: var(--band-h, 70px);
   overflow: hidden;
 }
 

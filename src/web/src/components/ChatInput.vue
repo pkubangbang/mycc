@@ -38,7 +38,7 @@ const fileInput = ref<HTMLInputElement | null>(null);
 /** Composer band height in px — the single owned value, handed to
  *  <ComposerBox> as `height`. ComposerBox clamps it once; the drag handle below
  *  is the only writer. */
-const composerHeight = ref(58);
+const composerHeight = ref(70);
 const dragOver = ref(false);
 let dragCounter = 0;
 /** Whether the attachment-manager popup is open. */
@@ -243,7 +243,7 @@ function removeAllFiles(): void {
 // ── Manual input-box height (top-edge drag handle) ──
 //
 // ChatInput OWNS the height: `composerHeight` is a reactive px value handed to
-// <ComposerBox> as the `height` prop. ComposerBox clamps it once (58–320) and
+// <ComposerBox> as the `height` prop. ComposerBox clamps it once (70–320) and
 // binds it inline as `--band-h`, so this handler never touches styles, never
 // measures a rect for the anchor, and never clamps — it just moves a number.
 //
