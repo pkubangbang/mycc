@@ -291,8 +291,16 @@ function loadMore(): void {
  * rect measured in an earlier frame, which is what used to make the stop land
  * slightly wrong.
  */
-/** Breathing room between the landed hint and the viewport's bottom edge. */
-const JUMP_BOTTOM_PAD = 8;
+/**
+ * Breathing room between the landed hint and the viewport's bottom edge.
+ *
+ * 50px, not 8: the jump lands the hint NEAR the bottom rather than flush with
+ * it, so the next user turn — which is what the reader is looking for — starts
+ * visibly below the hint instead of needing a further scroll. The number is a
+ * reading affordance (about two lines of ordinary message text), not a layout
+ * measurement, which is why it is a constant here and not derived from a rect.
+ */
+const JUMP_BOTTOM_PAD = 50;
 /** Eased-scroll duration: short enough to feel instant, long enough to show the
  *  direction of travel (a 30-screen jump in 0ms is disorienting). */
 const JUMP_TWEEN_MS = 260;

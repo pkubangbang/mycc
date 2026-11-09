@@ -341,8 +341,11 @@ function quoteContent(): void {
   <div v-if="isAwaitHint" class="await-hint" data-await-hint>
     <span v-if="awaitKind !== 'other'" class="await-dot" :class="awaitKind" aria-hidden="true" />
     <span class="await-text">{{ message.content }}</span>
-    <span v-if="awaitWakeTime" class="await-time">({{ awaitWakeTime }})</span>
-    <button
+    <span v-if="awaitWakeTime" class="await-time">({{ awaitWakeTime }})</span><!--
+      No whitespace between the time and the button on purpose: the row is an
+      INLINE flow (see .await-hint), so a newline here would render as a space
+      and detach PREV from the text it leads away from.
+   --><button
       v-if="showPrevJump"
       class="await-prev"
       type="button"
@@ -494,9 +497,20 @@ function quoteContent(): void {
 
 <style scoped>
 .await-hint {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
+  /* INLINE FLOW, not a flex row.
+   *
+   * The hint is one sentence with a ghost control trailing it, so the control
+   * must be part of the SENTENCE. In a flex row the button is its own item: when
+   * the text is long enough to wrap, the item goes to the next line by itself and
+   * PREV ends up stranded on a line of its own, detached from the text it leads
+   * away from. As an inline-level box the button simply follows the last word,
+   * and if the line is full it wraps exactly like any other word.
+   *
+   * The row's own alignment is `baseline` on each child rather than
+   * `align-items`: the dot is an inline-block that needs a nudge, while the
+   * button's baseline is already the baseline of the word "PREV" (see
+   * .await-prev). */
+  display: block;
   padding: 2px 16px;
   margin: 1px 0;
   font-size: 12px;
@@ -515,10 +529,12 @@ function quoteContent(): void {
 }
 /* Dot = state: red blocked on an external event, green woken. */
 .await-dot {
-  flex: 0 0 auto;
+  display: inline-block;
   width: 7px;
   height: 7px;
   border-radius: 50%;
+  /* One space of separation from the text, the same gap the flex row used. */
+  margin-right: 6px;
   transform: translateY(-1px);
 }
 .await-dot.await {
@@ -528,22 +544,20 @@ function quoteContent(): void {
   background: #30a46c;
 }
 .await-time {
-  flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
   opacity: 0.8;
 }
-/* Ghost jump button, immediately after the text and always visible: a control
-   that only appears on hover must be discovered by hovering the very line it
-   leads away from. */
-/* Inline text button, not a flex box.
+/* Inline text button, not a flex row.
  *
- * A flex container inside a baseline-aligned line has to be told how to align
- * itself, and every answer needs a compensating offset: `baseline` misplaces a
- * replaced element (its baseline is its bottom edge), `center` floats the
- * whole control off the text. An INLINE box sidesteps the problem — its
- * baseline IS the baseline of its last line box, i.e. the word "PREV" — so the
- * button lands on the message text's baseline by construction. The chevron is a
- * plain character in the same run, so it inherits that baseline too.
+ * Two constraints meet here. The hint ROW must be inline flow, because in a flex
+ * row this button is a separate item and a long message strands it on a line of
+ * its own; inside the sentence it wraps like any other word instead. And the
+ * button must be ONE control, so its icon and label are an inline-flex box.
+ *
+ * Baseline: an inline-level box seats itself on the line's baseline by its LAST
+ * line box. For the inline-flex control that is the word "PREV", which is what
+ * makes it read as part of the sentence rather than floating beside it. The
+ * chevron is a flex item inside that box, so it inherits the same centre.
  *
  * Sizing is the text's own: font-size and line-height inherit from the hint, and
  * the only padding is horizontal breathing room for the hover wash. */
@@ -557,9 +571,20 @@ function quoteContent(): void {
      still participates in the hint line as a normal inline-level box. */
   display: inline-flex;
   align-items: center;
+  /* The row now lays this button out in INLINE flow with the message text, so
+     the box's own baseline is what seats PREV on the text's baseline. For an
+     inline-flex box that baseline is the baseline of its first-line content —
+     the word "PREV" — which is exactly the alignment the hint needs. */
+  vertical-align: baseline;
   gap: 2px;
   margin: 0;
-  padding: 0 4px;
+  /* Horizontal breathing room for the hover wash, and VERTICAL height so the
+     control reads as a button rather than as 10px of type. The hint's font is
+     12px/1.5 (18px line box); with a 10px label and 1px line-height the button
+     is only ~10px tall, which is why it looked thin. 3px of block padding lifts
+     it to ~16px — still inside the 18px line box, so it grows in height without
+     adding line height or pushing the message text apart. */
+  padding: 3px 5px;
   border: 0;
   border-radius: 3px;
   background: transparent;
