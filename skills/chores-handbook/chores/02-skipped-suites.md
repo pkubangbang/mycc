@@ -19,8 +19,9 @@ this list — it drifts):
   it uses `opts.timeoutMs` to stay ~1s.)
 - `src/tests/mycc-compose-down.test.ts` — 3 process-spawning cases (`it.skip`).
 - `src/tests/mycc-compose-up-pipeline.test.ts` — spawning cases (`it.skip`).
-- `src/tests/serve/peer-wire-smoke.test.ts` — pre-existing (NOT part of the
-  compose PR); smoke-level.
+- `src/tests/serve/peer-wire-smoke.test.ts` — REMOVED 2026-11-09 with the rest of
+  the peer-wire and `mycc-compose` suites (see Chore 5); the compose suites listed
+  above were merged into `mycc-compose-core/-runtime` and then removed with them.
 
 ### How to find them
 
