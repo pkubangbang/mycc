@@ -9,7 +9,10 @@ description: >
   (3) the recurring note-template friction audit of triologue.note() prompt
   injections; (4) reclaiming stale discovery state (orphan channel files and
   heartbeat files under ~/.mycc-store/discovery); (5) why slow, PTY/tmux-driven
-  boot suites must NOT be test-covered, and how to reproduce them by hand.
+  boot suites must NOT be test-covered, and how to reproduce them by hand;
+  (6) the agent-driven wire + compose simulation test that replaced the removed
+  peer-wire/compose suites — its topology, kick-off commands, time/token budget
+  and the evaluation table.
   Use when the user switches embedding models, when WAL entries predate the
   rag-provider abstraction, when the user asks how to migrate / re-stamp /
   re-namespace wiki data, when a periodic review of the injected prompt
@@ -40,6 +43,7 @@ through the manual steps so they review every change before it is applied.
 > - `chores/03-note-friction-audit.md` — Chore 3: three-reviewer audit of `triologue.note()` call sites against six friction patterns.
 > - `chores/04-discovery-reclaim.md` — Chore 4: audit → back up → delete CANDIDATE discovery/ heartbeat files.
 > - `chores/05-slow-tmux-suites.md` — Chore 5: why PTY/tmux boot tests are not committed, and the manual reproduction.
+> - `chores/06-wire-compose-agent-test.md` — Chore 6: the agent-driven wire + compose simulation test (topology, kick-off, cost budget, evaluation table) that replaced the removed slow suites.
 
 ## Pick your chore
 
@@ -50,6 +54,7 @@ through the manual steps so they review every change before it is applied.
 | 3 | Recurring note-template friction audit | `chores/03-note-friction-audit.md` | a periodic review of `triologue.note()` prompt injections is due |
 | 4 | Reclaim stale discovery state | `chores/04-discovery-reclaim.md` | `~/.mycc-store/discovery` has grown large, or `peer_list` shows a graveyard of dead peers / orphan channel files |
 | 5 | Do NOT test-cover slow, PTY-driven boot suites | `chores/05-slow-tmux-suites.md` | you are about to write (or re-add) a tmux/real-terminal test for a startup-ordering contract — read this FIRST |
+| 6 | Agent-driven wire + compose simulation test | `chores/06-wire-compose-agent-test.md` | a change touches the peer wire (`src/serve/peer-wire.ts`, `src/peer/wire-*`) or `mycc-compose`, and you need end-to-end proof that the pair actually carries mail — the slow suites were removed on 2026-11-09, so this is the only proof |
 
 Chore 1 is the one-shot wiki migration; Chore 2 and Chore 5 both touch testing
 but are different mechanisms (2 = suites that are skipped but kept; 5 = a test
