@@ -218,6 +218,159 @@ export async function postJson(
   return data as Record<string, unknown>;
 }
 
+/**
+ * Is this error an abort signal's own DOMException (as opposed to a real
+ * transport fault that merely mentions "aborted")?
+ *
+ * Checked structurally — by `name`, never by message text — because the
+ * literal message differs per platform (`This operation was aborted` on
+ * Node/undici, `The operation was aborted.`, `The user aborted a request.`,
+ * `aborted`) and a message match would silently stop working on a Node bump.
+ */
+export function isAbortSignalError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+/**
+ * Constructors for the two cancellation/timeout error classes, injected rather
+ * than imported.
+ *
+ * `retryChat`/`collectStream` in `chat-helpers.ts` IMPORT `ollama.ts`, which
+ * constructs `OllamaHttpClient`. A runtime import of `chat-helpers` from here
+ * closes that cycle, and in production the class binding is `undefined` at the
+ * moment ollama.ts runs its module-level `new OllamaHttpClient(...)` — the
+ * transport then fails to construct at startup ("OllamaHttpClient is not a
+ * constructor"). This module therefore stays a LEAF of the engine: callers
+ * pass the constructors in, and when they are absent the failure is still
+ * reported with a structurally identical error (same `name`, so the existing
+ * `isCancellation` / `isTransientError` structural checks keep working).
+ */
+export interface ConnectFailureErrors {
+  cancelled: (cause?: unknown) => Error;
+  timedOut: (message: string, reason: 'first-token' | 'liveness', cause?: unknown) => Error;
+}
+
+/** `name` values the engine's structural checks recognise (see loop/cancellation.ts). */
+const ABORTED_ERROR_NAME = 'StreamAbortedError';
+const TIMEOUT_ERROR_NAME = 'StreamTimeoutError';
+
+function namedError(name: string, message: string, cause?: unknown): Error {
+  const error = new Error(message, cause === undefined ? undefined : { cause }) as Error & {
+    reason?: 'first-token' | 'liveness';
+  };
+  error.name = name;
+  return error;
+}
+
+const DEFAULT_CONNECT_FAILURE_ERRORS: ConnectFailureErrors = {
+  cancelled: (cause) => namedError(ABORTED_ERROR_NAME, 'Request aborted', cause),
+  // Mirror `StreamTimeoutError`'s public shape: consumers other than the
+  // injected chat client (health check, rag-*) read `reason` to decide whether
+  // to escalate the first-token deadline, so dropping it here silently
+  // disabled 20→40→80s escalation for them.
+  timedOut: (message, reason, cause) => Object.assign(namedError(TIMEOUT_ERROR_NAME, message, cause), { reason })
+};
+
+/**
+ * Explain a rejected chat POST instead of re-throwing an opaque `AbortError`.
+ *
+ * Why this exists: three different events abort the same controller —
+ *   - the caller's ESC signal (an intentional cancellation),
+ *   - the per-attempt POST deadline in `retryChat` (a connection hang),
+ *   - `connect()` itself on a non-2xx / empty-body response,
+ * and fetch reports ALL of them as one DOMException whose message is the bare
+ * "This operation was aborted". That message names neither the trigger nor the
+ * endpoint, so the user saw an unexplained abort in the COLLECT error box while
+ /**
+ * Explain a rejected chat POST instead of re-throwing an opaque `AbortError`.
+ *
+ * Why this exists: three different events abort the same controller —
+ *   - the caller's ESC signal (an intentional cancellation),
+ *   - the per-attempt POST deadline in `retryChat` (a connection hang),
+ *   - `connect()` itself on a non-2xx / empty-body response,
+ * and fetch reports ALL of them as one DOMException whose message is the bare
+ * "This operation was aborted". That message names neither the trigger nor the
+ * endpoint, so the user saw an unexplained abort in the COLLECT error box while
+ * the actual cause (a POST timeout, or ESC) was invisible.
+ *
+ * The precedence itself lives in {@link classifyConnectFailure}.
+ */
+/**
+ * The DECISION inside {@link describeConnectFailure}, separated so it can be
+ * tested without driving a live POST (the controller is created inside
+ * `connect()` and is not exposed, and an abort reason can only be recorded by
+ * the controller's owner).
+ */
+export type ConnectFailureVerdict =
+  | { kind: 'cancelled' }
+  | { kind: 'timeout' }
+  | { kind: 'reason'; reason: unknown }
+  | { kind: 'passthrough' };
+
+export function classifyConnectFailure(
+  error: unknown,
+  callerAborted: boolean,
+  requestReason: unknown
+): ConnectFailureVerdict {
+  // 1. A CANCELLATION MARKER always means cancelled, even when it is also the
+  // rejection itself (an Error reason makes `fetch` reject with it verbatim).
+  // Checked before the identity rule below, or a shared marker instance would
+  // be reported as a descriptive cause.
+  if ((requestReason as { causedByCancellation?: unknown } | undefined)?.causedByCancellation === true) {
+    return { kind: 'cancelled' };
+  }
+  // 2. A DESCRIPTIVE reason that is the rejection itself. `retryChat`'s POST
+  // deadline aborts the very controller `connect()` sees as its caller signal
+  // (`chatController.abort(timeoutError)`), so `callerAborted` is TRUE for a
+  // connection hang. Checking the caller flag first therefore reported "the
+  // user aborted" for every POST timeout — no retry, no 20→40→80s escalation.
+  // When the rejection IS the recorded reason, that reason is the answer:
+  // nothing was cancelled by a human, the controller was aborted BY the error.
+  if (requestReason !== undefined && error === requestReason) {
+    return { kind: 'reason', reason: requestReason };
+  }
+  // 3. Caller cancellation. Reaching here means the rejection is an
+  // independently-shaped value (a DOMException from an abort with no reason),
+  // so the caller's flag is the only thing that explains it.
+  if (callerAborted) return { kind: 'cancelled' };
+  // 4. Anything that is not an abort is the outer normalizer's business.
+  if (!isAbortSignalError(error)) return { kind: 'passthrough' };
+  // 5. `abort()` sites that carry a descriptive error while the rejection is a
+  // bare AbortError (HTTP error, empty body): the reason is more informative
+  // than the DOMException.
+  if (requestReason instanceof Error && !isAbortSignalError(requestReason)) {
+    return { kind: 'reason', reason: requestReason };
+  }
+  // 6. Not reachable in production today (every production abort records a
+  // reason, so rule 2 resolves it first), kept as the safe default for a
+  // caller-less abort: report a connection timeout naming the likely cause.
+  return { kind: 'timeout' };
+}
+
+async function describeConnectFailure(
+  error: unknown,
+  callerSignal: AbortSignal | undefined,
+  requestSignal: AbortSignal,
+  errors: ConnectFailureErrors
+): Promise<unknown> {
+  const verdict = classifyConnectFailure(error, callerSignal?.aborted === true, requestSignal.reason);
+  switch (verdict.kind) {
+    case 'cancelled':
+      return errors.cancelled(error);
+    case 'reason':
+      return verdict.reason;
+    case 'passthrough':
+      return error;
+    case 'timeout':
+      return errors.timedOut(
+        'Ollama chat POST was aborted before response headers (no timeout reason recorded; ' +
+          'a slow or unreachable Ollama endpoint is the usual cause)',
+        'first-token',
+        error
+      );
+  }
+}
+
 type StreamChunk = ChatResponse & { error?: string };
 
 /** Malformed complete records are fatal; an EOF-cut record is retryable. */
@@ -236,15 +389,24 @@ function parseChunk(line: string, atEof: boolean): StreamChunk {
 export interface OllamaHttpConfig {
   host: string;
   apiKey?: string;
+  /**
+   * Cancellation/timeout error constructors used to explain an aborted POST.
+   * Omit for standalone use (the transport then builds structurally identical
+   * errors itself). `ollama.ts` injects its real classes; see
+   * {@link ConnectFailureErrors} for why this is injected, not imported.
+   */
+  errors?: ConnectFailureErrors;
 }
 
 export class OllamaHttpClient {
   private readonly host: string;
   private readonly headers: Record<string, string>;
+  private readonly errors: ConnectFailureErrors;
 
   constructor(config: OllamaHttpConfig) {
     this.host = normalizeHost(config.host);
     this.headers = config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {};
+    this.errors = config.errors || DEFAULT_CONNECT_FAILURE_ERRORS;
   }
 
   private async request(path: string, init: RequestInit = {}): Promise<Response> {
@@ -282,7 +444,7 @@ export class OllamaHttpClient {
   async chat(request: ChatRequest & { stream?: false }): Promise<ChatResponse>;
   async chat(request: ChatRequest, signal?: AbortSignal): Promise<ChatResponse | OllamaChatStream> {
     if (request.stream === true) {
-      return OllamaChatStream.connect(this.host, this.headers, request, signal);
+      return OllamaChatStream.connect(this.host, this.headers, request, signal, this.errors);
     }
     const response = await this.request('/api/chat', {
       method: 'POST',
@@ -306,7 +468,8 @@ export class OllamaChatStream implements AsyncIterable<ChatResponse> {
     host: string,
     headers: Record<string, string>,
     request: ChatRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    errors: ConnectFailureErrors = DEFAULT_CONNECT_FAILURE_ERRORS
   ): Promise<OllamaChatStream> {
     const controller = new AbortController();
     const abort = () => controller.abort(signal?.reason);
@@ -323,24 +486,31 @@ export class OllamaChatStream implements AsyncIterable<ChatResponse> {
       });
     } catch (error) {
       signal?.removeEventListener('abort', abort);
-      throw error;
+      throw await describeConnectFailure(error, signal, controller.signal, errors);
     }
+    // From here on the POST has produced a Response: the caller's abort
+    // listener is no longer needed, and leaving it attached would fire a
+    // SECOND (latched, therefore useless) abort on the controller later.
+    signal?.removeEventListener('abort', abort);
     if (!response.ok) {
-      controller.abort();
-      throw await httpError(response);
+      // Throw the HTTP error ITSELF — `controller.abort(reason)` is a no-op if
+      // an abort already latched a different reason, which would discard the
+      // 429/401 body and could rethrow a non-Error.
+      const httpFailure = await httpError(response);
+      controller.abort(httpFailure);
+      throw httpFailure;
     }
     if (!response.body) {
-      controller.abort();
-      throw new Error('Ollama chat returned an empty response body');
+      const emptyBody = new Error('Ollama chat returned an empty response body');
+      controller.abort(emptyBody);
+      throw emptyBody;
     }
     let reader: ReadableStreamDefaultReader<Uint8Array>;
     try {
       reader = response.body.getReader();
     } catch (error) {
-      controller.abort();
+      controller.abort(error);
       throw error;
-    } finally {
-      signal?.removeEventListener('abort', abort);
     }
     return new OllamaChatStream(reader, controller);
   }

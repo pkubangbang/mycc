@@ -558,6 +558,14 @@ export async function retryChat(request: RetryChatRequest, config?: RetryChatCon
         return response;
       } catch (e) {
         if (e instanceof StreamAbortedError) throw e;
+        // A caller abort surfaces here as a raw `DOMException: AbortError`
+        // (this provider fetches with the caller's signal directly). Convert it
+        // BEFORE the transient check: since cancellation became structural,
+        // `isTransientError` returns false for it, so the old fall-through to
+        // the next attempt's `signal.aborted` check no longer happens and the
+        // raw DOMException would reach teammate-worker, where only a
+        // `StreamAbortedError` unwinds the shutdown path quietly.
+        if (signal?.aborted) throw new StreamAbortedError(e);
         // Normalize undici's bare `TypeError: terminated` (mid-stream socket
         // close) into a descriptive error isTransientError() recognizes, so
         // the retry loop covers it instead of rethrowing on the first attempt.

@@ -24,6 +24,8 @@ import {
   retryWithBackoff,
   StreamAbortedError,
   StreamTimeoutError,
+  cancelledByCaller,
+  isCancellationError,
   normalizeFetchError,
   DEFAULT_RETRY_CONFIG,
   DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS,
@@ -43,7 +45,16 @@ const OLLAMA_API_KEY = getOllamaApiKey();
 
 const ollama = new OllamaHttpClient({
   host: OLLAMA_HOST,
-  apiKey: OLLAMA_API_KEY
+  apiKey: OLLAMA_API_KEY,
+  // Inject the real error classes so an aborted POST surfaces as
+  // StreamAbortedError / StreamTimeoutError (with the cause named) rather than
+  // a bare `AbortError: This operation was aborted`. Injected, not imported by
+  // ollama-http.ts — that would close an import cycle and break startup (see
+  // ConnectFailureErrors).
+  errors: {
+    cancelled: (cause) => new StreamAbortedError(cause),
+    timedOut: (message, reason, cause) => new StreamTimeoutError(message, reason, cause)
+  }
 });
 const ollamaWeb = createOllamaWebClient({ host: OLLAMA_HOST, apiKey: OLLAMA_API_KEY });
 
@@ -241,8 +252,18 @@ export async function retryChat(request: RetryChatRequest, config?: RetryChatCon
       try {
         // Own cancellation before calling chat(): ESC and the first-token
         // deadline must abort the initial POST even before response headers.
+        // The caller's `reason` is forwarded so connect() can name the real
+        // trigger instead of surfacing a bare `AbortError` (see
+        // describeConnectFailure in ollama-http.ts).
         const chatController = new AbortController();
-        const abortChat = () => chatController.abort(signal?.reason);
+        // Distinguish the TWO ways this controller aborts. Forwarding
+        // `signal?.reason` blindly made an internal deadline abort look like a
+        // caller cancellation: `connect()` sees `callerSignal.aborted` and
+        // reports cancellation, discarding the descriptive timeout recorded on
+        // this controller. Record a cancellation marker instead, which is only
+        // produced when the caller's own signal fired.
+        const abortChat = () =>
+          chatController.abort(isCancellationError(signal?.reason) ? signal?.reason : cancelledByCaller());
         if (signal) signal.addEventListener('abort', abortChat);
         const chatPromise = ollama.chat(
           {
@@ -261,10 +282,16 @@ export async function retryChat(request: RetryChatRequest, config?: RetryChatCon
         let postAbortListener: (() => void) | undefined;
         const postRacePromise = new Promise<never>((_, reject) => {
           postTimeoutId = setTimeout(() => {
-            chatController.abort();
-            reject(
-              new StreamTimeoutError(`Ollama POST timed out after ${postTimeoutMs}ms (connection hang)`, 'first-token')
+            const timeoutError = new StreamTimeoutError(
+              `Ollama POST timed out after ${postTimeoutMs}ms (connection hang)`,
+              'first-token'
             );
+            // Record the reason BEFORE rejecting, so a fetch rejection that
+            // outruns this rejection still resolves (via connect()'s
+            // describeConnectFailure) to this descriptive error instead of a
+            // bare `AbortError: This operation was aborted`.
+            chatController.abort(timeoutError);
+            reject(timeoutError);
           }, postTimeoutMs);
           if (signal) {
             postAbortListener = () => {
@@ -281,7 +308,7 @@ export async function retryChat(request: RetryChatRequest, config?: RetryChatCon
         } catch (raceErr) {
           // Abort now, not only if the pending connection eventually yields a
           // stream. Suppress its expected post-abort rejection.
-          chatController.abort();
+          chatController.abort(raceErr);
           chatPromise.catch(() => {});
           throw raceErr;
         } finally {
@@ -337,6 +364,12 @@ export async function retryChat(request: RetryChatRequest, config?: RetryChatCon
         return response;
       } catch (e) {
         if (e instanceof StreamAbortedError) throw e;
+        // Same conversion as deepseek.ts: a caller abort can reach here as a
+        // raw `DOMException: AbortError` (e.g. when the POST already resolved
+        // and the stream is read directly), and since cancellation became
+        // structural `isTransientError` no longer lets it fall through to the
+        // next attempt's `signal.aborted` check.
+        if (signal?.aborted) throw new StreamAbortedError(e);
         // Normalize undici's bare `TypeError: terminated` (mid-stream socket
         // close) into a descriptive error isTransientError() recognizes, so
         // the retry loop covers it instead of rethrowing on the first attempt.

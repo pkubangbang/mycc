@@ -13,6 +13,64 @@ import { isPlainOutput } from '../config.js';
 // Error Helpers
 // ============================================================================
 
+/**
+ * Names that mean "this failure is a CANCELLATION", structurally recognised.
+ *
+ * Deliberately duplicated from `loop/cancellation.ts` (same two names) instead
+ * of imported: `loop/cancellation.ts` is itself a leaf, but importing it here
+ * pulls the `loop/` module graph into the engine's init path (through the
+ * `chat-provider` / `esc-wrap-up` chain) and the engine then constructs
+ * `OllamaHttpClient` while its class binding is still undefined in that cycle
+ * — observed at runtime as "OllamaHttpClient is not a constructor". This module
+ * is a LEAF for the engine, so it keeps its own copy of the two names. A
+ * rename missed in one place is caught by `transient-classification.test.ts`,
+ * which exercises this predicate directly.
+ */
+const CANCELLATION_ERROR_NAMES: ReadonlySet<string> = new Set(['AbortError', 'StreamAbortedError']);
+
+/** Did this error come from cancellation rather than a genuine fault? */
+export function isCancellationError(err: unknown): boolean {
+  // The marker is tested BEFORE the `instanceof Error` gate: it is the one
+  // value that must never be mistaken for a fault, and callers pass raw
+  // abort reasons (which are not always Errors) through here.
+  if ((err as { causedByCancellation?: unknown } | null | undefined)?.causedByCancellation === true) return true;
+  if (!(err instanceof Error)) return false;
+  return CANCELLATION_ERROR_NAMES.has(err.name);
+}
+
+/**
+ * The reason `retryChat` records on its controller when the CALLER cancelled.
+ *
+ * An AbortSignal cannot distinguish "aborted with no reason" from "aborted
+ * deliberately without a cause": the transport reports the former as a timeout
+ * (a POST deadline that recorded nothing), so only this marker forces
+ * cancellation.
+ *
+ * It IS an `Error` subclass on purpose. `fetch` rejects with the abort reason
+ * itself when that reason is an Error, so this value can arrive at any catch
+ * site, and the shared predicates must recognise it as cancellation there.
+ * Note it does NOT satisfy `instanceof StreamAbortedError` (different class):
+ * the two `teammate-worker` sites are made correct by their
+ * `&& watchdog.signal.aborted` guard, not by the class check.
+ *
+ * A FACTORY, not a shared instance: each cancellation needs its own stack
+ * pointing at the abort site, and its own `cause`. A module-level singleton
+ * would report the import site for every cancellation in the process.
+ */
+export class CallerCancelledError extends Error {
+  readonly causedByCancellation = true;
+
+  constructor(cause?: unknown) {
+    super('Request aborted by the caller', cause === undefined ? undefined : { cause });
+    this.name = 'StreamAbortedError';
+  }
+}
+
+/** Fresh caller-cancellation marker; see {@link CallerCancelledError}. */
+export function cancelledByCaller(cause?: unknown): CallerCancelledError {
+  return new CallerCancelledError(cause);
+}
+
 const TRANSIENT_ERROR_PATTERNS = [
   'econnreset',
   'econnrefused',
@@ -26,7 +84,18 @@ const TRANSIENT_ERROR_PATTERNS = [
   'rate limit',
   'timeout',
   'timed out',
-  'aborted',
+  // 'aborted' was removed: cancellation is decided structurally by
+  // `isCancellationError()` BEFORE this list is consulted, so the substring
+  // could only match a cancellation. It is NOT interchangeable with the
+  // socket-level codes below, which are genuine transport faults whose codes
+  // merely happen to contain the word — dropping it without these two would
+  // have made a real connection abort look fatal.
+  'econnaborted',
+  'wsaeconnaborted',
+  // Windows' PROSE wording for the same socket abort carries no code, so it
+  // needs its own entry (measured: it was the one abort-family message that
+  // stayed fatal).
+  'aborted by the software',
   'service temporarily unavailable',
   '503',
   '500',
@@ -77,9 +146,35 @@ const TRANSIENT_ERROR_PATTERNS = [
 
 /**
  * Check if an error is transient (recoverable with retry)
+ *
+ * Cancellation is NEVER transient, and this check comes FIRST.
+ *
+ * History: the pattern list used to contain the generic word 'aborted' so that
+ * NETWORK-level aborts (a server- or undici-level abort mid-body) kept being
+ * retried as transport faults. But the same substring matched an intentional
+ * cancellation — a fetch rejected by its AbortSignal carries
+ * `AbortError: This operation was aborted` — so an ESC (or a teammate
+ * shutdown) was classified as "transient", and `retryChat` re-sent the whole
+ * request (4 attempts with backoff) with the spinner up, then `COLLECT`'s own
+ * transient branch asked "retry the turn?". The user pressed ESC *because* the
+ * request was large (messages(raw)=445, tokens=226758): the "recovery" cost a
+ * full re-transmission of the conversation and surfaced a bare AbortError as
+ * if the network had failed.
+ *
+ * That entry is gone. It could never help: cancellation is decided
+ * structurally by `isCancellationError()` below, so by the time the patterns
+ * are consulted no abort-shaped error reaches them. Genuine transport aborts
+ * still retry through their own entries — ECONNRESET / 'connection reset' /
+ * 'socket hang up' / 'fetch failed' / 'unexpected eof' / 'transport terminated'
+ * (from `normalizeFetchError`).
+ *
+ * Recognition of cancellation is structural (error name, our own
+ * StreamAbortedError, or the `causedByCancellation` marker), never a message
+ * match — see `isCancellation` in ../loop/cancellation.ts.
  */
 export function isTransientError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
+  if (isCancellationError(err)) return false;
   const status = (err as Error & { status?: unknown }).status;
   if (typeof status === 'number' && (status === 408 || status === 429 || status >= 500)) return true;
   const msg = err.message.toLowerCase();
@@ -515,9 +610,16 @@ function fmtMs(ms: number): string {
 export class StreamTimeoutError extends Error {
   constructor(
     message: string,
-    public readonly reason: 'first-token' | 'liveness'
+    public readonly reason: 'first-token' | 'liveness',
+    /**
+     * The low-level rejection that triggered the deadline (usually the abort
+     * signal's own `AbortError: This operation was aborted`). Kept for
+     * diagnostics: the MESSAGE names the real cause, the cause chain keeps the
+     * raw DOMException for a stack when someone needs it.
+     */
+    cause?: unknown
   ) {
-    super(message);
+    super(message, cause === undefined ? undefined : { cause });
     this.name = 'StreamTimeoutError';
   }
 }

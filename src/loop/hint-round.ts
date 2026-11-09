@@ -62,6 +62,8 @@ import { retryChat, MODEL } from '../engine/chat-provider.js';
 import type { NoteCategory, WikiModule, SearchResult } from '../types.js';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { agentIO } from './agent-io.js';
+import { isCancellation } from './cancellation.js';
+import { isCancellationError } from '../engine/chat-helpers.js';
 import { formatLocalDateTime } from '../utils/time.js';
 
 /** Signal returned by HintRound.run to steer the orchestrator. */
@@ -573,7 +575,24 @@ export class HintRound {
 
       return { status: 'success', focusOn: hintData.focus_on };
     } catch (err) {
-      if (err instanceof Error && err.message === 'Request aborted') {
+      // Structural, not message-sniffing: an abort reaches here in several
+      // shapes (StreamAbortedError, a bare DOMException, the caller-cancel
+      // marker, or a raw non-Error abort reason). Matching the literal string
+      // 'Request aborted' recognised exactly one of them.
+      if (isCancellation(err, abortController.signal)) {
+        // `isCancellation` also returns true for ANY error once the caller's
+        // signal is aborted — so a genuine fault (a failed embedding call, a
+        // corrupt wiki file) that races an ESC would be silently converted to
+        // 'aborted' with no trace. The unwind is still right (the user asked to
+        // stop), but the lost error must be observable.
+        if (!isCancellationError(err)) {
+          agentIO.verbose(
+            'hint',
+            `hint request rejected while ESC was pending; reporting 'aborted' and dropping: ${
+              err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+            }`
+          );
+        }
         return 'aborted';
       }
       throw err;

@@ -40,9 +40,11 @@ const ABORT_ERROR_NAMES: ReadonlySet<string> = new Set([
  * faults, and those must keep their normal error path.
  */
 export function isCancellation(err: unknown, signal?: AbortSignal): boolean {
+  // The marker is tested before the Error gate: it is the one value that must
+  // never be mistaken for a fault, and abort reasons are not always Errors.
+  if ((err as { causedByCancellation?: unknown } | null | undefined)?.causedByCancellation === true) return true;
   if (err instanceof Error) {
     if (ABORT_ERROR_NAMES.has(err.name)) return true;
-    if ((err as { causedByCancellation?: unknown }).causedByCancellation === true) return true;
   }
   return signal?.aborted === true;
 }
