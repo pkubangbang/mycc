@@ -212,7 +212,7 @@ export function buildCmdArgsEnv(parsed: Record<string, unknown>): Record<string,
   for (const [argKey, envKey] of Object.entries(ARG_ENV_MAP)) {
     const value = parsed[argKey];
     if (value !== undefined && value !== null && value !== false) {
-      env[envKey] = String(value);
+      env[envKey] = coerceArgText(value);
     }
   }
   return env;
@@ -226,6 +226,25 @@ export function buildCmdArgsEnv(parsed: Record<string, unknown>): Record<string,
 export interface ParsedArgs {
   _: string[];
   [key: string]: unknown;
+}
+
+/**
+ * Render a parsed arg value as text.
+ *
+ * Values reaching here come from a `Record<string, unknown>`, so a bare
+ * `String(value)` (or template interpolation) could silently emit
+ * `[object Object]`. Strings pass through untouched; numbers/booleans use
+ * their natural form; anything else is JSON-encoded so the canonical form
+ * stays stable and diffable.
+ */
+function coerceArgText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }
 
 /** True when `value` was not set (mirrors config.ts's "flag not set" rule). */
@@ -394,10 +413,10 @@ function renderArgs(parsed: Record<string, unknown>, opts: { redact: boolean }):
       for (const v of value) {
         if (v === true) {
           emitFlag(parts, key);
-        } else if (!isUnset(v)) parts.push(`--${key} ${v}`);
+        } else if (!isUnset(v)) parts.push(`--${key} ${coerceArgText(v)}`);
       }
     } else {
-      parts.push(`--${key} ${value}`);
+      parts.push(`--${key} ${coerceArgText(value)}`);
     }
   }
   return parts.length > 0 ? parts.join(' ') : '(none)';

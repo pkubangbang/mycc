@@ -330,7 +330,7 @@ export const DEFAULT_RETRY_CONFIG: RetryConfig = {
 export type RetryChatRequest = Omit<ChatRequest, 'stream'> & {
   stream?: false;
   /** Force tool choice for structured output (deepseek also reads this) */
-  tool_choice?: 'none' | 'auto' | 'required' | string;
+  tool_choice?: string;
 };
 
 /** Standard retryChat config shape. */

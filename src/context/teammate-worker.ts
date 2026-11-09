@@ -687,7 +687,8 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
           if (!EXPLORATION_TOOLS.has(toolName)) {
             if (toolName === 'bash') {
-              const parsedIntent = parseIntent(String(args?.intent || ''));
+              const rawIntent = args?.intent;
+              const parsedIntent = parseIntent(typeof rawIntent === 'string' ? rawIntent : '');
               const readOnlyBash = parsedIntent ? isReadOnlyVerb(parsedIntent.verb) : false;
               if (!readOnlyBash) {
                 if (isRepetition) {

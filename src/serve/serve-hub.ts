@@ -20,6 +20,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
+import type { RawData } from 'ws';
 import { createServer as createViteServer, type ViteDevServer } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import chalk from 'chalk';
@@ -609,7 +610,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
     // disconnect): abnormal close so the DIALER side fails fast / redials
     // per its loop policy. Idempotent (stop() is safe when no server exists).
     try {
-      await getPeerWireAcceptor().stop();
+      getPeerWireAcceptor().stop();
     } catch {
       /* ignore */
     }
@@ -1074,7 +1075,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
     } catch {
       /* ignore */
     }
-    ws.on('message', (data) => handleWsMessage(this, ws, data.toString()));
+    ws.on('message', (data) => handleWsMessage(this, ws, wsDataToText(data)));
     ws.on('close', () => this.onWsClose(ws));
     ws.on('error', (err) => this.onWsError(ws, err));
   }
@@ -1176,4 +1177,18 @@ export class ServeHub implements HubHandler, ServeHubLike {
       this.restarting = false;
     }
   }
+}
+
+/**
+ * Decode a ws message payload to text.
+ *
+ * ws types message data as RawData (Buffer | ArrayBuffer | Buffer[]),
+ * which has no default string conversion worth trusting — String(rawData)
+ * can yield "[object Object]" for a Buffer[]. Decode through Buffer instead.
+ */
+function wsDataToText(data: RawData): string {
+  if (typeof data === 'string') return data;
+  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString('utf8');
+  return data.toString('utf8');
 }

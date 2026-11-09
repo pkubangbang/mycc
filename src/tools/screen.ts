@@ -400,7 +400,7 @@ export const screenTool: ToolDefinition = {
         ctx.core.brief(
           'warn',
           'screen',
-          `Invalid desktop value "${args.desktop}" (expected positive integer, 1-based); falling back to primary monitor (1).`
+          `Invalid desktop value "${String(JSON.stringify(args.desktop))}" (expected positive integer, 1-based); falling back to primary monitor (1).`
         );
       }
     }

@@ -533,7 +533,7 @@ export class Loader implements DynamicLoader, SkillModule {
     // it — chokidar reports the directory. Skills are the only thing nested,
     // so a directory removal is always "the skills under it are gone".
     this.hotWatcher.on('unlinkDir', (abs: string) => {
-      for (const entry of [...this.skills.values()]) {
+      for (const entry of this.skills.values()) {
         if (entry.layer !== 'project') continue;
         const file = entry.skill.sourceFile;
         if (!file?.startsWith('project:')) continue;

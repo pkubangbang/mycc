@@ -178,7 +178,7 @@ function runCoordinator(): void {
   // polling) and exits immediately. The Lead runs headless in auto mode.
   // This skips the entire terminal setup below.
   if (shouldDaemon()) {
-    startDaemonLead();
+    void startDaemonLead();
     return;
   }
 
@@ -254,7 +254,7 @@ function runCoordinator(): void {
     // Handle IPC
     child.on('message', (msg: CoordinatorMessage) => {
       if (msg.type === 'restart') {
-        restart(msg.sessionId, msg.cwd);
+        void restart(msg.sessionId, msg.cwd);
       } else if (msg.type === 'reload') {
         // /reload — restart only the lead with fresh code (no --from, so no
         // context pre-population). The coordinator is reused; teammates die
@@ -263,7 +263,7 @@ function runCoordinator(): void {
         // (--auto/--daemon/--allow-auto-commit/--token-threshold/…); serve
         // state is then merged in so the web UI rebinds to the same
         // port/interface (browser auto-reconnects after the brief disconnect).
-        reloadLead(msg.serveActive, msg.servePort, msg.serveHost, msg.leadArgs);
+        void reloadLead(msg.serveActive, msg.servePort, msg.serveHost, msg.leadArgs);
       } else if (msg.type === 'exit') {
         // Lead requested exit - exit coordinator cleanly with code 0
         process.exit(0);

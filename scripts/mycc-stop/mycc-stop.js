@@ -186,16 +186,16 @@ if (args.sessionId !== null) {
   const { verdict } = await stopPeerBySid(args.sessionId);
   switch (verdict) {
     case 'stopped':
-      process.stdout.write(`stopped session ${args.sessionId}\n`);
+      process.stdout.write(`stopped session ${String(args.sessionId)}\n`);
       process.exit(0);
     case 'already-stopped':
-      process.stdout.write(`session ${args.sessionId} is not running (already stopped)\n`);
+      process.stdout.write(`session ${String(args.sessionId)} is not running (already stopped)\n`);
       process.exit(0);
     case 'refused-not-found':
-      process.stdout.write(`session ${args.sessionId} is not running (no identity entry)\n`);
+      process.stdout.write(`session ${String(args.sessionId)} is not running (no identity entry)\n`);
       process.exit(0);
     default:
-      process.stderr.write(`refused session ${args.sessionId}: ${verdict}\n`);
+      process.stderr.write(`refused session ${String(args.sessionId)}: ${String(verdict)}\n`);
       process.exit(1);
   }
 }

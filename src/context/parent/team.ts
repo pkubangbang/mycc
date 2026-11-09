@@ -154,7 +154,7 @@ export class TeamManager implements TeamModule {
 
     // Handle IPC messages from child
     child.on('message', (msg: IpcMessage) => {
-      this.handleChildMessage(name, msg);
+      void this.handleChildMessage(name, msg);
     });
 
     // Handle process exit

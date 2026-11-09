@@ -412,7 +412,7 @@ export class OllamaHttpClient {
   private async request(path: string, init: RequestInit = {}): Promise<Response> {
     const response = await fetch(`${this.host}${path}`, {
       ...init,
-      headers: { 'Content-Type': 'application/json', ...this.headers, ...init.headers }
+      headers: { 'Content-Type': 'application/json', ...this.headers }
     });
     if (!response.ok) throw await httpError(response);
     return response;

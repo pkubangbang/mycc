@@ -480,7 +480,7 @@ export function teardownPair(
   // Close the pair's sockets: the entry is gone, so a socket left OPEN would
   // keep injecting mail through onMail while being invisible to peer_list,
   // /health and every count.
-  for (const s of [...entry.sockets]) {
+  for (const s of Array.from(entry.sockets)) {
     try {
       s.socket.close(WIRE_CLOSE_BYE, 'pair torn down');
     } catch {
@@ -634,7 +634,7 @@ export function hasLiveWireForEndpoint(endpoint: string): boolean {
  *  redial; local entries are pruned by each socket's close handling. */
 export function closeAllWireSockets(): void {
   for (const entry of pairs.values()) {
-    for (const s of [...entry.sockets]) {
+    for (const s of Array.from(entry.sockets)) {
       try {
         s.socket.close();
       } catch {

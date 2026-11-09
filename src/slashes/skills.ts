@@ -22,7 +22,7 @@ export const skillsCommand: SlashCommand = {
       // The loader builds PURE-DATA SkillIndexEntry[] (no wiki reference); we
       // hand it to ctx.wiki.indexSkills, which owns the wiki-DB re-index +
       // reindex lock. This keeps the loader decoupled from the wiki module.
-      loader.loadSkills();
+      await loader.loadSkills();
       await ctx.wiki.indexSkills(loader.buildAllSkillEntries());
       console.log(`${chalk.green('✓')} Skills reloaded and indexed in wiki.`);
       return;

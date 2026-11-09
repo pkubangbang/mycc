@@ -263,7 +263,7 @@ export async function handleStop(env: MachineEnv, turn: TurnVars, _chat: ChatDat
         // forever, which is exactly the "prompt never reached" bug this bound
         // exists to prevent. Report it once and give the turn back: the user
         // decides whether to wait longer (tm_await) or stop the teammate.
-        const teamInfo = ctx.team.printTeam();
+        const teamInfo = await ctx.team.printTeam();
         ctx.core.brief(
           'warn',
           'stop',

@@ -84,7 +84,7 @@ export async function openMultilineEditor(
 
   try {
     // Open in editor with cursor at the bottom (user content line)
-    openEditor([`${filePath}:${userContentLine}`]);
+    void openEditor([`${filePath}:${userContentLine}`]);
     console.log(chalk.gray('Opening editor for multi-line input...'));
   } catch (err) {
     console.log(chalk.yellow(`Please edit the file manually: ${filePath}`));

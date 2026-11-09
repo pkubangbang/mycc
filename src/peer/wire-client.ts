@@ -29,6 +29,7 @@
  */
 
 import { WebSocket } from 'ws';
+import type { RawData } from 'ws';
 import * as http from 'http';
 import * as https from 'https';
 import {
@@ -381,7 +382,7 @@ function dialSocket(endpoint: string, dialBase: string, epoch0: number, cb: Dial
     }
     let frame: WireFrame;
     try {
-      frame = JSON.parse(data.toString()) as WireFrame;
+      frame = JSON.parse(wsDataToText(data)) as WireFrame;
     } catch {
       verbose(`dropping malformed wire frame from ${endpoint}`);
       return;
@@ -840,7 +841,7 @@ export async function disconnectPeer(urlOrSid: string): Promise<string> {
     // Bye on every live socket of THIS endpoint's pair (4001 tears down the
     // WHOLE pair — plan §2 disconnect, including a simultaneous-dial
     // window's sibling).
-    for (const s of [...pair.sockets]) {
+    for (const s of Array.from(pair.sockets)) {
       if (s.socket.readyState === s.socket.OPEN) {
         try {
           s.socket.close(WIRE_CLOSE_BYE, 'bye');
@@ -868,11 +869,11 @@ export async function disconnectPeer(urlOrSid: string): Promise<string> {
  * prunes its registry in its own close handling.
  */
 export function stopWireClient(): void {
-  for (const endpoint of [...loops.keys()]) {
+  for (const endpoint of Array.from(loops.keys())) {
     cancelLoop(endpoint);
     loops.delete(endpoint);
   }
-  for (const ws of [...liveness.keys()]) {
+  for (const ws of Array.from(liveness.keys())) {
     try {
       ws.close();
     } catch {
@@ -904,4 +905,18 @@ export function resetWireClient(): void {
   stopWireClient();
   loops.clear();
   pingIntervalMs = PING_INTERVAL_MS;
+}
+
+/**
+ * Decode a ws message payload to text.
+ *
+ * ws types message data as RawData (Buffer | ArrayBuffer | Buffer[]),
+ * which has no default string conversion worth trusting — String(rawData)
+ * can yield "[object Object]" for a Buffer[]. Decode through Buffer instead.
+ */
+function wsDataToText(data: RawData): string {
+  if (typeof data === 'string') return data;
+  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString('utf8');
+  return data.toString('utf8');
 }

@@ -74,6 +74,20 @@ const WINDOWS_DEVICE_NAMES = [
  */
 const MAX_ID_LENGTH = 200;
 
+/**
+ * True when `id` contains a C0 control character (< 0x20).
+ *
+ * Scans UTF-16 code units rather than spreading the string into code points:
+ * every control character is a single code unit, so unit-level scanning is
+ * equivalent here and avoids decomposing astral pairs.
+ */
+function hasControlChar(id: string): boolean {
+  for (let i = 0; i < id.length; i++) {
+    if (id.charCodeAt(i) < 0x20) return true;
+  }
+  return false;
+}
+
 /** True when the trailing character is one Windows strips at open time. */
 function hasWindowsUnsafeTrailing(id: string): boolean {
   const last = id[id.length - 1];
@@ -100,7 +114,7 @@ export function isSafeId(id: unknown): boolean {
   if (typeof id !== 'string' || id === '') return false;
   if (id.includes('/') || id.includes('\\') || id.includes('..')) return false;
   // Control characters (avoid a regex char class for eslint's no-control-regex).
-  if ([...id].some((c) => c.codePointAt(0)! < 0x20)) return false;
+  if (hasControlChar(id)) return false;
   if (WINDOWS_RESERVED.some((c) => id.includes(c))) return false;
   if (hasWindowsUnsafeTrailing(id)) return false;
   if (isWindowsDeviceName(id)) return false;
@@ -123,7 +137,7 @@ export function sanitizeId(id: unknown, label: string): string {
   if (id.includes('/') || id.includes('\\') || id.includes('..')) {
     throw new Error(`Invalid ${label}: contains path separators or "..": ${JSON.stringify(id)}`);
   }
-  if ([...id].some((c) => c.codePointAt(0)! < 0x20)) {
+  if (hasControlChar(id)) {
     throw new Error(`Invalid ${label}: contains control characters: ${JSON.stringify(id)}`);
   }
   const reserved = WINDOWS_RESERVED.filter((c) => id.includes(c));

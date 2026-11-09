@@ -291,7 +291,7 @@ export function collateMessages(
       // exactly `\n<fragment>` in memory, so replaying the journal restores
       // the same message[] the livelog held.
       const host = messages[lastUserIndex];
-      host.content = `${host.content}\n${message.content}`;
+      host.content = `${contentText(host.content)}\n${contentText(message.content)}`;
     } else if (record.kind === 'merge' || record.kind === 'user') {
       // Defensive (structural anomaly): no user host in the collated view —
       // the piece cannot be folded, so keep its content (push as its own
@@ -418,6 +418,24 @@ export type MessageLike = {
   content?: unknown;
   [key: string]: unknown;
 };
+
+/**
+ * Render a message's `content` for a string fold.
+ *
+ * `content` is `unknown` on this boundary (read path stays shapeless by
+ * design), so interpolating it directly could produce `[object Object]`.
+ * Strings pass through unchanged — the fold's original behaviour — and any
+ * other shape is JSON-encoded so the collated transcript stays inspectable.
+ */
+function contentText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value === undefined || value === null) return '';
+  try {
+    return JSON.stringify(value) ?? '';
+  } catch {
+    return '';
+  }
+}
 
 /** The write-path shape: a message piece plus optional pre-stamped metadata. */
 export type AppendablePiece = MessageLike & Partial<TranscriptRecord>;

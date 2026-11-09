@@ -137,7 +137,7 @@ export class LineEditor {
       const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
       return Array.from(segmenter.segment(text), (seg) => seg.segment);
     }
-    return [...text];
+    return Array.from(text);
   }
 
   private getCursorIndex(): number {

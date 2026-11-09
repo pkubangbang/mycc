@@ -36,6 +36,7 @@ export function evaluateFile(filePath) {
     // boundary: the source is the ops array from the file. We restrict by
     // wrapping in a function that only exposes nothing. (Alternative: JSON.parse
     // but ops uses JS array syntax with single quotes / no quotes — not strict JSON.)
+    // oxlint-disable-next-line typescript/no-implied-eval -- trust boundary documented above
     ops = new Function(`"use strict"; return (${opsSrc});`)();
   } catch (e) {
     throw new L1Error(`ops array is not valid JS/JSON: ${e.message}`);
@@ -224,6 +225,7 @@ export function evaluateFile(filePath) {
             // constant fill: repeat `value` to fill area
             if (typeof fromVal !== 'number' && typeof fromVal !== 'string')
               throw new Error(`seq value must be number or string, got ${typeof fromVal}`);
+            // oxlint-disable-next-line unicorn/no-new-array -- fill-by-length is the intent here
             vals = new Array(n).fill(fromVal);
           } else {
             const fv = fromVal;

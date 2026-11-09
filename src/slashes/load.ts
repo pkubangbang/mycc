@@ -105,7 +105,7 @@ export const loadCommand: SlashCommand = {
 
       // Try to open DOSQ in editor (will fail if $EDITOR not set, but user was warned at startup)
       try {
-        openEditor([dosqPath]);
+        await openEditor([dosqPath]);
         console.log(chalk.gray('Opening DOSQ file in editor...'));
       } catch {
         console.log(chalk.yellow(`Please edit the DOSQ file manually: ${dosqPath}`));

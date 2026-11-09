@@ -96,7 +96,7 @@ async function prompt(
         if (result !== true) {
           console.log(chalk.red(`  ${result}`));
           // Re-prompt
-          prompt(rl, config, existingValue, allConfig).then(resolve);
+          void prompt(rl, config, existingValue, allConfig).then(resolve);
           return;
         }
       }

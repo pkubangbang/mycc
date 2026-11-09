@@ -53,7 +53,7 @@
  * (wire-client.ts) runs the same computation over its own two sockets.
  */
 
-import type { WebSocket, WebSocketServer } from 'ws';
+import type { RawData, WebSocket, WebSocketServer } from 'ws';
 import { WebSocketServer as WssCtor } from 'ws';
 import {
   recordAnnounce,
@@ -234,7 +234,7 @@ export class PeerWireAcceptor {
         this.onBinary(ws, data as Buffer);
         return;
       }
-      this.onMessage(ws, data.toString());
+      this.onMessage(ws, wsDataToText(data));
     });
     ws.on('close', (code) => this.onClose(ws, code));
     ws.on('pong', () => {
@@ -521,3 +521,17 @@ export function resetPeerWireAcceptor(): void {
  * re-exported above. The acceptor-side onMail path still dedupes inbound
  * frames and appends via hooks.appendLocalMail — unchanged.
  */
+
+/**
+ * Decode a ws message payload to text.
+ *
+ * ws types message data as RawData (Buffer | ArrayBuffer | Buffer[]),
+ * which has no default string conversion worth trusting — String(rawData)
+ * can yield "[object Object]" for a Buffer[]. Decode through Buffer instead.
+ */
+function wsDataToText(data: RawData): string {
+  if (typeof data === 'string') return data;
+  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString('utf8');
+  return data.toString('utf8');
+}

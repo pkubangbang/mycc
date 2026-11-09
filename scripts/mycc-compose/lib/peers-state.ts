@@ -290,7 +290,7 @@ export function cullStoppedPeers(peers: Peer[]): number {
       writeIdentityMap(map);
       // Verify: a candidate is only "culled" once it is absent after the write.
       const after = readIdentityMap();
-      for (const sid of [...candidates]) {
+      for (const sid of Array.from(candidates)) {
         if (!(sid in after)) {
           candidates.delete(sid);
           culled++;

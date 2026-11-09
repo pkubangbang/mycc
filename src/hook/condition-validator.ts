@@ -315,7 +315,7 @@ export function validateExpression(expression: string): ValidationResult {
   }
 
   // Walk the AST to validate all nodes
-  const visitErrors = visitNode(ast, errors, warnings);
+  const visitErrors = visitNode(ast, warnings);
   errors.push(...visitErrors);
 
   // Check for === usage (functions return primitives)
@@ -334,7 +334,7 @@ export function validateExpression(expression: string): ValidationResult {
 /**
  * Recursively visit AST nodes to validate safety
  */
-function visitNode(node: jsep.Expression, errors: string[], warnings: string[]): string[] {
+function visitNode(node: jsep.Expression, warnings: string[]): string[] {
   const newErrors: string[] = [];
 
   switch (node.type) {
@@ -463,7 +463,7 @@ function visitNode(node: jsep.Expression, errors: string[], warnings: string[]):
 
       // Validate arguments
       for (const arg of callExpr.arguments || []) {
-        newErrors.push(...visitNode(arg, errors, warnings));
+        newErrors.push(...visitNode(arg, warnings));
       }
       break;
     }
@@ -472,11 +472,11 @@ function visitNode(node: jsep.Expression, errors: string[], warnings: string[]):
       const memberExpr = node as jsep.MemberExpression;
 
       // Check object being accessed
-      newErrors.push(...visitNode(memberExpr.object, errors, warnings));
+      newErrors.push(...visitNode(memberExpr.object, warnings));
 
       // Check property (if computed, e.g., obj[expr])
       if (memberExpr.computed && memberExpr.property) {
-        newErrors.push(...visitNode(memberExpr.property, errors, warnings));
+        newErrors.push(...visitNode(memberExpr.property, warnings));
       }
 
       // Check for dangerous property access
@@ -497,30 +497,30 @@ function visitNode(node: jsep.Expression, errors: string[], warnings: string[]):
 
     case 'UnaryExpression': {
       const unaryExpr = node as jsep.UnaryExpression;
-      newErrors.push(...visitNode(unaryExpr.argument, errors, warnings));
+      newErrors.push(...visitNode(unaryExpr.argument, warnings));
       break;
     }
 
     case 'BinaryExpression':
     case 'LogicalExpression': {
       const binaryExpr = node as jsep.BinaryExpression;
-      newErrors.push(...visitNode(binaryExpr.left, errors, warnings));
-      newErrors.push(...visitNode(binaryExpr.right, errors, warnings));
+      newErrors.push(...visitNode(binaryExpr.left, warnings));
+      newErrors.push(...visitNode(binaryExpr.right, warnings));
       break;
     }
 
     case 'ConditionalExpression': {
       const condExpr = node as jsep.ConditionalExpression;
-      newErrors.push(...visitNode(condExpr.test, errors, warnings));
-      newErrors.push(...visitNode(condExpr.consequent, errors, warnings));
-      newErrors.push(...visitNode(condExpr.alternate, errors, warnings));
+      newErrors.push(...visitNode(condExpr.test, warnings));
+      newErrors.push(...visitNode(condExpr.consequent, warnings));
+      newErrors.push(...visitNode(condExpr.alternate, warnings));
       break;
     }
 
     case 'ArrayExpression': {
       const arrayExpr = node as jsep.ArrayExpression;
       for (const elem of arrayExpr.elements || []) {
-        if (elem) newErrors.push(...visitNode(elem, errors, warnings));
+        if (elem) newErrors.push(...visitNode(elem, warnings));
       }
       break;
     }
@@ -529,7 +529,7 @@ function visitNode(node: jsep.Expression, errors: string[], warnings: string[]):
       // Compound expressions (separated by comma)
       const compound = node as jsep.Compound;
       for (const expr of compound.body || []) {
-        newErrors.push(...visitNode(expr, errors, warnings));
+        newErrors.push(...visitNode(expr, warnings));
       }
       break;
     }

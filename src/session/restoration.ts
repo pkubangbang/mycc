@@ -125,7 +125,11 @@ function fixOrphanedToolCalls(messages: Message[]): Message[] {
     const args = tc.function.arguments ?? {};
     const command = args.command ?? args.path ?? args.name ?? '';
 
-    console.log(chalk.gray(`  - ${toolName}${command ? `: ${String(command).slice(0, 50)}` : ''}`));
+    console.log(
+      chalk.gray(
+        `  - ${toolName}${command ? `: ${String(typeof command === 'string' ? command : JSON.stringify(command)).slice(0, 50)}` : ''}`
+      )
+    );
 
     fixed.push({
       role: 'tool',

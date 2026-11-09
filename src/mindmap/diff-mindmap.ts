@@ -169,7 +169,7 @@ export async function incremental_compile(
 
   // 3. Handle removals
   for (const id of diff.removed) {
-    remove_node(existingMindmap, id);
+    await remove_node(existingMindmap, id);
   }
 
   // 4. Handle additions

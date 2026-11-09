@@ -104,7 +104,7 @@ function schemaSentinelRow(): Record<string, unknown> {
     title: '',
     content: '',
     references: '[]',
-    embedding: new Array(EMBEDDING_DIM).fill(0),
+    embedding: Array.from({ length: EMBEDDING_DIM }, () => 0),
     createdAt: new Date().toISOString(),
     [STATE_COLUMN]: WIKI_STATE_PENDING,
     ['rowId']: '__schema__'
@@ -295,7 +295,7 @@ export class WikiManager implements WikiModule {
       this.core.brief(
         'warn',
         'wiki',
-        `Duplicate check hit: similarity=${similarity.toFixed(4)} > ${threshold}, colliding doc: domain=${r.domain}, title=${r.title}, hash=${r.hash}`
+        `Duplicate check hit: similarity=${similarity.toFixed(4)} > ${threshold}, colliding doc: domain=${String(r.domain)}, title=${String(r.title)}, hash=${String(r.hash)}`
       );
       return true;
     }

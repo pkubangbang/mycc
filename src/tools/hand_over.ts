@@ -180,7 +180,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
       await spawnTmux(['send-keys', '-t', sessionName, ` ${command}`, 'Enter'], cwd);
     }
   } catch (e) {
-    return `Error: Failed to create session: ${e}`;
+    return `Error: Failed to create session: ${e instanceof Error ? e.message : String(e)}`;
   }
 
   // 3. Track session in todo

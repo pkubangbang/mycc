@@ -38,7 +38,8 @@ export interface ChatRequest {
   format?: string | object;
   keep_alive?: string;
   tools?: ProviderTool[];
-  tool_choice?: 'none' | 'auto' | 'required' | string;
+  /** Tool choice: 'none' | 'auto' | 'required' (or provider-specific string). */
+  tool_choice?: string;
   think?: boolean | 'high' | 'medium' | 'low';
   options?: Record<string, unknown>;
 }

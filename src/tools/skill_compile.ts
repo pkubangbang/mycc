@@ -62,7 +62,7 @@ export const skillCompileTool: ToolDefinition = {
       if (existing) {
         return (
           `Skill '${skillName}' has no "when" field but has a compiled condition:\n` +
-          `Trigger: ${existing.trigger}\n` +
+          `Trigger: ${existing.trigger.join(', ')}\n` +
           `Condition: ${existing.condition}\n` +
           `Action: ${JSON.stringify(existing.action)}\n` +
           `Version: ${existing.version}`
@@ -102,7 +102,7 @@ export const skillCompileTool: ToolDefinition = {
     ctx.core.brief(
       'info',
       'skill_compile',
-      `${skillName} (v${condition.version})\nTrigger: ${condition.trigger}\nCondition: ${condition.condition}\nAction Type: ${condition.action.type}\nAction: ${JSON.stringify(condition.action)}`
+      `${skillName} (v${condition.version})\nTrigger: ${condition.trigger.join(', ')}\nCondition: ${condition.condition}\nAction Type: ${condition.action.type}\nAction: ${JSON.stringify(condition.action)}`
     );
 
     // Build response
@@ -110,7 +110,7 @@ export const skillCompileTool: ToolDefinition = {
       `Compiled '${skillName}' (v${condition.version}):`,
       ``,
       `When: ${skill.when}`,
-      `Trigger: ${condition.trigger}`,
+      `Trigger: ${condition.trigger.join(', ')}`,
       `Condition: ${condition.condition}`,
       `Action Type: ${condition.action.type}`,
       `Action: ${JSON.stringify(condition.action, null, 2)}`

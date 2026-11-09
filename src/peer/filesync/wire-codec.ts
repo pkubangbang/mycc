@@ -53,7 +53,7 @@ export function isSyncControlFrame(frame: { type?: string }): frame is SyncContr
 /** Engine `t` ⇄ wire `type` fold. `foldControl` is used on the send path
  *  (sendSyncControl); `unfoldControl` on the receive path. */
 export function foldControl(payload: Record<string, unknown>): Record<string, unknown> {
-  const verb = String(payload.t ?? 'err');
+  const verb = String(typeof payload.t === 'string' ? payload.t : 'err');
   const { t: _t, ...rest } = payload;
   void _t;
   return { type: `sync-${verb}`, share: payload.share, ...rest };

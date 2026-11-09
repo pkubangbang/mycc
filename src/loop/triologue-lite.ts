@@ -132,9 +132,9 @@ export class TriologueLite {
     const tokenThreshold = options.tokenThreshold ?? 50000;
     this.options = {
       tokenThreshold,
-      onMisorder: options.onMisorder ?? this.defaultOnMisorder,
-      onToolMisalign: options.onToolMisalign ?? this.defaultOnToolMisalign,
-      onCompact: options.onCompact ?? this.defaultOnCompact,
+      onMisorder: options.onMisorder ?? ((...args) => this.defaultOnMisorder(...args)),
+      onToolMisalign: options.onToolMisalign ?? ((...args) => this.defaultOnToolMisalign(...args)),
+      onCompact: options.onCompact ?? ((...args) => this.defaultOnCompact(...args)),
       onMessage: options.onMessage ?? (() => {})
     };
   }

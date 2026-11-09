@@ -85,8 +85,10 @@ export class RequestEmbeddingTracker {
         strValue = value;
       } else if (typeof value === 'object') {
         strValue = JSON.stringify(value);
-      } else {
+      } else if (typeof value === 'number' || typeof value === 'boolean') {
         strValue = String(value);
+      } else {
+        strValue = JSON.stringify(value) ?? '';
       }
       // Truncate long values to prevent noise
       if (strValue.length > this.MAX_VALUE_LENGTH) {

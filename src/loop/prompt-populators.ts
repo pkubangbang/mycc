@@ -27,6 +27,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getShellInfo, type ShellKind } from '../utils/shell-detect.js';
 import type { Message } from '../types.js';
+import { getTokenThreshold } from '../config.js';
 
 // ============================================================================
 // Platform Detection
@@ -177,6 +178,72 @@ export function buildPlatformCalendarMessages(): Message[] {
       role: 'assistant',
       content: 'Understood. I have noted the current date and platform/shell environment.'
     }
+  ];
+}
+
+// ============================================================================
+// Project Root Doc Files (README.md / AGENTS.md)
+// ============================================================================
+
+/** Minimal logger surface the doc populator needs (satisfied by agentIO and Core). */
+export interface DocPopulatorLogger {
+  brief(level: 'info' | 'warn' | 'error', scope: string, message: string): void;
+}
+
+/** Options for buildProjectDocMessages(). */
+export interface ProjectDocOptions {
+  /** File name read from the project root, e.g. 'README.md' or 'AGENTS.md'. */
+  fileName: string;
+  /** Upper bound for the file body, in characters. Defaults to 10% of the token budget. */
+  maxChars?: number;
+  /** Optional logger for "too large, skipping" notices. */
+  log?: DocPopulatorLogger;
+}
+
+/** Matches the first markdown heading line in a document. */
+const FIRST_HEADING = /^#{1,6}\s+(.+)$/m;
+
+/**
+ * Build a project-context deliverable from a markdown doc at the project root
+ * (README.md, AGENTS.md, ...). The file is RE-READ on every call, so edits to
+ * the doc surface after the next compact/clear rebuild — the same contract the
+ * README populator has always had.
+ *
+ * Returns an empty array (a zero-cost no-op) when the file is absent, empty,
+ * or larger than `maxChars`. Oversize is logged rather than truncated: a
+ * half-loaded spec is worse than none, and the agent can still read_file it.
+ *
+ * The assistant acknowledgment names the document's first heading when it has
+ * one, so the "understood" turn reflects what was actually loaded.
+ */
+export function buildProjectDocMessages(options: ProjectDocOptions): Message[] {
+  const { fileName, log } = options;
+  const maxChars = options.maxChars ?? Math.floor(getTokenThreshold() * 4 * 0.1);
+
+  const filePath = path.join(process.cwd(), fileName);
+  if (!fs.existsSync(filePath)) return [];
+
+  let content: string;
+  try {
+    content = fs.readFileSync(filePath, 'utf-8');
+  } catch {
+    return [];
+  }
+  if (content.trim().length === 0) return [];
+
+  if (content.length > maxChars) {
+    log?.brief('info', 'triologue', `${fileName} is too large to load, skipping`);
+    return [];
+  }
+
+  const heading = FIRST_HEADING.exec(content)?.[1]?.trim();
+  const ack = heading
+    ? `Understood. I have read the project context from ${fileName} ("${heading}").`
+    : `Understood. I have read the project context from ${fileName}.`;
+
+  return [
+    { role: 'user', content: `[Project Context - ${fileName} from project root, FYI]\n\n${content}` },
+    { role: 'assistant', content: ack }
   ];
 }
 

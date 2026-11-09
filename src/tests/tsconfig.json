@@ -1,10 +1,18 @@
 {
   // VS Code's TS server picks the nearest tsconfig.json walking up from the
-  // open file, so it will NOT discover ../tsconfig.test.json on its own.
-  // This shim makes every file under src/tests use the project's dedicated
-  // test config (node + vitest global types) instead of the root tsconfig,
-  // which excludes src/tests and would leave these files in an inferred
-  // project with no node typings. CI still type-checks via
-  // `tsc --noEmit -p tsconfig.test.json`; this file is editor-only.
-  "extends": "../../tsconfig.test.json"
+  // open file. This shim gives every file under src/tests the test project's
+  // settings (node + vitest global types) instead of the root tsconfig, which
+  // excludes src/web only. It used to `extends: "../../tsconfig.test.json"`;
+  // that file is gone, so the needed options are inlined here.
+  //
+  // Vite's oxc transform also reads this file when compiling each test file —
+  // a missing or invalid `extends` target breaks the whole suite, so keep this
+  // self-contained.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "rootDir": "../..",
+    "types": ["node", "vitest/globals"]
+  }
 }

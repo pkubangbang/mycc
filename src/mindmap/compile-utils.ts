@@ -539,26 +539,37 @@ export function endProgressDisplay(): void {
 }
 
 /**
+ * Coerce an unknown tool arg to a string for display.
+ * Only strings are used verbatim; numbers/booleans are stringified; anything
+ * else falls back — avoids `[object Object]` from `String(unknown)`.
+ */
+function strArg(v: unknown, fallback: string): string {
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  return fallback;
+}
+
+/**
  * Format tool args for display - extract the most relevant arg
  */
 export function formatToolArg(tool: string, args: Record<string, unknown>): string {
   switch (tool) {
     case 'read_file':
-      return String(args.path || '').slice(0, 30);
+      return strArg(args.path, '').slice(0, 30);
     case 'ls':
-      return String(args.path || '.').slice(0, 20);
+      return strArg(args.path, '.').slice(0, 20);
     case 'grep':
-      return `pattern:"${String(args.pattern || '').slice(0, 20)}"`;
+      return `pattern:"${strArg(args.pattern, '').slice(0, 20)}"`;
     case 'mark_file':
-      return String(args.path || '').slice(0, 30);
+      return strArg(args.path, '').slice(0, 30);
     case 'web_search':
-      return `"${String(args.query || '').slice(0, 20)}"`;
+      return `"${strArg(args.query, '').slice(0, 20)}"`;
     case 'web_fetch':
-      return String(args.url || '').slice(0, 30);
+      return strArg(args.url, '').slice(0, 30);
     case 'mark_url':
-      return String(args.url || '').slice(0, 30);
+      return strArg(args.url, '').slice(0, 30);
     case 'mark_term':
-      return `"${String(args.term || '').slice(0, 20)}"`;
+      return `"${strArg(args.term, '').slice(0, 20)}"`;
     default:
       return '';
   }

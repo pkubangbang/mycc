@@ -63,7 +63,8 @@ import {
   buildPlatformCalendarMessages,
   buildNodeModulesReminderMessages,
   buildWikiDomainsMessages,
-  buildCollaborationMessages
+  buildCollaborationMessages,
+  buildProjectDocMessages
 } from './prompt-populators.js';
 import { loadDomains } from '../context/parent/wiki-utils.js';
 import { wireServeCallbacks } from './serve-wiring.js';
@@ -347,22 +348,13 @@ export async function main(): Promise<void> {
     });
   }
 
-  // (2) README.md — re-reads from disk on every rebuild so edits to README
+  // (2) README.md / AGENTS.md — re-reads from disk on every rebuild so edits
   //     surface after the next compact/clear. Skips when too large or absent.
-  triologue.registerProjectContextPopulator(() => {
-    const readmePathPop = path.join(process.cwd(), 'README.md');
-    if (!fs.existsSync(readmePathPop)) return [];
-    const content = fs.readFileSync(readmePathPop, 'utf-8');
-    const maxChars = Math.floor(getTokenThreshold() * 4 * 0.1);
-    if (content.length > maxChars) {
-      agentIO.brief('info', 'triologue', 'README.md is too large to load, skipping');
-      return [];
-    }
-    return [
-      { role: 'user', content: `[Project Context - README.md from project root, FYI]\n\n${content}` },
-      { role: 'assistant', content: 'Understood. I have read the project context from README.md.' }
-    ];
-  });
+  //     AGENTS.md is the agent-facing instruction file (repo conventions and
+  //     toolchain rules); README.md stays as user-facing orientation. Both go
+  //     through the same populator, in that order.
+  triologue.registerProjectContextPopulator(() => buildProjectDocMessages({ fileName: 'README.md', log: agentIO }));
+  triologue.registerProjectContextPopulator(() => buildProjectDocMessages({ fileName: 'AGENTS.md', log: agentIO }));
 
   // Initialize hook system (machine lifetime): load the ConditionRegistry,
   // report errors/warnings, wire IPC reload, sync pending skills, wire the
