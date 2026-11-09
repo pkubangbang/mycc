@@ -11,8 +11,13 @@
     "outDir": "dist",
     "declaration": true,
     "resolveJsonModule": true,
-    "types": ["node"]
+    "types": ["node", "vitest/globals"]
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "src/tests/**/*", "src/web/**/*"]
+  // src/web/** is a separate Vue project whose .vue SFCs no command type-checks
+  // (vue-tsc was removed; vp check cannot parse SFCs). Lint/format rules still
+  // apply to it via vite.config.ts. src/tests/** IS included here so that
+  // `vp check`'s type-check covers the test suite — the regression this file
+  // used to miss (see precommit-verify skill).
+  "exclude": ["node_modules", "src/web/**/*"]
 }

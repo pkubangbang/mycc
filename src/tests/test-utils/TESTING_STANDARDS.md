@@ -6,7 +6,7 @@ This document defines the standard testing patterns for the mycc project. All te
 
 - **Globals enabled**: Use `describe`, `it`, `expect`, `vi`, `beforeEach`, `afterEach` without imports
 - **Environment**: Node.js
-- **Test timeout**: 10 seconds (configured in vitest.config.ts)
+- **Test timeout**: 10 seconds (configured in `vite.config.ts` → `test.testTimeout`)
 
 ## Test File Organization
 

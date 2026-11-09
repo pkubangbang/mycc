@@ -350,9 +350,27 @@ export async function main(): Promise<void> {
 
   // (2) README.md / AGENTS.md — re-reads from disk on every rebuild so edits
   //     surface after the next compact/clear. Skips when too large or absent.
-  //     AGENTS.md is the agent-facing instruction file (repo conventions and
-  //     toolchain rules); README.md stays as user-facing orientation. Both go
-  //     through the same populator, in that order.
+  //     Both go through the same populator, in that order.
+  //
+  //     Why these two files and not MYCC.md: MYCC.md and AGENTS.md look like
+  //     they serve the same purpose, but they are loaded by completely
+  //     different mechanisms with opposite size economics.
+  //
+  //       MYCC.md  → COMPILED. It is the source for the mindmap: summarised
+  //                  into a navigable knowledge tree and retrieved on demand
+  //                  via the recall tool. Only the fragment the agent asks for
+  //                  enters context, so the file can be arbitrarily large —
+  //                  size is not the constraint, retrievability is.
+  //
+  //       AGENTS.md → INJECTED VERBATIM. It goes into the prompt word for word
+  //                  on every rebuild, so every line costs tokens in every
+  //                  turn. It must stay short and hold only always-true house
+  //                  rules. Oversize is SKIPPED, never truncated (see
+  //                  buildProjectDocMessages), because half a rulebook is
+  //                  worse than none.
+  //
+  //     Rule of thumb: reference material that grows → MYCC.md. A one-page
+  //     set of invariants the agent must never violate → AGENTS.md.
   triologue.registerProjectContextPopulator(() => buildProjectDocMessages({ fileName: 'README.md', log: agentIO }));
   triologue.registerProjectContextPopulator(() => buildProjectDocMessages({ fileName: 'AGENTS.md', log: agentIO }));
 

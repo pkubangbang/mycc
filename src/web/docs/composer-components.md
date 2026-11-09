@@ -209,13 +209,13 @@ and below it by design; the dialog itself has no internal dead band.
 
 ## 7. Verification
 
-There is **no component test harness** in this repo — `vitest.config.ts` is
-`environment: 'node'`, `@vue/test-utils`/`happy-dom` are not installed, and
-eslint's config only matches `**/*.ts` (`.vue` files are not linted). The gates
-are therefore:
+There is **no component test harness** in this repo — the vitest config in
+`vite.config.ts` is `environment: 'node'`, `@vue/test-utils`/`happy-dom` are not
+installed, and `.vue` files are not type-checked by any command (`vue-tsc` was
+removed; `vp check` cannot parse SFCs). The gates are therefore:
 
-1. `npm run typecheck:web` — `vue-tsc` on the SFCs (catches template/prop/emit
-   mistakes; this is the only automated component check).
+1. `pnpm lint` — formatting, lint rules and TypeScript types for the non-SFC
+   code. **It does not cover the `.vue` components themselves.**
 2. `npx vitest run src/tests/loop src/tests/tools src/tests/context` — 1345
    tests, proving the refactor did not touch the backend contract.
 3. Manual `--serve` smoke (`agent-browser` is handy):

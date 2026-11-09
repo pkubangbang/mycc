@@ -23,17 +23,9 @@
   },
   "scripts": {
     "start": "tsx src/index.ts",
-    "test": "npm run typecheck:all && vp test run",
+    "lint": "vp check",
+    "test": "vp test run",
     "test:tty": "cross-env MYCC_TTY_TESTS=1 vp test run src/tests/plain-output.test.ts",
-    "typecheck": "tsc --noEmit",
-    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
-    "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json",
-    "typecheck:web": "vue-tsc --noEmit -p src/web/tsconfig.json",
-    "typecheck:all": "node scripts/typecheck-parallel.mjs",
-    "lint": "vp lint src/",
-    "format": "node scripts/format.js --write",
-    "format:check": "node scripts/format.js --check",
-    "test:cov": "vp test run --coverage",
     "test:slow": "cross-env RUN_SLOW=1 vp test run",
     "prepare": "vp config"
   },
@@ -71,7 +63,6 @@
     "chai": "^6.2.2",
     "typescript": "^5.9.3",
     "vitest": "catalog:",
-    "vue-tsc": "^3.3.11",
     "vite-plus": "catalog:"
   }
 }

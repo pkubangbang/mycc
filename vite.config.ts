@@ -20,7 +20,17 @@ export default defineConfig({
       'node_modules/**',
       '*.config.js',
       '*.config.ts',
-      '*.config.mjs'
+      '*.config.mjs',
+      // Out of scope, matching the pre-consolidation `vp lint src/` + format.js
+      // filter. `skills/` and `docs/` are author-owned content — a self-learning
+      // reference and a demo game must not red the repo gate.
+      'skills/**',
+      'docs/**',
+      '.codegraph/**',
+      '.mycc/**',
+      // Manual, live-provider diagnostics: run by hand against real APIs,
+      // never part of a gate (see vitest `exclude` below).
+      'scripts/tp-violation/**'
     ],
     rules: {
       'constructor-super': 'error',
@@ -169,6 +179,15 @@ export default defineConfig({
         jsPlugins: []
       },
       {
+        files: ['src/tools/**/*.ts'],
+        rules: {
+          // Migrated from the former eslint-rules/no-console-in-tools.js:
+          // tool implementations must emit through ctx.core.brief() so output
+          // flows through the agent's stream with consistent tool tagging.
+          'no-console': 'error'
+        }
+      },
+      {
         files: ['scripts/**/*.ts'],
         rules: {
           'no-var': 'error',
@@ -246,6 +265,31 @@ export default defineConfig({
     ]
   },
   test: {
+    globals: true,
+    environment: 'node',
+    include: ['src/tests/**/*.test.ts'],
+    // Belt-and-braces: NOTHING outside src/tests is a test file. In particular
+    // `scripts/tp-violation/` holds a MANUAL, live-provider diagnostic
+    // (`main.mjs` / `probe.mjs` / `deepseek.mjs` / `ollama.mjs`) that posts
+    // real requests. It is run by hand, never by `pnpm test`; this exclude makes
+    // that invariant explicit so a future include-glob edit cannot silently
+    // sweep it in.
+    exclude: ['**/node_modules/**', '**/dist/**', 'scripts/**'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json', 'html'],
+      include: ['src/**/*.ts'],
+      exclude: ['src/tests/**', 'src/index.ts', 'src/lead.ts']
+      // Ratchet: these floors only guard against a test deletion that
+      // silently drops coverage. They are deliberately set below the
+      // measured baseline and must be raised (never lowered) once a higher
+      // baseline is established — see TESTING_STANDARDS.md.
+      // Requires `@vitest/coverage-v8` (`pnpm add -D @vitest/coverage-v8`);
+      // it is in pnpm-lock.yaml but not declared in package.json yet.
+      // thresholds: { lines: 0, branches: 0, functions: 0 },
+    },
+    testTimeout: 10000,
+    hookTimeout: 10000,
     // Vitest v4 compatibility: preserve mock call history.
     // Remove after tests no longer rely on calls from setup or earlier tests.
     // https://viteplus.dev/guide/vitest-v5#remove-unneeded-compatibility-settings
@@ -265,6 +309,22 @@ export default defineConfig({
     proseWrap: 'preserve',
     endOfLine: 'lf',
     sortPackageJson: false,
-    ignorePatterns: []
+    // Scope mirrors the former scripts/format.js gate: code + text assets under
+    // src/, scripts/ and root config, while docs/ and markdown stay author-
+    // controlled (proseWrap 'preserve' cannot save hand-laid-out docs from a
+    // machine reflow). Tests are excluded: vitest fixtures are churn, not style.
+    ignorePatterns: [
+      'docs/**',
+      'skills/**',
+      '.codegraph/**',
+      '.mycc/**',
+      '.vscode/**',
+      '**/*.md',
+      '**/*.sh',
+      'src/tests/**',
+      'src/web/dist/**',
+      'dist/**',
+      'node_modules/**'
+    ]
   }
 });

@@ -277,8 +277,7 @@ mycc/
 |---------|-------------|
 | `pnpm install` | Install dependencies |
 | `pnpm start` | Run the agent |
-| `pnpm typecheck` | Run TypeScript type checking |
-| `pnpm format` | Format code with Prettier |
+| `pnpm lint` | Run all static checks (format + lint + type-check via `vp check`) |
 
 ### Slash Commands
 
