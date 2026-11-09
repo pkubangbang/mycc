@@ -110,77 +110,85 @@ const bandHeight = computed(() => {
     <slot name="handle" />
     <div class="composer-row" :style="{ '--band-h': `${bandHeight}px` }">
       <div class="input-band" ref="bandEl">
-        <textarea
-          :value="props.text"
-          class="composer-box__textarea"
-          :placeholder="props.placeholder"
-          rows="2"
-          @input="emit('update:text', ($event.target as HTMLTextAreaElement).value)"
-          @keydown="onKeydown"
-          @paste="onPaste"
-        ></textarea>
-        <!-- Three action buttons, overlaid INSIDE the textarea's cell at the
-           bottom-right. Order left→right: compact, auto, attach. -->
-        <div class="composer-box__actions">
-          <button
-            class="tool-btn compact-btn"
-            :disabled="!props.canCompact"
-            title="压缩上下文"
-            @click="emit('compact')"
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
+        <!-- Text field wrapper: the CONTAINING BLOCK for the floating icon
+             strip. The textarea fills it; the strip is absolutely positioned
+             against its (bottom, right) corner, so the strip's clearance is
+             the declared offset itself instead of `--toolbar-w` minus the
+             strip's width. That subtraction is what used to collapse at
+             browser zoom (fractional px rounding on both operands). -->
+        <div class="input-field">
+          <textarea
+            :value="props.text"
+            class="composer-box__textarea"
+            :placeholder="props.placeholder"
+            rows="2"
+            @input="emit('update:text', ($event.target as HTMLTextAreaElement).value)"
+            @keydown="onKeydown"
+            @paste="onPaste"
+          ></textarea>
+          <!-- Three action buttons, overlaid INSIDE the field at the
+             bottom-right. Order left→right: compact, auto, attach. -->
+          <div class="composer-box__actions">
+            <button
+              class="tool-btn compact-btn"
+              :disabled="!props.canCompact"
+              title="压缩上下文"
+              @click="emit('compact')"
             >
-              <path d="M3 5 Q6 12 3 19" />
-              <path d="M21 5 Q18 12 21 19" />
-              <path d="M9 3 L14 3 L16 5 L15 21 L8 21 Z" />
-            </svg>
-          </button>
-          <!-- Lightning bolt: one-way "enter auto mode". If already in auto mode
-             the shell shows a transient "已经是自动模式了" toast. -->
-          <button
-            class="tool-btn auto-btn"
-            :class="{ 'auto-btn--on': props.isAutoMode }"
-            :disabled="!props.connected"
-            :title="props.isAutoMode ? '已经是自动模式了' : '进入自动模式'"
-            @click="emit('auto')"
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M3 5 Q6 12 3 19" />
+                <path d="M21 5 Q18 12 21 19" />
+                <path d="M9 3 L14 3 L16 5 L15 21 L8 21 Z" />
+              </svg>
+            </button>
+            <!-- Lightning bolt: one-way "enter auto mode". If already in auto
+               mode the shell shows a transient "已经是自动模式了" toast. -->
+            <button
+              class="tool-btn auto-btn"
+              :class="{ 'auto-btn--on': props.isAutoMode }"
+              :disabled="!props.connected"
+              :title="props.isAutoMode ? '已经是自动模式了' : '进入自动模式'"
+              @click="emit('auto')"
             >
-              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-            </svg>
-          </button>
-          <button class="tool-btn attach-btn" :disabled="!props.connected" title="附加文件" @click="emit('attach')">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-          </button>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+              </svg>
+            </button>
+            <button class="tool-btn attach-btn" :disabled="!props.connected" title="附加文件" @click="emit('attach')">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+            </button>
+          </div>
         </div>
         <div class="send-wrap">
           <button class="send-btn" :disabled="!props.canSend" @click="emit('send')">发送</button>
@@ -333,16 +341,29 @@ const bandHeight = computed(() => {
   gap: 8px;
 }
 
-.composer-box__textarea {
-  grid-area: 1 / 1 / 2 / 2;
+/* The text field: the CONTAINING BLOCK for the floating icon strip.
+   The textarea fills it; `.composer-box__actions` is positioned against its
+   bottom-right corner. One writer for the strip's offset (the strip's own
+   `right`/`bottom`), so no gutter has to be subtracted anywhere and the
+   clearance cannot thin out at browser zoom. */
+.input-field {
+  position: relative;
   height: 100%;
   min-height: 0;
+  min-width: 0;
+  display: flex;
+}
+
+.composer-box__textarea {
+  height: 100%;
   width: 100%;
   resize: none;
   border: 1px solid var(--border-input);
   border-radius: 6px;
-  /* Right gutter clears the floating strip. */
-  padding: 8px var(--toolbar-w, 98px) 8px 12px;
+  /* Symmetric side padding: the icon strip is an OVERLAY on top of the field
+     (see `.input-field`), so reserving a right gutter here would be a second
+     number for the same job — and it was the one that thinned out at zoom. */
+  padding: 8px 12px;
   font-size: 14px;
   font-family: inherit;
   line-height: 1.5;
@@ -355,18 +376,81 @@ const bandHeight = computed(() => {
   border-color: var(--accent);
 }
 
+/* ── Minimal scrollbar ──
+   The composer is a text band, not a content pane: the scrollbar must signal
+   "there is more text" without drawing a gutter. So: no track/background, no
+   arrows — the thumb is a thin rounded pill, visible only while the textarea is
+   hovered or focused.
+
+   INVARIANT: the scrollbar OWNS a reserved column. `scrollbar-gutter: stable`
+   keeps that column in the layout even while the text fits, and the icon strip
+   is offset from the field's right edge by exactly `--scrollbar-w` + its own
+   inset (`right` on `.composer-box__actions`). One number, one owner — the
+   thumb can never share a pixel with the upload button, at any zoom level,
+   because nothing here is a subtraction of two fixed widths.
+
+   Two syntaxes, one appearance: standard properties (Firefox, and Chromium
+   ≥121 where they win) plus the WebKit pseudo-elements (older Chromium/Safari,
+   which ignore the standard ones). Keep both in sync when changing sizes;
+   `scrollbar-width: thin` is the standard-property twin of the WebKit thumb
+   and cannot be matched exactly (it is UA-defined). */
+.composer-box__textarea {
+  --scrollbar-w: 6px;
+  scrollbar-width: thin;
+  /* `stable` + `both-edges: no` — a right-hand column is always reserved. */
+  scrollbar-gutter: stable;
+  scrollbar-color: transparent transparent;
+}
+.composer-box__textarea:hover,
+.composer-box__textarea:focus {
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 45%, transparent) transparent;
+}
+.composer-box__textarea::-webkit-scrollbar {
+  width: var(--scrollbar-w);
+  height: var(--scrollbar-w);
+}
+.composer-box__textarea::-webkit-scrollbar-track,
+.composer-box__textarea::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.composer-box__textarea::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+  transition: background 0.15s;
+}
+.composer-box__textarea:hover::-webkit-scrollbar-thumb,
+.composer-box__textarea:focus::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 45%, transparent);
+}
+.composer-box__textarea::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-muted) 70%, transparent);
+}
+.composer-box__textarea::-webkit-scrollbar-button {
+  display: none;
+}
+
 /* Overlay strip: same cell as the textarea, anchored bottom-right. Being a
    content-sized grid item (not a stretched absolutely positioned container)
    is what keeps it from covering the last text line. */
+/* Overlay strip: absolutely positioned inside `.input-field`, anchored to its
+   bottom-right corner. Being an OVERLAY (not a grid item in the textarea's
+   cell) is what makes the clearance the declared offset itself. */
 .composer-box__actions {
-  grid-area: 1 / 1 / 2 / 2;
-  align-self: end;
-  justify-self: end;
-  margin: 0 calc(var(--toolbar-inset, 2px) + 4px) var(--toolbar-inset, 2px) 0;
+  position: absolute;
+  /* Right offset = the scrollbar's reserved column + an 8px visual inset.
+     The column width is UA-defined (measured 12px for a 6px `thin`/WebKit
+     thumb), so it is reserved with `scrollbar-gutter: stable`, NOT assumed:
+     the strip sits at `gutter + inset`, which is where its 20px comes from. */
+  right: 20px;
+  bottom: 8px;
   display: flex;
   align-items: center;
   gap: 4px;
   z-index: 2;
+  /* The strip floats OVER text; a click on a button must not be swallowed by
+     the textarea underneath, and the strip's background is the field's own. */
+  background: var(--bg-input-field);
+  border-radius: 4px;
 }
 /* Shared icon-button base for the three toolbar buttons. */
 .tool-btn {
@@ -402,18 +486,18 @@ const bandHeight = computed(() => {
   color: #f59e0b;
 }
 
-/* Narrow screens cannot afford the 98px right gutter (it leaves ~330-390px of
-   empty space right of wrapped text). The strip is bottom-anchored, so reserve
-   BOTTOM padding instead and let text use the full width.
-   48px = 28px button + 4px inset + 2px border (34px) + one full 14px/1.5 line
+/* Narrow screens: the strip still floats at the bottom-right, so keep it clear
+   of the LAST line by reserving bottom padding only — text uses the full width
+   instead of a 98px right gutter.
+   48px = 28px button + 8px offset + 2px border (38px) + one full 14px/1.5 line
    box (21px) rounded up — otherwise the last line sits inside the strip. */
 @media (max-width: 600px) {
   .composer-box__textarea {
     padding: 8px 12px 48px;
   }
   .composer-box__actions {
-    margin-right: 4px;
-    margin-bottom: 4px;
+    right: 8px;
+    bottom: 8px;
   }
 }
 
