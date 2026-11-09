@@ -21,7 +21,13 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 
 /** Topic areas that must never be muted — active development surface. */
-const FORBIDDEN_SEGMENTS = ['/tests/loop/', '/tests/agent-io/', '/tests/state-machine/', '/tests/hook/', '/tests/engine/'];
+const FORBIDDEN_SEGMENTS = [
+  '/tests/loop/',
+  '/tests/agent-io/',
+  '/tests/state-machine/',
+  '/tests/hook/',
+  '/tests/engine/'
+];
 
 /**
  * True when the current run should SKIP a relatively stable, environment-bound
@@ -44,7 +50,7 @@ export function assertMuteAllowed(testFileUrl: string): void {
     if (p.includes(seg)) {
       throw new Error(
         `slow-suite: refusing to mute ${path.basename(p)} — suites under ${seg} exercise the ` +
-          `main loop and must run on every pass.`,
+          `main loop and must run on every pass.`
       );
     }
   }

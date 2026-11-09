@@ -40,7 +40,7 @@ export class ConsoleCapture {
     this.originals = {
       log: console.log,
       warn: console.warn,
-      error: console.error,
+      error: console.error
     };
 
     console.log = (...args: unknown[]): void => {
@@ -74,7 +74,7 @@ export class ConsoleCapture {
     return {
       logs: [...this.logs],
       warns: [...this.warns],
-      errors: [...this.errors],
+      errors: [...this.errors]
     };
   }
 
@@ -88,9 +88,7 @@ export class ConsoleCapture {
   filter(pattern: string | RegExp): string[] {
     const all = [...this.logs, ...this.warns, ...this.errors];
     const matcher =
-      typeof pattern === 'string'
-        ? (line: string) => line.includes(pattern)
-        : (line: string) => pattern.test(line);
+      typeof pattern === 'string' ? (line: string) => line.includes(pattern) : (line: string) => pattern.test(line);
     return all.filter(matcher);
   }
 }

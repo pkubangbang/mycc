@@ -77,11 +77,11 @@ const ROOT_FILE = /^[^/]+\.(mjs|js|cjs|json|ts)$/;
 function collectFiles() {
   const out = execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' });
   const tracked = out.split('\0').filter(Boolean);
-  return tracked.filter(file => {
+  return tracked.filter((file) => {
     const ext = path.extname(file).toLowerCase();
     if (!CODE_EXT.has(ext) && !ASSET_EXT.has(ext)) return false;
-    if (EXCLUDED_PREFIXES.some(p => file.startsWith(p))) return false;
-    if (file.startsWith('src/') || IN_SCOPE_DIRS.some(d => file.startsWith(d))) return true;
+    if (EXCLUDED_PREFIXES.some((p) => file.startsWith(p))) return false;
+    if (file.startsWith('src/') || IN_SCOPE_DIRS.some((d) => file.startsWith(d))) return true;
     return ROOT_FILE.test(file);
   });
 }
@@ -120,12 +120,12 @@ function main() {
     process.exit(1);
   }
 
-  const missing = files.filter(f => !existsSync(path.join(ROOT, f)));
+  const missing = files.filter((f) => !existsSync(path.join(ROOT, f)));
   if (missing.length > 0) {
     // A tracked-but-deleted file is normal mid-refactor; prettier would error.
     for (const f of missing) console.error(`[format] skipping deleted file ${f}`);
   }
-  const present = files.filter(f => !missing.includes(f));
+  const present = files.filter((f) => !missing.includes(f));
 
   const mode = write ? '--write' : '--check';
   let failed = 0;
@@ -134,7 +134,7 @@ function main() {
       execFileSync(process.execPath, [PRETTIER_BIN, mode, '--log-level', 'warn', ...chunk], {
         cwd: ROOT,
         stdio: ['ignore', 'pipe', 'pipe'],
-        encoding: 'utf8',
+        encoding: 'utf8'
       });
     } catch (error) {
       // Never swallow the reason: prettier exits non-zero for BOTH "needs
@@ -146,7 +146,7 @@ function main() {
       console.error(
         `[format] prettier ${mode} exited ${error.status ?? '?'}` +
           (error.signal ? ` (signal ${error.signal})` : '') +
-          ` on a batch of ${chunk.length} file(s)`,
+          ` on a batch of ${chunk.length} file(s)`
       );
     }
   }
@@ -158,7 +158,7 @@ function main() {
     }
     console.error(
       `\n[format] ${present.length} file(s) checked, ${failed} batch(es) reported drift.` +
-        '\n[format] Run `pnpm format` to rewrite them, then re-run this check.',
+        '\n[format] Run `pnpm format` to rewrite them, then re-run this check.'
     );
     process.exit(1);
   }

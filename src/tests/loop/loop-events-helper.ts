@@ -41,7 +41,7 @@ export function captureLoopEvents(): {
     cleanup(): void {
       for (const unsub of unsubs) unsub();
       loopEvents.clear();
-    },
+    }
   };
 }
 

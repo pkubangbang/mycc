@@ -63,7 +63,9 @@ import { startSpinner } from '../engine/chat-helpers.js';
  * status, because SkillSuggester depends on all three.
  */
 export type KeywordExtractionResult =
-  { status: 'success'; keywords: string[]; freeformQuery: string } | { status: 'skipped' } | { status: 'failed' };
+  | { status: 'success'; keywords: string[]; freeformQuery: string }
+  | { status: 'skipped' }
+  | { status: 'failed' };
 
 /** Tool definition for structured keyword extraction (LLM tool-calling). */
 const EXTRACT_KEYWORDS_TOOL: Tool = {

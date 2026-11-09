@@ -118,7 +118,7 @@ function remoteUrlKey(raw: string): string {
   let u = raw.trim().replace(/\/+$/, '');
   // Strip a scheme if present (http/https/ws/wss/anything) — irrelevant to
   // the endpoint identity, which is host:port only.
-  u = u.replace(/^[a-z][a-z0-9+.\-]*:\/\//i, '');
+  u = u.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
   // Drop path/query/fragment: the endpoint is the authority only.
   const slash = u.search(/[/?#]/);
   if (slash >= 0) u = u.slice(0, slash);
@@ -188,7 +188,7 @@ function normalizeRemotes(
     // be rejected on its OWN merits BEFORE the prepend — otherwise `ws://h:1`
     // becomes `http://ws://h:1`, `new URL` parses host `ws` (protocol http:),
     // and both the scheme + host checks pass while the author asked for ws.
-    const authoredScheme = /^([a-z][a-z0-9+.\-]*):\/\//i.exec(raw);
+    const authoredScheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(raw);
     if (authoredScheme) {
       const s = authoredScheme[1].toLowerCase();
       if (s !== 'http' && s !== 'https') {
@@ -233,7 +233,7 @@ function normalizeRemotes(
     // bare `host` (no port) which the constructor would otherwise accept via
     // the default-port fallback. The check judges the AUTHORED string (strip
     // scheme + trailing slashes), mirroring parseWireTarget's own grammar.
-    const portRest = raw.replace(/^[a-z][a-z0-9+.\-]*:\/\//i, '').replace(/\/+$/, '');
+    const portRest = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/\/+$/, '');
     const portHost = portRest.split('/')[0].split('?')[0].split('#')[0];
     // IPv6 literal `[::1]:port` — the port is after the closing bracket.
     const portColon = portHost.startsWith('[')
@@ -332,16 +332,15 @@ export function validateSpec(spec: unknown): NormalizedSpec {
     }
     if (names.has(dupKey(p.name as string))) throw new Error(`duplicate peer name: "${p.name}"`);
     names.add(dupKey(p.name as string));
-    const identityName = String(s.group) + ':' + String(p.name);
+    const identityName = `${String(s.group)}:${String(p.name)}`;
     try {
       validatePeerNameValue(identityName);
     } catch (err) {
       throw new Error(
-        at +
-          '.name cannot form a valid durable identity (' +
-          JSON.stringify(identityName) +
-          '): ' +
-          (err instanceof Error ? err.message : String(err))
+        `${at}.name cannot form a valid durable identity (${JSON.stringify(identityName)}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+        { cause: err }
       );
     }
     if (typeof p.workdir !== 'string' || (p.workdir as string).trim() === '') {

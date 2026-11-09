@@ -103,9 +103,10 @@ function findEmptyDescribe(src) {
       if (c === ')') {
         parenDepth--;
         if (parenDepth === 0) {
-          i++;
+          // `i` now points just past the describe's ')' — the for-loop's own
+          // `i++` is unreachable after `break`.
           break;
-        } // i now just past the describe's ')'
+        }
         continue;
       }
       // Detect arrow `=>` (only when not in string/comment).
@@ -211,7 +212,7 @@ function main() {
     let orig;
     try {
       orig = fs.readFileSync(f, 'utf8');
-    } catch (e) {
+    } catch {
       console.warn(`${f}: SKIPPED (file not found)`);
       continue;
     }

@@ -65,7 +65,7 @@ function remotesMailContent(peer: NormalizedPeer): string {
     `[Remotes] This peer should dial the following remote mycc instance(s) ` +
     `over the WebSocket peer-wire:\n\n${urls}\n\n` +
     `For each URL: call peer_connect(url). Then run peer_list to discover each ` +
-    `remote's session id, and mail_to(\"<discoveredSid>/lead\") to talk to it.\n` +
+    `remote's session id, and mail_to("<discoveredSid>/lead") to talk to it.\n` +
     `Do NOT ask the user anything; do NOT end your turn with a question. When ` +
     `all dials are attempted, report the connected peers and stop.`
   );

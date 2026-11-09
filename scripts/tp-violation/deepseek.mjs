@@ -15,7 +15,7 @@
  */
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
-import { HERE, REPO, OFFLINE, ONLY_SEQ, VERBOSE, registerTsx, loadFacade } from './lib/cli.mjs';
+import { REPO, VERBOSE, registerTsx } from './lib/cli.mjs';
 import { SEQUENCES, wantFor, isIllegal, describe } from './lib.mjs';
 
 export const PROVIDER = 'deepseek';
@@ -37,11 +37,6 @@ let retryChat, MODEL, loadEnv;
 }
 
 let inconclusive = 0;
-let invariantBreaches = 0;
-
-function makeFacade() {
-  return new loadFacade().Triologue({ onMessage: () => {}, tokenThreshold: 50000, resultThreshold: 100000 });
-}
 
 async function post(messages) {
   try {

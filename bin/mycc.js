@@ -27,14 +27,14 @@ if (isWin) {
   const tsxEsmUrl = pathToFileURL(tsxEsmPath).href;
   child = spawn(process.execPath, ['--import', tsxEsmUrl, entry, ...process.argv.slice(2)], {
     stdio: 'inherit',
-    env,
+    env
   });
 } else {
   // Unix: use tsx binary directly
   const tsx = resolve(PROJECT_ROOT, 'node_modules', '.bin', 'tsx');
   child = spawn(tsx, [entry, ...process.argv.slice(2)], {
     stdio: 'inherit',
-    env,
+    env
   });
 }
 

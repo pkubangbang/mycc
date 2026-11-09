@@ -39,7 +39,8 @@ import { abortWrapUpCapsule } from './wrap-up-state.js';
  * was a symptom of merging, and merging no longer exists).
  */
 type DeferredInput =
-  { kind: 'user'; text: string } | { kind: 'note'; category: NoteCategory; hookName?: string; text: string };
+  | { kind: 'user'; text: string }
+  | { kind: 'note'; category: NoteCategory; hookName?: string; text: string };
 
 export class Triologue {
   private store: MessageStore = new MessageStore();

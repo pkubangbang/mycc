@@ -61,14 +61,14 @@ if (PROVIDER) process.env.API_PROVIDER = PROVIDER;
 const { register } = await import('tsx/esm/api');
 register();
 
-let Triologue, retryChat, MODEL, getApiProvider;
+let Triologue, retryChat, MODEL;
 let loadEnv;
 {
   const load = async (rel) => import(pathToFileURL(join(REPO, rel)).href);
   ({ Triologue } = await load('src/loop/triologue.ts'));
   if (!OFFLINE) {
     ({ retryChat, MODEL } = await load('src/engine/chat-provider.ts'));
-    ({ getApiProvider, loadEnv } = await load('src/config.ts'));
+    ({ loadEnv } = await load('src/config.ts'));
     loadEnv();
   }
 }
@@ -115,7 +115,6 @@ export function isIllegal(msgs) {
   return pending.size > 0; // (3) conversation ends with an unanswered block
 }
 
-const roles = (msgs) => msgs.map((m) => m.role).join(' → ');
 const tc = (id, name) => ({ id, function: { name, arguments: {} } });
 const describe = (msgs) =>
   msgs.map((m) => (m.tool_calls ? `${m.role}[${m.tool_calls.map((c) => c.id).join(',')}]` : m.role)).join(' → ');

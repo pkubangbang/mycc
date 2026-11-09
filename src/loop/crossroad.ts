@@ -1072,10 +1072,3 @@ export async function handleCrossroad(
     }
   }
 }
-
-
-
-
-
-
-

@@ -174,6 +174,10 @@ if (!hasStopSelector) {
 // ── Form 2: SESSION ID ───────────────────────────────────────────────────────
 // Stop directly by sid. The id must be a full-length uuid — an abbreviated or
 // otherwise malformed id fails loud rather than resolving a prefix.
+//
+// Every case ends in `process.exit()`, so no `break` is needed (and none of the
+// fallthroughs the linter imagines can actually run).
+/* oxlint-disable no-fallthrough */
 if (args.sessionId !== null) {
   if (!UUID_RE.test(args.sessionId)) {
     process.stderr.write(`not a well-formed session-id: ${JSON.stringify(args.sessionId)}\n`);
@@ -220,3 +224,4 @@ switch (verdict) {
     process.stderr.write(`refused ${args.group}:${args.name}: ${verdict}\n`);
     process.exit(1);
 }
+/* oxlint-enable no-fallthrough */

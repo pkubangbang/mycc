@@ -48,8 +48,7 @@ function windowsTerminalCommand(command: string, args: string[], cwd: string): s
     : `& ${[command, ...args].map(psQuote).join(' ')}`;
   const script =
     `if (-not (Test-Path -LiteralPath ${psQuote(cwd)})) { New-Item -ItemType Directory -LiteralPath ${psQuote(cwd)} -Force | Out-Null }\n` +
-    `Set-Location -LiteralPath ${psQuote(cwd)}\n` +
-    invocation;
+    `Set-Location -LiteralPath ${psQuote(cwd)}\n${invocation}`;
   const encoded = Buffer.from(script, 'utf16le').toString('base64');
   return `powershell -NoExit -EncodedCommand ${encoded}`;
 }

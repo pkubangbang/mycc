@@ -410,7 +410,7 @@ export class HintRound {
       if (msg.role === 'system') return false;
       if (msg.role === 'user' && msg.content) {
         if (/^\[(?:REMINDER|WRAP_UP)\]/.test(msg.content)) return false;
-        if (/^\[HINT\]/.test(msg.content) && !/^\[HINT\]\s*Problem Analysis:/s.test(msg.content)) return false;
+        if (msg.content.startsWith('[HINT]') && !/^\[HINT\]\s*Problem Analysis:/s.test(msg.content)) return false;
       }
       return true;
     });

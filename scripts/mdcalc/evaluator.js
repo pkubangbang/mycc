@@ -422,7 +422,7 @@ export function evaluateWithRanges(expr, grid, rangeMap) {
         try {
           return FUNCS[fname](...args);
         } catch (e) {
-          throw new Error(`${fname}: ${e.message}`);
+          throw new Error(`${fname}: ${e.message}`, { cause: e });
         }
       }
       case 'UnaryExpression': {

@@ -184,7 +184,7 @@ export function repairIdentity(peers: Peer[]): number {
       // Our own pending entries only land for sids that were ABSENT at build
       // time; guard the write anyway so a concurrent register() that inserted
       // one of them in the gap is preserved, not clobbered ("insert if absent").
-      for (const [sid, entry] of pending) {
+      for (const [sid, entry] of Array.from(pending)) {
         if (!(sid in map)) map[sid] = entry;
       }
 
@@ -192,7 +192,7 @@ export function repairIdentity(peers: Peer[]): number {
 
       // Verify: entries present after the rename are done (count them once).
       const after = readIdentityMap();
-      for (const sid of [...pending.keys()]) {
+      for (const sid of Array.from(pending.keys())) {
         if (sid in after) {
           pending.delete(sid);
           repaired++;
@@ -272,7 +272,7 @@ export function cullStoppedPeers(peers: Peer[]): number {
   const runCull = (): number => {
     for (let attempt = 0; attempt < 5 && candidates.size > 0; attempt++) {
       const map = readIdentityMap();
-      for (const sid of [...candidates]) {
+      for (const sid of Array.from(candidates)) {
         // Merge-on-read: only ever DELETE, never write back a stale snapshot.
         // Re-check death at delete time (the pid could have been recycled onto
         // a live process between the scan above and here) — a now-alive pid

@@ -38,8 +38,8 @@ export function toDate(cell) {
 }
 
 // Coerce a CellValue to a JS number, throwing a descriptive error on non-num
-// (including empty). `ctx` is an op/function name used only in the message.
-export function asNum(c, ctx) {
+// (including empty).
+export function asNum(c) {
   if (!c || c.type !== 'num') {
     const desc = !c ? 'empty' : `${c.type} (${JSON.stringify(c.value)})`;
     throw new Error(`expected num, got ${desc}`);

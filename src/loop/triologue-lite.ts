@@ -54,7 +54,8 @@ export type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } fr
  * drift.
  */
 type DeferredInput =
-  { kind: 'user'; text: string } | { kind: 'note'; category: NoteCategory; hookName?: string; text: string };
+  | { kind: 'user'; text: string }
+  | { kind: 'note'; category: NoteCategory; hookName?: string; text: string };
 
 export class TriologueLite {
   private store: MessageStore = new MessageStore();

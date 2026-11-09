@@ -16,7 +16,7 @@ Line 3`,
   codeContent: `function hello(name: string) {
   console.log(\`Hello, \${name}!\`);
 }
-`,
+`
 };
 
 /**
@@ -26,7 +26,7 @@ export const samplePaths = {
   validFile: '/workspace/test.txt',
   validDir: '/workspace/src',
   deepFile: '/workspace/src/utils/helper.ts',
-  invalidPath: '/nonexistent/path/file.txt',
+  invalidPath: '/nonexistent/path/file.txt'
 };
 
 /**
@@ -53,7 +53,7 @@ export const contextFactories = {
       addExternalAutoGrant: () => {},
       getMode: () => 'normal' as const,
       getAuto: () => false,
-            setAuto: () => {},
+      setAuto: () => {},
       getAutoCommitBranches: () => [] as string[],
       addAutoCommitBranches: () => [],
       removeAutoCommitBranches: () => [],
@@ -65,7 +65,7 @@ export const contextFactories = {
       getConfusionIndex: () => 0,
       increaseConfusionIndex: () => {},
       resetConfusionIndex: () => {},
-      escAware: (async (fn: (ac: AbortController) => Promise<unknown>) => fn(new AbortController())) as never,
+      escAware: (async (fn: (ac: AbortController) => Promise<unknown>) => fn(new AbortController())) as never
     },
     todo: {} as never,
     mail: {} as never,
@@ -74,8 +74,8 @@ export const contextFactories = {
     bg: {} as never,
     team: {} as never,
     wiki: {} as never,
-    peer: {} as never,
-  }),
+    peer: {} as never
+  })
 };
 
 /**
@@ -87,29 +87,29 @@ export const bashOutputs = {
     stderr: '',
     exitCode: 0,
     interrupted: false,
-    timedOut: false,
+    timedOut: false
   },
   failure: {
     stdout: '',
     stderr: 'command not found',
     exitCode: 127,
     interrupted: false,
-    timedOut: false,
+    timedOut: false
   },
   timeout: {
     stdout: '',
     stderr: '',
     exitCode: 137,
     interrupted: false,
-    timedOut: true,
+    timedOut: true
   },
   interrupted: {
     stdout: '',
     stderr: '',
     exitCode: -1,
     interrupted: true,
-    timedOut: false,
-  },
+    timedOut: false
+  }
 };
 
 /**
@@ -118,7 +118,7 @@ export const bashOutputs = {
 export const sampleTodoItems = [
   { id: 0, name: 'First task', done: false, note: 'Note 1' },
   { id: 1, name: 'Second task', done: true, note: undefined },
-  { id: 2, name: 'Third task', done: false, note: 'Note 3' },
+  { id: 2, name: 'Third task', done: false, note: 'Note 3' }
 ];
 
 /**
@@ -128,18 +128,18 @@ export const sampleIssues = {
   pending: {
     title: 'Test Issue',
     content: 'Issue description',
-    blockedBy: [],
+    blockedBy: []
   },
   blocked: {
     title: 'Blocked Issue',
     content: 'This is blocked',
-    blockedBy: [1],
+    blockedBy: [1]
   },
   complex: {
     title: 'Complex Issue',
     content: 'Multiple blockers',
-    blockedBy: [1, 2, 3],
-  },
+    blockedBy: [1, 2, 3]
+  }
 };
 
 /**
@@ -151,13 +151,13 @@ export const sampleMails = [
     from: 'sender-1',
     title: 'Test Mail 1',
     content: 'Mail content 1',
-    timestamp: new Date('2024-01-15T10:00:00Z'),
+    timestamp: new Date('2024-01-15T10:00:00Z')
   },
   {
     id: 'mail-2',
     from: 'sender-2',
     title: 'Test Mail 2',
     content: 'Mail content 2',
-    timestamp: new Date('2024-01-15T11:00:00Z'),
-  },
+    timestamp: new Date('2024-01-15T11:00:00Z')
+  }
 ];
