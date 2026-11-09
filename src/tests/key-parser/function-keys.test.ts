@@ -1,8 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import {
-  parseKeys,
-  KeyInfo,
-} from '../../utils/key-parser';
+import { describe, it, expect } from 'vite-plus/test';
+import { parseKeys, KeyInfo } from '../../utils/key-parser';
 
 /**
  * Helper to create a buffer from hex values
@@ -21,7 +18,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1bOP',
+        sequence: '\x1bOP'
       });
     });
 
@@ -33,7 +30,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1bOQ',
+        sequence: '\x1bOQ'
       });
     });
 
@@ -45,7 +42,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1bOR',
+        sequence: '\x1bOR'
       });
     });
 
@@ -57,7 +54,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1bOS',
+        sequence: '\x1bOS'
       });
     });
 
@@ -69,7 +66,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1b[15~',
+        sequence: '\x1b[15~'
       });
     });
 
@@ -81,7 +78,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1b[17~',
+        sequence: '\x1b[17~'
       });
     });
 
@@ -93,7 +90,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1b[18~',
+        sequence: '\x1b[18~'
       });
     });
 
@@ -105,7 +102,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1b[19~',
+        sequence: '\x1b[19~'
       });
     });
 
@@ -117,7 +114,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1b[20~',
+        sequence: '\x1b[20~'
       });
     });
 
@@ -129,7 +126,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1b[21~',
+        sequence: '\x1b[21~'
       });
     });
 
@@ -141,7 +138,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1b[23~',
+        sequence: '\x1b[23~'
       });
     });
 
@@ -153,7 +150,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1b[24~',
+        sequence: '\x1b[24~'
       });
     });
   });

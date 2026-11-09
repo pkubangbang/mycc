@@ -2,7 +2,7 @@
  * bg-create.test.ts - Tests for the bg_create tool
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { bgCreateTool } from '../../tools/bg_create.js';
 
 import type { AgentContext } from '../../types.js';
@@ -24,7 +24,12 @@ describe('bgCreateTool', () => {
   describe('happy path', () => {
     it('should run a background command and return pid', async () => {
       vi.mocked(ctx.bg!.runCommand).mockResolvedValueOnce(42);
-      const result = await runTool(bgCreateTool, ctx, { command: 'sleep 10', intent: 'RUN SYSTEM TO test background task' }, testSignal);
+      const result = await runTool(
+        bgCreateTool,
+        ctx,
+        { command: 'sleep 10', intent: 'RUN SYSTEM TO test background task' },
+        testSignal
+      );
       expect(result).toBe('OK: 42');
       expect(ctx.bg!.runCommand).toHaveBeenCalledWith('sleep 10');
     });
@@ -32,7 +37,10 @@ describe('bgCreateTool', () => {
     it('should request grant before running', async () => {
       vi.mocked(ctx.bg!.runCommand).mockResolvedValueOnce(1);
       await runTool(bgCreateTool, ctx, { command: 'echo hello', intent: 'RUN SYSTEM TO test grant' }, testSignal);
-      expect(ctx.core.requestGrant).toHaveBeenCalledWith('bash', { command: 'echo hello', intent: 'RUN SYSTEM TO test grant' });
+      expect(ctx.core.requestGrant).toHaveBeenCalledWith('bash', {
+        command: 'echo hello',
+        intent: 'RUN SYSTEM TO test grant'
+      });
     });
   });
 
@@ -66,7 +74,10 @@ describe('bgCreateTool', () => {
 
   describe('grant rejection', () => {
     it('should return reason when grant is denied', async () => {
-      vi.mocked(ctx.core.requestGrant).mockResolvedValueOnce({ approved: false, reason: 'Operation not permitted in plan mode' });
+      vi.mocked(ctx.core.requestGrant).mockResolvedValueOnce({
+        approved: false,
+        reason: 'Operation not permitted in plan mode'
+      });
       const result = await runTool(bgCreateTool, ctx, { command: 'rm -rf /', intent: 'dangerous' }, testSignal);
       expect(result).toContain('Operation not permitted in plan mode');
       expect(ctx.bg!.runCommand).not.toHaveBeenCalled();
@@ -82,15 +93,24 @@ describe('bgCreateTool', () => {
   describe('error handling', () => {
     it('should handle runCommand throwing an error', async () => {
       vi.mocked(ctx.bg!.runCommand).mockRejectedValueOnce(new Error('Failed to spawn process'));
-      const result = await runTool(bgCreateTool, ctx, { command: 'bad-command', intent: 'RUN SYSTEM TO test error' }, testSignal);
+      const result = await runTool(
+        bgCreateTool,
+        ctx,
+        { command: 'bad-command', intent: 'RUN SYSTEM TO test error' },
+        testSignal
+      );
       expect(result).toContain('Error');
       expect(result).toContain('Failed to spawn process');
     });
   });
 
   describe('tool metadata', () => {
-    it('should have correct name', () => { expect(bgCreateTool.name).toBe('bg_create'); });
-    it('should have correct scope', () => { expect(bgCreateTool.scope).toEqual(['main', 'child']); });
+    it('should have correct name', () => {
+      expect(bgCreateTool.name).toBe('bg_create');
+    });
+    it('should have correct scope', () => {
+      expect(bgCreateTool.scope).toEqual(['main', 'child']);
+    });
     it('should require command and intent', () => {
       expect(bgCreateTool.input_schema.required).toContain('command');
       expect(bgCreateTool.input_schema.required).toContain('intent');

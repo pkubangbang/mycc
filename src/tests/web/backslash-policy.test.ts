@@ -15,7 +15,7 @@
  *   - the two renderers behave as claimed (path preserved vs. corrupted);
  *   - code fences/spans are unaffected by the verbatim renderer.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import MarkdownIt from 'markdown-it';
 import { backslashPolicy, PATH_TOOL_LABELS } from '../../web/src/backslash-policy';
 
@@ -57,7 +57,7 @@ describe('backslashPolicy', () => {
 
   it('renders a Windows path with a dot-directory intact', () => {
     const content = 'cache miss: D:\\dev\\mycc\\.mycc\\shot.png';
-    expect(md.renderInline(content)).toContain('mycc.mycc');   // the bug
+    expect(md.renderInline(content)).toContain('mycc.mycc'); // the bug
     expect(mdVerbatim.renderInline(content)).toContain('mycc\\.mycc');
     expect(mdVerbatim.renderInline(content)).not.toContain('mycc.mycc');
   });
@@ -83,13 +83,11 @@ describe('backslashPolicy', () => {
 
 describe('the two renderers', () => {
   it('stock markdown-it eats the backslash of `\\.` (the bug)', () => {
-    expect(md.render(WIN_PATH).trim())
-      .toBe('<p>read C:\\Proj\\mycc.mycc\\mindmap.json</p>');
+    expect(md.render(WIN_PATH).trim()).toBe('<p>read C:\\Proj\\mycc.mycc\\mindmap.json</p>');
   });
 
   it('the verbatim renderer preserves the path', () => {
-    expect(mdVerbatim.render(WIN_PATH).trim())
-      .toBe('<p>read C:\\Proj\\mycc\\.mycc\\mindmap.json</p>');
+    expect(mdVerbatim.render(WIN_PATH).trim()).toBe('<p>read C:\\Proj\\mycc\\.mycc\\mindmap.json</p>');
   });
 
   it('prose keeps its markdown escapes', () => {

@@ -2,7 +2,7 @@
  * path.test.ts - Tests for resolvePath utility
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import * as os from 'os';
 import * as path from 'path';
 import { resolvePath, isInsideWorkspace } from '../../utils/path.js';
@@ -49,19 +49,13 @@ describe('resolvePath', () => {
 
   it('should throw a clear error when path is undefined', () => {
     const workdir = '/home/user/project';
-    expect(() => resolvePath(undefined as unknown as string, workdir)).toThrow(
-      /path argument is required/
-    );
+    expect(() => resolvePath(undefined as unknown as string, workdir)).toThrow(/path argument is required/);
   });
 
   it('should throw a clear error when path is a non-string value', () => {
     const workdir = '/home/user/project';
-    expect(() => resolvePath(42 as unknown as string, workdir)).toThrow(
-      /path argument is required/
-    );
-    expect(() => resolvePath(null as unknown as string, workdir)).toThrow(
-      /path argument is required/
-    );
+    expect(() => resolvePath(42 as unknown as string, workdir)).toThrow(/path argument is required/);
+    expect(() => resolvePath(null as unknown as string, workdir)).toThrow(/path argument is required/);
   });
 
   it('should throw a clear error when path is an empty string', () => {

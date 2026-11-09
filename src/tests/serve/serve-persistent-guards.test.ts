@@ -24,19 +24,19 @@
  * true). The /health + /config endpoint shapes are covered live in
  * serve-health.test.ts (tmux). This file covers the remaining pure logic.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 // Mock agentIO before importing serve-ws-handler — it imports agentIO for
 // the 'interrupt' and 'exit' verbose logs. Only the verbose methods are
 // needed; no behaviour depends on them here.
 vi.mock('../../loop/agent-io.js', () => ({
-  agentIO: { verbose: vi.fn(), brief: vi.fn(), exec: vi.fn(), triggerNeglection: vi.fn() },
+  agentIO: { verbose: vi.fn(), brief: vi.fn(), exec: vi.fn(), triggerNeglection: vi.fn() }
 }));
 
 // autoState is read by the 'auto' case; not exercised here, but the import
 // must resolve.
 vi.mock('../../loop/auto-state.js', () => ({
-  autoState: { resetStreak: vi.fn(), setAuto: vi.fn() },
+  autoState: { resetStreak: vi.fn(), setAuto: vi.fn() }
 }));
 
 import { ServeDetachedExitError } from '../../serve/serve-errors.js';
@@ -57,12 +57,16 @@ function makeStubHub(): HubHandler & {
     pushSteer: vi.fn(),
     pushFileUpload: vi.fn(),
     resolveSteering: vi.fn(),
-    gracefulShutdown: vi.fn(async () => { calls.push('gracefulShutdown'); }),
-    restartServe: vi.fn(async () => { calls.push('restartServe'); }),
+    gracefulShutdown: vi.fn(async () => {
+      calls.push('gracefulShutdown');
+    }),
+    restartServe: vi.fn(async () => {
+      calls.push('restartServe');
+    }),
     broadcast: vi.fn(),
     broadcastExcept: vi.fn(),
     getAutoState: vi.fn(() => false),
-    enterAuto: vi.fn(() => true),
+    enterAuto: vi.fn(() => true)
   };
 }
 
@@ -92,7 +96,9 @@ describe('ServeDetachedExitError sentinel', () => {
   });
 
   it('can be thrown and caught by the sentinel class', () => {
-    expect(() => { throw new ServeDetachedExitError(); }).toThrow(ServeDetachedExitError);
+    expect(() => {
+      throw new ServeDetachedExitError();
+    }).toThrow(ServeDetachedExitError);
   });
 });
 
@@ -166,10 +172,7 @@ import * as path from 'path';
 
 describe('drift guards (serve-persistent plan §3b/§8)', () => {
   it('FRESHNESS_WINDOW_MS is pinned at 90_000 ms (Section 3b / 7d sizing)', () => {
-    const identitySrc = fs.readFileSync(
-      path.resolve(__dirname, '../../peer/identity.ts'),
-      'utf-8',
-    );
+    const identitySrc = fs.readFileSync(path.resolve(__dirname, '../../peer/identity.ts'), 'utf-8');
     // The constant is module-private; assert its declaration value so a
     // silent edit (e.g. raising it past the RestartSec=20 cadence's 5th
     // attempt at +100 s) is caught here rather than in a deployed deadlock.
@@ -177,10 +180,7 @@ describe('drift guards (serve-persistent plan §3b/§8)', () => {
   });
 
   it('every ServeDetachedExitError throw in web-input-provider.ts is gated on shouldDaemon()', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../../serve/web-input-provider.ts'),
-      'utf-8',
-    );
+    const src = fs.readFileSync(path.resolve(__dirname, '../../serve/web-input-provider.ts'), 'utf-8');
     // Find each "throw new ServeDetachedExitError()" and assert the
     // surrounding block (the enclosing if-statement text within ~3 lines
     // before the throw) contains the shouldDaemon() gate. This is the

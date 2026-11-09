@@ -21,13 +21,8 @@
  * classified as 'transient' and retried with backoff.
  */
 
-import { describe, it, expect } from 'vitest';
-import {
-  isTransientError,
-  classifyError,
-  normalizeFetchError,
-  retryWithBackoff,
-} from '../../engine/chat-helpers.js';
+import { describe, it, expect } from 'vite-plus/test';
+import { isTransientError, classifyError, normalizeFetchError, retryWithBackoff } from '../../engine/chat-helpers.js';
 
 describe('isTransientError()', () => {
   it('should classify the ollama "did not receive done" stream error as transient', () => {
@@ -232,7 +227,7 @@ describe('retryWithBackoff() — retries after bare TypeError("terminated")', ()
     await expect(
       retryWithBackoff(async () => {
         throw raw;
-      }, fastRetry),
+      }, fastRetry)
     ).rejects.toThrow(/transport terminated/);
 
     // Verify cause preservation on the thrown error by catching it directly.
@@ -257,7 +252,7 @@ describe('retryWithBackoff() — retries after bare TypeError("terminated")', ()
       retryWithBackoff(async () => {
         attempts++;
         throw new TypeError('terminated');
-      }, fastRetry),
+      }, fastRetry)
     ).rejects.toThrow(/transport terminated/);
     expect(attempts).toBe(4);
   });

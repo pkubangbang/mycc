@@ -10,16 +10,12 @@
  * reached through `os.homedir()`.
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import {
-  JsonlTranscriptWriter,
-  fileLineSink,
-  memoryLineSink,
-} from '../loop/triologue/transcript.js';
+import { JsonlTranscriptWriter, fileLineSink, memoryLineSink } from '../loop/triologue/transcript.js';
 import { appendPatch } from '../mindmap/patch-jsonl.js';
 import { appendWALEntry, appendWALEntries } from '../context/parent/wiki-wal.js';
 import type { MindmapPatchAction } from '../mindmap/types.js';
@@ -78,7 +74,7 @@ describe('JsonlTranscriptWriter + LineSink', () => {
       destination: '<throwing>',
       append() {
         throw new Error('disk full');
-      },
+      }
     };
     const w = new JsonlTranscriptWriter(throwing, onError);
 
@@ -108,8 +104,11 @@ describe('appendPatch + LineSink', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wi-patch-'));
     try {
       const sink = memoryLineSink();
-      const ok = appendPatch({ action: 'add', path: '/a', title: '', text: '' } as MindmapPatchAction,
-        path.join(dir, 'p.jsonl'), sink);
+      const ok = appendPatch(
+        { action: 'add', path: '/a', title: '', text: '' } as MindmapPatchAction,
+        path.join(dir, 'p.jsonl'),
+        sink
+      );
       expect(ok).toBe(false);
       expect(sink.lines).toHaveLength(0);
     } finally {

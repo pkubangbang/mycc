@@ -5,24 +5,24 @@
  * operations from child processes should be approved or rejected.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 
 // Mock bash-judge so evaluateGrant's bash path is deterministic (no LLM).
 vi.mock('../../context/grant/bash-judge.js', () => ({
-  judgeBash: vi.fn(),
+  judgeBash: vi.fn()
 }));
 
 // Mock worktree-store so listWorktrees returns a controlled set.
 vi.mock('../../context/worktree-store.js', () => ({
-  listWorktrees: vi.fn(),
+  listWorktrees: vi.fn()
 }));
 
 // Mock config for plan-mode-writable dirs.
 vi.mock('../../config.js', () => ({
-  getPlanModeWritableDirs: vi.fn(() => ['.mycc/longtext', '.mycc/imgcache']),
+  getPlanModeWritableDirs: vi.fn(() => ['.mycc/longtext', '.mycc/imgcache'])
 }));
 
 import { evaluateGrant } from '../../context/grant/grant-evaluator.js';
@@ -37,7 +37,7 @@ function makeCore(workDir: string, mode: 'plan' | 'normal' = 'normal', allowedFi
     getWorkDir: () => workDir,
     getAllowedFile: () => allowedFile,
     question: vi.fn(),
-    escAware: vi.fn(),
+    escAware: vi.fn()
   } as unknown as Parameters<typeof evaluateGrant>[2];
 }
 
@@ -54,9 +54,7 @@ describe('evaluateGrant', () => {
 
     mockJudgeBash.mockReset();
     mockListWorktrees.mockReset();
-    mockListWorktrees.mockResolvedValue([
-      { name: 'dev-agent', path: worktreePath, branch: 'feature/dev' },
-    ]);
+    mockListWorktrees.mockResolvedValue([{ name: 'dev-agent', path: worktreePath, branch: 'feature/dev' }]);
   });
 
   afterEach(() => {
@@ -67,10 +65,14 @@ describe('evaluateGrant', () => {
   describe('Plan Mode', () => {
     it('should reject file writes in plan mode', async () => {
       const core = makeCore(tempDir, 'plan');
-      const result = await evaluateGrant('dev-agent', {
-        tool: 'write_file',
-        path: path.join(tempDir, 'src', 'file.ts'),
-      }, core);
+      const result = await evaluateGrant(
+        'dev-agent',
+        {
+          tool: 'write_file',
+          path: path.join(tempDir, 'src', 'file.ts')
+        },
+        core
+      );
 
       expect(result.approved).toBe(false);
       expect(result.reason).toContain('Plan mode');
@@ -79,14 +81,18 @@ describe('evaluateGrant', () => {
     it('should reject bash commands in plan mode even for owned worktree', async () => {
       mockJudgeBash.mockResolvedValue({
         decision: 'block',
-        reason: 'Cannot BUILD in plan mode. Verb "BUILD" modifies state.',
+        reason: 'Cannot BUILD in plan mode. Verb "BUILD" modifies state.'
       });
       const core = makeCore(tempDir, 'plan');
-      const result = await evaluateGrant('dev-agent', {
-        tool: 'bash',
-        command: 'npm run build',
-        intent: 'BUILD ARTIFACT TO compile project',
-      }, core);
+      const result = await evaluateGrant(
+        'dev-agent',
+        {
+          tool: 'bash',
+          command: 'npm run build',
+          intent: 'BUILD ARTIFACT TO compile project'
+        },
+        core
+      );
 
       expect(result.approved).toBe(false);
       expect(result.reason).toContain('Cannot BUILD in plan mode');
@@ -94,10 +100,14 @@ describe('evaluateGrant', () => {
 
     it('should allow writes into plan-mode-writable tool-output dirs', async () => {
       const core = makeCore(tempDir, 'plan');
-      const result = await evaluateGrant('dev-agent', {
-        tool: 'write_file',
-        path: path.join(tempDir, '.mycc', 'longtext', 'dump.txt'),
-      }, core);
+      const result = await evaluateGrant(
+        'dev-agent',
+        {
+          tool: 'write_file',
+          path: path.join(tempDir, '.mycc', 'longtext', 'dump.txt')
+        },
+        core
+      );
 
       expect(result.approved).toBe(true);
       expect(result.reason).toBeUndefined();
@@ -106,10 +116,14 @@ describe('evaluateGrant', () => {
     it('should allow the single allowed file in plan mode', async () => {
       const allowed = path.join(tempDir, 'src', 'allowed.ts');
       const core = makeCore(tempDir, 'plan', allowed);
-      const result = await evaluateGrant('dev-agent', {
-        tool: 'edit_file',
-        path: allowed,
-      }, core);
+      const result = await evaluateGrant(
+        'dev-agent',
+        {
+          tool: 'edit_file',
+          path: allowed
+        },
+        core
+      );
 
       expect(result.approved).toBe(true);
     });
@@ -119,10 +133,14 @@ describe('evaluateGrant', () => {
     it('should auto-grant for files in owned worktree', async () => {
       const core = makeCore(tempDir, 'normal');
       const filePath = path.join(worktreePath, 'src', 'new-file.ts');
-      const result = await evaluateGrant('dev-agent', {
-        tool: 'write_file',
-        path: filePath,
-      }, core);
+      const result = await evaluateGrant(
+        'dev-agent',
+        {
+          tool: 'write_file',
+          path: filePath
+        },
+        core
+      );
 
       expect(result.approved).toBe(true);
       expect(result.reason).toBeUndefined();
@@ -131,10 +149,14 @@ describe('evaluateGrant', () => {
     it('should reject files outside owned worktree and project root', async () => {
       const core = makeCore(tempDir, 'normal');
       const filePath = path.join(os.tmpdir(), 'unrelated-dir', 'main-branch-file.ts');
-      const result = await evaluateGrant('dev-agent', {
-        tool: 'write_file',
-        path: filePath,
-      }, core);
+      const result = await evaluateGrant(
+        'dev-agent',
+        {
+          tool: 'write_file',
+          path: filePath
+        },
+        core
+      );
 
       expect(result.approved).toBe(false);
       expect(result.reason).toContain('outside your worktree');
@@ -145,10 +167,14 @@ describe('evaluateGrant', () => {
       // the project root (general project work, not worktree-specific).
       mockListWorktrees.mockResolvedValue([]);
       const core = makeCore(tempDir, 'normal');
-      const result = await evaluateGrant('no-worktree-agent', {
-        tool: 'write_file',
-        path: path.join(tempDir, 'src', 'file.ts'),
-      }, core);
+      const result = await evaluateGrant(
+        'no-worktree-agent',
+        {
+          tool: 'write_file',
+          path: path.join(tempDir, 'src', 'file.ts')
+        },
+        core
+      );
 
       expect(result.approved).toBe(true);
     });
@@ -157,10 +183,14 @@ describe('evaluateGrant', () => {
       mockListWorktrees.mockResolvedValue([]);
       const core = makeCore(tempDir, 'normal');
       const outside = path.join(os.tmpdir(), 'unrelated-dir', 'file.ts');
-      const result = await evaluateGrant('no-worktree-agent', {
-        tool: 'write_file',
-        path: outside,
-      }, core);
+      const result = await evaluateGrant(
+        'no-worktree-agent',
+        {
+          tool: 'write_file',
+          path: outside
+        },
+        core
+      );
 
       expect(result.approved).toBe(false);
       expect(result.reason).toContain('outside your worktree');
@@ -168,9 +198,13 @@ describe('evaluateGrant', () => {
 
     it('should reject file op with no path', async () => {
       const core = makeCore(tempDir, 'normal');
-      const result = await evaluateGrant('dev-agent', {
-        tool: 'write_file',
-      } as GrantRequest, core);
+      const result = await evaluateGrant(
+        'dev-agent',
+        {
+          tool: 'write_file'
+        } as GrantRequest,
+        core
+      );
 
       expect(result.approved).toBe(false);
       expect(result.reason).toContain('No path provided');
@@ -181,14 +215,18 @@ describe('evaluateGrant', () => {
     it('should block dangerous command: rm -rf /', async () => {
       mockJudgeBash.mockResolvedValue({
         decision: 'block',
-        reason: 'Command blocked: rm -rf / is destructive',
+        reason: 'Command blocked: rm -rf / is destructive'
       });
       const core = makeCore(tempDir, 'normal');
-      const result = await evaluateGrant('dev-agent', {
-        tool: 'bash',
-        command: 'rm -rf /',
-        intent: 'DELETE DATA dangerous=i_know TO reclaim disk space',
-      }, core);
+      const result = await evaluateGrant(
+        'dev-agent',
+        {
+          tool: 'bash',
+          command: 'rm -rf /',
+          intent: 'DELETE DATA dangerous=i_know TO reclaim disk space'
+        },
+        core
+      );
 
       expect(result.approved).toBe(false);
       expect(result.reason).toContain('blocked');
@@ -197,14 +235,18 @@ describe('evaluateGrant', () => {
     it('should block git commit (must use git_commit tool)', async () => {
       mockJudgeBash.mockResolvedValue({
         decision: 'block',
-        reason: 'Command blocked: git commit must use the git_commit tool',
+        reason: 'Command blocked: git commit must use the git_commit tool'
       });
       const core = makeCore(tempDir, 'normal');
-      const result = await evaluateGrant('dev-agent', {
-        tool: 'bash',
-        command: 'git commit -m "test"',
-        intent: 'RUN SYSTEM TO commit changes',
-      }, core);
+      const result = await evaluateGrant(
+        'dev-agent',
+        {
+          tool: 'bash',
+          command: 'git commit -m "test"',
+          intent: 'RUN SYSTEM TO commit changes'
+        },
+        core
+      );
 
       expect(result.approved).toBe(false);
       expect(result.reason).toContain('git_commit tool');
@@ -213,20 +255,28 @@ describe('evaluateGrant', () => {
     it('should allow read-only git status', async () => {
       mockJudgeBash.mockResolvedValue({ decision: 'allow' });
       const core = makeCore(tempDir, 'normal');
-      const result = await evaluateGrant('dev-agent', {
-        tool: 'bash',
-        command: 'git status',
-        intent: 'READ SOURCE TO check repo state',
-      }, core);
+      const result = await evaluateGrant(
+        'dev-agent',
+        {
+          tool: 'bash',
+          command: 'git status',
+          intent: 'READ SOURCE TO check repo state'
+        },
+        core
+      );
 
       expect(result.approved).toBe(true);
     });
 
     it('should reject bash with no command', async () => {
       const core = makeCore(tempDir, 'normal');
-      const result = await evaluateGrant('dev-agent', {
-        tool: 'bash',
-      } as GrantRequest, core);
+      const result = await evaluateGrant(
+        'dev-agent',
+        {
+          tool: 'bash'
+        } as GrantRequest,
+        core
+      );
 
       expect(result.approved).toBe(false);
       expect(result.reason).toContain('No command provided');
@@ -237,11 +287,15 @@ describe('evaluateGrant', () => {
     it('should auto-grant bash commands for child with owned worktree', async () => {
       mockJudgeBash.mockResolvedValue({ decision: 'allow' });
       const core = makeCore(tempDir, 'normal');
-      const result = await evaluateGrant('dev-agent', {
-        tool: 'bash',
-        command: 'npm run build',
-        intent: 'BUILD ARTIFACT TO compile project',
-      }, core);
+      const result = await evaluateGrant(
+        'dev-agent',
+        {
+          tool: 'bash',
+          command: 'npm run build',
+          intent: 'BUILD ARTIFACT TO compile project'
+        },
+        core
+      );
 
       expect(result.approved).toBe(true);
     });
@@ -249,14 +303,18 @@ describe('evaluateGrant', () => {
     it('should reject bash commands for child without worktree (non-read-only)', async () => {
       mockJudgeBash.mockResolvedValue({
         decision: 'block',
-        reason: 'Batch deletion from child process is not allowed.',
+        reason: 'Batch deletion from child process is not allowed.'
       });
       const core = makeCore(tempDir, 'normal');
-      const result = await evaluateGrant('no-worktree-agent', {
-        tool: 'bash',
-        command: 'rm -rf node_modules',
-        intent: 'DELETE TEMP batch=i_know TO clean build artifacts',
-      }, core);
+      const result = await evaluateGrant(
+        'no-worktree-agent',
+        {
+          tool: 'bash',
+          command: 'rm -rf node_modules',
+          intent: 'DELETE TEMP batch=i_know TO clean build artifacts'
+        },
+        core
+      );
 
       expect(result.approved).toBe(false);
     });
@@ -265,10 +323,14 @@ describe('evaluateGrant', () => {
   describe('Lead (parent) in normal mode', () => {
     it('should allow file writes for lead', async () => {
       const core = makeCore(tempDir, 'normal');
-      const result = await evaluateGrant('lead', {
-        tool: 'write_file',
-        path: path.join(tempDir, 'src', 'file.ts'),
-      }, core);
+      const result = await evaluateGrant(
+        'lead',
+        {
+          tool: 'write_file',
+          path: path.join(tempDir, 'src', 'file.ts')
+        },
+        core
+      );
 
       expect(result.approved).toBe(true);
     });

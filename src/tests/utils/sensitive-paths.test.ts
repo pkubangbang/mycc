@@ -2,7 +2,7 @@
  * sensitive-paths.test.ts - Tests for checkSensitivePath
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import * as os from 'os';
 import * as path from 'path';
 import { checkSensitivePath } from '../../utils/sensitive-paths.js';

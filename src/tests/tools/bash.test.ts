@@ -2,7 +2,7 @@
  * bash.test.ts - Tests for the bash tool
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { bashTool } from '../../tools/bash.js';
 import { agentIO } from '../../loop/agent-io.js';
 import { checkDangerousCommand } from '../../context/grant/dangerous-commands.js';
@@ -12,16 +12,16 @@ import type { AgentContext } from '../../types.js';
 // Mock agentIO.exec
 vi.mock('../../loop/agent-io.js', () => ({
   agentIO: {
-    exec: vi.fn(),
-  },
+    exec: vi.fn()
+  }
 }));
 
 // Mock the ollama module for bash summarization
 vi.mock('../../engine/chat-provider.js', () => ({
   retryChat: vi.fn().mockResolvedValue({
-    message: { content: 'Summary of output' },
+    message: { content: 'Summary of output' }
   }),
-  MODEL: 'test-model',
+  MODEL: 'test-model'
 }));
 
 describe('bashTool', () => {
@@ -45,19 +45,24 @@ describe('bashTool', () => {
       stderr: '',
       interrupted: false,
       exitCode: 0,
-      timedOut: false,
+      timedOut: false
     });
 
-    const result = await runTool(bashTool, ctx, {
-      command: 'echo hello',
-      intent: 'test output',
-      timeout: 5,
-    }, testSignal);
+    const result = await runTool(
+      bashTool,
+      ctx,
+      {
+        command: 'echo hello',
+        intent: 'test output',
+        timeout: 5
+      },
+      testSignal
+    );
 
     expect(mockExec).toHaveBeenCalledWith({
       cwd: tempDir,
       command: 'echo hello',
-      timeout: 5,
+      timeout: 5
     });
     expect(result).toContain('Command completed successfully');
     expect(result).toContain('hello world');
@@ -70,14 +75,19 @@ describe('bashTool', () => {
       stderr: 'command not found: badcmd',
       interrupted: false,
       exitCode: 127,
-      timedOut: false,
+      timedOut: false
     });
 
-    const result = await runTool(bashTool, ctx, {
-      command: 'badcmd',
-      intent: 'test failure',
-      timeout: 5,
-    }, testSignal);
+    const result = await runTool(
+      bashTool,
+      ctx,
+      {
+        command: 'badcmd',
+        intent: 'test failure',
+        timeout: 5
+      },
+      testSignal
+    );
 
     expect(result).toContain('Command failed');
     expect(result).toContain('exit: 127');
@@ -88,14 +98,19 @@ describe('bashTool', () => {
     // Mock requestGrant to return blocked for dangerous commands
     vi.mocked(ctx.core.requestGrant).mockResolvedValueOnce({
       approved: false,
-      reason: 'Command blocked: Recursive delete from root directory',
+      reason: 'Command blocked: Recursive delete from root directory'
     });
 
-    const result = await runTool(bashTool, ctx, {
-      command: 'rm -rf /',
-      intent: 'dangerous test',
-      timeout: 5,
-    }, testSignal);
+    const result = await runTool(
+      bashTool,
+      ctx,
+      {
+        command: 'rm -rf /',
+        intent: 'dangerous test',
+        timeout: 5
+      },
+      testSignal
+    );
 
     expect(result).toContain('Command blocked');
   });
@@ -103,14 +118,19 @@ describe('bashTool', () => {
   it('should block "sudo rm" commands', async () => {
     vi.mocked(ctx.core.requestGrant).mockResolvedValueOnce({
       approved: false,
-      reason: 'Command blocked: Privileged deletion',
+      reason: 'Command blocked: Privileged deletion'
     });
 
-    const result = await runTool(bashTool, ctx, {
-      command: 'sudo rm -rf /home',
-      intent: 'dangerous test',
-      timeout: 5,
-    }, testSignal);
+    const result = await runTool(
+      bashTool,
+      ctx,
+      {
+        command: 'sudo rm -rf /home',
+        intent: 'dangerous test',
+        timeout: 5
+      },
+      testSignal
+    );
 
     expect(result).toContain('Command blocked');
   });
@@ -118,14 +138,19 @@ describe('bashTool', () => {
   it('should block "mkfs" commands', async () => {
     vi.mocked(ctx.core.requestGrant).mockResolvedValueOnce({
       approved: false,
-      reason: 'Command blocked: Filesystem formatting',
+      reason: 'Command blocked: Filesystem formatting'
     });
 
-    const result = await runTool(bashTool, ctx, {
-      command: 'mkfs.ext4 /dev/sda1',
-      intent: 'dangerous test',
-      timeout: 5,
-    }, testSignal);
+    const result = await runTool(
+      bashTool,
+      ctx,
+      {
+        command: 'mkfs.ext4 /dev/sda1',
+        intent: 'dangerous test',
+        timeout: 5
+      },
+      testSignal
+    );
 
     expect(result).toContain('Command blocked');
   });
@@ -133,14 +158,19 @@ describe('bashTool', () => {
   it('should block "dd if=" commands', async () => {
     vi.mocked(ctx.core.requestGrant).mockResolvedValueOnce({
       approved: false,
-      reason: 'Command blocked: Disk imaging operation',
+      reason: 'Command blocked: Disk imaging operation'
     });
 
-    const result = await runTool(bashTool, ctx, {
-      command: 'dd if=/dev/zero of=/dev/sda',
-      intent: 'dangerous test',
-      timeout: 5,
-    }, testSignal);
+    const result = await runTool(
+      bashTool,
+      ctx,
+      {
+        command: 'dd if=/dev/zero of=/dev/sda',
+        intent: 'dangerous test',
+        timeout: 5
+      },
+      testSignal
+    );
 
     expect(result).toContain('Command blocked');
   });
@@ -152,14 +182,19 @@ describe('bashTool', () => {
       stderr: '',
       interrupted: false,
       exitCode: 137,
-      timedOut: true,
+      timedOut: true
     });
 
-    const result = await runTool(bashTool, ctx, {
-      command: 'sleep 100',
-      intent: 'test timeout',
-      timeout: 1,
-    }, testSignal);
+    const result = await runTool(
+      bashTool,
+      ctx,
+      {
+        command: 'sleep 100',
+        intent: 'test timeout',
+        timeout: 1
+      },
+      testSignal
+    );
 
     expect(result).toContain('Error: Command timeout after 1 seconds');
     expect(result).toContain('1 seconds');
@@ -172,14 +207,19 @@ describe('bashTool', () => {
       stderr: '',
       interrupted: true,
       exitCode: -1,
-      timedOut: false,
+      timedOut: false
     });
 
-    const result = await runTool(bashTool, ctx, {
-      command: 'long running command',
-      intent: 'test interruption',
-      timeout: 5,
-    }, testSignal);
+    const result = await runTool(
+      bashTool,
+      ctx,
+      {
+        command: 'long running command',
+        intent: 'test interruption',
+        timeout: 5
+      },
+      testSignal
+    );
 
     expect(result).toBe('Command interrupted by user.');
   });
@@ -191,14 +231,19 @@ describe('bashTool', () => {
       stderr: 'error output',
       interrupted: false,
       exitCode: 0,
-      timedOut: false,
+      timedOut: false
     });
 
-    const result = await runTool(bashTool, ctx, {
-      command: 'test',
-      intent: 'test mixed output',
-      timeout: 5,
-    }, testSignal);
+    const result = await runTool(
+      bashTool,
+      ctx,
+      {
+        command: 'test',
+        intent: 'test mixed output',
+        timeout: 5
+      },
+      testSignal
+    );
 
     expect(result).toContain('[stdout]');
     expect(result).toContain('standard output');
@@ -213,14 +258,19 @@ describe('bashTool', () => {
       stderr: '',
       interrupted: false,
       exitCode: 0,
-      timedOut: false,
+      timedOut: false
     });
 
-    await runTool(bashTool, ctx, {
-      command: 'test',
-      intent: 'test',
-      timeout: 5,
-    }, testSignal);
+    await runTool(
+      bashTool,
+      ctx,
+      {
+        command: 'test',
+        intent: 'test',
+        timeout: 5
+      },
+      testSignal
+    );
 
     // Verify brief was called (part of context validation)
     expect(ctx.core.brief).toHaveBeenCalled();
@@ -233,14 +283,19 @@ describe('bashTool', () => {
       stderr: '',
       interrupted: false,
       exitCode: 0,
-      timedOut: false,
+      timedOut: false
     });
 
-    const result = await runTool(bashTool, ctx, {
-      command: 'true',
-      intent: 'test empty output',
-      timeout: 5,
-    }, testSignal);
+    const result = await runTool(
+      bashTool,
+      ctx,
+      {
+        command: 'true',
+        intent: 'test empty output',
+        timeout: 5
+      },
+      testSignal
+    );
 
     expect(result).toContain('Command completed successfully');
     // Should not have [stdout] or [stderr] sections for empty output
@@ -263,23 +318,26 @@ describe('bashTool', () => {
       stderr: '',
       interrupted: false,
       exitCode: 0,
-      timedOut: false,
+      timedOut: false
     });
 
-    const result = await runTool(bashTool, ctx, {
-      command: 'echo display this to the user',
-      intent: 'test display',
-      timeout: 5,
-      display: true,
-    }, testSignal);
+    const result = await runTool(
+      bashTool,
+      ctx,
+      {
+        command: 'echo display this to the user',
+        intent: 'test display',
+        timeout: 5,
+        display: true
+      },
+      testSignal
+    );
 
     // LLM still receives the full structured result
     expect(result).toContain('Command completed successfully');
     expect(result).toContain('display this to the user');
     // Terminal was shown the raw stdout via brief('info', 'bash_display', ...)
-    expect(ctx.core.brief).toHaveBeenCalledWith(
-      'info', 'bash_display', 'display this to the user'
-    );
+    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'bash_display', 'display this to the user');
   });
 
   it('should NOT brief to terminal when display is omitted (default false)', async () => {
@@ -289,19 +347,24 @@ describe('bashTool', () => {
       stderr: '',
       interrupted: false,
       exitCode: 0,
-      timedOut: false,
+      timedOut: false
     });
 
-    await runTool(bashTool, ctx, {
-      command: 'echo silent output',
-      intent: 'test no display',
-      timeout: 5,
-    }, testSignal);
+    await runTool(
+      bashTool,
+      ctx,
+      {
+        command: 'echo silent output',
+        intent: 'test no display',
+        timeout: 5
+      },
+      testSignal
+    );
 
     // bash_display brief must never fire without display=true.
     // (Other briefs like 'bash' progress still happen, so check the specific label.)
     const calls = vi.mocked(ctx.core.brief).mock.calls;
-    const displayCalls = calls.filter(c => c[1] === 'bash_display');
+    const displayCalls = calls.filter((c) => c[1] === 'bash_display');
     expect(displayCalls).toHaveLength(0);
   });
 
@@ -312,19 +375,24 @@ describe('bashTool', () => {
       stderr: 'some error',
       interrupted: false,
       exitCode: 1,
-      timedOut: false,
+      timedOut: false
     });
 
-    await runTool(bashTool, ctx, {
-      command: 'failing-cmd',
-      intent: 'test empty stdout with display',
-      timeout: 5,
-      display: true,
-    }, testSignal);
+    await runTool(
+      bashTool,
+      ctx,
+      {
+        command: 'failing-cmd',
+        intent: 'test empty stdout with display',
+        timeout: 5,
+        display: true
+      },
+      testSignal
+    );
 
     // No stdout to display → bash_display brief must not fire.
     const calls = vi.mocked(ctx.core.brief).mock.calls;
-    const displayCalls = calls.filter(c => c[1] === 'bash_display');
+    const displayCalls = calls.filter((c) => c[1] === 'bash_display');
     expect(displayCalls).toHaveLength(0);
   });
 
@@ -376,13 +444,18 @@ describe('bashTool timeout coercion', () => {
       stderr: '',
       interrupted: false,
       exitCode: 0,
-      timedOut: false,
+      timedOut: false
     });
-    await runTool(bashTool, ctx, {
-      command: 'echo hi',
-      intent: 'test coercion',
-      ...args,
-    }, testSignal);
+    await runTool(
+      bashTool,
+      ctx,
+      {
+        command: 'echo hi',
+        intent: 'test coercion',
+        ...args
+      },
+      testSignal
+    );
     expect(mockExec).toHaveBeenCalledTimes(1);
     return mockExec.mock.calls[0][0].timeout;
   }
@@ -432,13 +505,18 @@ describe('bashTool timeout coercion', () => {
         stderr: '',
         interrupted: false,
         exitCode: 0,
-        timedOut: false,
+        timedOut: false
       });
-      return runTool(bashTool, ctx, {
-        command: 'echo hi',
-        intent: 'test warning',
-        ...args,
-      }, testSignal);
+      return runTool(
+        bashTool,
+        ctx,
+        {
+          command: 'echo hi',
+          intent: 'test warning',
+          ...args
+        },
+        testSignal
+      );
     }
 
     it('includes a warning when timeout is undefined', async () => {
@@ -482,13 +560,18 @@ describe('bashTool timeout coercion', () => {
         stderr: '',
         interrupted: false,
         exitCode: 137,
-        timedOut: true,
+        timedOut: true
       });
-      const result = await runTool(bashTool, ctx, {
-        command: 'sleep 100',
-        intent: 'test',
-        timeout: 120,
-      }, testSignal);
+      const result = await runTool(
+        bashTool,
+        ctx,
+        {
+          command: 'sleep 100',
+          intent: 'test',
+          timeout: 120
+        },
+        testSignal
+      );
       expect(result).toContain('[Warning: bash timeout]');
       expect(result).toContain('Command timeout after 60 seconds');
     });
@@ -501,13 +584,18 @@ describe('bashTool timeout coercion', () => {
         stderr: '',
         interrupted: true,
         exitCode: -1,
-        timedOut: false,
+        timedOut: false
       });
-      const result = await runTool(bashTool, ctx, {
-        command: 'long cmd',
-        intent: 'test',
-        timeout: 90,
-      }, testSignal);
+      const result = await runTool(
+        bashTool,
+        ctx,
+        {
+          command: 'long cmd',
+          intent: 'test',
+          timeout: 90
+        },
+        testSignal
+      );
       expect(result).toContain('[Warning: bash timeout]');
       expect(result).toContain('Command interrupted by user.');
     });
@@ -526,7 +614,7 @@ describe('checkDangerousCommand', () => {
       expect(checkDangerousCommand('rm -r -f /')).toEqual({ blocked: true, reason: blocked });
       expect(checkDangerousCommand('rm -rf --no-preserve-root /')).toEqual({
         blocked: true,
-        reason: blocked,
+        reason: blocked
       });
     });
 
@@ -555,7 +643,7 @@ describe('checkDangerousCommand', () => {
       expect(checkDangerousCommand('rm -rf ~')).toEqual({ blocked: true, reason: blocked });
       expect(checkDangerousCommand('rm -rf ~/some/dir')).toEqual({
         blocked: true,
-        reason: blocked,
+        reason: blocked
       });
     });
     it('allows rm -f ~ (non-recursive)', () => {
@@ -568,11 +656,11 @@ describe('checkDangerousCommand', () => {
     it('blocks sudo rm -rf / and variants', () => {
       expect(checkDangerousCommand('sudo rm -rf /')).toEqual({
         blocked: true,
-        reason: 'Privileged deletion',
+        reason: 'Privileged deletion'
       });
       expect(checkDangerousCommand('sudo -u root rm -rf /')).toEqual({
         blocked: true,
-        reason: 'Privileged deletion',
+        reason: 'Privileged deletion'
       });
     });
     it('allows sudo mv file (not rm)', () => {
@@ -586,13 +674,13 @@ describe('checkDangerousCommand', () => {
     it('blocks sudo chmod 000 /etc/shadow', () => {
       expect(checkDangerousCommand('sudo chmod 000 /etc/shadow')).toEqual({
         blocked: true,
-        reason: blocked,
+        reason: blocked
       });
     });
     it('blocks sudo chmod -R 000 /dir', () => {
       expect(checkDangerousCommand('sudo chmod -R 000 /dir')).toEqual({
         blocked: true,
-        reason: blocked,
+        reason: blocked
       });
     });
   });
@@ -615,23 +703,23 @@ describe('checkDangerousCommand', () => {
     it('blocks mkfs.ext4 /dev/sda1', () => {
       expect(checkDangerousCommand('mkfs.ext4 /dev/sda1')).toEqual({
         blocked: true,
-        reason: 'Filesystem formatting',
+        reason: 'Filesystem formatting'
       });
     });
     it('blocks dd if=/dev/sda of=/dev/sdb', () => {
       expect(checkDangerousCommand('dd if=/dev/sda of=/dev/sdb')).toEqual({
         blocked: true,
-        reason: 'Disk imaging operation',
+        reason: 'Disk imaging operation'
       });
     });
     it('blocks shutdown and reboot', () => {
       expect(checkDangerousCommand('shutdown -h now')).toEqual({
         blocked: true,
-        reason: 'System shutdown',
+        reason: 'System shutdown'
       });
       expect(checkDangerousCommand('reboot')).toEqual({
         blocked: true,
-        reason: 'System reboot',
+        reason: 'System reboot'
       });
     });
     it('allows dd --help', () => {
@@ -644,17 +732,17 @@ describe('checkDangerousCommand', () => {
     it('blocks git commit -m "msg"', () => {
       expect(checkDangerousCommand('git commit -m "msg"')).toEqual({
         blocked: true,
-        reason: 'Use git_commit tool instead',
+        reason: 'Use git_commit tool instead'
       });
     });
     it('blocks git push --force variants', () => {
       expect(checkDangerousCommand('git push --force')).toEqual({
         blocked: true,
-        reason: 'Force push',
+        reason: 'Force push'
       });
       expect(checkDangerousCommand('git push origin main -f')).toEqual({
         blocked: true,
-        reason: 'Force push (-f)',
+        reason: 'Force push (-f)'
       });
     });
     it('allows git push --force-with-lease and plain push', () => {
@@ -664,7 +752,7 @@ describe('checkDangerousCommand', () => {
     it('blocks git reset --hard', () => {
       expect(checkDangerousCommand('git reset --hard')).toEqual({
         blocked: true,
-        reason: 'Hard reset discards working changes',
+        reason: 'Hard reset discards working changes'
       });
     });
   });
@@ -674,11 +762,11 @@ describe('checkDangerousCommand', () => {
     it('blocks npm publish and twine upload', () => {
       expect(checkDangerousCommand('npm publish')).toEqual({
         blocked: true,
-        reason: 'Package publishing requires manual confirmation',
+        reason: 'Package publishing requires manual confirmation'
       });
       expect(checkDangerousCommand('twine upload dist/*')).toEqual({
         blocked: true,
-        reason: 'Package publishing requires manual confirmation',
+        reason: 'Package publishing requires manual confirmation'
       });
     });
     it('allows pip install (not a publish)', () => {
@@ -713,9 +801,7 @@ describe('Cluster C — findDangerousCommand wrapper semantics', () => {
     it('allows tmux capture-pane with mkfs in the literal command tail', () => {
       // Even a literal "mkfs" substring in the command must not trigger when
       // the wrapper is pure observation.
-      expect(
-        findDangerousCommand("tmux capture-pane -t mycc-1 -p 'sudo mkfs.vfat /dev/sdd1'")
-      ).toBeNull();
+      expect(findDangerousCommand("tmux capture-pane -t mycc-1 -p 'sudo mkfs.vfat /dev/sdd1'")).toBeNull();
     });
     it('allows tmux show / display-message / list-*', () => {
       expect(findDangerousCommand('tmux show -t mycc-1')).toBeNull();
@@ -755,18 +841,14 @@ describe('Cluster C — findDangerousCommand wrapper semantics', () => {
       });
       // Even when an indirect wrapper is present, an exec wrapper still trips the check.
       it('blocks tmux capture-pane when sh -c also present (exec wins over observation)', () => {
-        expect(
-          findDangerousCommand("tmux capture-pane -t x -p && sh -c 'mkfs.vfat /dev/sda1'")
-        ).not.toBeNull();
+        expect(findDangerousCommand("tmux capture-pane -t x -p && sh -c 'mkfs.vfat /dev/sda1'")).not.toBeNull();
       });
     });
 
     // ── tmux send-keys is NOT observation — routes through dangerous check ──
     describe('tmux send-keys routes through dangerous check', () => {
       it('blocks tmux send-keys routing sudo mkfs', () => {
-        const dc = findDangerousCommand(
-          "tmux send-keys -t mycc-1 'sudo mkfs.vfat /dev/sdd1' Enter"
-        );
+        const dc = findDangerousCommand("tmux send-keys -t mycc-1 'sudo mkfs.vfat /dev/sdd1' Enter");
         // sudo ... mkfs matches the privileged-deletion pattern? No — that pattern
         // is sudo+rm. mkfs itself is the irreversible match.
         expect(dc).not.toBeNull();
@@ -831,13 +913,7 @@ describe('Cluster C — judgeBash dangerous=i_know escape param', () => {
   // ── scope: system category is NOT overridable ────────────────────
   it('system category (git commit) stays hard-blocked even with dangerous=i_know', async () => {
     const askUser = vi.fn(async () => 'y');
-    const res = await judgeBash(
-      'git commit -m x',
-      'WRITE SOURCE dangerous=i_know TO commit',
-      'normal',
-      false,
-      askUser
-    );
+    const res = await judgeBash('git commit -m x', 'WRITE SOURCE dangerous=i_know TO commit', 'normal', false, askUser);
     expect(askUser).not.toHaveBeenCalled();
     expect(res.decision).toBe('block');
     expect(res.reason).toContain('Use git_commit tool instead');
@@ -868,13 +944,7 @@ describe('Cluster C — judgeBash dangerous=i_know escape param', () => {
     const askUser = vi.fn(async () => 'y');
     // Has VERB OBJECT TO PURPOSE but a malformed PARAM (uppercase key) AND the
     // escape substring. Grammar must win — the human is not asked.
-    const res = await judgeBash(
-      mkfs,
-      'WRITE SYSTEM CMD=mkfs dangerous=i_know TO format',
-      'normal',
-      false,
-      askUser
-    );
+    const res = await judgeBash(mkfs, 'WRITE SYSTEM CMD=mkfs dangerous=i_know TO format', 'normal', false, askUser);
     expect(askUser).not.toHaveBeenCalled();
     expect(res.decision).toBe('block');
     expect(res.reason).toContain('Error: [Intent]');
@@ -936,13 +1006,7 @@ describe('Cluster C — judgeBash dangerous=i_know escape param', () => {
 
   it('tmux list-sessions is allowed (observation-skip)', async () => {
     const askUser = vi.fn(async () => 'y');
-    const res = await judgeBash(
-      'tmux list-sessions',
-      'READ SOURCE TO list active sessions',
-      'normal',
-      false,
-      askUser
-    );
+    const res = await judgeBash('tmux list-sessions', 'READ SOURCE TO list active sessions', 'normal', false, askUser);
     expect(askUser).not.toHaveBeenCalled();
     expect(res.decision).toBe('allow');
   });
@@ -974,11 +1038,9 @@ describe('Cluster D — judgeBash batch=i_know escape param', () => {
     expect(res.decision).toBe('allow');
     // The user prompt uses the "acknowledged by agent" wording, not "…detected",
     // and passes onEsc:'n' so ESC defaults to denying the batch deletion.
-    expect(askUser).toHaveBeenCalledWith(
-      expect.stringContaining('acknowledged by agent'),
-      'bash-judge',
-      { onEsc: 'n' }
-    );
+    expect(askUser).toHaveBeenCalledWith(expect.stringContaining('acknowledged by agent'), 'bash-judge', {
+      onEsc: 'n'
+    });
   });
 
   it('D1: with batch=i_know, blocks on user "n"', async () => {
@@ -1023,11 +1085,9 @@ describe('Cluster D — judgeBash batch=i_know escape param', () => {
     // made the assertion vacuous whenever the LLM classified the command SAFE).
     // Whether or not the UNCERTAIN fallthrough consults the user, the batch
     // short-circuit wording must NEVER be used on this path.
-    expect(askUser).not.toHaveBeenCalledWith(
-      expect.stringContaining('acknowledged by agent'),
-      'bash-judge',
-      { onEsc: 'n' }
-    );
+    expect(askUser).not.toHaveBeenCalledWith(expect.stringContaining('acknowledged by agent'), 'bash-judge', {
+      onEsc: 'n'
+    });
   });
 
   it('D4: batch=i_know is a no-op on a non-batch DELETE (single-file rm)', async () => {
@@ -1044,13 +1104,7 @@ describe('Cluster D — judgeBash batch=i_know escape param', () => {
     // reaches the batch path. batch=i_know is irrelevant; without
     // dangerous=i_know, the Socratic hint is returned.
     const askUser = vi.fn(async () => 'y');
-    const res = await judgeBash(
-      'rm -rf /',
-      'DELETE SYSTEM batch=i_know TO wipe root',
-      'normal',
-      false,
-      askUser
-    );
+    const res = await judgeBash('rm -rf /', 'DELETE SYSTEM batch=i_know TO wipe root', 'normal', false, askUser);
     expect(askUser).not.toHaveBeenCalled();
     expect(res.decision).toBe('block');
     expect(res.reason).toContain('Command blocked');

@@ -17,19 +17,11 @@
  * name that Windows may normalize differently, which costs nothing to reject.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { isSafeId, sanitizeId } from '../utils/id-guard.js';
 
 describe('isSafeId / sanitizeId: rejects traversal', () => {
-  const traversal = [
-    'x/../../identity',
-    'x/../../heartbeat/abc',
-    'a/b',
-    'a\\b',
-    '..',
-    '...',
-    'a..b',
-  ];
+  const traversal = ['x/../../identity', 'x/../../heartbeat/abc', 'a/b', 'a\\b', '..', '...', 'a..b'];
 
   for (const id of traversal) {
     it(`rejects ${JSON.stringify(id)}`, () => {
@@ -92,11 +84,7 @@ describe('isSafeId / sanitizeId: rejects Windows-unsafe trailing dot/space', () 
 describe('isSafeId / sanitizeId: rejects Windows device names', () => {
   // `NUL`, `nul.txt`, `CON.foo` all resolve to devices on Windows, regardless
   // of extension or directory.
-  const devices = [
-    'NUL', 'nul', 'NUL.json', 'nul.txt',
-    'CON', 'PRN', 'AUX',
-    'COM1', 'COM9', 'LPT1', 'LPT9',
-  ];
+  const devices = ['NUL', 'nul', 'NUL.json', 'nul.txt', 'CON', 'PRN', 'AUX', 'COM1', 'COM9', 'LPT1', 'LPT9'];
 
   for (const id of devices) {
     it(`rejects ${JSON.stringify(id)}`, () => {
@@ -130,14 +118,7 @@ describe('isSafeId / sanitizeId: rejects an over-long id', () => {
 });
 
 describe('isSafeId / sanitizeId: accepts ordinary ids and labels', () => {
-  const ok = [
-    'task-1',
-    'task-1.review_2',
-    '11111111-2222-4333-8444-555555555555',
-    'review',
-    'my.group',
-    'a_b-c.d',
-  ];
+  const ok = ['task-1', 'task-1.review_2', '11111111-2222-4333-8444-555555555555', 'review', 'my.group', 'a_b-c.d'];
 
   for (const id of ok) {
     it(`accepts ${JSON.stringify(id)}`, () => {

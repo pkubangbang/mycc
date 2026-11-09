@@ -38,13 +38,13 @@
  *  - To test the "crossroad applied" branch: handleCrossroad returns a
  *    CrossroadResult and neglected mode stays false.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
 
 vi.mock('../../../engine/chat-provider.js', () => ({
   retryChat: vi.fn(),
-  MODEL: 'test-model',
+  MODEL: 'test-model'
 }));
 
 // agentIO: starts in normal mode; tests flip neglected as needed via the mock
@@ -53,20 +53,23 @@ vi.mock('../../../loop/agent-io.js', () => {
   return {
     agentIO: {
       isNeglectedMode: vi.fn(() => neglected),
-      setNeglectedMode: vi.fn((v: boolean) => { neglected = v; }),
-    },
+      setNeglectedMode: vi.fn((v: boolean) => {
+        neglected = v;
+      })
+    }
   };
 });
 
 vi.mock('../../../loop/esc-wrap-up.js', () => ({
   startWrapUp: vi.fn(),
   evaluateWrapUp: vi.fn(),
-  clearWrapUp: vi.fn(),
+  clearWrapUp: vi.fn()
 }));
 
 // handleCrossroad is the unit under test's collaborator — mock it per-test
 vi.mock('../../../loop/crossroad.js', () => ({
-  handleCrossroad: vi.fn(), initCrossroad: vi.fn(),
+  handleCrossroad: vi.fn(),
+  initCrossroad: vi.fn()
 }));
 
 vi.mock('../../../engine/chat-helpers.js', () => ({ stopSpinner: vi.fn() }));
@@ -74,11 +77,11 @@ vi.mock('../../../engine/chat-helpers.js', () => ({ stopSpinner: vi.fn() }));
 vi.mock('../../../loop/prompts/lead.js', () => ({
   buildPlanModePrompt: vi.fn(() => 'plan-prompt'),
   buildNormalModePrompt: vi.fn(() => 'normal-prompt'),
-  isInPlanMode: vi.fn(() => false),
+  isInPlanMode: vi.fn(() => false)
 }));
 
 vi.mock('../../../context/shared/loader.js', () => ({
-  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) },
+  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) }
 }));
 
 vi.mock('../../../loop/triologue.js', () => {
@@ -102,12 +105,7 @@ import { stopSpinner } from '../../../engine/chat-helpers.js';
 import { handleCrossroad } from '../../../loop/crossroad.js';
 import { retryChat } from '../../../engine/chat-provider.js';
 import { Triologue } from '../../../loop/triologue.js';
-import {
-  createTurnVars,
-  createChatData,
-  createMockMachineEnv,
-  createMockChatResponse,
-} from '../esc-test-helpers.js';
+import { createTurnVars, createChatData, createMockMachineEnv, createMockChatResponse } from '../esc-test-helpers.js';
 
 describe('handleLlm — ESC during crossroad processing', () => {
   let triologue: Triologue;
@@ -138,9 +136,7 @@ describe('handleLlm — ESC during crossroad processing', () => {
     const turn = createTurnVars();
     const chat = createChatData();
 
-    vi.mocked(retryChat).mockResolvedValueOnce(
-      createMockChatResponse({ content: 'some response' }) as never,
-    );
+    vi.mocked(retryChat).mockResolvedValueOnce(createMockChatResponse({ content: 'some response' }) as never);
 
     const result = await handleLlm(env, turn, chat);
 
@@ -168,8 +164,8 @@ describe('handleLlm — ESC during crossroad processing', () => {
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({
         content: 'original text',
-        toolCalls: [{ id: 'c1', function: { name: 'bash', arguments: {} } } as never],
-      }) as never,
+        toolCalls: [{ id: 'c1', function: { name: 'bash', arguments: {} } } as never]
+      }) as never
     );
     // handleCrossroad returns a valid result
     vi.mocked(handleCrossroad).mockResolvedValueOnce({
@@ -180,7 +176,7 @@ describe('handleLlm — ESC during crossroad processing', () => {
       cutEnd: 18,
       continuation: 'Let me continue differently.',
       candidates: ['Let me continue differently.'],
-      selectedIndex: 0,
+      selectedIndex: 0
     } as never);
 
     const result = await handleLlm(env, turn, chat);
@@ -207,9 +203,7 @@ describe('handleLlm — ESC during crossroad processing', () => {
     const chat = createChatData();
     env.crossroadOccurred = false;
 
-    vi.mocked(retryChat).mockResolvedValueOnce(
-      createMockChatResponse({ content: 'plain response' }) as never,
-    );
+    vi.mocked(retryChat).mockResolvedValueOnce(createMockChatResponse({ content: 'plain response' }) as never);
     // The detector fired but nothing usable came out (cut refused, or every
     // direction failed validation). That already cost up to seven forkChat calls.
     vi.mocked(handleCrossroad).mockResolvedValueOnce(null as never);

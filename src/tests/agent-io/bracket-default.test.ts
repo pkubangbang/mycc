@@ -14,7 +14,7 @@
  * bracket's uppercase-default token, else (3) ''. This keeps terminal and
  * serve behavior in sync.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 
 // Capture the onDone callback so tests can simulate user input.
 let capturedOnDone: ((value: string) => void) | null = null;
@@ -31,9 +31,9 @@ vi.mock('../../utils/line-editor.js', () => {
         setContent: vi.fn(),
         setWhisper: vi.fn(),
         clearScreen: vi.fn(),
-        insertAtCursor: vi.fn(),
+        insertAtCursor: vi.fn()
       };
-    }),
+    })
   };
 });
 
@@ -41,7 +41,7 @@ vi.mock('../../loop/esc-wrap-up.js', () => ({
   getWrapUpState: vi.fn(() => ({ promise: null })),
   tryDisplayWrapUp: vi.fn(() => false),
   startWrapUp: vi.fn(),
-  clearWrapUp: vi.fn(),
+  clearWrapUp: vi.fn()
 }));
 
 import { agentIO } from '../../loop/agent-io.js';

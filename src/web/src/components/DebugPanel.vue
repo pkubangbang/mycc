@@ -34,7 +34,7 @@ function injectSteeringSequence(): void {
 function snapshotToConsole(): void {
   const seam = window.__myccDebug;
   if (!seam) return;
-  // eslint-disable-next-line no-console
+  // oxlint-disable-next-line no-console
   console.log('__myccDebug.snapshot():', JSON.stringify(seam.snapshot(), null, 2));
 }
 

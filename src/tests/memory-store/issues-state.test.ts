@@ -7,14 +7,14 @@
  * - Issue-related edge cases
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import {
   createIssue,
   getIssue,
   listIssues,
   updateIssue,
   addIssueComment,
-  clearAll,
+  clearAll
 } from '../../context/memory-store.js';
 import type { IssueStatus } from '../../types.js';
 

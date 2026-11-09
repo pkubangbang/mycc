@@ -23,7 +23,7 @@
  * Integration tests that drive the real handleCollect() live in
  * collect-keyword-integration.test.ts.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { skillSuggester } from '../../../loop/states/collect-skill.js';
 import type { KeywordExtractionResult } from '../../../loop/keyword-extractor.js';
 
@@ -34,7 +34,6 @@ describe('Composite keyword extraction — query source', () => {
     const q = skillSuggester.computeQuerySource('focus on tests', 'original query');
     expect(q).toBe('focus on tests');
   });
-
 
   it('returns null when neither steering note nor user query', () => {
     expect(skillSuggester.computeQuerySource(null, '')).toBeNull();
@@ -49,14 +48,12 @@ describe('Composite keyword extraction — query-change detection', () => {
     expect(skillSuggester.queryChanged('new query')).toBe(true);
   });
 
-
   it('does not trigger when query is null', () => {
     expect(skillSuggester.queryChanged(null)).toBe(false);
     // even when lastQuery holds a prior value
     skillSuggester.markQuerySeen('old');
     expect(skillSuggester.queryChanged(null)).toBe(false);
   });
-
 });
 
 describe('Composite keyword extraction — composite text', () => {
@@ -66,8 +63,6 @@ describe('Composite keyword extraction — composite text', () => {
     const text = skillSuggester.buildCompositeText('working on brief', 'user query', 'hint focus');
     expect(text).toBe('working on brief\nuser query\nhint focus');
   });
-
-
 
   it('returns empty string when all sources are empty', () => {
     expect(skillSuggester.buildCompositeText('', null, '')).toBe('');
@@ -80,10 +75,6 @@ describe('Composite keyword extraction — extraction gate', () => {
   it('fires when query changed, cooldown is 0, and composite is long enough', () => {
     expect(skillSuggester.shouldExtract(true, 0, 'user query about testing')).toBe(true);
   });
-
-
-
-
 });
 
 describe('Composite keyword extraction — cooldown decrementation', () => {
@@ -106,7 +97,6 @@ describe('Composite keyword extraction — cooldown decrementation', () => {
     skillSuggester.decrementCooldown();
     expect(skillSuggester.getCooldown()).toBe(0);
   });
-
 });
 
 describe('Composite keyword extraction — BUG 1 (spurious double-trigger)', () => {
@@ -117,7 +107,6 @@ describe('Composite keyword extraction — BUG 1 (spurious double-trigger)', () 
   // expires. The fix marks BOTH sources as seen so neither re-triggers.
 
   beforeEach(() => skillSuggester.reset());
-
 
   it('does NOT spuriously re-trigger after steering note is consumed', () => {
     const firstSteerNote = 'focus on tests';
@@ -140,7 +129,6 @@ describe('Composite keyword extraction — BUG 1 (spurious double-trigger)', () 
     const q5 = skillSuggester.computeQuerySource(null, lastUserQuery);
     expect(skillSuggester.queryChanged(q5)).toBe(false);
   });
-
 });
 
 describe('Composite keyword extraction — steering note then new user query', () => {
@@ -173,7 +161,6 @@ describe('Composite keyword extraction — outcome-gated throttle (P1 fix)', () 
     expect(skillSuggester.getCooldown()).toBe(3);
   });
 
-
   it('does NOT arm the cooldown or mark query as seen on a FAILED extraction (retry eligible)', () => {
     const lastUserQuery = 'help me test the parser';
     const q = skillSuggester.computeQuerySource(null, lastUserQuery)!;
@@ -196,7 +183,6 @@ describe('Composite keyword extraction — outcome-gated throttle (P1 fix)', () 
     expect(skillSuggester.getCooldown()).toBe(0);
     expect(skillSuggester.shouldExtract(true, skillSuggester.getCooldown(), qNext!)).toBe(true);
   });
-
 
   it('a SUCCESSFUL extraction with empty keywords still arms the cooldown', () => {
     // The LLM ran but found nothing relevant. The operation completed, so the
@@ -226,7 +212,7 @@ function applyOutcome(
   outcome: KeywordExtractionResult,
   firstSteerNote: string | null,
   query: string,
-  lastUserQuery: string,
+  lastUserQuery: string
 ): void {
   if (outcome.status === 'failed') {
     // Query stays eligible for retry — do not touch throttle state.

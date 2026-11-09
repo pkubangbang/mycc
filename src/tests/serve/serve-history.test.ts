@@ -12,7 +12,7 @@
  * fragments never render. Untimestamped legacy lines inherit the previous
  * positive timestamp (emission order) rather than sorting to the head.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -74,9 +74,11 @@ describe('readHistory (transcript journal projection)', () => {
     // right-side bubble — the deleted user.jsonl is gone entirely.
     fs.writeFileSync(
       transcriptPath,
-      JSON.stringify({ role: 'user', content: 'fix the bug', kind: 'user', user_origin: true, timestamp: 100 }) + '\n' +
-      JSON.stringify({ role: 'assistant', content: 'on it', kind: 'new', timestamp: 200 }) + '\n',
-      'utf-8',
+      JSON.stringify({ role: 'user', content: 'fix the bug', kind: 'user', user_origin: true, timestamp: 100 }) +
+        '\n' +
+        JSON.stringify({ role: 'assistant', content: 'on it', kind: 'new', timestamp: 200 }) +
+        '\n',
+      'utf-8'
     );
     const history = readHistory(transcriptPath, []);
     expect(history.map((e) => e.content)).toEqual(['fix the bug', 'on it']);
@@ -87,8 +89,14 @@ describe('readHistory (transcript journal projection)', () => {
   it('renders a steer journal record as a user bubble too', () => {
     fs.writeFileSync(
       transcriptPath,
-      JSON.stringify({ role: 'user', content: 'stop and reconsider', kind: 'steer', user_origin: true, timestamp: 50 }) + '\n',
-      'utf-8',
+      JSON.stringify({
+        role: 'user',
+        content: 'stop and reconsider',
+        kind: 'steer',
+        user_origin: true,
+        timestamp: 50
+      }) + '\n',
+      'utf-8'
     );
     const history = readHistory(transcriptPath, []);
     expect(history).toHaveLength(1);
@@ -100,11 +108,22 @@ describe('readHistory (transcript journal projection)', () => {
     // are injected (not user_origin) — neither may surface as a bubble.
     fs.writeFileSync(
       transcriptPath,
-      JSON.stringify({ role: 'assistant', content: 'working', kind: 'new', timestamp: 100 }) + '\n' +
-      JSON.stringify({ role: 'tool', tool_name: 'bash', tool_call_id: 't1', content: 'out1', kind: 'new', timestamp: 200 }) + '\n' +
-      JSON.stringify({ role: 'user', content: '[HINT] steering', kind: 'merge', timestamp: 250 }) + '\n' +
-      JSON.stringify({ role: 'user', content: '[REMINDER] nudge', kind: 'new', timestamp: 260 }) + '\n',
-      'utf-8',
+      JSON.stringify({ role: 'assistant', content: 'working', kind: 'new', timestamp: 100 }) +
+        '\n' +
+        JSON.stringify({
+          role: 'tool',
+          tool_name: 'bash',
+          tool_call_id: 't1',
+          content: 'out1',
+          kind: 'new',
+          timestamp: 200
+        }) +
+        '\n' +
+        JSON.stringify({ role: 'user', content: '[HINT] steering', kind: 'merge', timestamp: 250 }) +
+        '\n' +
+        JSON.stringify({ role: 'user', content: '[REMINDER] nudge', kind: 'new', timestamp: 260 }) +
+        '\n',
+      'utf-8'
     );
     const history = readHistory(transcriptPath, []);
     const contents = history.map((e) => e.content);
@@ -122,9 +141,11 @@ describe('readHistory (transcript journal projection)', () => {
     // preserved, INCLUDING the {A, AB} duplicates baked into old files.
     fs.writeFileSync(
       transcriptPath,
-      JSON.stringify({ role: 'assistant', content: 'A', timestamp: 10 }) + '\n' +
-      JSON.stringify({ role: 'assistant', content: 'AB', timestamp: 11 }) + '\n',
-      'utf-8',
+      JSON.stringify({ role: 'assistant', content: 'A', timestamp: 10 }) +
+        '\n' +
+        JSON.stringify({ role: 'assistant', content: 'AB', timestamp: 11 }) +
+        '\n',
+      'utf-8'
     );
     const history = readHistory(transcriptPath, []);
     expect(history.map((e) => e.content)).toEqual(['A', 'AB']);
@@ -136,10 +157,13 @@ describe('readHistory (transcript journal projection)', () => {
     // timestamp, keeping emission order — NOT sort to the head of the list.
     fs.writeFileSync(
       transcriptPath,
-      JSON.stringify({ role: 'assistant', content: 'first', timestamp: 100 }) + '\n' +
-      JSON.stringify({ role: 'assistant', content: 'second' }) + '\n' +
-      JSON.stringify({ role: 'assistant', content: 'third', timestamp: 300 }) + '\n',
-      'utf-8',
+      JSON.stringify({ role: 'assistant', content: 'first', timestamp: 100 }) +
+        '\n' +
+        JSON.stringify({ role: 'assistant', content: 'second' }) +
+        '\n' +
+        JSON.stringify({ role: 'assistant', content: 'third', timestamp: 300 }) +
+        '\n',
+      'utf-8'
     );
     const history = readHistory(transcriptPath, []);
     expect(history.map((e) => e.content)).toEqual(['first', 'second', 'third']);
@@ -153,11 +177,15 @@ describe('readHistory (transcript journal projection)', () => {
     // to the head, preserving the legacy prefix.
     fs.writeFileSync(
       transcriptPath,
-      JSON.stringify({ role: 'assistant', content: 'A' }) + '\n' +
-      JSON.stringify({ role: 'assistant', content: 'B' }) + '\n' +
-      JSON.stringify({ role: 'assistant', content: 'C', timestamp: 100 }) + '\n' +
-      JSON.stringify({ role: 'assistant', content: 'D', timestamp: 200 }) + '\n',
-      'utf-8',
+      JSON.stringify({ role: 'assistant', content: 'A' }) +
+        '\n' +
+        JSON.stringify({ role: 'assistant', content: 'B' }) +
+        '\n' +
+        JSON.stringify({ role: 'assistant', content: 'C', timestamp: 100 }) +
+        '\n' +
+        JSON.stringify({ role: 'assistant', content: 'D', timestamp: 200 }) +
+        '\n',
+      'utf-8'
     );
     const history = readHistory(transcriptPath, []);
     expect(history.map((e) => e.content)).toEqual(['A', 'B', 'C', 'D']);
@@ -167,10 +195,13 @@ describe('readHistory (transcript journal projection)', () => {
   it('P1: [100, 0, 200] inherits the preceding positive ts for the middle entry', () => {
     fs.writeFileSync(
       transcriptPath,
-      JSON.stringify({ role: 'assistant', content: 'A', timestamp: 100 }) + '\n' +
-      JSON.stringify({ role: 'assistant', content: 'B' }) + '\n' +
-      JSON.stringify({ role: 'assistant', content: 'C', timestamp: 200 }) + '\n',
-      'utf-8',
+      JSON.stringify({ role: 'assistant', content: 'A', timestamp: 100 }) +
+        '\n' +
+        JSON.stringify({ role: 'assistant', content: 'B' }) +
+        '\n' +
+        JSON.stringify({ role: 'assistant', content: 'C', timestamp: 200 }) +
+        '\n',
+      'utf-8'
     );
     const history = readHistory(transcriptPath, []);
     expect(history.map((e) => e.timestamp)).toEqual([100, 100, 200]);
@@ -179,10 +210,13 @@ describe('readHistory (transcript journal projection)', () => {
   it('P1: [0, 0, 0] keeps file order (all equal, stable sort no-op)', () => {
     fs.writeFileSync(
       transcriptPath,
-      JSON.stringify({ role: 'assistant', content: 'A' }) + '\n' +
-      JSON.stringify({ role: 'assistant', content: 'B' }) + '\n' +
-      JSON.stringify({ role: 'assistant', content: 'C' }) + '\n',
-      'utf-8',
+      JSON.stringify({ role: 'assistant', content: 'A' }) +
+        '\n' +
+        JSON.stringify({ role: 'assistant', content: 'B' }) +
+        '\n' +
+        JSON.stringify({ role: 'assistant', content: 'C' }) +
+        '\n',
+      'utf-8'
     );
     const history = readHistory(transcriptPath, []);
     expect(history.map((e) => e.content)).toEqual(['A', 'B', 'C']);
@@ -195,10 +229,13 @@ describe('readHistory (transcript journal projection)', () => {
     // prefix was back-filled to 100 and jumped after M.
     fs.writeFileSync(
       transcriptPath,
-      JSON.stringify({ role: 'assistant', content: 'A' }) + '\n' +
-      JSON.stringify({ role: 'assistant', content: 'B' }) + '\n' +
-      JSON.stringify({ role: 'assistant', content: 'C', timestamp: 100 }) + '\n',
-      'utf-8',
+      JSON.stringify({ role: 'assistant', content: 'A' }) +
+        '\n' +
+        JSON.stringify({ role: 'assistant', content: 'B' }) +
+        '\n' +
+        JSON.stringify({ role: 'assistant', content: 'C', timestamp: 100 }) +
+        '\n',
+      'utf-8'
     );
     const messageLog = [{ type: 'log' as const, content: 'M', timestamp: 50 }];
     const history = readHistory(transcriptPath, messageLog);
@@ -209,8 +246,15 @@ describe('readHistory (transcript journal projection)', () => {
   it('merges transcript entries + in-memory messageLog chronologically by timestamp', () => {
     fs.writeFileSync(
       transcriptPath,
-      JSON.stringify({ role: 'tool', tool_name: 'bash', tool_call_id: 'x', content: 'toolout', kind: 'new', timestamp: 300 }) + '\n',
-      'utf-8',
+      JSON.stringify({
+        role: 'tool',
+        tool_name: 'bash',
+        tool_call_id: 'x',
+        content: 'toolout',
+        kind: 'new',
+        timestamp: 300
+      }) + '\n',
+      'utf-8'
     );
     const messageLog = [{ type: 'log' as const, content: 'memlog', timestamp: 200 }];
     const history = readHistory(transcriptPath, messageLog);
@@ -222,15 +266,15 @@ describe('readHistory (transcript journal projection)', () => {
     // every query must still round-trip to a right-side bubble.
     const lines: string[] = [];
     for (let i = 1; i <= 9; i++) {
-      lines.push(JSON.stringify({ role: 'user', content: `query ${i}`, kind: 'user', user_origin: true, timestamp: i * 100 }));
+      lines.push(
+        JSON.stringify({ role: 'user', content: `query ${i}`, kind: 'user', user_origin: true, timestamp: i * 100 })
+      );
       lines.push(JSON.stringify({ role: 'assistant', content: `reply ${i}`, kind: 'new', timestamp: i * 100 + 10 }));
       lines.push(JSON.stringify({ role: 'user', content: `[HINT] note ${i}`, kind: 'merge', timestamp: i * 100 + 20 }));
     }
     fs.writeFileSync(transcriptPath, lines.join('\n') + '\n', 'utf-8');
     const history = readHistory(transcriptPath, []);
     const userBubbles = history.filter((e) => e.type === 'user');
-    expect(userBubbles.map((e) => e.content)).toEqual(
-      Array.from({ length: 9 }, (_, i) => `query ${i + 1}`),
-    );
+    expect(userBubbles.map((e) => e.content)).toEqual(Array.from({ length: 9 }, (_, i) => `query ${i + 1}`));
   });
 });

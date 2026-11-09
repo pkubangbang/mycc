@@ -16,7 +16,7 @@
  * everything would break every consumer that expects a string tool result.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -37,7 +37,7 @@ function loaderFor(tool: { name: string }): Loader {
   const loader = new Loader(true);
   (loader as unknown as { tools: Map<string, unknown> }).tools.set(tool.name, {
     tool,
-    layer: 'built-in',
+    layer: 'built-in'
   });
   return loader;
 }
@@ -59,9 +59,9 @@ describe('cancellation survives the real tool wrappers and Loader.execute', () =
       throw new DOMException('The operation was aborted.', 'AbortError');
     });
 
-    await expect(
-      loader.execute('web_fetch', ctx, { url: 'https://example.com' }, controller.signal),
-    ).rejects.toSatisfy((err: unknown) => isCancellation(err, controller.signal));
+    await expect(loader.execute('web_fetch', ctx, { url: 'https://example.com' }, controller.signal)).rejects.toSatisfy(
+      (err: unknown) => isCancellation(err, controller.signal)
+    );
   });
 
   it('web_fetch: an ordinary network failure still returns an Error string', async () => {
@@ -83,9 +83,7 @@ describe('cancellation survives the real tool wrappers and Loader.execute', () =
       throw new Error('aborted');
     });
 
-    await expect(
-      loader.execute('web_search', ctx, { query: 'x' }, controller.signal),
-    ).rejects.toThrow();
+    await expect(loader.execute('web_search', ctx, { query: 'x' }, controller.signal)).rejects.toThrow();
     expect(ctx.core.brief).not.toHaveBeenCalledWith('error', 'web_search', expect.any(String));
   });
 
@@ -113,9 +111,9 @@ describe('cancellation survives the real tool wrappers and Loader.execute', () =
     const pic = path.join(workspace, 'pic.png');
     fs.writeFileSync(pic, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     try {
-      await expect(
-        loader.execute('read_picture', ctx, { path: pic }, controller.signal),
-      ).rejects.toSatisfy((err: unknown) => isCancellation(err, controller.signal));
+      await expect(loader.execute('read_picture', ctx, { path: pic }, controller.signal)).rejects.toSatisfy(
+        (err: unknown) => isCancellation(err, controller.signal)
+      );
     } finally {
       fs.rmSync(workspace, { recursive: true, force: true });
     }
@@ -130,8 +128,8 @@ describe('cancellation survives the real tool wrappers and Loader.execute', () =
       throw new Error('fetch failed');
     });
 
-    await expect(
-      loader.execute('web_fetch', ctx, { url: 'https://example.com' }, controller.signal),
-    ).rejects.toThrow('fetch failed');
+    await expect(loader.execute('web_fetch', ctx, { url: 'https://example.com' }, controller.signal)).rejects.toThrow(
+      'fetch failed'
+    );
   });
 });

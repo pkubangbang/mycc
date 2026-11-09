@@ -9,7 +9,7 @@
  * 5. Lock-based resumption with 4h threshold
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -35,17 +35,17 @@ vi.mock('../../mindmap/explorer-agent.js', () => ({
     ) => {
       summarizeCalls.push({
         nodeTitle,
-        hasExistingNode: !!existingNode,
+        hasExistingNode: !!existingNode
       });
       const randSuffix = crypto.randomBytes(4).toString('hex');
       return {
         summary: `[A] ${nodeTitle} [N] ${nodeText.slice(0, 40)} [C] ${ancestorContext.slice(0, 30)} [E] ${randSuffix}`,
         markedFiles: [],
         markedUrls: [],
-        markedTerms: [],
+        markedTerms: []
       };
     }
-  ),
+  )
 }));
 
 describe('rotation-based compile_mindmap', () => {
@@ -302,7 +302,7 @@ Child content.
       summary: '', // root not summarized yet
       level: 0,
       children: sections.map((s) => build_node(s, '/', 1)),
-      links: extract_links(preamble),
+      links: extract_links(preamble)
     };
 
     // Mark the leaf node as already summarized (simulating partial progress)
@@ -315,7 +315,7 @@ Child content.
       hash,
       compiled_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      root: partialRoot,
+      root: partialRoot
     };
 
     fs.writeFileSync(newFilePath, JSON.stringify(partialMindmap, null, 2));
@@ -351,7 +351,7 @@ Child content.
       started_at: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(), // 5 hours ago
       source_file: 'TEST.md',
       source_hash: hash,
-      output_file: outPath,
+      output_file: outPath
     };
     const lockPath = `${outPath}.lock`;
     fs.writeFileSync(lockPath, JSON.stringify(staleLock, null, 2));

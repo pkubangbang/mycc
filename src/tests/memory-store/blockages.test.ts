@@ -6,14 +6,8 @@
  * - Blockage edge cases (chains, diamond patterns)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
-  createIssue,
-  getIssue,
-  createBlockage,
-  removeBlockage,
-  clearAll,
-} from '../../context/memory-store.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
+import { createIssue, getIssue, createBlockage, removeBlockage, clearAll } from '../../context/memory-store.js';
 
 describe('memory-store', () => {
   // Reset state before each test for isolation

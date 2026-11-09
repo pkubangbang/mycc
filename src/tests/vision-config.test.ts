@@ -11,14 +11,14 @@
  * unconditionally, so a DeepSeek install had no way to configure vision.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import { isVisionEnabled, getVisionModel } from '../config.js';
 
 describe('vision config (provider-aware)', () => {
   const saved = {
     provider: process.env.API_PROVIDER,
     ollamaVision: process.env.OLLAMA_VISION_MODEL,
-    deepseekVision: process.env.DEEPSEEK_VISION_MODEL,
+    deepseekVision: process.env.DEEPSEEK_VISION_MODEL
   };
 
   afterEach(() => {

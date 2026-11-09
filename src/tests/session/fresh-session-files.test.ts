@@ -21,7 +21,7 @@
  * NO mocking needed at all.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -41,7 +41,10 @@ async function loadSession(): Promise<SessionMod> {
 function triologueFiles(id: string): string[] {
   const dir = path.join(projectTmp, '.mycc', 'sessions', id);
   if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir).filter((f) => f.startsWith('triologue-lead-')).sort();
+  return fs
+    .readdirSync(dir)
+    .filter((f) => f.startsWith('triologue-lead-'))
+    .sort();
 }
 
 beforeEach(() => {

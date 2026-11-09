@@ -32,7 +32,7 @@
  *    normalization.
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vite-plus/test';
 import { OllamaHttpClient, classifyConnectFailure } from '../../engine/ollama-http.js';
 import {
   isTransientError,
@@ -106,7 +106,13 @@ describe('isTransientError() and cancellation', () => {
     expect(
       isTransientError(new Error('An established connection was aborted by the software in your host machine.'))
     ).toBe(true);
-    expect(isTransientError(new Error("A connection attempt failed because the connected party did not properly respond after a period of time"))).toBe(true);
+    expect(
+      isTransientError(
+        new Error(
+          'A connection attempt failed because the connected party did not properly respond after a period of time'
+        )
+      )
+    ).toBe(true);
     // ...while an intentional cancellation of the same word stays non-transient.
     expect(isTransientError(new Error('This operation was aborted'))).toBe(false);
   });
@@ -206,8 +212,6 @@ describe('OllamaChatStream.connect abort explanation', () => {
     expect(isTransientError(error)).toBe(false);
   });
 
-
-
   it('leaves a genuine transport rejection untouched for the retry normalizer', async () => {
     stubFetch(new TypeError('terminated'));
     const client = new OllamaHttpClient({ host: 'http://127.0.0.1:11434', errors });
@@ -230,10 +234,11 @@ describe('OllamaChatStream.connect abort explanation', () => {
 
     vi.stubGlobal(
       'fetch',
-      vi.fn((_url: string, init: RequestInit) =>
-        new Promise<Response>((_resolve, reject) => {
-          init.signal?.addEventListener('abort', () => reject(abortDomException()));
-        })
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(abortDomException()));
+          })
       )
     );
 

@@ -25,7 +25,7 @@
  * matrix.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { Triologue } from '../../loop/triologue.js';
 import type { Message, ToolCall } from '../../types.js';
 
@@ -43,7 +43,7 @@ function captureAll(): { captured: Captured[]; triologue: Triologue } {
       captured.push({ msg: msg as Captured['msg'], seen: getTriologue() });
     },
     tokenThreshold: 50000,
-    resultThreshold: 100000, // oversized-result dump path needs a big threshold
+    resultThreshold: 100000 // oversized-result dump path needs a big threshold
   });
   return { captured, triologue };
 }
@@ -54,7 +54,7 @@ function pieceOf(c: Captured): { role?: string; content?: string; kind?: string;
     role: c.msg.role,
     content: typeof c.msg.content === 'string' ? c.msg.content : undefined,
     kind: c.msg.kind,
-    user_origin: c.msg.user_origin,
+    user_origin: c.msg.user_origin
   };
 }
 
@@ -70,7 +70,10 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     triologue.user('hello');
     expect(captured).toHaveLength(1);
     expect(pieceOf(captured[0])).toEqual({
-      role: 'user', content: 'hello', kind: 'new', user_origin: true,
+      role: 'user',
+      content: 'hello',
+      kind: 'new',
+      user_origin: true
     });
     // The livelog the piece saw: exactly the appended message, nothing else.
     expect(captured[0].seen.map((m) => m.role)).toEqual(['user']);
@@ -86,10 +89,16 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     triologue.user('B');
     expect(captured).toHaveLength(2);
     expect(pieceOf(captured[0])).toEqual({
-      role: 'user', content: 'A', kind: 'new', user_origin: true,
+      role: 'user',
+      content: 'A',
+      kind: 'new',
+      user_origin: true
     });
     expect(pieceOf(captured[1])).toEqual({
-      role: 'user', content: 'B', kind: 'new', user_origin: true,
+      role: 'user',
+      content: 'B',
+      kind: 'new',
+      user_origin: true
     });
     // Two separate livelog messages — nothing grew.
     expect(triologue.getMessagesRaw().map((m) => m.content)).toEqual(['A', 'B']);
@@ -102,11 +111,16 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     triologue.note('REMINDER', 'nudge');
     expect(captured).toHaveLength(2);
     expect(pieceOf(captured[0])).toEqual({
-      role: 'user', content: 'task', kind: 'new', user_origin: true,
+      role: 'user',
+      content: 'task',
+      kind: 'new',
+      user_origin: true
     });
     // Standalone note: its own 'new' piece, carrying the [REMINDER] prefix.
     expect(pieceOf(captured[1])).toEqual({
-      role: 'user', content: '[REMINDER] nudge', kind: 'new',
+      role: 'user',
+      content: '[REMINDER] nudge',
+      kind: 'new'
     });
     // The note is NOT a user-origin record, so the serve projection will not
     // render it as a user bubble.
@@ -148,11 +162,9 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     triologue.user('do the thing');
     triologue.note('MAIL', 'm');
     triologue.note('SYSTEM', 's');
-    expect((triologue.getMessagesRaw()[0].content as string)).toBe('do the thing');
+    expect(triologue.getMessagesRaw()[0].content as string).toBe('do the thing');
     expect(triologue.getLastUserQuery()).toBe('do the thing');
-    expect(triologue.getMessagesRaw().map((m) => m.content)).toEqual([
-      'do the thing', '[MAIL] m', '[SYSTEM] s',
-    ]);
+    expect(triologue.getMessagesRaw().map((m) => m.content)).toEqual(['do the thing', '[MAIL] m', '[SYSTEM] s']);
   });
 
   it('a note arriving first is not promoted over a later note of higher priority', () => {
@@ -163,16 +175,17 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     triologue.user('go');
     triologue.note('HINT', 'h');
     triologue.note('URGENT', 'u');
-    expect(triologue.getMessagesRaw().map((m) => m.content)).toEqual([
-      'go', '[HINT] h', '[URGENT] u',
-    ]);
+    expect(triologue.getMessagesRaw().map((m) => m.content)).toEqual(['go', '[HINT] h', '[URGENT] u']);
   });
 
   it('hook notes NEVER combine: each hook note is its own new piece', () => {
     triologue.user('task');
     triologue.note('MAIL', 'from hook', 'some-hook');
     expect(captured).toHaveLength(2);
-    const hookPiece = captured[1].msg as Captured['msg'] & { hook_name?: string; kind?: 'new' | 'merge' | 'user' | 'steer' | 'clear' | 'compact' | 'rollback' };
+    const hookPiece = captured[1].msg as Captured['msg'] & {
+      hook_name?: string;
+      kind?: 'new' | 'merge' | 'user' | 'steer' | 'clear' | 'compact' | 'rollback';
+    };
     expect(hookPiece.kind).toBe('new');
     expect(hookPiece.hook_name).toBe('some-hook');
     expect(triologue.getMessagesRaw()).toHaveLength(2); // separate message
@@ -185,7 +198,7 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     // synthetic assistant first (the `no_pending_calls` bridge), which
     // would shift captured[1] to that bridge instead of the tool result.
     triologue.agent('calling', [
-      { id: 'tc1', function: { name: 'bash', arguments: { command: 'ls' } } } as unknown as ToolCall,
+      { id: 'tc1', function: { name: 'bash', arguments: { command: 'ls' } } } as unknown as ToolCall
     ]);
     triologue.tool('bash', 'out');
     expect(captured).toHaveLength(2);
@@ -206,7 +219,10 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     triologue.user('next query'); // tool → user: TP-fix allowed path
     expect(captured).toHaveLength(3);
     expect(pieceOf(captured[2])).toEqual({
-      role: 'user', content: 'next query', kind: 'new', user_origin: true,
+      role: 'user',
+      content: 'next query',
+      kind: 'new',
+      user_origin: true
     });
   });
 
@@ -215,7 +231,11 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     triologue.beginWrapUp(); // separate [WRAP_UP] user message (new piece)
     triologue.finishWrapUp('wrapping up');
     expect(captured).toHaveLength(3);
-    expect(pieceOf(captured[1])).toEqual({ role: 'user', content: '[WRAP_UP] LLM call interrupted. Please wrap up quickly and ask user for next steps.', kind: 'new' });
+    expect(pieceOf(captured[1])).toEqual({
+      role: 'user',
+      content: '[WRAP_UP] LLM call interrupted. Please wrap up quickly and ask user for next steps.',
+      kind: 'new'
+    });
     expect(pieceOf(captured[2])).toEqual({ role: 'assistant', content: 'wrapping up', kind: 'new' });
   });
 
@@ -229,14 +249,17 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     expect(captured[1].msg.role).toBeUndefined(); // bare boundary piece — no message fields
     expect(captured[1].seen).toEqual([]); // store already emptied when journaled
     expect(pieceOf(captured[2])).toEqual({
-      role: 'user', content: 'after clear', kind: 'new', user_origin: true,
+      role: 'user',
+      content: 'after clear',
+      kind: 'new',
+      user_origin: true
     });
   });
 
   it('loadRestoration() journals the pair as TWO new pieces (by-construction parity — review F1)', () => {
     const pair: [Message, Message] = [
       { role: 'user', content: '[Conversation compressed. Transcript: x]\nsummary...' },
-      { role: 'assistant', content: 'OK' },
+      { role: 'assistant', content: 'OK' }
     ];
     triologue.loadRestoration(pair);
     // Exactly 2 'new' pieces, one per pair message — the inherited context
@@ -244,10 +267,14 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     // restores and in serve-history).
     expect(captured).toHaveLength(2);
     expect(pieceOf(captured[0])).toEqual({
-      role: 'user', content: pair[0].content, kind: 'new',
+      role: 'user',
+      content: pair[0].content,
+      kind: 'new'
     });
     expect(pieceOf(captured[1])).toEqual({
-      role: 'assistant', content: 'OK', kind: 'new',
+      role: 'assistant',
+      content: 'OK',
+      kind: 'new'
     });
     // Neither piece claims genuine user input (restored context, not input).
     expect(captured[0].msg.user_origin).toBeUndefined();
@@ -283,19 +310,20 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
   });
 
   it('end-to-end piece sequence: replaying the emitted pieces reproduces the livelog', () => {
-    triologue.user('q1');        // new, user
+    triologue.user('q1'); // new, user
     triologue.note('HINT', 'h'); // new (standalone note — no merge)
-    triologue.agent('r1', [      // new (+ pending call registered)
-      { id: 'tc-e2e', function: { name: 'bash', arguments: { command: 'ls' } } } as unknown as ToolCall,
+    triologue.agent('r1', [
+      // new (+ pending call registered)
+      { id: 'tc-e2e', function: { name: 'bash', arguments: { command: 'ls' } } } as unknown as ToolCall
     ]);
     triologue.tool('bash', 'o'); // new
-    triologue.user('q2');        // new, user (post-tool fast path)
+    triologue.user('q2'); // new, user (post-tool fast path)
     expect(captured.map((c) => ({ kind: c.msg.kind }))).toEqual([
       { kind: 'new' },
       { kind: 'new' },
       { kind: 'new' },
       { kind: 'new' },
-      { kind: 'new' },
+      { kind: 'new' }
     ]);
     // NO-MERGE parity: pieces and livelog messages are 1:1 — every producer
     // appends exactly one message, so nothing can drift on replay. (Under the

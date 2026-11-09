@@ -12,7 +12,7 @@
  * - grepSearch edge cases: empty pattern, regex special chars, long pattern, pattern with spaces/dots,
  *   non-existent directory, maxResults capping, binary file handling
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 import { mutedSlowSuite } from './slow-suite.js';
 import {
   shellQuote,
@@ -21,7 +21,7 @@ import {
   MAX_MAX_RESULTS,
   grepSearch,
   truncateLines,
-  buildGrepExcludeFlags,
+  buildGrepExcludeFlags
 } from '../../utils/grep-search.js';
 import * as path from 'path';
 import * as os from 'os';
@@ -179,7 +179,7 @@ describe('buildGrepExcludeFlags', () => {
   it('should build flags for directory exclusions', () => {
     const result = buildGrepExcludeFlags({
       excludeDirs: new Set(['node_modules', '.git']),
-      excludePatterns: new Set(),
+      excludePatterns: new Set()
     });
     if (os.platform() === 'win32') {
       expect(result).toContain('--exclude-dir="node_modules"');
@@ -193,7 +193,7 @@ describe('buildGrepExcludeFlags', () => {
   it('should build flags for file pattern exclusions', () => {
     const result = buildGrepExcludeFlags({
       excludeDirs: new Set(),
-      excludePatterns: new Set(['*.log', '*.tmp']),
+      excludePatterns: new Set(['*.log', '*.tmp'])
     });
     if (os.platform() === 'win32') {
       expect(result).toContain('--exclude="*.log"');
@@ -207,7 +207,7 @@ describe('buildGrepExcludeFlags', () => {
   it('should combine dir and pattern exclusions', () => {
     const result = buildGrepExcludeFlags({
       excludeDirs: new Set(['dist']),
-      excludePatterns: new Set(['*.min.js']),
+      excludePatterns: new Set(['*.min.js'])
     });
     expect(result).toContain('--exclude-dir');
     expect(result).toContain('--exclude');
@@ -216,7 +216,7 @@ describe('buildGrepExcludeFlags', () => {
   it('should handle shell-quoted values with special characters', () => {
     const result = buildGrepExcludeFlags({
       excludeDirs: new Set(["it's"]),
-      excludePatterns: new Set(),
+      excludePatterns: new Set()
     });
     if (os.platform() === 'win32') {
       expect(result).toBe('--exclude-dir="it\'s"');
@@ -283,10 +283,7 @@ describe('collectGitignores', () => {
   it('should skip complex glob patterns in .gitignore', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grep-test-'));
     try {
-      fs.writeFileSync(
-        path.join(tmpDir, '.gitignore'),
-        '**/node_modules\nsrc/**/*.ts\n[abc]*.txt\n*.min.*\n'
-      );
+      fs.writeFileSync(path.join(tmpDir, '.gitignore'), '**/node_modules\nsrc/**/*.ts\n[abc]*.txt\n*.min.*\n');
       const result = collectGitignores(tmpDir);
       // **/node_modules has path separator → skipped (not in excludePatterns)
       expect(result.excludePatterns.has('**/node_modules')).toBe(false);
@@ -370,7 +367,6 @@ describe.skipIf(mutedSlowSuite(import.meta.url))('grepSearch - fallback behavior
     expect(result.output).toBe('No matches found');
   });
 
-
   // NOTE: with rg installed the chain answers 'rg' for every case below;
   // 'none' is only reachable when NO engine answers (rg missing AND the WASM
   // package unavailable) — the probe cannot force that, so the LAST-resort
@@ -386,8 +382,6 @@ describe.skipIf(mutedSlowSuite(import.meta.url))('grepSearch - fallback behavior
     expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
     expect(typeof result.output).toBe('string');
   });
-
-
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -424,7 +418,7 @@ describe.skipIf(mutedSlowSuite(import.meta.url))('grepSearch - integration with 
     const result = await grepSearch('import', process.cwd(), '*.ts', 20, '*.test.ts');
     expect(result.method).toBe('rg');
     if (result.output !== 'No matches found') {
-      const lines = result.output.split('\n').filter(l => l.trim());
+      const lines = result.output.split('\n').filter((l) => l.trim());
       for (const line of lines) {
         expect(line).not.toMatch(/\.test\.ts/);
       }
@@ -455,7 +449,7 @@ describe.skipIf(mutedSlowSuite(import.meta.url))('grepSearch - integration with 
     const result = await grepSearch('import', process.cwd(), '*.ts', 10);
     expect(result.method).toBe('rg');
     if (result.output !== 'No matches found') {
-      const lines = result.output.split('\n').filter(l => l.trim());
+      const lines = result.output.split('\n').filter((l) => l.trim());
       for (const line of lines) {
         expect(line).toMatch(/\.ts:/);
       }
@@ -469,7 +463,7 @@ describe.skipIf(mutedSlowSuite(import.meta.url))('grepSearch - integration with 
     const result = await grepSearch('import', process.cwd(), '*.ts', 20, '*.test.ts');
     expect(result.method).toBe('rg');
     if (result.output !== 'No matches found') {
-      const lines = result.output.split('\n').filter(l => l.trim());
+      const lines = result.output.split('\n').filter((l) => l.trim());
       for (const line of lines) {
         expect(line).not.toMatch(/\.test\.ts/);
       }
@@ -482,7 +476,7 @@ describe.skipIf(mutedSlowSuite(import.meta.url))('grepSearch - integration with 
     const result = await grepSearch('import', process.cwd(), '*.ts', 20, '*.test.ts');
     expect(result.method).toBe('rg');
     if (result.output !== 'No matches found') {
-      const lines = result.output.split('\n').filter(l => l.trim());
+      const lines = result.output.split('\n').filter((l) => l.trim());
       for (const line of lines) {
         expect(line).toMatch(/\.ts:/);
         expect(line).not.toMatch(/\.test\.ts/);
@@ -499,7 +493,7 @@ describe.skipIf(mutedSlowSuite(import.meta.url))('grepSearch - integration with 
     const result = await grepSearch('import', process.cwd(), '*.ts', 5);
     expect(result.method).toBe('rg');
     if (result.output !== 'No matches found') {
-      const lines = result.output.split('\n').filter(l => l.trim());
+      const lines = result.output.split('\n').filter((l) => l.trim());
       expect(lines.length).toBeLessThanOrEqual(6); // maxResults + 1
     }
   });
@@ -523,7 +517,7 @@ describe.skipIf(mutedSlowSuite(import.meta.url))('grepSearch - edge cases', () =
     const result = await grepSearch('import', process.cwd(), '*.ts', 9999);
     expect(result.method).toBe('rg');
     if (rgAvailableCache !== false) {
-      const lines = result.output === 'No matches found' ? [] : result.output.split('\n').filter(l => l.trim());
+      const lines = result.output === 'No matches found' ? [] : result.output.split('\n').filter((l) => l.trim());
       // Capped at MAX_MAX_RESULTS, NOT at the requested 9999.
       expect(lines.length).toBeLessThanOrEqual(MAX_MAX_RESULTS + 1);
     }
@@ -565,20 +559,18 @@ describe.skipIf(mutedSlowSuite(import.meta.url))('grepSearch - edge cases', () =
 // grepSearch — parameter validation
 // ═══════════════════════════════════════════════════════════════════════════
 
-
 // ═══════════════════════════════════════════════════════════════════════════
 // grepSearch — output format
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe.skipIf(mutedSlowSuite(import.meta.url))('grepSearch - output format', () => {
-
   it('should return output in "file:line:content" format', async () => {
     if (!isRgAvailable()) return;
 
     const result = await grepSearch('export function', process.cwd(), '*.ts', 5);
     expect(result.method).toBe('rg');
     if (result.output !== 'No matches found') {
-      const lines = result.output.split('\n').filter(l => l.trim());
+      const lines = result.output.split('\n').filter((l) => l.trim());
       for (const line of lines) {
         expect(line).toMatch(/^.+\.ts:\d+:.+/);
       }

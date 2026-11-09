@@ -13,7 +13,7 @@
  * in-memory flags that `load_mindmap` sets.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { validate_mindmap_structure } from '../../mindmap/validate.js';
 import type { MindmapJSON, Node } from '../../mindmap/types.js';
 
@@ -26,7 +26,7 @@ function baseNode(overrides: Partial<Node> = {}): Node {
     level: 0,
     children: [],
     links: [],
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -38,7 +38,7 @@ function base(overrides: Partial<MindmapJSON> = {}): MindmapJSON {
     compiled_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
     root: baseNode(),
-    ...overrides,
+    ...overrides
   } as MindmapJSON;
 }
 
@@ -49,7 +49,7 @@ describe('Node required fields (enforced by the real validator)', () => {
       const n = baseNode() as unknown as Record<string, unknown>;
       delete n[field];
       expect(validate_mindmap_structure(base({ root: n as unknown as Node }))).toBe(false);
-    },
+    }
   );
 
   it('rejects a children entry that is not an array, and a non-numeric level', () => {
@@ -88,8 +88,12 @@ describe('Link union is closed at four variants', () => {
   });
 
   it('rejects any fifth variant and a missing payload on a known variant', () => {
-    expect(validate_mindmap_structure(base({ root: baseNode({ links: [{ target_type: 'x', comment: '' } as never] }) }))).toBe(false);
-    expect(validate_mindmap_structure(base({ root: baseNode({ links: [{ target_type: 'term', comment: 'c' } as never] }) }))).toBe(false);
+    expect(
+      validate_mindmap_structure(base({ root: baseNode({ links: [{ target_type: 'x', comment: '' } as never] }) }))
+    ).toBe(false);
+    expect(
+      validate_mindmap_structure(base({ root: baseNode({ links: [{ target_type: 'term', comment: 'c' } as never] }) }))
+    ).toBe(false);
   });
 });
 

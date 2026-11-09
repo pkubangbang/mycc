@@ -2,7 +2,7 @@
  * todo-create.test.ts - Tests for todo_create tool
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 import { todoCreateTool } from '../../tools/todo_create.js';
 
 import type { AgentContext, TodoModule } from '../../types.js';
@@ -17,7 +17,7 @@ function createMockTodoContext(): { ctx: AgentContext; mockTodo: TodoModule } {
     getItems: vi.fn(() => []),
     pinTodo: vi.fn(() => null),
     findByPreviousHash: vi.fn(() => null),
-    getPreventStopTodos: vi.fn(() => []),
+    getPreventStopTodos: vi.fn(() => [])
   };
   const ctx = createMockContext('/tmp/test');
   ctx.todo = mockTodo;
@@ -47,8 +47,16 @@ describe('todoCreateTool', () => {
   });
 
   it('should create a todo item with name and note', () => {
-    vi.mocked(mockTodo.createTodo).mockReturnValue({ id: 2, name: 'Task with note', done: false, hash: 'ghi11111', note: 'important' });
-    vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [ ] 2. Task with note (important) [hash: ghi11111]');
+    vi.mocked(mockTodo.createTodo).mockReturnValue({
+      id: 2,
+      name: 'Task with note',
+      done: false,
+      hash: 'ghi11111',
+      note: 'important'
+    });
+    vi.mocked(mockTodo.printTodoList).mockReturnValue(
+      'Todo list:\n  [ ] 2. Task with note (important) [hash: ghi11111]'
+    );
 
     const result = runTool(todoCreateTool, ctx, { name: 'Task with note', note: 'important' }, testSignal);
     expect(mockTodo.createTodo).toHaveBeenCalledWith('Task with note', 'important');
@@ -107,7 +115,12 @@ describe('todoCreateTool', () => {
     vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [ ] 1. My task [hash: abc12345]');
 
     runTool(todoCreateTool, ctx, { name: 'My task' }, testSignal);
-    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'todo_create', expect.any(String), expect.stringContaining('My task'));
+    expect(ctx.core.brief).toHaveBeenCalledWith(
+      'info',
+      'todo_create',
+      expect.any(String),
+      expect.stringContaining('My task')
+    );
   });
 
   // Tool metadata

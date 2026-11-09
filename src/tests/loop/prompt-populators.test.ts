@@ -17,11 +17,16 @@
  * LLM in full via projectContext even though it is no longer in the system prompt.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildWikiDomainsMessages, buildCollaborationMessages } from '../../loop/prompt-populators.js';
+import {
+  buildPlatformCalendarMessages,
+  buildNodeModulesReminderMessages,
+  buildWikiDomainsMessages,
+  buildCollaborationMessages
+} from '../../loop/prompt-populators.js';
 
 describe('buildPlatformCalendarMessages', () => {
   it('returns a user + assistant message pair', () => {
@@ -118,7 +123,7 @@ describe('buildWikiDomainsMessages', () => {
   it('returns a user + assistant pair listing every domain name and description', () => {
     const messages = buildWikiDomainsMessages([
       { domain_name: 'pitfall', description: 'known traps and how to avoid them' },
-      { domain_name: 'routine', description: 'repeatable procedures' },
+      { domain_name: 'routine', description: 'repeatable procedures' }
     ]);
     expect(messages).toHaveLength(2);
     expect(messages[0].role).toBe('user');
@@ -135,7 +140,7 @@ describe('buildWikiDomainsMessages', () => {
   it('emits no trailing colon for a domain with an empty description', () => {
     const [user] = buildWikiDomainsMessages([
       { domain_name: 'bare', description: '' },
-      { domain_name: 'described', description: 'has a description' },
+      { domain_name: 'described', description: 'has a description' }
     ]);
     expect(user.content).toContain('- bare\n');
     expect(user.content).not.toContain('- bare:');

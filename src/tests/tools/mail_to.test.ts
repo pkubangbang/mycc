@@ -18,7 +18,7 @@
  * The handler is async (returns Promise<string>), so every call is awaited.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 import { mailToTool } from '../../tools/mail_to.js';
 
 import type { AgentContext } from '../../types.js';
@@ -46,11 +46,16 @@ describe('mailToTool — cross-instance peer routing', () => {
     // A backing channel exists between sender and peer → clean OK (no warning).
     (ctx.peer.hasChannelWith as ReturnType<typeof vi.fn>).mockReturnValue(true);
 
-    const result = await runTool(mailToTool, ctx, {
-      name: `${PEER_SID}/lead`,
-      title: 'sync-check',
-      content: 'are you ready?',
-    }, testSignal);
+    const result = await runTool(
+      mailToTool,
+      ctx,
+      {
+        name: `${PEER_SID}/lead`,
+        title: 'sync-check',
+        content: 'are you ready?'
+      },
+      testSignal
+    );
 
     expect(ctx.peer.isFresh).toHaveBeenCalledWith(PEER_SID);
     expect(ctx.peer.sendPeerMail).toHaveBeenCalledWith(PEER_SID, 'sync-check', 'are you ready?');
@@ -66,11 +71,16 @@ describe('mailToTool — cross-instance peer routing', () => {
     (ctx.peer.isFresh as ReturnType<typeof vi.fn>).mockReturnValue(true);
     (ctx.peer.hasChannelWith as ReturnType<typeof vi.fn>).mockReturnValue(false);
 
-    const result = await runTool(mailToTool, ctx, {
-      name: `${PEER_SID}/lead`,
-      title: 'sync-check',
-      content: 'are you ready?',
-    }, testSignal);
+    const result = await runTool(
+      mailToTool,
+      ctx,
+      {
+        name: `${PEER_SID}/lead`,
+        title: 'sync-check',
+        content: 'are you ready?'
+      },
+      testSignal
+    );
 
     expect(ctx.peer.sendPeerMail).toHaveBeenCalledWith(PEER_SID, 'sync-check', 'are you ready?');
     expect(ctx.peer.hasChannelWith).toHaveBeenCalledWith(PEER_SID);
@@ -86,11 +96,16 @@ describe('mailToTool — cross-instance peer routing', () => {
     (ctx.peer.isFresh as ReturnType<typeof vi.fn>).mockReturnValue(true);
     (ctx.peer.hasChannelWith as ReturnType<typeof vi.fn>).mockReturnValue(true);
 
-    const result = await runTool(mailToTool, ctx, {
-      name: `${PEER_SID}/lead`,
-      title: 'sync-check',
-      content: 'are you ready?',
-    }, testSignal);
+    const result = await runTool(
+      mailToTool,
+      ctx,
+      {
+        name: `${PEER_SID}/lead`,
+        title: 'sync-check',
+        content: 'are you ready?'
+      },
+      testSignal
+    );
 
     expect(ctx.peer.hasChannelWith).toHaveBeenCalledWith(PEER_SID);
     expect(result).toBe(`OK. Peer mail sent to ${PEER_SID}/lead.`);
@@ -100,11 +115,16 @@ describe('mailToTool — cross-instance peer routing', () => {
   it('fail-fast rejects a stale/offline peer BEFORE sendPeerMail (isFresh=false)', async () => {
     (ctx.peer.isFresh as ReturnType<typeof vi.fn>).mockReturnValue(false);
 
-    const result = await runTool(mailToTool, ctx, {
-      name: `${PEER_SID}/lead`,
-      title: 't',
-      content: 'b',
-    }, testSignal);
+    const result = await runTool(
+      mailToTool,
+      ctx,
+      {
+        name: `${PEER_SID}/lead`,
+        title: 't',
+        content: 'b'
+      },
+      testSignal
+    );
 
     // isFresh pre-check rejects; sendPeerMail is NOT attempted.
     expect(ctx.peer.isFresh).toHaveBeenCalledWith(PEER_SID);
@@ -117,11 +137,16 @@ describe('mailToTool — cross-instance peer routing', () => {
   it('does not treat a bare "lead" (no slash) as peer routing', async () => {
     // lead→lead: senderName is 'lead', name is 'lead' → not the teammate-to-lead
     // path. Falls to the generic tail: ctx.team.mailTo(name, title, content).
-    const result = await runTool(mailToTool, ctx, {
-      name: 'lead',
-      title: 'self-note',
-      content: 'hi',
-    }, testSignal);
+    const result = await runTool(
+      mailToTool,
+      ctx,
+      {
+        name: 'lead',
+        title: 'self-note',
+        content: 'hi'
+      },
+      testSignal
+    );
 
     expect(ctx.peer.sendPeerMail).not.toHaveBeenCalled();
     expect(ctx.team.mailTo).toHaveBeenCalledWith('lead', 'self-note', 'hi');
@@ -130,14 +155,19 @@ describe('mailToTool — cross-instance peer routing', () => {
 
   it('a known teammate name (in roster) routes to ctx.team.mailTo and returns OK', async () => {
     (ctx.team.listTeammates as ReturnType<typeof vi.fn>).mockReturnValue([
-      { name: 'researcher', role: 'coder', status: 'working' },
+      { name: 'researcher', role: 'coder', status: 'working' }
     ]);
 
-    const result = await runTool(mailToTool, ctx, {
-      name: 'researcher',
-      title: 'task',
-      content: 'go',
-    }, testSignal);
+    const result = await runTool(
+      mailToTool,
+      ctx,
+      {
+        name: 'researcher',
+        title: 'task',
+        content: 'go'
+      },
+      testSignal
+    );
 
     expect(ctx.peer.sendPeerMail).not.toHaveBeenCalled();
     expect(ctx.team.mailTo).toHaveBeenCalledWith('researcher', 'task', 'go');
@@ -146,11 +176,16 @@ describe('mailToTool — cross-instance peer routing', () => {
 
   it('fail-fast rejects an UNKNOWN teammate name (not in roster) — no mailTo', async () => {
     // Default roster is empty (mock-context), so 'researcher' is unknown.
-    const result = await runTool(mailToTool, ctx, {
-      name: 'researcher',
-      title: 'task',
-      content: 'go',
-    }, testSignal);
+    const result = await runTool(
+      mailToTool,
+      ctx,
+      {
+        name: 'researcher',
+        title: 'task',
+        content: 'go'
+      },
+      testSignal
+    );
 
     expect(ctx.peer.sendPeerMail).not.toHaveBeenCalled();
     expect(ctx.team.mailTo).not.toHaveBeenCalled();
@@ -161,11 +196,16 @@ describe('mailToTool — cross-instance peer routing', () => {
   it('fail-fast rejects a slash-name whose agent part is not "lead" (no mailTo)', async () => {
     // Only "lead" is a valid agent-name in the identity pattern; an unknown
     // agent-name is NOT a valid peer route and is rejected up front.
-    const result = await runTool(mailToTool, ctx, {
-      name: `${PEER_SID}/worker`,
-      title: 't',
-      content: 'b',
-    }, testSignal);
+    const result = await runTool(
+      mailToTool,
+      ctx,
+      {
+        name: `${PEER_SID}/worker`,
+        title: 't',
+        content: 'b'
+      },
+      testSignal
+    );
 
     expect(ctx.peer.sendPeerMail).not.toHaveBeenCalled();
     expect(ctx.team.mailTo).not.toHaveBeenCalled();
@@ -176,11 +216,16 @@ describe('mailToTool — cross-instance peer routing', () => {
   it('fail-fast rejects a slash-name with no dash in the session part ("a/lead")', async () => {
     // "a/lead" has no dash in the session part — not a UUID, so not a valid
     // peer route. Rejected up front (no mailTo).
-    const result = await runTool(mailToTool, ctx, {
-      name: 'a/lead',
-      title: 't',
-      content: 'b',
-    }, testSignal);
+    const result = await runTool(
+      mailToTool,
+      ctx,
+      {
+        name: 'a/lead',
+        title: 't',
+        content: 'b'
+      },
+      testSignal
+    );
 
     expect(ctx.peer.sendPeerMail).not.toHaveBeenCalled();
     expect(ctx.team.mailTo).not.toHaveBeenCalled();
@@ -207,11 +252,16 @@ describe('mailToTool — UUID session-id validation (Fix #4)', () => {
     // Backing channel exists → clean OK (isolate the routing behavior from the
     // fix #2 channel-completeness warning).
     (ctx.peer.hasChannelWith as ReturnType<typeof vi.fn>).mockReturnValue(true);
-    const result = await runTool(mailToTool, ctx, {
-      name: `${PEER_SID}/lead`,
-      title: 'hello',
-      content: 'world',
-    }, testSignal);
+    const result = await runTool(
+      mailToTool,
+      ctx,
+      {
+        name: `${PEER_SID}/lead`,
+        title: 'hello',
+        content: 'world'
+      },
+      testSignal
+    );
     expect(ctx.peer.sendPeerMail).toHaveBeenCalledWith(PEER_SID, 'hello', 'world');
     expect(ctx.team.mailTo).not.toHaveBeenCalled();
     expect(result).toBe(`OK. Peer mail sent to ${PEER_SID}/lead.`);
@@ -221,22 +271,32 @@ describe('mailToTool — UUID session-id validation (Fix #4)', () => {
     // "review-peer-1" has dashes but is NOT a UUID (wrong segment lengths /
     // non-hex). It is not a valid peer route, so it is rejected up front
     // (no sendPeerMail, no mailTo).
-    const result = await runTool(mailToTool, ctx, {
-      name: 'review-peer-1/lead',
-      title: 't',
-      content: 'b',
-    }, testSignal);
+    const result = await runTool(
+      mailToTool,
+      ctx,
+      {
+        name: 'review-peer-1/lead',
+        title: 't',
+        content: 'b'
+      },
+      testSignal
+    );
     expect(ctx.peer.sendPeerMail).not.toHaveBeenCalled();
     expect(ctx.team.mailTo).not.toHaveBeenCalled();
     expect(result).toContain('Error');
   });
 
   it('a dashed but non-UUID session part like "ab-cd-ef/lead" is rejected (not routed to peer, not mailed)', async () => {
-    const result = await runTool(mailToTool, ctx, {
-      name: 'ab-cd-ef/lead',
-      title: 't',
-      content: 'b',
-    }, testSignal);
+    const result = await runTool(
+      mailToTool,
+      ctx,
+      {
+        name: 'ab-cd-ef/lead',
+        title: 't',
+        content: 'b'
+      },
+      testSignal
+    );
     expect(ctx.peer.sendPeerMail).not.toHaveBeenCalled();
     expect(ctx.team.mailTo).not.toHaveBeenCalled();
     expect(result).toContain('Error');
@@ -245,11 +305,16 @@ describe('mailToTool — UUID session-id validation (Fix #4)', () => {
   it('a UUID with wrong segment lengths is rejected (not routed to peer, not mailed)', async () => {
     // 7-4-4-4-12 — first segment too short (must be 8 hex chars).
     const bad = '1234567-1234-1234-1234-123456789012';
-    const result = await runTool(mailToTool, ctx, {
-      name: `${bad}/lead`,
-      title: 't',
-      content: 'b',
-    }, testSignal);
+    const result = await runTool(
+      mailToTool,
+      ctx,
+      {
+        name: `${bad}/lead`,
+        title: 't',
+        content: 'b'
+      },
+      testSignal
+    );
     expect(ctx.peer.sendPeerMail).not.toHaveBeenCalled();
     expect(ctx.team.mailTo).not.toHaveBeenCalled();
     expect(result).toContain('Error');
@@ -258,11 +323,16 @@ describe('mailToTool — UUID session-id validation (Fix #4)', () => {
   it('a UUID with non-hex characters is rejected (not routed to peer, not mailed)', async () => {
     // 8-4-4-4-12 but contains 'g' (non-hex).
     const bad = 'gggg0000-0000-0000-0000-000000000000';
-    const result = await runTool(mailToTool, ctx, {
-      name: `${bad}/lead`,
-      title: 't',
-      content: 'b',
-    }, testSignal);
+    const result = await runTool(
+      mailToTool,
+      ctx,
+      {
+        name: `${bad}/lead`,
+        title: 't',
+        content: 'b'
+      },
+      testSignal
+    );
     expect(ctx.peer.sendPeerMail).not.toHaveBeenCalled();
     expect(ctx.team.mailTo).not.toHaveBeenCalled();
     expect(result).toContain('Error');

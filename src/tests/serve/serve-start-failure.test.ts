@@ -23,7 +23,7 @@
  * their existing failure handling — activateServe's "Terminal mode continues"
  * message, restartServe's down-publish + input wake).
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test';
 import * as net from 'node:net';
 import { ServeHub } from '../../serve/serve-hub.js';
 
@@ -104,7 +104,9 @@ describe('ServeHub.start() releases a partially-initialized stack on failure (P2
       expect(internals.httpServer).not.toBeNull();
     } finally {
       // Always tear down whatever this attempt bound.
-      await hub.stop(true).catch(() => { /* ignore */ });
+      await hub.stop(true).catch(() => {
+        /* ignore */
+      });
     }
   });
 });

@@ -8,7 +8,7 @@
  * `displayLetterBox`, which this file drives.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import { stripInternalMarkup, displayLetterBox, setResultCallback } from '../../src/utils/letter-box.js';
 
 let writes: string[] = [];
@@ -31,9 +31,13 @@ afterEach(() => {
 describe('stripInternalMarkup', () => {
   it.each([
     ['ASCII pipes', 'before <||DSML||tag>hidden</||DSML||tag> after', 'before  after'],
-    ['fullwidth pipes', 'before <\uff5c\uff5cDSML\uff5c\uff5ctag>hidden</\uff5c\uff5cDSML\uff5c\uff5ctag> after', 'before  after'],
+    [
+      'fullwidth pipes',
+      'before <\uff5c\uff5cDSML\uff5c\uff5ctag>hidden</\uff5c\uff5cDSML\uff5c\uff5ctag> after',
+      'before  after'
+    ],
     ['mixed ASCII+fullwidth pipes', 'a <|\uff5cDSML|\uff5cTAG>x</\uff5c|DSML\uff5c|TAG> b', 'a  b'],
-    ['uppercase tag name', 'a <||DSML||TAG>x</||DSML||TAG> b', 'a  b'],
+    ['uppercase tag name', 'a <||DSML||TAG>x</||DSML||TAG> b', 'a  b']
   ])('strips %s tags and keeps surrounding text', (_label, input, expected) => {
     expect(stripInternalMarkup(input)).toBe(expected);
   });

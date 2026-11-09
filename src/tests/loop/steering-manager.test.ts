@@ -12,13 +12,13 @@
  * queue drains atomically so a later peek cannot re-synthesize already-resolved
  * notes. Zero new dependencies — pure data-logic tests in the node environment.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import {
   SteeringManager,
   getSteeringManager,
   resolveSteeringQueue,
   joinSteeringNotes,
-  type SteeringNote,
+  type SteeringNote
 } from '../../loop/steering-manager.js';
 
 function notes(...pairs: [number, string][]): SteeringNote[] {
@@ -30,7 +30,7 @@ describe('resolveSteeringQueue', () => {
     const queue = notes([1, 'a'], [2, 'b'], [3, 'c']);
     expect(resolveSteeringQueue(queue, [3, 1])).toEqual([
       { id: 1, text: 'a' },
-      { id: 3, text: 'c' },
+      { id: 3, text: 'c' }
     ]);
   });
 
@@ -113,7 +113,10 @@ describe('SteeringManager', () => {
     const m = new SteeringManager();
     m.addNote('a');
     m.addNote('b');
-    expect(m.drainNotes()).toEqual([{ id: 1, text: 'a' }, { id: 2, text: 'b' }]);
+    expect(m.drainNotes()).toEqual([
+      { id: 1, text: 'a' },
+      { id: 2, text: 'b' }
+    ]);
     expect(m.isNonEmpty()).toBe(false);
     expect(m.drainNotes()).toEqual([]);
   });
@@ -124,7 +127,10 @@ describe('SteeringManager', () => {
     m.addNote('b');
     m.addNote('keep');
     const { selected, discarded } = m.resolveBoomerang([2, 3]);
-    expect(selected).toEqual([{ id: 2, text: 'b' }, { id: 3, text: 'keep' }]);
+    expect(selected).toEqual([
+      { id: 2, text: 'b' },
+      { id: 3, text: 'keep' }
+    ]);
     expect(discarded).toEqual([{ id: 1, text: 'a' }]);
     expect(m.isNonEmpty()).toBe(false);
   });
@@ -210,7 +216,7 @@ describe('SteeringManager', () => {
       expect(m.takeForDelivery(false, false)).toBeNull();
       expect(m.takeForDelivery(true, false)).toEqual([
         { id: 1, text: 'a' },
-        { id: 2, text: 'b' },
+        { id: 2, text: 'b' }
       ]);
       expect(m.takeForDelivery(true, false)).toBeNull();
     });

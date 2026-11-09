@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 
 // Mock LineEditor before importing agent-io
 vi.mock('../../utils/line-editor.js', () => {
@@ -7,8 +7,8 @@ vi.mock('../../utils/line-editor.js', () => {
       handleKey: vi.fn(),
       resize: vi.fn(),
       getHistory: vi.fn().mockReturnValue([]),
-      close: vi.fn(),
-    })),
+      close: vi.fn()
+    }))
   };
 });
 
@@ -20,8 +20,7 @@ describe('agent-io', () => {
     // Reset singleton state before each test
     (agentIO as unknown as { neglectedModeFlag: boolean }).neglectedModeFlag = false;
     (agentIO as unknown as { activeLineEditor: unknown }).activeLineEditor = null;
-    (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> }).outputBuffer =
-      [];
+    (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> }).outputBuffer = [];
     (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> }).onNeglectedCallbacks = new Set();
   });
 
@@ -79,14 +78,16 @@ describe('agent-io', () => {
   describe('handleKeyEvent', () => {
     it('should do nothing when no active line editor', () => {
       // Should not throw
-      expect(() => agentIO.handleKeyEvent({ name: 'a', sequence: 'a', ctrl: false, meta: false, shift: false })).not.toThrow();
+      expect(() =>
+        agentIO.handleKeyEvent({ name: 'a', sequence: 'a', ctrl: false, meta: false, shift: false })
+      ).not.toThrow();
     });
 
     it('should forward key to active line editor', () => {
       const mockHandleKey = vi.fn();
       (agentIO as unknown as { activeLineEditor: unknown }).activeLineEditor = {
         handleKey: mockHandleKey,
-        close: vi.fn(),
+        close: vi.fn()
       };
 
       const keyInfo = { name: 'enter', sequence: '\r', ctrl: false, meta: false, shift: false };
@@ -106,7 +107,7 @@ describe('agent-io', () => {
       (agentIO as unknown as { activeLineEditor: unknown }).activeLineEditor = {
         handleKey: vi.fn(),
         resize: mockResize,
-        close: vi.fn(),
+        close: vi.fn()
       };
 
       agentIO.handleResize(120);

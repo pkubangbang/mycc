@@ -21,7 +21,7 @@
  * `@lancedb/lancedb` (an in-memory fake supporting where/update/delete).
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -43,7 +43,7 @@ vi.mock('../../config.js', () => ({
   getRagProvider: () => 'nomic',
   ensureDirs: () => {
     if (!fs.existsSync(logsDir())) fs.mkdirSync(logsDir(), { recursive: true });
-  },
+  }
 }));
 
 // --- Embedding mock -------------------------------------------------------
@@ -53,7 +53,7 @@ vi.mock('../../engine/rag-provider.js', () => ({
   EMBEDDING_DIM: 4,
   NAMESPACE: 'test-ns',
   getEmbedding: async (text: string) => embedFor(text),
-  getEmbeddings: async (texts: string[]) => texts.map(embedFor),
+  getEmbeddings: async (texts: string[]) => texts.map(embedFor)
 }));
 
 function embedFor(text: string): number[] {
@@ -65,14 +65,22 @@ function embedFor(text: string): number[] {
 }
 
 function cosineDistance(a: number[], b: number[]): number {
-  let dot = 0, na = 0, nb = 0;
-  for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+  let dot = 0,
+    na = 0,
+    nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
   if (na === 0 || nb === 0) return 1;
   return 1 - dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
 // --- LanceDB mock (predicate-aware) --------------------------------------
-interface Row { [k: string]: unknown }
+interface Row {
+  [k: string]: unknown;
+}
 const tableState = { rows: [] as Row[], addCalls: 0 };
 
 function rowMatches(row: Row, predicate: string): boolean {
@@ -97,7 +105,10 @@ let failNextAdd = false;
 vi.mock('@lancedb/lancedb', () => {
   const fakeTable = {
     add: async (records: Row[]) => {
-      if (failNextAdd) { failNextAdd = false; throw new Error('boom'); }
+      if (failNextAdd) {
+        failNextAdd = false;
+        throw new Error('boom');
+      }
       tableState.addCalls++;
       tableState.rows.push(...records);
     },
@@ -109,7 +120,10 @@ vi.mock('@lancedb/lancedb', () => {
     update: async (opts: { where?: string; values: Row }) => {
       let n = 0;
       for (const row of tableState.rows) {
-        if (!opts.where || rowMatches(row, opts.where)) { Object.assign(row, opts.values); n++; }
+        if (!opts.where || rowMatches(row, opts.where)) {
+          Object.assign(row, opts.values);
+          n++;
+        }
       }
       return { rowsUpdated: n, version: 1 };
     },
@@ -118,33 +132,44 @@ vi.mock('@lancedb/lancedb', () => {
       const state: { predicate: string; limit: number } = { predicate: 'true', limit: 10 };
       const builder = {
         distanceType: () => builder,
-        where: (p: string) => { state.predicate = p; return builder; },
-        limit: (n: number) => { state.limit = n; return builder; },
+        where: (p: string) => {
+          state.predicate = p;
+          return builder;
+        },
+        limit: (n: number) => {
+          state.limit = n;
+          return builder;
+        },
         toArray: async () =>
           tableState.rows
             .filter((r) => rowMatches(r, state.predicate))
             .map((r) => ({ ...r, _distance: cosineDistance(query, r.embedding as number[]) }))
             .sort((a, b) => (a._distance as number) - (b._distance as number))
-            .slice(0, state.limit),
+            .slice(0, state.limit)
       };
       return builder;
     },
     query: () => ({
       where: (predicate: string) => ({
-        toArray: async () => tableState.rows.filter((r) => rowMatches(r, predicate)),
+        toArray: async () => tableState.rows.filter((r) => rowMatches(r, predicate))
       }),
-      toArray: async () => tableState.rows,
+      toArray: async () => tableState.rows
     }),
     // Schema mock: `state` present unless `staleSchema` is set.
-    schema: async () => ({ fields: staleSchema ? [{ name: 'hash' }] : [{ name: 'hash' }, { name: 'state' }] }),
+    schema: async () => ({ fields: staleSchema ? [{ name: 'hash' }] : [{ name: 'hash' }, { name: 'state' }] })
   };
   return {
     connect: async () => ({
       tableNames: async () => (staleSchema ? ['wiki_test-ns'] : []),
       openTable: async () => fakeTable,
-      createTable: async (_name: string, rows: Row[]) => { tableState.rows = [...rows]; return fakeTable; },
-      dropTable: async () => { tableState.rows = []; },
-    }),
+      createTable: async (_name: string, rows: Row[]) => {
+        tableState.rows = [...rows];
+        return fakeTable;
+      },
+      dropTable: async () => {
+        tableState.rows = [];
+      }
+    })
   };
 });
 
@@ -172,7 +197,10 @@ const C = 'a document content long enough to be a realistic body';
 function allWalEntries(): WALEntry[] {
   if (!fs.existsSync(logsDir())) return [];
   const out: WALEntry[] = [];
-  for (const f of fs.readdirSync(logsDir()).filter((x) => x.endsWith('.wal')).sort()) {
+  for (const f of fs
+    .readdirSync(logsDir())
+    .filter((x) => x.endsWith('.wal'))
+    .sort()) {
     for (const line of fs.readFileSync(path.join(logsDir(), f), 'utf-8').trim().split('\n')) {
       if (line.trim()) out.push(JSON.parse(line) as WALEntry);
     }
@@ -184,9 +212,11 @@ describe('wiki state machine + 2FC', () => {
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mycc-wiki-state-'));
     fs.mkdirSync(logsDir(), { recursive: true });
-    fs.writeFileSync(domainsFile(), JSON.stringify([
-      { domain_name: 'project', description: '', created_at: '', project_folder: tempDir },
-    ]), 'utf-8');
+    fs.writeFileSync(
+      domainsFile(),
+      JSON.stringify([{ domain_name: 'project', description: '', created_at: '', project_folder: tempDir }]),
+      'utf-8'
+    );
     tableState.rows = [];
     tableState.addCalls = 0;
     staleSchema = false;
@@ -228,8 +258,14 @@ describe('wiki state machine + 2FC', () => {
     // the flip by throwing inside appendWAL. Simplest faithful simulation:
     // seed the row directly at state 0 and assert reads ignore it.
     tableState.rows.push({
-      hash, domain: doc.domain, title: doc.title, content: doc.content,
-      references: '[]', embedding: embedFor(doc.content), createdAt: 'x', state: 0,
+      hash,
+      domain: doc.domain,
+      title: doc.title,
+      content: doc.content,
+      references: '[]',
+      embedding: embedFor(doc.content),
+      createdAt: 'x',
+      state: 0
     });
 
     // get() must not return the PENDING row (filtered by state = 1).
@@ -257,9 +293,15 @@ describe('wiki state machine + 2FC', () => {
     // Seed an unrelated PENDING row with the SAME hash but a different rowId,
     // as a crashed earlier write would leave behind.
     tableState.rows.push({
-      hash, domain: doc.domain, title: doc.title, content: doc.content,
-      references: '[]', embedding: embedFor(doc.content), createdAt: 'x',
-      state: 0, rowId: 'aaaaaaaa-0000-0000-0000-000000000000',
+      hash,
+      domain: doc.domain,
+      title: doc.title,
+      content: doc.content,
+      references: '[]',
+      embedding: embedFor(doc.content),
+      createdAt: 'x',
+      state: 0,
+      rowId: 'aaaaaaaa-0000-0000-0000-000000000000'
     });
 
     const res = await wiki.put(hash, doc);
@@ -298,7 +340,7 @@ describe('wiki state machine + 2FC', () => {
 
     const results = await wiki.batchPut([
       { document: a, embedding: embedFor(a.content) },
-      { document: b, embedding: embedFor(b.content) },
+      { document: b, embedding: embedFor(b.content) }
     ]);
     expect(results.every((r) => r.success)).toBe(true);
 
@@ -378,7 +420,16 @@ describe('wiki state machine + 2FC', () => {
     // Pre-seed a submerged row, then open the (existing) table.
     staleSchema = false;
     tableState.rows = [
-      { hash: 'aaaaaaaaaaaaaaaa', domain: 'project', title: 'x', content: 'c', references: '[]', embedding: embedFor('c'), createdAt: 'x', state: 2 },
+      {
+        hash: 'aaaaaaaaaaaaaaaa',
+        domain: 'project',
+        title: 'x',
+        content: 'c',
+        references: '[]',
+        embedding: embedFor('c'),
+        createdAt: 'x',
+        state: 2
+      }
     ];
     // Force initDb() to take the "existing table" path by marking it present.
     const wiki = await newManager();

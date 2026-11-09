@@ -16,7 +16,7 @@
  * → the loop must NOT hang; escAware must resolve with the cleanup result so
  * handleCollect returns STOP → PROMPT.
  */
-import { describe, test, beforeEach, afterEach, vi } from 'vitest';
+import { describe, test, beforeEach, afterEach, vi } from 'vite-plus/test';
 import { expect } from 'chai';
 import { Core } from '../../context/parent/core.js';
 import { agentIO } from '../../loop/agent-io.js';
@@ -40,7 +40,7 @@ vi.mock('../../engine/chat-provider.js', () => ({
   // resolve to a chat-like response; per-test the content can be overridden
   // by re-mocking retryChat if needed, but the default is a simple wrap-up.
   retryChat: vi.fn(async () => ({ message: { content: 'Wrap-up complete. Awaiting next step.' } })),
-  MODEL: 'test-model',
+  MODEL: 'test-model'
 }));
 
 vi.mock('../../config.js', async (importOriginal) => {
@@ -53,7 +53,7 @@ vi.mock('../../config.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../config.js')>();
   return {
     ...actual,
-    getApiProvider: () => 'ollama',
+    getApiProvider: () => 'ollama'
   };
 });
 
@@ -73,7 +73,7 @@ vi.mock('../../serve/serve-registry.js', () => {
     setAutoStateProvider: () => {},
     isInputBlocked: () => false,
     gracefulShutdown: () => Promise.resolve(),
-    onWrapUpSettled: () => {},
+    onWrapUpSettled: () => {}
   };
   // The lazy-serve refactor: shared/boot call sites now use the null-safe
   // tryGetServeHub() (getServeHub() throws until the serve layer is loaded)
@@ -82,7 +82,9 @@ vi.mock('../../serve/serve-registry.js', () => {
   return {
     getServeHub: () => hub,
     tryGetServeHub: () => hub,
-    onServeHubReady: (cb: (h: typeof hub) => void) => { cb(hub); },
+    onServeHubReady: (cb: (h: typeof hub) => void) => {
+      cb(hub);
+    }
   };
 });
 
@@ -90,11 +92,7 @@ vi.mock('../../serve/serve-registry.js', () => {
 // (startWrapUp/tryDisplayWrapUp = orchestration, stays on esc-wrap-up;
 // hasPendingWrapUp/clearWrapUp = state, moved to wrap-up-state per A5.)
 import { startWrapUp, tryDisplayWrapUp } from '../../loop/esc-wrap-up.js';
-import {
-  hasPendingWrapUp,
-  clearWrapUp,
-  getWrapUpState,
-} from '../../loop/wrap-up-state.js';
+import { hasPendingWrapUp, clearWrapUp, getWrapUpState } from '../../loop/wrap-up-state.js';
 import { setResultCallback } from '../../utils/letter-box.js';
 import type { Triologue } from '../../loop/triologue.js';
 
@@ -112,7 +110,7 @@ describe('escAware + real triggerNeglection (WebUI 停止 path)', () => {
       bg: {} as never,
       team: {} as never,
       wiki: {} as never,
-      peer: {} as never,
+      peer: {} as never
     };
     agentIO.initMain();
   });
@@ -138,7 +136,7 @@ describe('escAware + real triggerNeglection (WebUI 停止 path)', () => {
         operationCompleted = true;
         return 'operation-result';
       },
-      () => 'aborted' as const,
+      () => 'aborted' as const
     );
 
     // Give escAware a tick to register its onNeglectedHandler.
@@ -151,7 +149,7 @@ describe('escAware + real triggerNeglection (WebUI 停止 path)', () => {
     // NOT hang. Race against a timeout to prove it resolves promptly.
     const result = await Promise.race([
       resultPromise,
-      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2000)),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2000))
     ]);
 
     expect(result).to.equal('aborted');
@@ -174,7 +172,7 @@ describe('escAware + real triggerNeglection (WebUI 停止 path)', () => {
       () => {
         cleanupCalls++;
         return 'aborted' as const;
-      },
+      }
     );
 
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -185,7 +183,7 @@ describe('escAware + real triggerNeglection (WebUI 停止 path)', () => {
 
     const result = await Promise.race([
       resultPromise,
-      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2000)),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2000))
     ]);
 
     expect(result).to.equal('aborted');
@@ -236,7 +234,7 @@ describe('escAware + real triggerNeglection (WebUI 停止 path)', () => {
 function makeStubTriologue(): Triologue {
   const messages: { role: string; content: string }[] = [
     { role: 'user', content: 'do something' },
-    { role: 'assistant', content: 'working on it' },
+    { role: 'assistant', content: 'working on it' }
   ];
   let wrapActive = false;
   return {
@@ -250,7 +248,7 @@ function makeStubTriologue(): Triologue {
       if (!wrapActive) return;
       messages.push({ role: 'assistant', content });
       // mark stays for rollback; not reset here.
-    },
+    }
   } as unknown as Triologue;
 }
 

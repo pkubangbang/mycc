@@ -17,7 +17,7 @@
  * freshness".
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -65,13 +65,27 @@ function run(home: string, extraArgs: string[] = []) {
   env.HOME = home;
   const res = spawnSync(
     process.execPath,
-    [MAILER, SID, '--title', 'remotes', '--content', 'dial http://1.2.3.4:3191', '--from', 'mycc-compose', '--require-online', ...extraArgs],
-    { encoding: 'utf-8', env, windowsHide: true, timeout: 15_000 },
+    [
+      MAILER,
+      SID,
+      '--title',
+      'remotes',
+      '--content',
+      'dial http://1.2.3.4:3191',
+      '--from',
+      'mycc-compose',
+      '--require-online',
+      ...extraArgs
+    ],
+    { encoding: 'utf-8', env, windowsHide: true, timeout: 15_000 }
   );
   const mb = mailboxIn(home);
   let mailboxLines: string[] = [];
   if (fs.existsSync(mb)) {
-    mailboxLines = fs.readFileSync(mb, 'utf-8').split('\n').filter((l) => l.trim() !== '');
+    mailboxLines = fs
+      .readFileSync(mb, 'utf-8')
+      .split('\n')
+      .filter((l) => l.trim() !== '');
   }
   return { status: res.status, stderr: res.stderr || '', stdout: res.stdout || '', mailboxLines };
 }
@@ -150,16 +164,20 @@ describe('mycc-mail --require-online liveness gate', () => {
     const env: NodeJS.ProcessEnv = { ...process.env };
     env.USERPROFILE = home;
     env.HOME = home;
-    const res = spawnSync(
-      process.execPath,
-      [MAILER, SID, '--title', 'cron', '--content', 'hello', '--from', 'cron'],
-      { encoding: 'utf-8', env, windowsHide: true, timeout: 15_000 },
-    );
+    const res = spawnSync(process.execPath, [MAILER, SID, '--title', 'cron', '--content', 'hello', '--from', 'cron'], {
+      encoding: 'utf-8',
+      env,
+      windowsHide: true,
+      timeout: 15_000
+    });
     expect(res.status).toBe(0);
     expect(res.stderr).toMatch(/Warning.*offline/);
     expect(run(home).mailboxLines.length).toBeGreaterThanOrEqual(0); // mailbox exists from this run
     const mb = mailboxIn(home);
-    const lines = fs.readFileSync(mb, 'utf-8').split('\n').filter((l) => l.trim() !== '');
+    const lines = fs
+      .readFileSync(mb, 'utf-8')
+      .split('\n')
+      .filter((l) => l.trim() !== '');
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0]).title).toBe('cron');
   });

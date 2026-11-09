@@ -6,7 +6,7 @@
  * shared module-level singleton used in production; tests use the class
  * directly for isolation).
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import { AutoState, DEFAULT_AUTOfLY_THRESHOLD } from '../../loop/auto-state.js';
 
 describe('AutoState', () => {
@@ -149,11 +149,11 @@ describe('AutoState', () => {
       const s = new AutoState();
       s.recordLlmSuccess();
       s.recordLlmSuccess(); // streak 2
-      s.resetStreak();       // user input arrived
+      s.resetStreak(); // user input arrived
       expect(s.getStreak()).toBe(0);
-      s.recordLlmSuccess();  // streak 1
-      s.recordLlmSuccess();  // streak 2
-      s.recordLlmSuccess();  // streak 3 — PROMPT would compare streak(3) >= threshold(3) → engage
+      s.recordLlmSuccess(); // streak 1
+      s.recordLlmSuccess(); // streak 2
+      s.recordLlmSuccess(); // streak 3 — PROMPT would compare streak(3) >= threshold(3) → engage
       expect(s.getStreak()).toBe(3);
       expect(s.getAuto()).toBe(false); // engagement is PROMPT's job, not the singleton's
     });
@@ -184,7 +184,7 @@ describe('AutoState', () => {
       expect(cb).not.toHaveBeenCalled();
     });
 
-    it('does NOT fire when recordLlmSuccess() increments (engagement is PROMPT\'s job)', () => {
+    it("does NOT fire when recordLlmSuccess() increments (engagement is PROMPT's job)", () => {
       const s = new AutoState();
       const cb = vi.fn();
       s.onAutoChange = cb;
@@ -198,7 +198,9 @@ describe('AutoState', () => {
 
     it('swallows errors thrown by the callback (flag still flips)', () => {
       const s = new AutoState();
-      s.onAutoChange = () => { throw new Error('boom'); };
+      s.onAutoChange = () => {
+        throw new Error('boom');
+      };
       expect(() => s.setAuto(true)).not.toThrow();
       expect(s.getAuto()).toBe(true);
     });

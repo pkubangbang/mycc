@@ -2,7 +2,7 @@
  * blockage-create.test.ts - Tests for the blockage_create tool
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { blockageCreateTool } from '../../tools/blockage_create.js';
 import type { AgentContext, IssueModule, CoreModule, Issue } from '../../types.js';
 import { runTool, testSignal } from './test-utils.js';
@@ -21,7 +21,7 @@ function createMockIssueModule(): IssueModule {
     removeBlockage: vi.fn().mockResolvedValue(undefined),
     publishIssue: vi.fn().mockResolvedValue(true),
     releaseIssuesOwnedBy: vi.fn().mockResolvedValue([]),
-    clearAll: vi.fn(),
+    clearAll: vi.fn()
   };
 }
 
@@ -55,7 +55,7 @@ function createMockContext(issueModule: IssueModule): AgentContext {
     getConfusionIndex: vi.fn(() => 0),
     increaseConfusionIndex: vi.fn(),
     resetConfusionIndex: vi.fn(),
-    escAware: (vi.fn() as unknown) as CoreModule['escAware'],
+    escAware: vi.fn() as unknown as CoreModule['escAware']
   };
 
   return {
@@ -67,7 +67,7 @@ function createMockContext(issueModule: IssueModule): AgentContext {
     bg: {} as never,
     team: {} as never,
     wiki: {} as never,
-    peer: {} as never,
+    peer: {} as never
   };
 }
 
@@ -82,7 +82,7 @@ function createBlockerIssue(): Issue {
     blockedBy: [],
     blocks: [],
     comments: [],
-    createdAt: new Date(),
+    createdAt: new Date()
   };
 }
 
@@ -95,7 +95,7 @@ function createBlockedIssue(): Issue {
     blockedBy: [],
     blocks: [],
     comments: [],
-    createdAt: new Date(),
+    createdAt: new Date()
   };
 }
 
@@ -116,17 +116,21 @@ describe('blockageCreateTool', () => {
   // ========== Happy Path Tests ==========
 
   it('should create a blockage between two issues', async () => {
-    mockIssue.getIssue = vi.fn()
-      .mockImplementation((id: number) => {
-        if (id === 1) return Promise.resolve(createBlockerIssue());
-        if (id === 2) return Promise.resolve(createBlockedIssue());
-        return Promise.resolve(undefined);
-      });
+    mockIssue.getIssue = vi.fn().mockImplementation((id: number) => {
+      if (id === 1) return Promise.resolve(createBlockerIssue());
+      if (id === 2) return Promise.resolve(createBlockedIssue());
+      return Promise.resolve(undefined);
+    });
 
-    const result = await runTool(blockageCreateTool, ctx, {
-      blocker: 1,
-      blocked: 2,
-    }, testSignal);
+    const result = await runTool(
+      blockageCreateTool,
+      ctx,
+      {
+        blocker: 1,
+        blocked: 2
+      },
+      testSignal
+    );
 
     expect(mockIssue.getIssue).toHaveBeenCalledWith(1);
     expect(mockIssue.getIssue).toHaveBeenCalledWith(2);
@@ -138,10 +142,15 @@ describe('blockageCreateTool', () => {
   it('should create blockage with larger issue IDs', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createBlockerIssue());
 
-    const result = await runTool(blockageCreateTool, ctx, {
-      blocker: 100,
-      blocked: 200,
-    }, testSignal);
+    const result = await runTool(
+      blockageCreateTool,
+      ctx,
+      {
+        blocker: 100,
+        blocked: 200
+      },
+      testSignal
+    );
 
     expect(mockIssue.createBlockage).toHaveBeenCalledWith(100, 200);
     expect(result).toBe('OK');
@@ -150,9 +159,14 @@ describe('blockageCreateTool', () => {
   // ========== Error Case Tests ==========
 
   it('should reject missing blocker', async () => {
-    const result = await runTool(blockageCreateTool, ctx, {
-      blocked: 2,
-    }, testSignal);
+    const result = await runTool(
+      blockageCreateTool,
+      ctx,
+      {
+        blocked: 2
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: blocker must be an integer');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'blockage_create', 'Invalid blocker parameter');
@@ -160,9 +174,14 @@ describe('blockageCreateTool', () => {
   });
 
   it('should reject missing blocked', async () => {
-    const result = await runTool(blockageCreateTool, ctx, {
-      blocker: 1,
-    }, testSignal);
+    const result = await runTool(
+      blockageCreateTool,
+      ctx,
+      {
+        blocker: 1
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: blocked must be an integer');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'blockage_create', 'Invalid blocked parameter');
@@ -170,10 +189,15 @@ describe('blockageCreateTool', () => {
   });
 
   it('should reject non-integer blocker', async () => {
-    const result = await runTool(blockageCreateTool, ctx, {
-      blocker: 'abc',
-      blocked: 2,
-    }, testSignal);
+    const result = await runTool(
+      blockageCreateTool,
+      ctx,
+      {
+        blocker: 'abc',
+        blocked: 2
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: blocker must be an integer');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'blockage_create', 'Invalid blocker parameter');
@@ -182,20 +206,30 @@ describe('blockageCreateTool', () => {
   it('should reject non-integer blocked', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createBlockerIssue());
 
-    const result = await runTool(blockageCreateTool, ctx, {
-      blocker: 1,
-      blocked: 'xyz',
-    }, testSignal);
+    const result = await runTool(
+      blockageCreateTool,
+      ctx,
+      {
+        blocker: 1,
+        blocked: 'xyz'
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: blocked must be an integer');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'blockage_create', 'Invalid blocked parameter');
   });
 
   it('should reject float blocker', async () => {
-    const result = await runTool(blockageCreateTool, ctx, {
-      blocker: 1.5,
-      blocked: 2,
-    }, testSignal);
+    const result = await runTool(
+      blockageCreateTool,
+      ctx,
+      {
+        blocker: 1.5,
+        blocked: 2
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: blocker must be an integer');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'blockage_create', 'Invalid blocker parameter');
@@ -204,10 +238,15 @@ describe('blockageCreateTool', () => {
   it('should reject float blocked', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createBlockerIssue());
 
-    const result = await runTool(blockageCreateTool, ctx, {
-      blocker: 1,
-      blocked: 2.5,
-    }, testSignal);
+    const result = await runTool(
+      blockageCreateTool,
+      ctx,
+      {
+        blocker: 1,
+        blocked: 2.5
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: blocked must be an integer');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'blockage_create', 'Invalid blocked parameter');
@@ -217,10 +256,15 @@ describe('blockageCreateTool', () => {
     const issue = createBlockerIssue();
     mockIssue.getIssue = vi.fn().mockResolvedValue(issue);
 
-    const result = await runTool(blockageCreateTool, ctx, {
-      blocker: 1,
-      blocked: 1,
-    }, testSignal);
+    const result = await runTool(
+      blockageCreateTool,
+      ctx,
+      {
+        blocker: 1,
+        blocked: 1
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: An issue cannot block itself');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'blockage_create', 'Self-blocking not allowed');
@@ -228,17 +272,21 @@ describe('blockageCreateTool', () => {
   });
 
   it('should return error when blocker issue not found', async () => {
-    mockIssue.getIssue = vi.fn()
-      .mockImplementation((id: number) => {
-        if (id === 1) return Promise.resolve(undefined); // blocker not found
-        if (id === 2) return Promise.resolve(createBlockedIssue());
-        return Promise.resolve(undefined);
-      });
+    mockIssue.getIssue = vi.fn().mockImplementation((id: number) => {
+      if (id === 1) return Promise.resolve(undefined); // blocker not found
+      if (id === 2) return Promise.resolve(createBlockedIssue());
+      return Promise.resolve(undefined);
+    });
 
-    const result = await runTool(blockageCreateTool, ctx, {
-      blocker: 1,
-      blocked: 2,
-    }, testSignal);
+    const result = await runTool(
+      blockageCreateTool,
+      ctx,
+      {
+        blocker: 1,
+        blocked: 2
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: Blocker issue #1 not found');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'blockage_create', 'Blocker issue #1 not found');
@@ -246,17 +294,21 @@ describe('blockageCreateTool', () => {
   });
 
   it('should return error when blocked issue not found', async () => {
-    mockIssue.getIssue = vi.fn()
-      .mockImplementation((id: number) => {
-        if (id === 1) return Promise.resolve(createBlockerIssue());
-        if (id === 2) return Promise.resolve(undefined); // blocked not found
-        return Promise.resolve(undefined);
-      });
+    mockIssue.getIssue = vi.fn().mockImplementation((id: number) => {
+      if (id === 1) return Promise.resolve(createBlockerIssue());
+      if (id === 2) return Promise.resolve(undefined); // blocked not found
+      return Promise.resolve(undefined);
+    });
 
-    const result = await runTool(blockageCreateTool, ctx, {
-      blocker: 1,
-      blocked: 2,
-    }, testSignal);
+    const result = await runTool(
+      blockageCreateTool,
+      ctx,
+      {
+        blocker: 1,
+        blocked: 2
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: Blocked issue #2 not found');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'blockage_create', 'Blocked issue #2 not found');

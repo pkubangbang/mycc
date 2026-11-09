@@ -16,7 +16,7 @@
  * Every test moved verbatim into a scoped describe(); no `it` was dropped.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vite-plus/test';
 import { HookExecutor, createToolCall } from '../hook/hook-executor.js';
 import { ConditionRegistry } from '../hook/conditions.js';
 import { Sequence } from '../hook/sequence.js';
@@ -41,7 +41,6 @@ describe('HookExecutor pipeline (processToolCalls)', () => {
   });
 
   describe('execute() - replace on stop trigger (empty pendingCalls)', () => {
-
     it('processStopTrigger should replace stop with a skill_load call end-to-end', async () => {
       // Use plan mode so isPlanMode() is true. The shared beforeEach
       // sequence has no mode getter (defaults to normal), so build a plan-mode
@@ -57,16 +56,14 @@ describe('HookExecutor pipeline (processToolCalls)', () => {
         action: {
           type: 'replace',
           tool: 'skill_load',
-          args: { name: 'plan-quality' },
+          args: { name: 'plan-quality' }
         },
-        version: 1,
+        version: 1
       });
 
       // processToolCalls with empty calls = stop trigger
-      const result = await planExecutor.processToolCalls(
-        [],
-        ctx,
-        (name) => (name === 'plan-quality' ? { content: 'skill body' } : undefined)
+      const result = await planExecutor.processToolCalls([], ctx, (name) =>
+        name === 'plan-quality' ? { content: 'skill body' } : undefined
       );
 
       // The stop should have been replaced with one skill_load call
@@ -96,9 +93,9 @@ describe('HookExecutor pipeline (processToolCalls)', () => {
         action: {
           type: 'replace',
           tool: 'skill_load',
-          args: { name: 'plan-quality' },
+          args: { name: 'plan-quality' }
         },
-        version: 1,
+        version: 1
       });
 
       // Batch 1: stop trigger fires → replaces stop with skill_load
@@ -113,9 +110,6 @@ describe('HookExecutor pipeline (processToolCalls)', () => {
       const r2 = await ex.processToolCalls([], ctx, getSkill);
       expect(r2.calls).toHaveLength(0); // stop proceeds — no re-replacement
     });
-
-
-
   });
 
   describe('integration scenarios', () => {
@@ -124,13 +118,14 @@ describe('HookExecutor pipeline (processToolCalls)', () => {
       registry.set('pre-commit-lint', {
         trigger: ['git_commit'],
         when: 'run lint before commit if files changed',
-        condition: '(turn.count("edit_file") > 0 || turn.count("write_file") > 0) && turn.lastIndex("bash#pnpm lint") == -1',
+        condition:
+          '(turn.count("edit_file") > 0 || turn.count("write_file") > 0) && turn.lastIndex("bash#pnpm lint") == -1',
         action: {
           type: 'inject_before',
           tool: 'bash',
-          args: { command: 'pnpm lint', intent: 'pre-commit lint check', timeout: 60 },
+          args: { command: 'pnpm lint', intent: 'pre-commit lint check', timeout: 60 }
         },
-        version: 1,
+        version: 1
       });
 
       // User edited files
@@ -159,13 +154,14 @@ describe('HookExecutor pipeline (processToolCalls)', () => {
       registry.set('pre-commit-lint', {
         trigger: ['git_commit'],
         when: 'run lint before commit',
-        condition: '(turn.count("edit_file") > 0 || turn.count("write_file") > 0) && turn.lastIndex("bash#pnpm lint") == -1',
+        condition:
+          '(turn.count("edit_file") > 0 || turn.count("write_file") > 0) && turn.lastIndex("bash#pnpm lint") == -1',
         action: {
           type: 'inject_before',
           tool: 'bash',
-          args: { command: 'pnpm lint' },
+          args: { command: 'pnpm lint' }
         },
-        version: 1,
+        version: 1
       });
 
       // User edited files AND ran lint
@@ -184,9 +180,9 @@ describe('HookExecutor pipeline (processToolCalls)', () => {
         condition: 'turn.count("bash#git push --force") > 0',
         action: {
           type: 'block',
-          reason: 'Force pushing to main branch is prohibited. Please create a feature branch.',
+          reason: 'Force pushing to main branch is prohibited. Please create a feature branch.'
         },
-        version: 1,
+        version: 1
       });
 
       // Normal push
@@ -218,9 +214,9 @@ describe('HookExecutor pipeline (processToolCalls)', () => {
         action: {
           type: 'inject_before',
           tool: 'wiki_get',
-          args: { query: 'error', domain: 'pitfall' },
+          args: { query: 'error', domain: 'pitfall' }
         },
-        version: 1,
+        version: 1
       });
 
       // No error
@@ -248,7 +244,7 @@ describe('HookExecutor pipeline (processToolCalls)', () => {
       // (arguments is the ollama-shape OBJECT, not a JSON string.)
       expect(result.newCalls?.[0].function.arguments).toEqual({
         query: 'error',
-        domain: 'pitfall',
+        domain: 'pitfall'
       });
     });
   });
@@ -262,12 +258,12 @@ describe('HookExecutor pipeline (processToolCalls)', () => {
         when: 'prepare a GitHub release',
         condition: "call.args.command && call.args.command.includes('gh release')",
         action: { type: 'message', message: 'release helper' },
-        version: 1,
+        version: 1
       });
 
       const call: ToolCall = {
         id: 'c1',
-        function: { name: 'bash', arguments: { command: 'gh release create v1' } },
+        function: { name: 'bash', arguments: { command: 'gh release create v1' } }
       };
       const result = await executor.processToolCalls([call], ctx, getSkill);
 
@@ -282,13 +278,13 @@ describe('HookExecutor pipeline (processToolCalls)', () => {
         when: 'prepare a GitHub release',
         condition: "call.args.command && call.args.command.includes('gh release')",
         action: { type: 'message', message: 'release helper' },
-        version: 1,
+        version: 1
       });
 
       // A bash call whose arguments lack `command` (e.g. a malformed/partial call).
       const call: ToolCall = {
         id: 'c2',
-        function: { name: 'bash', arguments: {} },
+        function: { name: 'bash', arguments: {} }
       };
       await executor.processToolCalls([call], ctx, getSkill);
 
@@ -302,12 +298,12 @@ describe('HookExecutor pipeline (processToolCalls)', () => {
         when: 'bad condition',
         condition: "call.args.command.includes('gh release')",
         action: { type: 'message', message: 'x' },
-        version: 1,
+        version: 1
       });
 
       const call: ToolCall = {
         id: 'c3',
-        function: { name: 'bash', arguments: {} },
+        function: { name: 'bash', arguments: {} }
       };
       await executor.processToolCalls([call], ctx, getSkill);
 
@@ -317,5 +313,4 @@ describe('HookExecutor pipeline (processToolCalls)', () => {
       expect(errored[0].name).toBe('bad-hook');
     });
   });
-
 });

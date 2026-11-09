@@ -1,8 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 vi.mock('../../loop/agent-io.js', () => ({ agentIO: { verbose: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock('../../engine/health-check.js', () => ({ probeModel: vi.fn(), probeEmbeddingModel: vi.fn() }));
-vi.mock('../../config.js', () => ({ isVisionEnabled: vi.fn(() => false), DEFAULT_DEEPSEEK_VISION_MODEL: 'deepseek-flash' }));
+vi.mock('../../config.js', () => ({
+  isVisionEnabled: vi.fn(() => false),
+  DEFAULT_DEEPSEEK_VISION_MODEL: 'deepseek-flash'
+}));
 
 const fetchMock = vi.fn<typeof fetch>();
 vi.stubGlobal('fetch', fetchMock);
@@ -11,12 +14,19 @@ import { retryChat, webSearch, webFetch } from '../../engine/deepseek.js';
 import type { ChatResponse } from '../../engine/provider-types.js';
 
 function responseWithReasoning(): Response {
-  return new Response(new ReadableStream({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"done","reasoning_content":"thinking"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'));
-      controller.close();
-    },
-  }), { status: 200 });
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"content":"done","reasoning_content":"thinking"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
+          )
+        );
+        controller.close();
+      }
+    }),
+    { status: 200 }
+  );
 }
 
 describe('DeepSeek provider-neutral contract', () => {
@@ -27,12 +37,15 @@ describe('DeepSeek provider-neutral contract', () => {
 
   it('forwards canonical tool_choice and returns reasoning_content', async () => {
     fetchMock.mockResolvedValue(responseWithReasoning());
-    const response: ChatResponse = await retryChat({
-      model: 'deepseek-v4-pro',
-      messages: [],
-      tools: [{ type: 'function', function: { name: 'extract_keywords' } }],
-      tool_choice: 'required',
-    }, { noSpinner: true });
+    const response: ChatResponse = await retryChat(
+      {
+        model: 'deepseek-v4-pro',
+        messages: [],
+        tools: [{ type: 'function', function: { name: 'extract_keywords' } }],
+        tool_choice: 'required'
+      },
+      { noSpinner: true }
+    );
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(body.tool_choice).toBe('required');
     expect(body.toolChoice).toBeUndefined();
@@ -68,10 +81,14 @@ describe('DeepSeek provider-neutral contract', () => {
 
   it('retains the legacy toolChoice alias', async () => {
     fetchMock.mockResolvedValue(responseWithReasoning());
-    await retryChat({
-      model: 'deepseek-v4-pro', messages: [],
-      toolChoice: 'none',
-    } as Parameters<typeof retryChat>[0], { noSpinner: true });
+    await retryChat(
+      {
+        model: 'deepseek-v4-pro',
+        messages: [],
+        toolChoice: 'none'
+      } as Parameters<typeof retryChat>[0],
+      { noSpinner: true }
+    );
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).tool_choice).toBe('none');
   });
 });

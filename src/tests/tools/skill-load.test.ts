@@ -1,6 +1,6 @@
 // skill_load — merged from basics/content/errors
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 import { skillLoadTool } from '../../tools/skill_load.js';
 
 import type { AgentContext, Skill, SkillModule } from '../../types.js';
@@ -10,10 +10,10 @@ vi.mock('../../context/shared/loader.js', () => ({
     getSkillLayer: vi.fn(() => 'project'),
     buildSkillIndexEntry: vi.fn(() => ({
       document: { domain: 'skills', title: '[project]:test', content: 'test', references: [] },
-      contentHash: 'deadbeef',
+      contentHash: 'deadbeef'
     })),
-    buildAllSkillEntries: vi.fn(() => []),
-  },
+    buildAllSkillEntries: vi.fn(() => [])
+  }
 }));
 
 describe('skill-load-basics', () => {
@@ -21,7 +21,6 @@ describe('skill-load-basics', () => {
    * skill-load-basics.test.ts - Basic tests for the skill_load tool
    * Tests metadata, happy path, and skill loading functionality
    */
-
 
   // Mock the loader singleton. buildSkillIndexEntry returns a minimal valid
   // SkillIndexEntry so skill_load's ctx.wiki.indexSkills([entry]) path runs.
@@ -33,12 +32,12 @@ describe('skill-load-basics', () => {
     const skillModule: SkillModule = {
       loadSkills: vi.fn().mockResolvedValue(undefined),
       listSkills: vi.fn().mockReturnValue(skills),
-      getSkill: vi.fn().mockImplementation((name: string) => skills.find(s => s.name === name)),
+      getSkill: vi.fn().mockImplementation((name: string) => skills.find((s) => s.name === name)),
       listAllTools: vi.fn().mockReturnValue([]),
       compileCondition: vi.fn().mockResolvedValue({}),
       replaceCondition: vi.fn().mockResolvedValue({ success: true }),
       buildSkillIndexEntry: vi.fn(() => null),
-      buildAllSkillEntries: vi.fn(() => []),
+      buildAllSkillEntries: vi.fn(() => [])
     };
 
     const ctx = createMockContext(workdir);
@@ -54,8 +53,9 @@ describe('skill-load-basics', () => {
       name: 'test-skill',
       description: 'A test skill for unit testing',
       keywords: ['test', 'example'],
-      content: '# Test Skill\n\nThis is the content of the test skill.\n\n## Usage\n\nUse this skill for testing purposes.',
-      ...overrides,
+      content:
+        '# Test Skill\n\nThis is the content of the test skill.\n\n## Usage\n\nUse this skill for testing purposes.',
+      ...overrides
     };
   }
 
@@ -104,11 +104,7 @@ describe('skill-load-basics', () => {
 
       await runTool(skillLoadTool, ctx, { name: 'test-skill' }, testSignal);
 
-      expect(ctx.core.brief).toHaveBeenCalledWith(
-        'info',
-        'skill_load',
-        expect.stringContaining('Loaded: test-skill'),
-      );
+      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'skill_load', expect.stringContaining('Loaded: test-skill'));
     });
 
     it('should handle skill with empty keywords', async () => {
@@ -124,7 +120,7 @@ describe('skill-load-basics', () => {
     it('should handle skill with multiple keywords', async () => {
       const skill = createSampleSkill({
         name: 'multi-keyword',
-        keywords: ['code', 'review', 'quality', 'best-practices'],
+        keywords: ['code', 'review', 'quality', 'best-practices']
       });
       ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
@@ -190,7 +186,6 @@ describe('skill-load-content', () => {
    * Tests content handling, unicode, and special formatting cases
    */
 
-
   // Mock the loader singleton. buildSkillIndexEntry returns a minimal valid
   // SkillIndexEntry so skill_load's ctx.wiki.indexSkills([entry]) path runs.
 
@@ -201,12 +196,12 @@ describe('skill-load-content', () => {
     const skillModule: SkillModule = {
       loadSkills: vi.fn().mockResolvedValue(undefined),
       listSkills: vi.fn().mockReturnValue(skills),
-      getSkill: vi.fn().mockImplementation((name: string) => skills.find(s => s.name === name)),
+      getSkill: vi.fn().mockImplementation((name: string) => skills.find((s) => s.name === name)),
       listAllTools: vi.fn().mockReturnValue([]),
       compileCondition: vi.fn().mockResolvedValue({}),
       replaceCondition: vi.fn().mockResolvedValue({ success: true }),
       buildSkillIndexEntry: vi.fn(() => null),
-      buildAllSkillEntries: vi.fn(() => []),
+      buildAllSkillEntries: vi.fn(() => [])
     };
 
     const ctx = createMockContext(workdir);
@@ -223,7 +218,7 @@ describe('skill-load-content', () => {
       description: 'A test skill for unit testing',
       keywords: ['test', 'example'],
       content: '# Test Skill\n\nThis is the content of the test skill.',
-      ...overrides,
+      ...overrides
     };
   }
 
@@ -244,7 +239,7 @@ describe('skill-load-content', () => {
         name: 'documentation',
         description: 'Write comprehensive documentation',
         keywords: ['docs', 'markdown', 'api'],
-        content: '## Getting Started\n\nWrite clear documentation.\n\n## Tips\n- Be concise\n- Use examples',
+        content: '## Getting Started\n\nWrite clear documentation.\n\n## Tips\n- Be concise\n- Use examples'
       };
       ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
@@ -313,14 +308,14 @@ describe('skill-load-content', () => {
       const skills = [
         createSampleSkill({ name: 'skill-a' }),
         createSampleSkill({ name: 'skill-b' }),
-        createSampleSkill({ name: 'skill-c' }),
+        createSampleSkill({ name: 'skill-c' })
       ];
       ctx = createMockContextWithSkills('/tmp/test', skills);
 
       const [resultA, resultB, resultC] = await Promise.all([
         runTool(skillLoadTool, ctx, { name: 'skill-a' }, testSignal),
         runTool(skillLoadTool, ctx, { name: 'skill-b' }, testSignal),
-        runTool(skillLoadTool, ctx, { name: 'skill-c' }, testSignal),
+        runTool(skillLoadTool, ctx, { name: 'skill-c' }, testSignal)
       ]);
 
       expect(resultA).toContain('# Skill: skill-a');
@@ -333,7 +328,7 @@ describe('skill-load-content', () => {
         name: 'empty-content',
         description: 'Skill with no content',
         keywords: ['empty'],
-        content: '',
+        content: ''
       };
       ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
@@ -350,7 +345,7 @@ describe('skill-load-content', () => {
         name: 'keywords-only',
         description: '',
         keywords: ['keyword1', 'keyword2'],
-        content: 'Some content',
+        content: 'Some content'
       };
       ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
@@ -366,7 +361,7 @@ describe('skill-load-content', () => {
         name: 'description-only',
         description: 'Only has description',
         keywords: [],
-        content: 'Content here',
+        content: 'Content here'
       };
       ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
@@ -385,7 +380,6 @@ describe('skill-load-errors', () => {
    * Tests skill not found, invalid names, and edge cases
    */
 
-
   // Mock the loader singleton. buildSkillIndexEntry returns a minimal valid
   // SkillIndexEntry so skill_load's ctx.wiki.indexSkills([entry]) path runs.
 
@@ -396,12 +390,12 @@ describe('skill-load-errors', () => {
     const skillModule: SkillModule = {
       loadSkills: vi.fn().mockResolvedValue(undefined),
       listSkills: vi.fn().mockReturnValue(skills),
-      getSkill: vi.fn().mockImplementation((name: string) => skills.find(s => s.name === name)),
+      getSkill: vi.fn().mockImplementation((name: string) => skills.find((s) => s.name === name)),
       listAllTools: vi.fn().mockReturnValue([]),
       compileCondition: vi.fn().mockResolvedValue({}),
       replaceCondition: vi.fn().mockResolvedValue({ success: true }),
       buildSkillIndexEntry: vi.fn(() => null),
-      buildAllSkillEntries: vi.fn(() => []),
+      buildAllSkillEntries: vi.fn(() => [])
     };
 
     const ctx = createMockContext(workdir);
@@ -418,7 +412,7 @@ describe('skill-load-errors', () => {
       description: 'A test skill for unit testing',
       keywords: ['test', 'example'],
       content: '# Test Skill\n\nThis is the content of the test skill.',
-      ...overrides,
+      ...overrides
     };
   }
 
@@ -454,7 +448,7 @@ describe('skill-load-errors', () => {
     it('should suggest using skill_search when skill not found', async () => {
       const skills = [
         createSampleSkill({ name: 'code-review', description: 'Review code' }),
-        createSampleSkill({ name: 'testing', description: 'Write tests' }),
+        createSampleSkill({ name: 'testing', description: 'Write tests' })
       ];
       ctx = createMockContextWithSkills('/tmp/test', skills);
 

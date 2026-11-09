@@ -8,7 +8,7 @@
  * every derived controller, and the listener bookkeeping must not leak.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 
 describe('process cancel token', () => {
   // The token is a module-level singleton whose lifetime is the process. Use

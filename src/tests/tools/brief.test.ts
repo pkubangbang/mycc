@@ -2,7 +2,7 @@
  * brief.test.ts - Tests for the brief tool
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { briefTool } from '../../tools/brief.js';
 
 import type { AgentContext } from '../../types.js';
@@ -42,13 +42,6 @@ describe('briefTool', () => {
       runTool(briefTool, ctx, { message: '', confidence: 10 }, testSignal);
       expect(ctx.peer.recordBrief).not.toHaveBeenCalled();
     });
-
-
-
-
-
-
-
   });
 
   describe('edge cases', () => {
@@ -68,10 +61,6 @@ describe('briefTool', () => {
       expect(ctx.core.brief).not.toHaveBeenCalled();
     });
 
-
-
-
-
     it('should return error for missing confidence parameter', () => {
       const result = runTool(briefTool, ctx, { message: 'test' }, testSignal);
 
@@ -80,9 +69,6 @@ describe('briefTool', () => {
       expect(result).toContain('brief(message="<status>", confidence=7)');
       expect(ctx.core.brief).not.toHaveBeenCalled();
     });
-
-
-
   });
 
   describe('tool metadata and integration', () => {
@@ -101,10 +87,6 @@ describe('briefTool', () => {
     it('should require confidence parameter', () => {
       expect(briefTool.input_schema.required).toContain('confidence');
     });
-
-
-
-
 
     it('should update confusion index based on confidence', () => {
       // High confidence (10) should reduce confusion (delta = 8 - 10 = -2)

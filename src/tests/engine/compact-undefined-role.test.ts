@@ -33,7 +33,7 @@
  * post-compact corruption) and asserts none of the chokepoints crash.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 import type { Message } from '../../types.js';
 
 // --- Mocks (must be set up BEFORE importing modules that use them) ----------
@@ -46,8 +46,8 @@ vi.mock('../../loop/agent-io.js', () => ({
     verbose: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
-    error: vi.fn(),
-  },
+    error: vi.fn()
+  }
 }));
 
 // chat-provider.ts selects the active provider at module load via
@@ -63,11 +63,11 @@ vi.mock('../../engine/ollama.js', () => ({
   webSearch: vi.fn(),
   webFetch: vi.fn(),
   imgDescribe: vi.fn(),
-    readPictureCached: vi.fn(),
+  readPictureCached: vi.fn(),
   structuredChat: vi.fn(),
   healthCheck: vi.fn(),
   getEmbedding: vi.fn(),
-  MODEL: 'test-model',
+  MODEL: 'test-model'
 }));
 
 import { Triologue } from '../../loop/triologue.js';
@@ -96,7 +96,7 @@ function internals(t: Triologue): TriologueInternals {
     },
     get projectContext(): Message[] {
       return (store as unknown as { projectContext: Message[] }).projectContext;
-    },
+    }
   };
 }
 
@@ -111,10 +111,7 @@ describe('Triologue — /compact undefined-role regression (defense-in-depth)', 
   describe('getMessages()', () => {
     it('should NOT crash and should drop undefined entries from messages', () => {
       const { messages } = internals(t);
-      messages.push(
-        { role: 'user', content: 'hello' },
-        { role: 'assistant', content: 'hi' },
-      );
+      messages.push({ role: 'user', content: 'hello' }, { role: 'assistant', content: 'hi' });
       // Inject the corruption: an undefined hole in the middle + a null at end.
       messages.push(undefined as unknown as Message);
       messages.push(null as unknown as Message);
@@ -132,7 +129,7 @@ describe('Triologue — /compact undefined-role regression (defense-in-depth)', 
       messages.push(
         { role: 'user', content: 'q' } as Message,
         { content: 'no role here' } as unknown as Message,
-        { role: 'assistant', content: 'a' } as Message,
+        { role: 'assistant', content: 'a' } as Message
       );
 
       const out = t.getMessages();
@@ -144,7 +141,7 @@ describe('Triologue — /compact undefined-role regression (defense-in-depth)', 
       projectContext.push(
         undefined as unknown as Message,
         { role: 'user', content: '[ctx]' } as Message,
-        null as unknown as Message,
+        null as unknown as Message
       );
       messages.push({ role: 'user', content: 'real' } as Message);
 
@@ -170,7 +167,7 @@ describe('Triologue — /compact undefined-role regression (defense-in-depth)', 
       messages.push(
         { role: 'user', content: 'a' } as Message,
         { role: 'assistant', content: 'b' } as Message,
-        undefined as unknown as Message,
+        undefined as unknown as Message
       );
 
       // Before the fix this threw "Cannot read properties of undefined".
@@ -182,7 +179,7 @@ describe('Triologue — /compact undefined-role regression (defense-in-depth)', 
       messages.push(
         { role: 'tool', tool_name: 'bash', content: 'ok' } as Message,
         null as unknown as Message,
-        undefined as unknown as Message,
+        undefined as unknown as Message
       );
 
       expect(t.getLastRole()).toBe('tool');
@@ -212,10 +209,7 @@ describe('forkChat — trailing undefined last message guard', () => {
   });
 
   it('should not crash when the last message is undefined', () => {
-    const msgs: Message[] = [
-      { role: 'user', content: 'q' } as Message,
-      undefined as unknown as Message,
-    ];
+    const msgs: Message[] = [{ role: 'user', content: 'q' } as Message, undefined as unknown as Message];
 
     // Should not throw on the `msgs[lastIdx].role` read.
     const p = forkChat(msgs, [], 'follow-up');

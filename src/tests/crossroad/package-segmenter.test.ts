@@ -15,7 +15,7 @@
  * There is deliberately NO fallback test: when the grid cannot be produced the
  * resolver refuses to cut rather than segmenting on units nothing scored.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vite-plus/test';
 import {
   segmentsOf,
   usePackageSegmenter,
@@ -28,7 +28,6 @@ import { createSegmenter, segmentsOf as pkgSegmentsOf } from '@pkubangbang/cross
 beforeAll(() => {
   initCrossroad(pkgSegmentsOf);
 });
-
 
 const EN =
   'First paragraph of the answer.\n\nHowever, the real issue is in the API layer.\n\nI will inspect the router next.';
@@ -131,9 +130,7 @@ describe('segmentsOf — the package grid, in UTF-16 offsets', () => {
     try {
       const segs = segmentsOf(content);
       const unit = segs.find((s) => content.slice(s.start, s.end).includes('0.9.7'))!;
-      expect(content.slice(unit.start, unit.end)).toBe(
-        'The fix lands in version 0.9.7 and the release is today.'
-      );
+      expect(content.slice(unit.start, unit.end)).toBe('The fix lands in version 0.9.7 and the release is today.');
       const point = resolveTurningPoint(content, {
         word: '9',
         index: Array.from(content.slice(0, content.indexOf('9.7'))).length,
@@ -191,12 +188,10 @@ describe('segmentsOf — the package grid, in UTF-16 offsets', () => {
     // A producer that speaks code points, like the package: two emoji before
     // the boundary make code-point and UTF-16 offsets diverge by 2.
     const content = '🚀🚀 Alpha beta.';
-    usePackageSegmenter(
-      (): PkgSegment[] => [
-        { start: 0, end: 3, cutKind: 'sentence' },
-        { start: 3, end: Array.from(content).length, cutKind: 'sentence' }
-      ]
-    );
+    usePackageSegmenter((): PkgSegment[] => [
+      { start: 0, end: 3, cutKind: 'sentence' },
+      { start: 3, end: Array.from(content).length, cutKind: 'sentence' }
+    ]);
     try {
       const segs = segmentsOf(content);
       expect(segs.map((s) => content.slice(s.start, s.end)).join('')).toBe(content);
@@ -206,5 +201,3 @@ describe('segmentsOf — the package grid, in UTF-16 offsets', () => {
     }
   });
 });
-
-

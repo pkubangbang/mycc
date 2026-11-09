@@ -2,7 +2,7 @@
  * issue-close.test.ts - Tests for the issue_close tool
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { issueCloseTool } from '../../tools/issue_close.js';
 import type { AgentContext, IssueModule, CoreModule, Issue } from '../../types.js';
 import { runTool, testSignal } from './test-utils.js';
@@ -21,7 +21,7 @@ function createMockIssueModule(): IssueModule {
     removeBlockage: vi.fn().mockResolvedValue(undefined),
     publishIssue: vi.fn().mockResolvedValue(true),
     releaseIssuesOwnedBy: vi.fn().mockResolvedValue([]),
-    clearAll: vi.fn(),
+    clearAll: vi.fn()
   };
 }
 
@@ -55,7 +55,7 @@ function createMockContext(issueModule: IssueModule): AgentContext {
     getConfusionIndex: vi.fn(() => 0),
     increaseConfusionIndex: vi.fn(),
     resetConfusionIndex: vi.fn(),
-    escAware: (vi.fn() as unknown) as CoreModule['escAware'],
+    escAware: vi.fn() as unknown as CoreModule['escAware']
   };
 
   return {
@@ -67,7 +67,7 @@ function createMockContext(issueModule: IssueModule): AgentContext {
     bg: {} as never,
     team: {} as never,
     wiki: {} as never,
-    peer: {} as never,
+    peer: {} as never
   };
 }
 
@@ -82,7 +82,7 @@ function createInProgressIssue(): Issue {
     blockedBy: [],
     blocks: [],
     comments: [],
-    createdAt: new Date(),
+    createdAt: new Date()
   };
 }
 
@@ -96,7 +96,7 @@ function createPendingIssue(): Issue {
     blockedBy: [],
     blocks: [],
     comments: [],
-    createdAt: new Date(),
+    createdAt: new Date()
   };
 }
 
@@ -110,7 +110,7 @@ function createBlockingIssue(): Issue {
     blockedBy: [],
     blocks: [4, 5],
     comments: [],
-    createdAt: new Date(),
+    createdAt: new Date()
   };
 }
 
@@ -133,11 +133,16 @@ describe('issueCloseTool', () => {
   it('should close an issue as completed', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
 
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 1,
-      status: 'completed',
-      comment: 'Resolved',
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 1,
+        status: 'completed',
+        comment: 'Resolved'
+      },
+      testSignal
+    );
 
     expect(mockIssue.getIssue).toHaveBeenCalledWith(1);
     expect(mockIssue.closeIssue).toHaveBeenCalledWith(1, 'completed', 'Resolved', undefined);
@@ -148,11 +153,16 @@ describe('issueCloseTool', () => {
   it('should close an issue as failed', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
 
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 1,
-      status: 'failed',
-      comment: 'Blocked by dependency',
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 1,
+        status: 'failed',
+        comment: 'Blocked by dependency'
+      },
+      testSignal
+    );
 
     expect(mockIssue.closeIssue).toHaveBeenCalledWith(1, 'failed', 'Blocked by dependency', undefined);
     expect(result).toBe('No issues.');
@@ -162,11 +172,16 @@ describe('issueCloseTool', () => {
   it('should close an issue as abandoned', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
 
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 1,
-      status: 'abandoned',
-      comment: 'Out of scope',
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 1,
+        status: 'abandoned',
+        comment: 'Out of scope'
+      },
+      testSignal
+    );
 
     expect(mockIssue.closeIssue).toHaveBeenCalledWith(1, 'abandoned', 'Out of scope', undefined);
     expect(result).toBe('No issues.');
@@ -176,11 +191,16 @@ describe('issueCloseTool', () => {
   it('should close an issue with a comment', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
 
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 1,
-      status: 'completed',
-      comment: 'All tests passing',
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 1,
+        status: 'completed',
+        comment: 'All tests passing'
+      },
+      testSignal
+    );
 
     expect(mockIssue.closeIssue).toHaveBeenCalledWith(1, 'completed', 'All tests passing', undefined);
     expect(result).toBe('No issues.');
@@ -190,12 +210,17 @@ describe('issueCloseTool', () => {
   it('should close an issue with comment and poster', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
 
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 1,
-      status: 'completed',
-      comment: 'Done',
-      poster: 'developer',
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 1,
+        status: 'completed',
+        comment: 'Done',
+        poster: 'developer'
+      },
+      testSignal
+    );
 
     expect(mockIssue.closeIssue).toHaveBeenCalledWith(1, 'completed', 'Done', 'developer');
     expect(result).toBe('No issues.');
@@ -204,11 +229,16 @@ describe('issueCloseTool', () => {
   it('should close a pending issue directly', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createPendingIssue());
 
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 2,
-      status: 'abandoned',
-      comment: 'Not needed anymore',
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 2,
+        status: 'abandoned',
+        comment: 'Not needed anymore'
+      },
+      testSignal
+    );
 
     expect(mockIssue.closeIssue).toHaveBeenCalledWith(2, 'abandoned', 'Not needed anymore', undefined);
     expect(result).toBe('No issues.');
@@ -217,9 +247,14 @@ describe('issueCloseTool', () => {
   // ========== Error Case Tests ==========
 
   it('should reject missing id', async () => {
-    const result = await runTool(issueCloseTool, ctx, {
-      status: 'completed',
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        status: 'completed'
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: id must be an integer');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_close', 'Invalid id parameter');
@@ -228,20 +263,30 @@ describe('issueCloseTool', () => {
   });
 
   it('should reject non-integer id', async () => {
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 'abc',
-      status: 'completed',
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 'abc',
+        status: 'completed'
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: id must be an integer');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_close', 'Invalid id parameter');
   });
 
   it('should reject float id', async () => {
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 1.5,
-      status: 'completed',
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 1.5,
+        status: 'completed'
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: id must be an integer');
   });
@@ -249,9 +294,14 @@ describe('issueCloseTool', () => {
   it('should reject missing status', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
 
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 1,
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 1
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: status must be one of: completed, failed, abandoned');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_close', 'Invalid status: undefined');
@@ -260,10 +310,15 @@ describe('issueCloseTool', () => {
   it('should reject invalid status', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
 
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 1,
-      status: 'invalid_status',
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 1,
+        status: 'invalid_status'
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: status must be one of: completed, failed, abandoned');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_close', 'Invalid status: invalid_status');
@@ -272,10 +327,15 @@ describe('issueCloseTool', () => {
   it('should reject status not in allowed list', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
 
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 1,
-      status: 'pending', // pending is a valid status but not for closing
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 1,
+        status: 'pending' // pending is a valid status but not for closing
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: status must be one of: completed, failed, abandoned');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_close', 'Invalid status: pending');
@@ -284,11 +344,16 @@ describe('issueCloseTool', () => {
   it('should return error for non-existent issue', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(undefined);
 
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 999,
-      status: 'completed',
-      comment: 'Closing',
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 999,
+        status: 'completed',
+        comment: 'Closing'
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: Issue #999 not found');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_close', 'Issue #999 not found');
@@ -300,12 +365,19 @@ describe('issueCloseTool', () => {
   it('should reject missing comment', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
 
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 1,
-      status: 'completed',
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 1,
+        status: 'completed'
+      },
+      testSignal
+    );
 
-    expect(result).toBe('Error: comment is required to explain the resolution or reason for closure. Provide a non-empty comment.');
+    expect(result).toBe(
+      'Error: comment is required to explain the resolution or reason for closure. Provide a non-empty comment.'
+    );
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_close', 'Missing or empty comment');
     expect(mockIssue.getIssue).not.toHaveBeenCalled();
     expect(mockIssue.closeIssue).not.toHaveBeenCalled();
@@ -314,13 +386,20 @@ describe('issueCloseTool', () => {
   it('should reject empty string comment', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
 
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 1,
-      status: 'completed',
-      comment: '',
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 1,
+        status: 'completed',
+        comment: ''
+      },
+      testSignal
+    );
 
-    expect(result).toBe('Error: comment is required to explain the resolution or reason for closure. Provide a non-empty comment.');
+    expect(result).toBe(
+      'Error: comment is required to explain the resolution or reason for closure. Provide a non-empty comment.'
+    );
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_close', 'Missing or empty comment');
     expect(mockIssue.closeIssue).not.toHaveBeenCalled();
   });
@@ -328,13 +407,20 @@ describe('issueCloseTool', () => {
   it('should reject whitespace-only comment', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
 
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 1,
-      status: 'completed',
-      comment: '   ',
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 1,
+        status: 'completed',
+        comment: '   '
+      },
+      testSignal
+    );
 
-    expect(result).toBe('Error: comment is required to explain the resolution or reason for closure. Provide a non-empty comment.');
+    expect(result).toBe(
+      'Error: comment is required to explain the resolution or reason for closure. Provide a non-empty comment.'
+    );
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_close', 'Missing or empty comment');
     expect(mockIssue.closeIssue).not.toHaveBeenCalled();
   });
@@ -342,13 +428,20 @@ describe('issueCloseTool', () => {
   it('should reject non-string comment', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
 
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 1,
-      status: 'completed',
-      comment: 42,
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 1,
+        status: 'completed',
+        comment: 42
+      },
+      testSignal
+    );
 
-    expect(result).toBe('Error: comment is required to explain the resolution or reason for closure. Provide a non-empty comment.');
+    expect(result).toBe(
+      'Error: comment is required to explain the resolution or reason for closure. Provide a non-empty comment.'
+    );
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_close', 'Missing or empty comment');
     expect(mockIssue.closeIssue).not.toHaveBeenCalled();
   });
@@ -358,11 +451,16 @@ describe('issueCloseTool', () => {
   it('should allow closing an in_progress issue', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
 
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 1,
-      status: 'completed',
-      comment: 'Done',
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 1,
+        status: 'completed',
+        comment: 'Done'
+      },
+      testSignal
+    );
 
     expect(mockIssue.closeIssue).toHaveBeenCalled();
     expect(result).toBe('No issues.');
@@ -371,11 +469,16 @@ describe('issueCloseTool', () => {
   it('should allow closing a pending issue', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createPendingIssue());
 
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 2,
-      status: 'failed',
-      comment: 'Could not reproduce',
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 2,
+        status: 'failed',
+        comment: 'Could not reproduce'
+      },
+      testSignal
+    );
 
     expect(mockIssue.closeIssue).toHaveBeenCalled();
     expect(result).toBe('No issues.');
@@ -387,11 +490,16 @@ describe('issueCloseTool', () => {
     const blockingIssue = createBlockingIssue();
     mockIssue.getIssue = vi.fn().mockResolvedValue(blockingIssue);
 
-    const result = await runTool(issueCloseTool, ctx, {
-      id: 3,
-      status: 'completed',
-      comment: 'Blocker resolved',
-    }, testSignal);
+    const result = await runTool(
+      issueCloseTool,
+      ctx,
+      {
+        id: 3,
+        status: 'completed',
+        comment: 'Blocker resolved'
+      },
+      testSignal
+    );
 
     // The handler calls closeIssue which should handle blockage removal
     expect(mockIssue.closeIssue).toHaveBeenCalledWith(3, 'completed', 'Blocker resolved', undefined);

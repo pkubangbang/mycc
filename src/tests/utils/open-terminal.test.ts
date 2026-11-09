@@ -10,7 +10,7 @@
  * into a bash syntax error — the command never runs.
  */
 
-import { describe, it, expect, afterEach, beforeEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vite-plus/test';
 import { wrapCommand } from '../../utils/open-terminal.js';
 
 const ORIG_PATH = process.env.PATH;

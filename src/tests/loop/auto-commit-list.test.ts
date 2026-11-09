@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 /**
  * Tests for the core-owned auto-commit allow-list (AutoState) and the
@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const execMock = vi.fn();
 vi.mock('../../loop/agent-io.js', () => ({
-  agentIO: { exec: (...args: unknown[]) => execMock(...args) },
+  agentIO: { exec: (...args: unknown[]) => execMock(...args) }
 }));
 
 import {
@@ -18,7 +18,7 @@ import {
   parseAutoCommitEntry,
   formatAutoCommitEntry,
   autoCommitSeedFromFlag,
-  AUTO_ADD_SUFFIX,
+  AUTO_ADD_SUFFIX
 } from '../../loop/auto-state.js';
 import { autoCommitCommand } from '../../slashes/auto-commit.js';
 import type { SlashCommandContext } from '../../types.js';
@@ -63,10 +63,7 @@ describe('autoCommitSeedFromFlag', () => {
   });
 
   it('marks every launch-granted branch as autoAdd (the flag predates auto mode gating)', () => {
-    expect(autoCommitSeedFromFlag('main, dev')).toEqual([
-      `main:${AUTO_ADD_SUFFIX}`,
-      `dev:${AUTO_ADD_SUFFIX}`,
-    ]);
+    expect(autoCommitSeedFromFlag('main, dev')).toEqual([`main:${AUTO_ADD_SUFFIX}`, `dev:${AUTO_ADD_SUFFIX}`]);
   });
 });
 
@@ -177,14 +174,14 @@ describe('/auto-commit slash command', () => {
       getMode: () => 'normal' as const,
       addAutoCommitBranches: (b: readonly string[], a: boolean) => autoState.addAutoCommitBranches(b, a),
       removeAutoCommitBranches: (b: readonly string[]) => autoState.removeAutoCommitBranches(b),
-      clearAutoCommitBranches: () => autoState.clearAutoCommitBranches(),
+      clearAutoCommitBranches: () => autoState.clearAutoCommitBranches()
     };
     return {
       query: '',
       args: ['/auto-commit'],
       ctx: { core } as unknown as SlashCommandContext['ctx'],
       triologue: null,
-      sessionFilePath: '',
+      sessionFilePath: ''
     };
   }
 
@@ -214,10 +211,7 @@ describe('/auto-commit slash command', () => {
 
   it('on accepts a comma list and the --auto-add flag', async () => {
     await run(['on', '--auto-add', 'main,dev']);
-    expect(autoState.getAutoCommitBranches()).toEqual([
-      `main:${AUTO_ADD_SUFFIX}`,
-      `dev:${AUTO_ADD_SUFFIX}`,
-    ]);
+    expect(autoState.getAutoCommitBranches()).toEqual([`main:${AUTO_ADD_SUFFIX}`, `dev:${AUTO_ADD_SUFFIX}`]);
   });
 
   it('on with no branches is a usage error and changes nothing', async () => {

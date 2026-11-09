@@ -2,12 +2,12 @@
  * open-editor-terminal.test.ts - Terminal editor tests
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { spawn } from 'child_process';
 
 // Mock child_process.spawn
 vi.mock('child_process', () => ({
-  spawn: vi.fn(),
+  spawn: vi.fn()
 }));
 
 // Store original env
@@ -23,7 +23,7 @@ const { openEditor } = await import('../../utils/open-editor.js');
  *   [binary, ...args.map(a => a.includes(' ') ? `"${a}"` : a)].join(' ')
  */
 function winCmd(binary: string, ...args: string[]): string {
-  return [binary, ...args.map(a => a.includes(' ') ? `"${a}"` : a)].join(' ');
+  return [binary, ...args.map((a) => (a.includes(' ') ? `"${a}"` : a))].join(' ');
 }
 
 // These tests assert the Windows-specific spawn shape — spawn(cmdString, [],
@@ -55,7 +55,7 @@ describePlatform('openEditor - terminal editors', () => {
         on: vi.fn((event, callback) => {
           if (event === 'close') callback(0);
           return mockProcess;
-        }),
+        })
       };
       mockSpawn.mockReturnValue(mockProcess as unknown as ReturnType<typeof spawn>);
 
@@ -74,7 +74,7 @@ describePlatform('openEditor - terminal editors', () => {
         on: vi.fn((event, callback) => {
           if (event === 'close') callback(0);
           return mockProcess;
-        }),
+        })
       };
       mockSpawn.mockReturnValue(mockProcess as unknown as ReturnType<typeof spawn>);
 
@@ -93,7 +93,7 @@ describePlatform('openEditor - terminal editors', () => {
         on: vi.fn((event, callback) => {
           if (event === 'close') callback(0);
           return mockProcess;
-        }),
+        })
       };
       mockSpawn.mockReturnValue(mockProcess as unknown as ReturnType<typeof spawn>);
 
@@ -112,7 +112,7 @@ describePlatform('openEditor - terminal editors', () => {
         on: vi.fn((event, callback) => {
           if (event === 'close') callback(0);
           return mockProcess;
-        }),
+        })
       };
       mockSpawn.mockReturnValue(mockProcess as unknown as ReturnType<typeof spawn>);
 
@@ -127,7 +127,7 @@ describePlatform('openEditor - terminal editors', () => {
         on: vi.fn((event, callback) => {
           if (event === 'close') callback(0);
           return mockProcess;
-        }),
+        })
       };
       mockSpawn.mockReturnValue(mockProcess as unknown as ReturnType<typeof spawn>);
 
@@ -148,18 +148,14 @@ describePlatform('openEditor - terminal editors', () => {
         on: vi.fn((event, callback) => {
           if (event === 'close') callback(0);
           return mockProcess;
-        }),
+        })
       };
       mockSpawn.mockReturnValue(mockProcess as unknown as ReturnType<typeof spawn>);
 
       await openEditor(['file.ts:25:8'], { editor: 'neovim' });
 
       // On Windows: spawn(cmdString, [], options) to avoid DEP0190
-      expect(mockSpawn).toHaveBeenCalledWith(
-        winCmd('nvim', '+call cursor(25, 8)', 'file.ts'),
-        [],
-        expect.any(Object)
-      );
+      expect(mockSpawn).toHaveBeenCalledWith(winCmd('nvim', '+call cursor(25, 8)', 'file.ts'), [], expect.any(Object));
     });
 
     it('should spawn by binary name (nvim)', async () => {
@@ -167,18 +163,14 @@ describePlatform('openEditor - terminal editors', () => {
         on: vi.fn((event, callback) => {
           if (event === 'close') callback(0);
           return mockProcess;
-        }),
+        })
       };
       mockSpawn.mockReturnValue(mockProcess as unknown as ReturnType<typeof spawn>);
 
       await openEditor(['file.ts:10'], { editor: 'nvim' });
 
       // On Windows: spawn(cmdString, [], options) to avoid DEP0190
-      expect(mockSpawn).toHaveBeenCalledWith(
-        winCmd('nvim', '+call cursor(10, 1)', 'file.ts'),
-        [],
-        expect.any(Object)
-      );
+      expect(mockSpawn).toHaveBeenCalledWith(winCmd('nvim', '+call cursor(10, 1)', 'file.ts'), [], expect.any(Object));
     });
   });
 
@@ -188,7 +180,7 @@ describePlatform('openEditor - terminal editors', () => {
         on: vi.fn((event, callback) => {
           if (event === 'close') callback(0);
           return mockProcess;
-        }),
+        })
       };
       mockSpawn.mockReturnValue(mockProcess as unknown as ReturnType<typeof spawn>);
 
@@ -205,7 +197,7 @@ describePlatform('openEditor - terminal editors', () => {
         on: vi.fn((event, callback) => {
           if (event === 'close') callback(0);
           return mockProcess;
-        }),
+        })
       };
       mockSpawn.mockReturnValue(mockProcess as unknown as ReturnType<typeof spawn>);
 
@@ -226,7 +218,7 @@ describePlatform('openEditor - terminal editors', () => {
         on: vi.fn((event, callback) => {
           if (event === 'close') callback(0);
           return mockProcess;
-        }),
+        })
       };
       mockSpawn.mockReturnValue(mockProcess as unknown as ReturnType<typeof spawn>);
 
@@ -245,7 +237,7 @@ describePlatform('openEditor - terminal editors', () => {
         on: vi.fn((event, callback) => {
           if (event === 'close') callback(0);
           return mockProcess;
-        }),
+        })
       };
       mockSpawn.mockReturnValue(mockProcess as unknown as ReturnType<typeof spawn>);
 
@@ -262,7 +254,7 @@ describePlatform('openEditor - terminal editors', () => {
             setTimeout(() => callback(0), 10);
           }
           return mockProcess;
-        }),
+        })
       };
       mockSpawn.mockReturnValue(mockProcess as unknown as ReturnType<typeof spawn>);
 
@@ -279,13 +271,11 @@ describePlatform('openEditor - terminal editors', () => {
         on: vi.fn((event, callback) => {
           if (event === 'close') callback(1);
           return mockProcess;
-        }),
+        })
       };
       mockSpawn.mockReturnValue(mockProcess as unknown as ReturnType<typeof spawn>);
 
-      await expect(openEditor(['file.ts'], { editor: 'vim' })).rejects.toThrow(
-        'Editor exited with code 1'
-      );
+      await expect(openEditor(['file.ts'], { editor: 'vim' })).rejects.toThrow('Editor exited with code 1');
     });
 
     it('should handle spawn error for terminal editors', async () => {
@@ -295,7 +285,7 @@ describePlatform('openEditor - terminal editors', () => {
             callback(new Error('spawn vim ENOENT'));
           }
           return mockProcess;
-        }),
+        })
       };
       mockSpawn.mockReturnValue(mockProcess as unknown as ReturnType<typeof spawn>);
 
@@ -311,7 +301,7 @@ describePlatform('openEditor - terminal editors', () => {
             callback(new Error('spawn nonexistent-editor ENOENT'));
           }
           return mockProcess;
-        }),
+        })
       };
       mockSpawn.mockReturnValue(mockProcess as unknown as ReturnType<typeof spawn>);
 

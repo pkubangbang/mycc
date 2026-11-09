@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 
 // Mock LineEditor before importing agent-io
 vi.mock('../../utils/line-editor.js', () => {
@@ -7,8 +7,8 @@ vi.mock('../../utils/line-editor.js', () => {
       handleKey: vi.fn(),
       resize: vi.fn(),
       getHistory: vi.fn().mockReturnValue([]),
-      close: vi.fn(),
-    })),
+      close: vi.fn()
+    }))
   };
 });
 
@@ -25,8 +25,7 @@ describe('agent-io', () => {
     // Reset singleton state before each test
     (agentIO as unknown as { neglectedModeFlag: boolean }).neglectedModeFlag = false;
     (agentIO as unknown as { activeLineEditor: unknown }).activeLineEditor = null;
-    (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> }).outputBuffer =
-      [];
+    (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> }).outputBuffer = [];
     (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> }).onNeglectedCallbacks = new Set();
 
     // Mock console methods
@@ -63,7 +62,7 @@ describe('agent-io', () => {
       it('should buffer when line editor is active', () => {
         (agentIO as unknown as { activeLineEditor: unknown }).activeLineEditor = {
           handleKey: vi.fn(),
-          close: vi.fn(),
+          close: vi.fn()
         };
 
         agentIO.log('buffered during prompt');
@@ -73,8 +72,6 @@ describe('agent-io', () => {
           .outputBuffer;
         expect(buffer).toHaveLength(1);
       });
-
-
     });
 
     describe('warn', () => {
@@ -100,7 +97,7 @@ describe('agent-io', () => {
       it('should buffer when line editor is active', () => {
         (agentIO as unknown as { activeLineEditor: unknown }).activeLineEditor = {
           handleKey: vi.fn(),
-          close: vi.fn(),
+          close: vi.fn()
         };
 
         agentIO.warn('buffered warning during prompt');
@@ -135,7 +132,7 @@ describe('agent-io', () => {
       it('should buffer when line editor is active', () => {
         (agentIO as unknown as { activeLineEditor: unknown }).activeLineEditor = {
           handleKey: vi.fn(),
-          close: vi.fn(),
+          close: vi.fn()
         };
 
         agentIO.error('buffered error during prompt');
@@ -174,15 +171,12 @@ describe('agent-io', () => {
       expect(consoleErrorSpy).not.toHaveBeenCalled();
     });
 
-
-
-
     it('should flush mixed messages in order', () => {
       (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> }).outputBuffer = [
         { method: 'log', args: ['log 1'] },
         { method: 'warn', args: ['warn 1'] },
         { method: 'error', args: ['error 1'] },
-        { method: 'log', args: ['log 2'] },
+        { method: 'log', args: ['log 2'] }
       ];
 
       agentIO.flushOutput();
@@ -197,10 +191,6 @@ describe('agent-io', () => {
       expect(consoleErrorSpy).toHaveBeenNthCalledWith(1, 'error 1');
       expect(consoleLogSpy).toHaveBeenNthCalledWith(2, 'log 2');
     });
-
-
-
-
 
     it('should not interfere with new buffering after flush', () => {
       // First round
@@ -217,7 +207,6 @@ describe('agent-io', () => {
       expect(consoleLogSpy).toHaveBeenCalledTimes(2);
     });
   });
-
 });
 
 describe('agent-io — WebUI mirror replay (row lead-044)', () => {
@@ -249,8 +238,8 @@ describe('agent-io — WebUI mirror replay (row lead-044)', () => {
 
   it('replays a buffered line that had no sink when it was emitted', () => {
     agentIO.setNeglectedMode(true);
-    agentIO.log('emitted before serve started');       // mirror: 'no-sink'
-    installMirror();                                   // serve comes up
+    agentIO.log('emitted before serve started'); // mirror: 'no-sink'
+    installMirror(); // serve comes up
     agentIO.setNeglectedMode(false);
     agentIO.flushOutput();
 
@@ -260,7 +249,7 @@ describe('agent-io — WebUI mirror replay (row lead-044)', () => {
   it('does NOT replay a brief() line — brief mirrors its own clean message', () => {
     agentIO.setNeglectedMode(true);
     installMirror();
-    agentIO.brief('warn', 'hook', 'a warning');        // body is 'suppressed'
+    agentIO.brief('warn', 'hook', 'a warning'); // body is 'suppressed'
     agentIO.setNeglectedMode(false);
     mirror.mockClear();
     agentIO.flushOutput();
@@ -275,7 +264,7 @@ describe('agent-io — WebUI mirror replay (row lead-044)', () => {
   it('replays nothing twice when a line was already mirrored', () => {
     installMirror();
     agentIO.setNeglectedMode(true);
-    agentIO.log('already sent');                        // mirror: 'sent'
+    agentIO.log('already sent'); // mirror: 'sent'
     agentIO.setNeglectedMode(false);
     mirror.mockClear();
     agentIO.flushOutput();

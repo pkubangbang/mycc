@@ -8,19 +8,19 @@
  * - Atomic file writes and error handling
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { ConditionRegistry, type Condition } from "../hook/conditions.js";
-import { Sequence } from "../hook/sequence.js";
-import * as fs from "fs";
-import * as path from "path";
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test';
+import { ConditionRegistry, type Condition } from '../hook/conditions.js';
+import { Sequence } from '../hook/sequence.js';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // Mock getMyccDir to use temp directory within project
-const testDir = path.join(process.cwd(), ".tmp-test-conditions");
-vi.mock("../config.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../config.js")>();
+const testDir = path.join(process.cwd(), '.tmp-test-conditions');
+vi.mock('../config.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../config.js')>();
   return {
     ...actual,
-    getMyccDir: () => testDir,
+    getMyccDir: () => testDir
   };
 });
 
@@ -28,9 +28,9 @@ vi.mock("../config.js", async (importOriginal) => {
 // ConditionRegistry Core Tests
 // ============================================================================
 
-describe("ConditionRegistry", () => {
+describe('ConditionRegistry', () => {
   let registry: ConditionRegistry;
-  const conditionsFile = path.join(testDir, "conditions.json");
+  const conditionsFile = path.join(testDir, 'conditions.json');
 
   beforeEach(() => {
     // Clean up test directory
@@ -54,146 +54,146 @@ describe("ConditionRegistry", () => {
   // load()
   // ============================================================================
 
-  describe("load()", () => {
-    it("should handle missing file gracefully", async () => {
+  describe('load()', () => {
+    it('should handle missing file gracefully', async () => {
       // No file exists
       await registry.load();
-      expect(registry.get("any-skill")).toBeUndefined();
+      expect(registry.get('any-skill')).toBeUndefined();
     });
 
-    it("should load valid conditions.json", async () => {
+    it('should load valid conditions.json', async () => {
       const conditions: Record<string, Condition> = {
-        "pre-commit-lint": {
-          trigger: ["git_commit"],
-          when: "run lint before commit",
+        'pre-commit-lint': {
+          trigger: ['git_commit'],
+          when: 'run lint before commit',
           condition: 'turn.count("edit_file") > 0 && turn.lastIndex("bash#pnpm lint") == -1',
           action: {
-            type: "inject_before",
-            tool: "bash",
-            args: { command: "pnpm lint", intent: "TEST ARTIFACT TO verify lint before commit" },
+            type: 'inject_before',
+            tool: 'bash',
+            args: { command: 'pnpm lint', intent: 'TEST ARTIFACT TO verify lint before commit' }
           },
-          version: 1,
+          version: 1
         },
-        "block-dangerous-push": {
-          trigger: ["bash"],
-          when: "block dangerous push to main",
+        'block-dangerous-push': {
+          trigger: ['bash'],
+          when: 'block dangerous push to main',
           condition: 'turn.count("bash#git push --force") > 0',
-          action: { type: "block", reason: "Dangerous push to main is prohibited" },
-          version: 1,
-        },
+          action: { type: 'block', reason: 'Dangerous push to main is prohibited' },
+          version: 1
+        }
       };
 
       fs.writeFileSync(conditionsFile, JSON.stringify(conditions, null, 2));
       await registry.load();
 
-      expect(registry.get("pre-commit-lint")).toMatchObject({
-        trigger: ["git_commit"],
-        when: "run lint before commit",
+      expect(registry.get('pre-commit-lint')).toMatchObject({
+        trigger: ['git_commit'],
+        when: 'run lint before commit',
         condition: 'turn.count("edit_file") > 0 && turn.lastIndex("bash#pnpm lint") == -1',
         action: {
-          type: "inject_before",
-          tool: "bash",
-          args: { command: "pnpm lint", intent: "TEST ARTIFACT TO verify lint before commit" },
+          type: 'inject_before',
+          tool: 'bash',
+          args: { command: 'pnpm lint', intent: 'TEST ARTIFACT TO verify lint before commit' }
         },
-        version: 1,
+        version: 1
       });
-      expect(registry.get("block-dangerous-push")).toMatchObject({
-        trigger: ["bash"],
-        action: { type: "block", reason: "Dangerous push to main is prohibited" },
-        version: 1,
+      expect(registry.get('block-dangerous-push')).toMatchObject({
+        trigger: ['bash'],
+        action: { type: 'block', reason: 'Dangerous push to main is prohibited' },
+        version: 1
       });
     });
 
-    it("should handle invalid JSON gracefully", async () => {
-      fs.writeFileSync(conditionsFile, "{ invalid json }");
+    it('should handle invalid JSON gracefully', async () => {
+      fs.writeFileSync(conditionsFile, '{ invalid json }');
 
       // Should not throw, just log error
       await registry.load();
-      expect(registry.get("any-skill")).toBeUndefined();
+      expect(registry.get('any-skill')).toBeUndefined();
     });
 
-    it("should handle malformed JSON with partial content", async () => {
+    it('should handle malformed JSON with partial content', async () => {
       fs.writeFileSync(conditionsFile, '{"skill1": { "trigger": "bash"'); // Incomplete
 
       await registry.load();
-      expect(registry.get("skill1")).toBeUndefined();
+      expect(registry.get('skill1')).toBeUndefined();
     });
 
-    it("should load a condition with an empty trigger (warning only, not rejected)", async () => {
+    it('should load a condition with an empty trigger (warning only, not rejected)', async () => {
       const conditions: Record<string, Condition> = {
-        "test-skill": {
-          trigger: [""], // Empty trigger - produces warning but is valid
-          when: "test",
-          condition: "true",
-          action: { type: "message" },
-          version: 1,
-        },
+        'test-skill': {
+          trigger: [''], // Empty trigger - produces warning but is valid
+          when: 'test',
+          condition: 'true',
+          action: { type: 'message' },
+          version: 1
+        }
       };
 
       fs.writeFileSync(conditionsFile, JSON.stringify(conditions, null, 2));
       const result = await registry.load();
 
       // Empty trigger passes validation (warning only), so the condition loads.
-      const cond = registry.get("test-skill");
-      expect(cond?.trigger).toEqual([""]);
+      const cond = registry.get('test-skill');
+      expect(cond?.trigger).toEqual(['']);
       // A warning about the empty trigger is reported.
-      expect(result.warnings.some((w) => w.includes("trigger"))).toBe(true);
+      expect(result.warnings.some((w) => w.includes('trigger'))).toBe(true);
     });
 
-    it("should clamp invalid timeout values", async () => {
+    it('should clamp invalid timeout values', async () => {
       const conditions: Record<string, Condition> = {
-        "test-skill": {
-          trigger: ["bash"],
-          when: "test",
-          condition: "true",
+        'test-skill': {
+          trigger: ['bash'],
+          when: 'test',
+          condition: 'true',
           action: {
-            type: "inject_before",
-            tool: "bash",
-            args: { command: "test", timeout: 100, intent: "TEST ARTIFACT TO verify timeout clamping" }, // Out of range
+            type: 'inject_before',
+            tool: 'bash',
+            args: { command: 'test', timeout: 100, intent: 'TEST ARTIFACT TO verify timeout clamping' } // Out of range
           },
-          version: 1,
-        },
+          version: 1
+        }
       };
 
       fs.writeFileSync(conditionsFile, JSON.stringify(conditions, null, 2));
       await registry.load();
 
-      const cond = registry.get("test-skill");
+      const cond = registry.get('test-skill');
       const args = cond?.action as { args: { timeout?: number } };
       // Timeout is clamped to 1-60 range in applyRuntimeFixes
       expect(args.args.timeout).toBeLessThanOrEqual(60);
     });
 
-    it("should fix timeout in history entries too", async () => {
+    it('should fix timeout in history entries too', async () => {
       const conditions: Record<string, Condition> = {
-        "test-skill": {
-          trigger: ["bash"],
-          when: "test",
-          condition: "true",
+        'test-skill': {
+          trigger: ['bash'],
+          when: 'test',
+          condition: 'true',
           action: {
-            type: "inject_before",
-            tool: "bash",
-            args: { command: "test", intent: "TEST ARTIFACT TO verify timeout fix" },
+            type: 'inject_before',
+            tool: 'bash',
+            args: { command: 'test', intent: 'TEST ARTIFACT TO verify timeout fix' }
           },
           version: 2,
           history: [
             {
               version: 1,
-              condition: "true",
+              condition: 'true',
               action: {
-                type: "inject_before",
-                tool: "bash",
-                args: { command: "test", timeout: 0 }, // Invalid
-              },
-            },
-          ],
-        },
+                type: 'inject_before',
+                tool: 'bash',
+                args: { command: 'test', timeout: 0 } // Invalid
+              }
+            }
+          ]
+        }
       };
 
       fs.writeFileSync(conditionsFile, JSON.stringify(conditions, null, 2));
       await registry.load();
 
-      const cond = registry.get("test-skill");
+      const cond = registry.get('test-skill');
       const historyEntry = cond?.history?.[0];
       const args = historyEntry?.action as { args: { timeout?: number } };
       expect(args.args.timeout).toBeGreaterThanOrEqual(1);
@@ -204,40 +204,40 @@ describe("ConditionRegistry", () => {
   // save()
   // ============================================================================
 
-  describe("save()", () => {
-    it("should save conditions to file", async () => {
-      registry.set("test-skill", {
-        trigger: ["bash"],
-        when: "test",
-        condition: "true",
-        action: { type: "message" },
-        version: 1,
+  describe('save()', () => {
+    it('should save conditions to file', async () => {
+      registry.set('test-skill', {
+        trigger: ['bash'],
+        when: 'test',
+        condition: 'true',
+        action: { type: 'message' },
+        version: 1
       });
 
       await registry.save();
 
       expect(fs.existsSync(conditionsFile)).toBe(true);
-      const content = fs.readFileSync(conditionsFile, "utf-8");
+      const content = fs.readFileSync(conditionsFile, 'utf-8');
       const parsed = JSON.parse(content);
-      expect(parsed["test-skill"]).toMatchObject({
-        trigger: ["bash"],
-        when: "test",
-        condition: "true",
-        action: { type: "message" },
-        version: 1,
+      expect(parsed['test-skill']).toMatchObject({
+        trigger: ['bash'],
+        when: 'test',
+        condition: 'true',
+        action: { type: 'message' },
+        version: 1
       });
     });
 
-    it("should create directory if missing", async () => {
+    it('should create directory if missing', async () => {
       // Remove directory
       fs.rmSync(testDir, { recursive: true, force: true });
 
-      registry.set("test-skill", {
-        trigger: ["bash"],
-        when: "test",
-        condition: "true",
-        action: { type: "message" },
-        version: 1,
+      registry.set('test-skill', {
+        trigger: ['bash'],
+        when: 'test',
+        condition: 'true',
+        action: { type: 'message' },
+        version: 1
       });
 
       await registry.save();
@@ -245,114 +245,115 @@ describe("ConditionRegistry", () => {
       expect(fs.existsSync(testDir)).toBe(true);
       expect(fs.existsSync(conditionsFile)).toBe(true);
     });
-
-
   });
 
   // get() / set()
-  describe("get() / set()", () => {
-    it("should get undefined for non-existent skill", () => {
-      expect(registry.get("nonexistent")).toBeUndefined();
+  describe('get() / set()', () => {
+    it('should get undefined for non-existent skill', () => {
+      expect(registry.get('nonexistent')).toBeUndefined();
     });
 
-    it("should set and get condition", () => {
+    it('should set and get condition', () => {
       const condition: Condition = {
-        trigger: ["bash"],
-        when: "test",
-        condition: "true",
-        action: { type: "message" },
-        version: 1,
+        trigger: ['bash'],
+        when: 'test',
+        condition: 'true',
+        action: { type: 'message' },
+        version: 1
       };
-      registry.set("test-skill", condition);
-      expect(registry.get("test-skill")).toEqual(condition);
+      registry.set('test-skill', condition);
+      expect(registry.get('test-skill')).toEqual(condition);
     });
-
   });
 
   // findByTrigger()
-  describe("findByTrigger()", () => {
+  describe('findByTrigger()', () => {
     beforeEach(() => {
-      registry.set("any-hook", {
-        trigger: ["*"], when: "any tool", condition: "true",
-        action: { type: "message" }, version: 1,
+      registry.set('any-hook', {
+        trigger: ['*'],
+        when: 'any tool',
+        condition: 'true',
+        action: { type: 'message' },
+        version: 1
       });
-      registry.set("bash-hook", {
-        trigger: ["bash"], when: "bash only", condition: "true",
-        action: { type: "message" }, version: 1,
+      registry.set('bash-hook', {
+        trigger: ['bash'],
+        when: 'bash only',
+        condition: 'true',
+        action: { type: 'message' },
+        version: 1
       });
-      registry.set("commit-hook", {
-        trigger: ["git_commit"], when: "commit only", condition: "true",
-        action: { type: "message" }, version: 1,
+      registry.set('commit-hook', {
+        trigger: ['git_commit'],
+        when: 'commit only',
+        condition: 'true',
+        action: { type: 'message' },
+        version: 1
       });
     });
 
-    it("should find conditions with exact trigger", () => {
-      const bashHooks = registry.findByTrigger("bash");
+    it('should find conditions with exact trigger', () => {
+      const bashHooks = registry.findByTrigger('bash');
       expect(bashHooks).toHaveLength(2);
-      expect(bashHooks.some(h => h.when === "bash only")).toBe(true);
+      expect(bashHooks.some((h) => h.when === 'bash only')).toBe(true);
     });
-
-
   });
 
   // matches()
-  describe("matches()", () => {
+  describe('matches()', () => {
     let seq: Sequence;
 
     beforeEach(() => {
       seq = new Sequence();
 
-      registry.set("edit-reminder", {
-        trigger: ["edit_file"],
-        when: "remind about tests after edit",
+      registry.set('edit-reminder', {
+        trigger: ['edit_file'],
+        when: 'remind about tests after edit',
         condition: 'turn.count("edit_file") >= 2',
-        action: { type: "message" },
-        version: 1,
+        action: { type: 'message' },
+        version: 1
       });
 
-      registry.set("any-error", {
-        trigger: ["*"],
-        when: "search wiki on error",
-        condition: "turn.hadError()",
-        action: { type: "inject_before", tool: "wiki_get", args: { query: "error", domain: "pitfall" } },
-        version: 1,
+      registry.set('any-error', {
+        trigger: ['*'],
+        when: 'search wiki on error',
+        condition: 'turn.hadError()',
+        action: { type: 'inject_before', tool: 'wiki_get', args: { query: 'error', domain: 'pitfall' } },
+        version: 1
       });
     });
 
-    it("should match condition that evaluates to true", () => {
-      seq.add({ tool: "edit_file", args: { path: "a.ts" }, result: "ok", timestamp: 1000 });
-      seq.add({ tool: "edit_file", args: { path: "b.ts" }, result: "ok", timestamp: 2000 });
-      const matches = registry.matches("edit_file", seq);
-      expect(matches).toContain("edit-reminder");
+    it('should match condition that evaluates to true', () => {
+      seq.add({ tool: 'edit_file', args: { path: 'a.ts' }, result: 'ok', timestamp: 1000 });
+      seq.add({ tool: 'edit_file', args: { path: 'b.ts' }, result: 'ok', timestamp: 2000 });
+      const matches = registry.matches('edit_file', seq);
+      expect(matches).toContain('edit-reminder');
     });
 
-
-    it("should match wildcard trigger for any tool", () => {
-      seq.add({ tool: "bash", args: { command: "test" }, result: "Error: failed", timestamp: 1000 });
-      const matches = registry.matches("bash", seq);
-      expect(matches).toContain("any-error");
+    it('should match wildcard trigger for any tool', () => {
+      seq.add({ tool: 'bash', args: { command: 'test' }, result: 'Error: failed', timestamp: 1000 });
+      const matches = registry.matches('bash', seq);
+      expect(matches).toContain('any-error');
     });
 
+    it('should match even when previously injected (matches() ignores injection state)', () => {
+      seq.add({ tool: 'bash', args: { command: 'test' }, result: 'Error: failed', timestamp: 1000 });
+      const matches1 = registry.matches('bash', seq);
+      expect(matches1).toContain('any-error');
+      expect(registry.hasInjected('any-error')).toBe(false);
 
-    it("should match even when previously injected (matches() ignores injection state)", () => {
-      seq.add({ tool: "bash", args: { command: "test" }, result: "Error: failed", timestamp: 1000 });
-      const matches1 = registry.matches("bash", seq);
-      expect(matches1).toContain("any-error");
-      expect(registry.hasInjected("any-error")).toBe(false);
-
-      registry.markInjected("any-error");
+      registry.markInjected('any-error');
       // `matches()` is a pure predicate over the sequence: it does not consult
       // the injected set, so a previously-injected skill still matches. The
       // dedupe lives in the EXECUTOR (it checks hasInjected before acting) —
       // this test pins exactly that split.
-      expect(registry.hasInjected("any-error")).toBe(true);
-      const matches2 = registry.matches("bash", seq);
-      expect(matches2).toContain("any-error");
+      expect(registry.hasInjected('any-error')).toBe(true);
+      const matches2 = registry.matches('bash', seq);
+      expect(matches2).toContain('any-error');
 
       // ...and the marker really tracks state (a fresh key is not injected).
-      expect(registry.hasInjected("never-marked")).toBe(false);
+      expect(registry.hasInjected('never-marked')).toBe(false);
     });
-
   });
 
   // pending management
@@ -360,115 +361,120 @@ describe("ConditionRegistry", () => {
   // injected management
 
   // load/save roundtrip
-  describe("load/save roundtrip", () => {
-    it("should preserve conditions through save/load cycle", async () => {
+  describe('load/save roundtrip', () => {
+    it('should preserve conditions through save/load cycle', async () => {
       const original: Condition = {
-        trigger: ["git_commit"],
-        when: "run tests before commit",
+        trigger: ['git_commit'],
+        when: 'run tests before commit',
         condition: 'turn.count("edit_file") > 0 && turn.lastIndex("bash#pnpm test") == -1',
         action: {
-          type: "inject_before", tool: "bash",
-          args: { command: "pnpm test", intent: "TEST ARTIFACT TO verify behavior before commit", timeout: 30 },
+          type: 'inject_before',
+          tool: 'bash',
+          args: { command: 'pnpm test', intent: 'TEST ARTIFACT TO verify behavior before commit', timeout: 30 }
         },
         version: 2,
-        history: [{
-          version: 1, condition: 'turn.count("edit_file") > 0',
-          action: { type: "inject_before", tool: "bash", args: { command: "pnpm test" } },
-          reason: "initial",
-        }],
+        history: [
+          {
+            version: 1,
+            condition: 'turn.count("edit_file") > 0',
+            action: { type: 'inject_before', tool: 'bash', args: { command: 'pnpm test' } },
+            reason: 'initial'
+          }
+        ]
       };
-      registry.set("pre-commit-test", original);
+      registry.set('pre-commit-test', original);
       await registry.save();
       const newRegistry = new ConditionRegistry();
       await newRegistry.load();
-      const loaded = newRegistry.get("pre-commit-test");
+      const loaded = newRegistry.get('pre-commit-test');
       expect(loaded).toEqual(original);
     });
-
-
   });
 
   // edge cases
-  describe("edge cases", () => {
-    it("should handle null values in JSON", async () => {
+  describe('edge cases', () => {
+    it('should handle null values in JSON', async () => {
       fs.writeFileSync(conditionsFile, '{"skill1": null}');
       await registry.load();
-      expect(registry.get("skill1")).toBeUndefined();
+      expect(registry.get('skill1')).toBeUndefined();
     });
 
-    it("should collect legacy seq.X conditions in legacyConditions", async () => {
+    it('should collect legacy seq.X conditions in legacyConditions', async () => {
       // A condition written against the old `seq.X` API fails validation
       // (the validator explicitly rejects `seq.` syntax). load() should:
       //   1. NOT load the condition (it stays inactive)
       //   2. Collect it into legacyConditions so the agent can be prompted
       //      to recompile via skill_compile.
       const conditions = {
-        "legacy-hook": {
-          trigger: ["git_commit"],
-          when: "run lint before commit",
+        'legacy-hook': {
+          trigger: ['git_commit'],
+          when: 'run lint before commit',
           condition: 'seq.lastIndexOf("bash#pnpm lint") == -1',
-          action: { type: "block", reason: "Run lint first" },
+          action: { type: 'block', reason: 'Run lint first' },
           version: 1,
-          sourceFile: "project:legacy-hook",
-        },
+          sourceFile: 'project:legacy-hook'
+        }
       };
 
       fs.writeFileSync(conditionsFile, JSON.stringify(conditions, null, 2));
       const result = await registry.load();
 
       // Condition is NOT loaded (rejected at validation)
-      expect(registry.get("legacy-hook")).toBeUndefined();
+      expect(registry.get('legacy-hook')).toBeUndefined();
       // It IS collected as a legacy condition for recompile prompting
       expect(result.legacyConditions).toHaveLength(1);
       expect(result.legacyConditions[0]).toMatchObject({
-        name: "legacy-hook",
-        when: "run lint before commit",
+        name: 'legacy-hook',
+        when: 'run lint before commit',
         condition: 'seq.lastIndexOf("bash#pnpm lint") == -1',
-        sourceFile: "project:legacy-hook",
+        sourceFile: 'project:legacy-hook'
       });
       // An error is still reported (validation failure message)
       expect(result.errors.length).toBeGreaterThan(0);
     });
 
-    it("should NOT collect valid turn.X conditions as legacy", async () => {
+    it('should NOT collect valid turn.X conditions as legacy', async () => {
       const conditions = {
-        "valid-hook": {
-          trigger: ["git_commit"],
-          when: "run lint before commit",
+        'valid-hook': {
+          trigger: ['git_commit'],
+          when: 'run lint before commit',
           condition: 'turn.lastIndex("bash#pnpm lint") == -1',
-          action: { type: "block", reason: "Run lint first" },
-          version: 1,
-        },
+          action: { type: 'block', reason: 'Run lint first' },
+          version: 1
+        }
       };
 
       fs.writeFileSync(conditionsFile, JSON.stringify(conditions, null, 2));
       const result = await registry.load();
 
-      expect(registry.get("valid-hook")).toMatchObject({
-        trigger: ["git_commit"],
-        when: "run lint before commit",
+      expect(registry.get('valid-hook')).toMatchObject({
+        trigger: ['git_commit'],
+        when: 'run lint before commit',
         condition: 'turn.lastIndex("bash#pnpm lint") == -1',
-        action: { type: "block", reason: "Run lint first" },
-        version: 1,
+        action: { type: 'block', reason: 'Run lint first' },
+        version: 1
       });
       expect(result).toMatchObject({ legacyConditions: [], errors: [] });
     });
 
-    it("should handle array instead of object (no conditions loaded)", async () => {
-      fs.writeFileSync(conditionsFile, "[]");
+    it('should handle array instead of object (no conditions loaded)', async () => {
+      fs.writeFileSync(conditionsFile, '[]');
       const result = await registry.load();
       // An array is not a valid conditions object — Object.entries([]) is
       // empty, so nothing is loaded and no error is reported.
-      expect(registry.get("any")).toBeUndefined();
+      expect(registry.get('any')).toBeUndefined();
       expect(result.errors).toHaveLength(0);
     });
 
-    it("should handle file write failure gracefully (returns success:false, does not throw)", async () => {
+    it('should handle file write failure gracefully (returns success:false, does not throw)', async () => {
       fs.rmSync(testDir, { recursive: true, force: true });
-      fs.writeFileSync(testDir, "not a directory");
-      registry.set("test", {
-        trigger: ["bash"], when: "test", condition: "true",
-        action: { type: "message" }, version: 1,
+      fs.writeFileSync(testDir, 'not a directory');
+      registry.set('test', {
+        trigger: ['bash'],
+        when: 'test',
+        condition: 'true',
+        action: { type: 'message' },
+        version: 1
       });
       const result = await registry.save();
       // save() must not throw; it reports the failure via the result object.

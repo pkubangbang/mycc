@@ -2,7 +2,7 @@
  * Test for filePath-based condition (replacing isTestFile)
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { testExpression, createMockSequence } from '../hook/condition-validator.js';
 
 describe('filePath-based condition', () => {
@@ -14,9 +14,9 @@ describe('filePath-based condition', () => {
         metadata: {
           filePath: '/home/student/proj/mycc/src/tests/example.test.ts',
           newLoc: 350,
-          existingLoc: 0,
+          existingLoc: 0
         },
-        args: {},
+        args: {}
       }
     );
 
@@ -32,9 +32,9 @@ describe('filePath-based condition', () => {
         metadata: {
           filePath: '/home/student/proj/mycc/src/index.ts',
           newLoc: 350,
-          existingLoc: 0,
+          existingLoc: 0
         },
-        args: {},
+        args: {}
       }
     );
 
@@ -50,9 +50,9 @@ describe('filePath-based condition', () => {
         metadata: {
           filePath: '/home/student/proj/mycc/src/tests/example.test.ts',
           newLoc: 250,
-          existingLoc: 0,
+          existingLoc: 0
         },
-        args: {},
+        args: {}
       }
     );
 
@@ -68,9 +68,9 @@ describe('filePath-based condition', () => {
         metadata: {
           filePath: '/home/student/proj/mycc/src/tests/example.test.ts',
           newLoc: 300,
-          existingLoc: 0,
+          existingLoc: 0
         },
-        args: {},
+        args: {}
       }
     );
 
@@ -85,7 +85,7 @@ describe('filePath-based condition', () => {
       createMockSequence(),
       {
         metadata: { filePath: '/src/utils/helpers.test.ts', newLoc: 100 },
-        args: {},
+        args: {}
       }
     );
 
@@ -98,7 +98,7 @@ describe('filePath-based condition', () => {
       createMockSequence(),
       {
         metadata: { filePath: '/src/utils/helpers.spec.ts', newLoc: 100 },
-        args: {},
+        args: {}
       }
     );
 

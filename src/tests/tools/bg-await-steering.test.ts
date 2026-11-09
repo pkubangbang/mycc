@@ -17,15 +17,17 @@
  * BackgroundTasks (constructed with a mocked core) rather than reaching into
  * the tool. The tool is a thin formatter over that result.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 
 // Mock agent-io so isMainProcess()/onNeglected() are controllable without a
 // real process/IPC environment. waitForTasks only needs those two.
 vi.mock('../../loop/agent-io.js', () => ({
   agentIO: {
     isMainProcess: vi.fn(() => true),
-    onNeglected: vi.fn(() => () => { /* unsubscribe no-op */ }),
-  },
+    onNeglected: vi.fn(() => () => {
+      /* unsubscribe no-op */
+    })
+  }
 }));
 
 // The bg module's wait loop no longer touches the serve hub at all — it peeks
@@ -46,7 +48,9 @@ function makeCore(): CoreModule {
 }
 
 /** Build a BackgroundTasks with a fake task map (no real spawn). */
-function makeBg(tasks: Map<number, { pid: number; command: string; status: string; output?: string }>): BackgroundTasks {
+function makeBg(
+  tasks: Map<number, { pid: number; command: string; status: string; output?: string }>
+): BackgroundTasks {
   const bg = new BackgroundTasks(makeCore());
   // Inject the fake tasks into the private map (test seam).
   (bg as unknown as { tasks: Map<number, unknown> }).tasks = tasks as never;

@@ -17,7 +17,7 @@
  * dropped. That double-slice regression is pinned below; it is exactly the
  * silent-veto class of bug this guard exists to prevent.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { hasNameFlag } from '../../slashes/reload.js';
 
 describe('hasNameFlag: pre-sliced token list detects the compose --name', () => {
@@ -58,7 +58,7 @@ describe('hasNameFlag: pre-sliced token list detects the compose --name', () => 
 });
 
 describe('hasNameFlag M4 boundary: a string-flag VALUE that literally equals --name', () => {
-  it('a bare `--name` smuggled as another flag\'s value IS detected (documented boundary)', () => {
+  it("a bare `--name` smuggled as another flag's value IS detected (documented boundary)", () => {
     // parseArgString consumes the next non-flag token as a string flag's value,
     // so `--editor --name` yields editor='--name'; formatLaunchArgsForSpawn
     // RE-EMITS it as a separate `--editor --name` token pair. The spawned child

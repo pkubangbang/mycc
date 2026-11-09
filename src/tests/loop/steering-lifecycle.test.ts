@@ -16,14 +16,11 @@
  *   never deliver to the webui again), and both return BEFORE the wipe line
  *   on the restart branches.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import {
-  getSteeringManager,
-  SteeringManager,
-} from '../../loop/steering-manager.js';
+import { getSteeringManager, SteeringManager } from '../../loop/steering-manager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HUB_PATH = path.resolve(__dirname, '..', '..', '..', 'src', 'serve', 'serve-hub.ts');
@@ -122,7 +119,7 @@ describe('A2 hub/provider wipe-site pins (source-text guards)', () => {
     expect(branch1.indexOf('isRestarting()')).toBeLessThan(branch1.length);
 
     // Branch 2: post-abort fallback — same guard shape.
-    const abortIdx = provider.indexOf("abortInput() resolved waitForInput() with null");
+    const abortIdx = provider.indexOf('abortInput() resolved waitForInput() with null');
     const branch2 = provider.slice(abortIdx, provider.indexOf("logSteeringWipe('terminal-fallback", abortIdx));
     expect(branch2).toContain('if (hub.isRestarting()) return hub.waitForInput();');
     expect(branch2).toContain('if (shouldDaemon()) throw new ServeDetachedExitError();');

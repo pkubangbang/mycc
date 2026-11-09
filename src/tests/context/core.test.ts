@@ -5,7 +5,7 @@
  * for both parent and child contexts.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { Core } from '../../context/parent/core.js';
 import { isWebUiUp, setWebUiUp } from '../../loop/loop-events.js';
 import * as path from 'path';
@@ -18,8 +18,8 @@ vi.mock('../../loop/agent-io.js', () => ({
     log: vi.fn(),
     error: vi.fn(),
     warn: vi.fn(),
-    ask: vi.fn(),
-  },
+    ask: vi.fn()
+  }
 }));
 
 // Mock ollama for web search/fetch
@@ -27,7 +27,7 @@ vi.mock('../../engine/ollama.js', () => ({
   ollama: {
     webSearch: vi.fn(),
     webFetch: vi.fn(),
-    chat: vi.fn(),
+    chat: vi.fn()
   },
   MODEL: 'test-model',
   retryChat: vi.fn(),
@@ -36,10 +36,10 @@ vi.mock('../../engine/ollama.js', () => ({
   webFetch: vi.fn(),
   imgDescribe: vi.fn(),
   structuredChat: vi.fn(),
-  healthCheck: vi.fn(),
+  healthCheck: vi.fn()
 }));
 vi.mock('../../engine/chat-helpers.js', () => ({
-  retryWithBackoff: vi.fn(async (fn: any) => fn()),
+  retryWithBackoff: vi.fn(async (fn: any) => fn())
 }));
 
 // Mock config
@@ -55,16 +55,16 @@ vi.mock('../../config.js', () => ({
   getRagProvider: vi.fn(() => 'nomic'),
   getImgCacheDir: vi.fn(() => '.mycc/imgcache'),
   getLongtextDir: vi.fn(() => '.mycc/longtext'),
-  getPlanModeWritableDirs: vi.fn(() => ['.mycc/longtext', '.mycc/imgcache']),
+  getPlanModeWritableDirs: vi.fn(() => ['.mycc/longtext', '.mycc/imgcache'])
 }));
 
 // Mock ipc-helpers for ChildCore tests - use factory that returns mock functions
 vi.mock('../../context/child/ipc-helpers.js', () => ({
   ipc: {
     sendRequest: vi.fn().mockResolvedValue({ approved: true }),
-    sendNotification: vi.fn(),
+    sendNotification: vi.fn()
   },
-  sendStatus: vi.fn(),
+  sendStatus: vi.fn()
 }));
 
 // Import ChildCore AFTER mocking ipc-helpers
@@ -128,7 +128,7 @@ describe('Core (Parent) - Mode System', () => {
       // flag to true at the end; the loop must never observe a "down" blip.
       setWebUiUp(true);
       setWebUiUp(false); // stop() inside restartServe
-      setWebUiUp(true);  // restartServe() re-set on the same port
+      setWebUiUp(true); // restartServe() re-set on the same port
       expect(isWebUiUp()).toBe(true);
     });
   });
@@ -191,7 +191,10 @@ describe('Core (Parent) - Mode System', () => {
     it('should reject mutation verbs in plan mode', async () => {
       core.setMode('plan');
 
-      const result = await core.requestGrant('bash', { command: 'npm run build', intent: 'BUILD ARTIFACT TO compile project' });
+      const result = await core.requestGrant('bash', {
+        command: 'npm run build',
+        intent: 'BUILD ARTIFACT TO compile project'
+      });
 
       expect(result.approved).toBe(false);
       expect(result.reason).toContain('Cannot BUILD in plan mode');
@@ -348,7 +351,7 @@ describe('Core (Parent) - the denial ring', () => {
       target: '/test/file.ts',
       // Derived from the verdict's OWN reason at record time — plan mode.
       kind: 'plan-mode',
-      seq: 1,
+      seq: 1
     });
     // The recorded reason is the gate's prose, verbatim (no re-derivation).
     expect(denials[0].reason).toBe(verdict.reason);
@@ -364,7 +367,10 @@ describe('Core (Parent) - the denial ring', () => {
     // so it is recorded as 'dangerous'; without the escape PARAM the irreversible
     // command is hard-blocked with a Socratic hint and never reaches [y/N].
     const irreversible = 'mk' + 'fs.ext4 /dev/sdb1';
-    await core.requestGrant('bash', { command: irreversible, intent: 'DELETE DATA path=dev_sdb1 TO wipe the test disk' });
+    await core.requestGrant('bash', {
+      command: irreversible,
+      intent: 'DELETE DATA path=dev_sdb1 TO wipe the test disk'
+    });
     await core.requestGrant('bash', { command: 'git commit -m "x"', intent: 'RUN SYSTEM TO commit changes' });
     await core.requestGrant('bash', { command: 'echo hi' }); // no intent → grammar rule
 
@@ -451,7 +457,7 @@ describe('ChildCore - requestGrant Method', () => {
   it('should send IPC request for write_file grant', async () => {
     // This test documents the expected behavior
     await childCore.requestGrant('write_file', { path: '/test/file.ts' });
-    
+
     expect(mockSendRequest).toHaveBeenCalledWith(
       'grant_request',
       expect.objectContaining({ tool: 'write_file', path: '/test/file.ts' }),
@@ -464,9 +470,9 @@ describe('ChildCore - requestGrant Method', () => {
 
   it('should send IPC request for bash grant', async () => {
     mockSendRequest.mockResolvedValue({ approved: true, reason: undefined });
-    
+
     await childCore.requestGrant('bash', { command: 'echo test' });
-    
+
     expect(mockSendRequest).toHaveBeenCalledWith(
       'grant_request',
       expect.objectContaining({ tool: 'bash', command: 'echo test' }),
@@ -476,9 +482,9 @@ describe('ChildCore - requestGrant Method', () => {
 
   it('should return the IPC response', async () => {
     mockSendRequest.mockResolvedValue({ approved: false, reason: 'Plan mode' });
-    
+
     const result = await childCore.requestGrant('write_file', { path: '/test/file.ts' });
-    
+
     expect(result.approved).toBe(false);
     expect(result.reason).toBe('Plan mode');
   });
@@ -515,7 +521,7 @@ describe('Grant Evaluator', () => {
       core.setMode('normal');
       const result = await core.requestGrant('bash', {
         command: 'rm -rf /',
-        intent: 'DELETE DATA TO reclaim disk space',
+        intent: 'DELETE DATA TO reclaim disk space'
       });
       expect(result.approved).toBe(false);
       expect(result.reason).toContain('blocked');
@@ -525,7 +531,7 @@ describe('Grant Evaluator', () => {
       core.setMode('normal');
       const result = await core.requestGrant('bash', {
         command: 'git commit -m "test"',
-        intent: 'RUN SYSTEM TO commit changes',
+        intent: 'RUN SYSTEM TO commit changes'
       });
       expect(result.approved).toBe(false);
       expect(result.reason).toContain('git_commit tool');

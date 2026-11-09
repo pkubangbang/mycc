@@ -7,7 +7,7 @@
  * and an injected `DispatchContext` (nextId/chatApi). Tested directly in the
  * node environment with zero DOM/browser dependencies — no jsdom, no Playwright.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import { reactive, ref, computed } from 'vue';
 import { applyServerMessage } from '../../web/src/message-dispatch.js';
 import type { DispatchState } from '../../web/src/message-dispatch.js';
@@ -106,7 +106,7 @@ function makeState(): DispatchState & {
     setAutoMode,
     setPlanMode,
     adoptSteering,
-    populateSteeringReview,
+    populateSteeringReview
   }) as DispatchState & {
     isWaiting: boolean;
     isRunning: boolean;
@@ -120,8 +120,8 @@ function makeCtx(overrides: { sendInput?: (text: string) => void } = {}) {
   return {
     nextId: () => ++id,
     chatApi: {
-      sendInput: overrides.sendInput ?? vi.fn(),
-    },
+      sendInput: overrides.sendInput ?? vi.fn()
+    }
   };
 }
 
@@ -137,7 +137,14 @@ describe('applyServerMessage — steering snapshot adoption', () => {
   it('adopts a snapshot into the buffer bar and moves notes into review at prompt (non-auto)', () => {
     const state = makeState();
     const ctx = makeCtx();
-    applyServerMessage(state, steerState(1, [{ id: 1, text: 'note A' }, { id: 2, text: 'note B' }]), ctx);
+    applyServerMessage(
+      state,
+      steerState(1, [
+        { id: 1, text: 'note A' },
+        { id: 2, text: 'note B' }
+      ]),
+      ctx
+    );
     expect(state.steeringBuffer.map((n) => n.id)).toEqual([1, 2]);
     expect(state.pendingSteeringReview).toEqual([]);
 
@@ -173,19 +180,40 @@ describe('applyServerMessage — steering snapshot adoption', () => {
     const state = makeState();
     const ctx = makeCtx();
     applyServerMessage(state, steerState(3, [{ id: 1, text: 'a' }]), ctx);
-    applyServerMessage(state, steerState(3, [{ id: 1, text: 'a' }, { id: 2, text: 'b' }]), ctx);
+    applyServerMessage(
+      state,
+      steerState(3, [
+        { id: 1, text: 'a' },
+        { id: 2, text: 'b' }
+      ]),
+      ctx
+    );
     expect(state.steeringQueue.map((n) => n.id)).toEqual([1]);
   });
 
   it('review is pruned to live ids — the ESC contract survives', () => {
     const state = makeState();
     const ctx = makeCtx();
-    applyServerMessage(state, steerState(1, [{ id: 1, text: 'a' }, { id: 2, text: 'b' }]), ctx);
+    applyServerMessage(
+      state,
+      steerState(1, [
+        { id: 1, text: 'a' },
+        { id: 2, text: 'b' }
+      ]),
+      ctx
+    );
     applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
     expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([1, 2]);
     // ESC kept both notes queued; a later snapshot still holds both → the card
     // must NOT be emptied by the adoption itself.
-    applyServerMessage(state, steerState(2, [{ id: 1, text: 'a' }, { id: 2, text: 'b' }]), ctx);
+    applyServerMessage(
+      state,
+      steerState(2, [
+        { id: 1, text: 'a' },
+        { id: 2, text: 'b' }
+      ]),
+      ctx
+    );
     expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([1, 2]);
     // The agent consumes id 1: the card drops exactly that one.
     applyServerMessage(state, steerState(3, [{ id: 2, text: 'b' }]), ctx);
@@ -209,7 +237,14 @@ describe('applyServerMessage — steering snapshot adoption', () => {
     const ctx = makeCtx();
     applyServerMessage(state, steerState(1, [{ id: 1, text: 'first' }]), ctx);
     applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
-    applyServerMessage(state, steerState(2, [{ id: 1, text: 'first' }, { id: 2, text: 'second' }]), ctx);
+    applyServerMessage(
+      state,
+      steerState(2, [
+        { id: 1, text: 'first' },
+        { id: 2, text: 'second' }
+      ]),
+      ctx
+    );
     applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
 
     expect(state.pendingSteeringReview.map((n) => n.id)).toEqual([1, 2]);
@@ -258,16 +293,10 @@ describe('applyServerMessage — phase transitions', () => {
     expect(state.isRunning).toBe(false);
   });
 
-
-
   it('card message transitions to card phase', () => {
     const state = makeState();
     const ctx = makeCtx();
-    applyServerMessage(
-      state,
-      { type: 'card', content: 'Confirm?', cardId: 'c1', kind: 'confirm' },
-      ctx,
-    );
+    applyServerMessage(state, { type: 'card', content: 'Confirm?', cardId: 'c1', kind: 'confirm' }, ctx);
     expect(state.phase).toBe('card');
     expect(state.isWaiting).toBe(true);
     expect(state.hasPendingCard).toBe(true);
@@ -343,7 +372,6 @@ describe('applyServerMessage — phase transitions', () => {
     expect(state.isAutoMode).toBe(true);
   });
 
-
   it('manual mode: result-at-prompt does NOT flip to working (C5/A3 no-flip guard)', () => {
     const state = makeState();
     const ctx = makeCtx();
@@ -413,7 +441,6 @@ describe('applyServerMessage — phase transitions', () => {
     applyServerMessage(state, { type: 'running', content: 'on' }, ctx);
     expect(state.phase).toBe('working');
   });
-
 });
 
 describe('applyServerMessage — routing', () => {
@@ -451,9 +478,6 @@ describe('applyServerMessage — synthetic filter (machine-originated briefs)', 
     expect(state.messages).toHaveLength(0);
     expect(state.teammateMessages).toHaveLength(0);
   });
-
-
-
 });
 
 describe('applyServerMessage — lastServerMsg diagnostic recording', () => {
@@ -467,9 +491,6 @@ describe('applyServerMessage — lastServerMsg diagnostic recording', () => {
     applyServerMessage(state, { type: 'running', content: 'on' }, ctx);
     expect(state.lastServerMsg?.type).toBe('running');
   });
-
-
-
 });
 
 describe('applyServerMessage - plan/normal mode mirror (row obs-002)', () => {

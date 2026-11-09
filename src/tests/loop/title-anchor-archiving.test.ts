@@ -9,7 +9,7 @@
  *  4. compact() propagates a runAutoCompact rejection and the chain stays usable.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 // Stub the summarizer so no LLM call is made; tests control its resolution.
 const autoCompactMock = vi.fn();
@@ -19,7 +19,7 @@ vi.mock('../../loop/triologue/compact.js', async (importOriginal) => {
 });
 
 vi.mock('../../loop/agent-io.js', () => ({
-  agentIO: { brief: vi.fn(), verbose: vi.fn(), log: vi.fn(), isNeglectedMode: () => false },
+  agentIO: { brief: vi.fn(), verbose: vi.fn(), log: vi.fn(), isNeglectedMode: () => false }
 }));
 
 vi.mock('../../config.js', () => ({
@@ -31,17 +31,17 @@ vi.mock('../../config.js', () => ({
   getLongtextDir: vi.fn(() => '/tmp/lt'),
   ensureDirs: vi.fn(),
   getSessionContext: vi.fn(() => 'test-session'),
-  getSessionDir: vi.fn(() => '/tmp/sess'),
+  getSessionDir: vi.fn(() => '/tmp/sess')
 }));
 
 vi.mock('../../engine/chat-provider.js', () => ({
   forkChat: vi.fn(),
   retryChat: vi.fn(),
-  MODEL: 'test-model',
+  MODEL: 'test-model'
 }));
 
 vi.mock('../../context/shared/loader.js', () => ({
-  loader: { execute: vi.fn() },
+  loader: { execute: vi.fn() }
 }));
 
 import { Triologue } from '../../loop/triologue.js';
@@ -59,7 +59,7 @@ function mkTriologue(): Triologue {
     onMisorder: () => {},
     onToolMisalign: () => {},
     onCompact: () => {},
-    onMessage: () => {},
+    onMessage: () => {}
   });
 }
 
@@ -67,7 +67,7 @@ function titleAssistant(id: string): Message {
   return {
     role: 'assistant',
     content: '',
-    tool_calls: [{ id, type: 'function', function: { name: 'mycc_title', arguments: { title: 't' } } } as ToolCall],
+    tool_calls: [{ id, type: 'function', function: { name: 'mycc_title', arguments: { title: 't' } } } as ToolCall]
   };
 }
 function toolResult(id: string, name = 'mycc_title'): Message {
@@ -76,8 +76,12 @@ function toolResult(id: string, name = 'mycc_title'): Message {
 function summaryTriple(): Message[] {
   return [
     { role: 'user', content: '[summary] archived' },
-    { role: 'assistant', content: '', tool_calls: [{ id: 's', type: 'function', function: { name: 'brief', arguments: {} } } as ToolCall] },
-    { role: 'tool', tool_name: 'brief', content: 'OK', tool_call_id: 's' },
+    {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{ id: 's', type: 'function', function: { name: 'brief', arguments: {} } } as ToolCall]
+    },
+    { role: 'tool', tool_name: 'brief', content: 'OK', tool_call_id: 's' }
   ];
 }
 
@@ -159,13 +163,17 @@ describe('title trigger wiring (peer case 3)', () => {
     // AbortController handleTool builds internally.
     const core = {
       escAware: async (fn: (ac: AbortController) => Promise<string>) => fn(new AbortController()),
-      increaseConfusionIndex: vi.fn(),
+      increaseConfusionIndex: vi.fn()
     };
     const env = {
       triologue: t,
       ctx: { core },
       sequence: { add: vi.fn() },
-      requestEmbeddingTracker: { addEntry: vi.fn(async () => {}), getMaxSimilarity: vi.fn(() => 0), similarityToDelta: vi.fn(() => -1) },
+      requestEmbeddingTracker: {
+        addEntry: vi.fn(async () => {}),
+        getMaxSimilarity: vi.fn(() => 0),
+        similarityToDelta: vi.fn(() => -1)
+      }
     } as never;
     const turn = { nextBriefNudge: 0 } as never;
 
@@ -176,7 +184,10 @@ describe('title trigger wiring (peer case 3)', () => {
     store.push(titleAssistant('tc1'));
 
     const chat = {
-      hookResult: { calls: [{ id: 'tc1', function: { name: 'mycc_title', arguments: { title: 'x' } } }], blockedCalls: new Map() },
+      hookResult: {
+        calls: [{ id: 'tc1', function: { name: 'mycc_title', arguments: { title: 'x' } } }],
+        blockedCalls: new Map()
+      }
     } as never;
     await handleTool(env, turn, chat);
     expect(spy).toHaveBeenCalledTimes(1);
@@ -184,7 +195,7 @@ describe('title trigger wiring (peer case 3)', () => {
 
     spy.mockClear();
     const chat2 = {
-      hookResult: { calls: [{ id: 'tc2', function: { name: 'read_file', arguments: {} } }], blockedCalls: new Map() },
+      hookResult: { calls: [{ id: 'tc2', function: { name: 'read_file', arguments: {} } }], blockedCalls: new Map() }
     } as never;
     await handleTool(env, turn, chat2);
     expect(spy).not.toHaveBeenCalled();
@@ -222,7 +233,7 @@ describe('concurrency invariants (lead steering)', () => {
     t.agent('a0');
     t.agent('', [
       titleAssistant('t1').tool_calls![0] as ToolCall,
-      { id: 't2', type: 'function', function: { name: 'read_file', arguments: {} } } as ToolCall,
+      { id: 't2', type: 'function', function: { name: 'read_file', arguments: {} } } as ToolCall
     ]);
     t.tool('mycc_title', 'OK', 't1'); // ledger: t2 still pending
     t.user('typed while archiving'); // DEFERRED
@@ -230,7 +241,12 @@ describe('concurrency invariants (lead steering)', () => {
     expect(t.installCompacted(summaryTriple(), 2)).toBe(true);
 
     // Tail kept verbatim behind the summary head — open batch and all.
-    expect(t.getMessagesRaw().slice(3).map((m) => m.role)).toEqual(['assistant', 'assistant', 'tool']);
+    expect(
+      t
+        .getMessagesRaw()
+        .slice(3)
+        .map((m) => m.role)
+    ).toEqual(['assistant', 'assistant', 'tool']);
     // The deferred input was NOT dropped (segment mode keeps the ledger).
     expect(t.getMessagesRaw().some((m) => m.content === 'typed while archiving')).toBe(false);
 
@@ -239,4 +255,3 @@ describe('concurrency invariants (lead steering)', () => {
     expect(t.getMessagesRaw().some((m) => m.content === 'typed while archiving')).toBe(true);
   });
 });
-

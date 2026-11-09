@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { LineEditor } from '../../utils/line-editor.js';
 
 import { key, charKey, createMockStdout } from '../test-utils/index.js';
@@ -35,11 +35,13 @@ describe('LineEditor - CJK/Wide Characters', () => {
   /**
    * Create a LineEditor with standard options
    */
-  function createEditor(options: {
-    prompt?: string;
-    history?: string[];
-    columns?: number;
-  } = {}): LineEditor {
+  function createEditor(
+    options: {
+      prompt?: string;
+      history?: string[];
+      columns?: number;
+    } = {}
+  ): LineEditor {
     if (options.columns) {
       process.env.COLUMNS = String(options.columns);
     }
@@ -47,7 +49,7 @@ describe('LineEditor - CJK/Wide Characters', () => {
       prompt: options.prompt ?? '> ',
       stdout: mockStdout,
       onDone: onDone as (value: string) => void,
-      history: options.history,
+      history: options.history
     });
     // Clear initial render calls
     writeCalls = [];
@@ -156,7 +158,7 @@ describe('LineEditor - CJK/Wide Characters', () => {
       // Close immediately (timer should be cleared)
       editor.close();
       // Wait longer than debounce
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
       // Should not have errors
     });
 
@@ -183,7 +185,7 @@ describe('LineEditor - CJK/Wide Characters', () => {
       }
 
       // Wait for any queued renders
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 50));
 
       // Should have rendered (possibly fewer times than key presses due to throttling)
       expect(mockStdout.write).toHaveBeenCalled();

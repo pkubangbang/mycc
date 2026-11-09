@@ -27,7 +27,7 @@
  * wire the hint-round threshold. Mock inputProvider.promptRetry to simulate
  * auto mode (returns true) or user decline (returns false).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
 
@@ -36,33 +36,35 @@ vi.mock('../../../loop/agent-io.js', () => {
   return {
     agentIO: {
       isNeglectedMode: vi.fn(() => neglected),
-      setNeglectedMode: vi.fn((v: boolean) => { neglected = v; }),
+      setNeglectedMode: vi.fn((v: boolean) => {
+        neglected = v;
+      }),
       getAuto: vi.fn(() => false),
       log: vi.fn(),
-      verbose: vi.fn(),
-    },
+      verbose: vi.fn()
+    }
   };
 });
 
 vi.mock('../../../loop/esc-wrap-up.js', () => ({
   evaluateWrapUp: vi.fn(),
-  clearWrapUp: vi.fn(),
+  clearWrapUp: vi.fn()
 }));
 
 vi.mock('../../../config.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../config.js')>();
   return {
     ...actual,
-    isVerbose: vi.fn(() => false),
+    isVerbose: vi.fn(() => false)
   };
 });
 
 vi.mock('../../../context/shared/loader.js', () => ({
-  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) },
+  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) }
 }));
 
 vi.mock('../../../context/worktree-store.js', () => ({
-  listWorktrees: vi.fn(async () => []),
+  listWorktrees: vi.fn(async () => [])
 }));
 
 vi.mock('../../../loop/triologue.js', () => {
@@ -86,17 +88,13 @@ vi.mock('../../../loop/triologue.js', () => {
 import { handleCollect } from '../../../loop/states/collect.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { Triologue } from '../../../loop/triologue.js';
-import {
-  createTurnVars,
-  createChatData,
-  createMockMachineEnv,
-} from '../esc-test-helpers.js';
+import { createTurnVars, createChatData, createMockMachineEnv } from '../esc-test-helpers.js';
 import { createMockContext } from '../../test-utils/mock-context.js';
 
 // A transient error whose message contains 'timeout' → isTransientError true.
 // Mirrors the peer's reported "net/http: TLS handshake timeout".
 const TRANSIENT_ERROR = new Error(
-  'Post "https://ollama.com:443/api/chat?ts=1788397616": net/http: TLS handshake timeout',
+  'Post "https://ollama.com:443/api/chat?ts=1788397616": net/http: TLS handshake timeout'
 );
 // A non-transient error (no pattern match) → isTransientError false.
 const NON_TRANSIENT_ERROR = new Error('Cannot read properties of undefined (reading "role")');
@@ -119,26 +117,24 @@ describe('handleCollect — transient-error recovery + circuit breaker', () => {
    * a failure early in the COLLECT try block (reaches the catch without wiring
    * the hint-round threshold). promptRetry is wired via inputProvider override.
    */
-  function makeEnv(opts: {
-    err: Error;
-    promptRetry: () => Promise<boolean>;
-    collectTransientRetries?: number;
-  }) {
+  function makeEnv(opts: { err: Error; promptRetry: () => Promise<boolean>; collectTransientRetries?: number }) {
     const ctx = createMockContext({
       core: {
         getConfusionIndex: vi.fn(() => 0),
         brief: vi.fn(),
-        verbose: vi.fn(),
+        verbose: vi.fn()
       } as never,
       team: {
-        handlePendingQuestions: vi.fn(async () => { throw opts.err; }),
+        handlePendingQuestions: vi.fn(async () => {
+          throw opts.err;
+        }),
         printTeam: vi.fn(() => 'No teammates.'),
-        listTeammates: vi.fn(() => []),
-      } as never,
+        listTeammates: vi.fn(() => [])
+      } as never
     });
     const env = createMockMachineEnv({
       triologue,
-      inputProvider: { promptRetry: vi.fn(opts.promptRetry) },
+      inputProvider: { promptRetry: vi.fn(opts.promptRetry) }
     });
     env.ctx = ctx;
     return env;
@@ -149,7 +145,7 @@ describe('handleCollect — transient-error recovery + circuit breaker', () => {
       err: TRANSIENT_ERROR,
       // Auto mode: promptRetry always returns true (mirrors UserInputProvider
       // auto-mode guard `if (agentIO.getAuto()) return true;`).
-      promptRetry: async () => true,
+      promptRetry: async () => true
     });
     const turn = createTurnVars();
     const chat = createChatData();
@@ -167,7 +163,7 @@ describe('handleCollect — transient-error recovery + circuit breaker', () => {
   it('should return PROMPT for a transient error when promptRetry says no (user declined)', async () => {
     const env = makeEnv({
       err: TRANSIENT_ERROR,
-      promptRetry: async () => false,
+      promptRetry: async () => false
     });
     const turn = createTurnVars();
     const chat = createChatData();
@@ -183,7 +179,7 @@ describe('handleCollect — transient-error recovery + circuit breaker', () => {
   it('should return PROMPT (no promptRetry) for a non-transient error', async () => {
     const env = makeEnv({
       err: NON_TRANSIENT_ERROR,
-      promptRetry: async () => true, // would say yes, but must NOT be called
+      promptRetry: async () => true // would say yes, but must NOT be called
     });
     const turn = createTurnVars();
     const chat = createChatData();
@@ -199,7 +195,7 @@ describe('handleCollect — transient-error recovery + circuit breaker', () => {
     // Pre-arm the counter at the cap so the breaker trips on this call.
     const env = makeEnv({
       err: TRANSIENT_ERROR,
-      promptRetry: async () => true, // would retry, but breaker should prevent the call
+      promptRetry: async () => true // would retry, but breaker should prevent the call
     });
     const turn = createTurnVars({ collectTransientRetries: 3 });
     const chat = createChatData();
@@ -218,7 +214,7 @@ describe('handleCollect — transient-error recovery + circuit breaker', () => {
 
     const env = makeEnv({
       err: TRANSIENT_ERROR,
-      promptRetry: async () => true, // would retry, but neglected mode short-circuits to STOP
+      promptRetry: async () => true // would retry, but neglected mode short-circuits to STOP
     });
     const turn = createTurnVars();
     const chat = createChatData();
@@ -239,7 +235,9 @@ describe('handleCollect — transient-error recovery + circuit breaker', () => {
     // the turn. It must instead fall back to PROMPT, mirroring llm.ts.
     const env = makeEnv({
       err: TRANSIENT_ERROR,
-      promptRetry: async () => { throw new Error('prompt UI failed'); },
+      promptRetry: async () => {
+        throw new Error('prompt UI failed');
+      }
     });
     const turn = createTurnVars();
     const chat = createChatData();
@@ -257,13 +255,13 @@ describe('handleCollect — transient-error recovery + circuit breaker', () => {
       core: {
         getConfusionIndex: vi.fn(() => 0),
         brief: vi.fn(),
-        verbose: vi.fn(),
+        verbose: vi.fn()
       } as never,
       team: {
         handlePendingQuestions: vi.fn(async () => {}),
         printTeam: vi.fn(() => 'No teammates.'),
-        listTeammates: vi.fn(() => []),
-      } as never,
+        listTeammates: vi.fn(() => [])
+      } as never
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;

@@ -21,7 +21,7 @@
  * queue to confirm the immediate re-wake, and asserts the fix: after 停止, the
  * lingering note must be drained so AWAIT does NOT re-wake on it.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
 
@@ -30,19 +30,21 @@ vi.mock('../../../loop/agent-io.js', () => {
   return {
     agentIO: {
       isNeglectedMode: vi.fn(() => neglected),
-      setNeglectedMode: vi.fn((v: boolean) => { neglected = v; }),
+      setNeglectedMode: vi.fn((v: boolean) => {
+        neglected = v;
+      }),
       setAuto: vi.fn(),
-    getAutoCommitBranches: vi.fn(() => [] as string[]),
-    addAutoCommitBranches: vi.fn(() => []),
-    removeAutoCommitBranches: vi.fn(() => []),
-    clearAutoCommitBranches: vi.fn(() => []),
-    effectiveAutoCommitBranches: vi.fn(() => [] as string[]),
+      getAutoCommitBranches: vi.fn(() => [] as string[]),
+      addAutoCommitBranches: vi.fn(() => []),
+      removeAutoCommitBranches: vi.fn(() => []),
+      clearAutoCommitBranches: vi.fn(() => []),
+      effectiveAutoCommitBranches: vi.fn(() => [] as string[]),
       getAuto: vi.fn(() => false),
       log: vi.fn(),
       flushOutput: vi.fn(),
       verbose: vi.fn(),
-      brief: vi.fn(),
-    },
+      brief: vi.fn()
+    }
   };
 });
 
@@ -55,8 +57,8 @@ vi.mock('../../../loop/auto-state.js', () => ({
     removeAutoCommitBranches: vi.fn(() => []),
     clearAutoCommitBranches: vi.fn(() => []),
     effectiveAutoCommitBranches: vi.fn(() => [] as string[]),
-    resetStreak: vi.fn(),
-  },
+    resetStreak: vi.fn()
+  }
 }));
 
 // Mock the serve hub so getServeHub().isRunning() is controllable. The old
@@ -64,7 +66,7 @@ vi.mock('../../../loop/auto-state.js', () => ({
 // hub facades were removed — hub steering surface is pushSteer/resolveSteering
 // only, and AWAIT's steering detection reads the manager via awaitTeammates.
 vi.mock('../../../serve/serve-registry.js', () => ({
-  getServeHub: vi.fn(),
+  getServeHub: vi.fn()
 }));
 
 // --- Imports after mocks -----------------------------------------------------
@@ -88,7 +90,7 @@ describe('AWAIT re-entry on a lingering steering note (post-停止 tight loop)',
     // "lingering note" scenario is seeded there and wiped between tests.
     getSteeringManager().clear();
     hub = {
-      isRunning: vi.fn(() => true),
+      isRunning: vi.fn(() => true)
     };
     vi.mocked(getServeHub).mockReturnValue(hub as never);
   });
@@ -106,7 +108,7 @@ describe('AWAIT re-entry on a lingering steering note (post-停止 tight loop)',
     // pending steering note is caught without delay.
     const result = await Promise.race([
       handleWait(env, turn, chat),
-      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 3000)),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 3000))
     ]);
 
     // AWAIT returns COLLECT immediately (re-wake on the stale note) — this is
@@ -121,7 +123,10 @@ describe('AWAIT re-entry on a lingering steering note (post-停止 tight loop)',
     // when no steering note is pending, exactly like the real 1s poll loop.
     const env = createMockMachineEnv({ triologue: {} as never });
     env.ctx.team.awaitTeammates = vi.fn(
-      () => new Promise<'timeout'>(() => { /* never resolves — blocks */ }),
+      () =>
+        new Promise<'timeout'>(() => {
+          /* never resolves — blocks */
+        })
     ) as never;
 
     const turn = createTurnVars();
@@ -131,7 +136,7 @@ describe('AWAIT re-entry on a lingering steering note (post-停止 tight loop)',
     // short timeout — if it returns COLLECT, the re-wake bug is present.
     const result = await Promise.race([
       handleWait(env, turn, chat),
-      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 500)),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 500))
     ]);
 
     // With an empty queue and auto still on, AWAIT keeps blocking (timeout).

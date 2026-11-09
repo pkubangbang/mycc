@@ -8,7 +8,7 @@
  * after setting up vi.mock() for agent-io.js and ollama.js (required to construct
  * a real Triologue). See compact-undefined-role.test.ts for the mock pattern.
  */
-import { vi } from 'vitest';
+import { vi } from 'vite-plus/test';
 import { createMockContext, type MockContextOptions } from '../test-utils/mock-context.js';
 import type { MachineEnv, TurnVars, ChatData } from '../../loop/state-machine.js';
 import type { ToolCall, ToolScope } from '../../types.js';
@@ -34,7 +34,7 @@ export function createTurnVars(overrides: Partial<TurnVars> = {}): TurnVars {
     lastBriefMessage: '',
     lastHintFocus: '',
     collectTransientRetries: 0,
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -47,7 +47,7 @@ export function createChatData(overrides: Partial<ChatData> = {}): ChatData {
     augmentedCalls: [],
     hookResult: null,
     deferredCompact: false,
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -81,10 +81,8 @@ export function createMockChatResponse(options: {
     message: {
       role: 'assistant' as const,
       content: options.content ?? '',
-      ...(options.toolCalls && options.toolCalls.length > 0
-        ? { tool_calls: options.toolCalls }
-        : {}),
-      ...(options.reasoningContent ? { reasoning_content: options.reasoningContent } : {}),
+      ...(options.toolCalls && options.toolCalls.length > 0 ? { tool_calls: options.toolCalls } : {}),
+      ...(options.reasoningContent ? { reasoning_content: options.reasoningContent } : {})
     },
     done: true,
     done_reason: 'stop',
@@ -95,19 +93,15 @@ export function createMockChatResponse(options: {
     load_duration: 0,
     prompt_eval_count: 0,
     prompt_eval_duration: 0,
-    eval_duration: 0,
+    eval_duration: 0
   };
 }
 
 /** Create a mock ToolCall (with id, required by mycc's extended ToolCall type). */
-export function createMockToolCall(
-  name: string,
-  args: Record<string, unknown> = {},
-  id?: string,
-): ToolCall {
+export function createMockToolCall(name: string, args: Record<string, unknown> = {}, id?: string): ToolCall {
   return {
     id: id ?? `call-${Math.random().toString(36).slice(2, 10)}`,
-    function: { name, arguments: args },
+    function: { name, arguments: args }
   } as ToolCall;
 }
 
@@ -116,26 +110,28 @@ export function createMockAugmentedToolCall(
   name: string,
   args: Record<string, unknown> = {},
   id?: string,
-  metadata?: AugmentedToolCall['metadata'],
+  metadata?: AugmentedToolCall['metadata']
 ): AugmentedToolCall {
   return {
     ...createMockToolCall(name, args, id),
-    ...(metadata ? { metadata } : {}),
+    ...(metadata ? { metadata } : {})
   };
 }
 
 /** Create a mock ProcessToolCallsResult. */
-export function createMockHookResult(options: {
-  calls?: AugmentedToolCall[];
-  blockedCalls?: Map<string, string>;
-  deferredMessages?: Array<{ hookName: string; message: string }>;
-  compactRequested?: boolean;
-} = {}): ProcessToolCallsResult {
+export function createMockHookResult(
+  options: {
+    calls?: AugmentedToolCall[];
+    blockedCalls?: Map<string, string>;
+    deferredMessages?: Array<{ hookName: string; message: string }>;
+    compactRequested?: boolean;
+  } = {}
+): ProcessToolCallsResult {
   return {
     calls: options.calls ?? [],
     blockedCalls: options.blockedCalls ?? new Map(),
     deferredMessages: options.deferredMessages ?? [],
-    compactRequested: options.compactRequested ?? false,
+    compactRequested: options.compactRequested ?? false
   };
 }
 
@@ -167,7 +163,7 @@ export function createMockMachineEnv(options: MockMachineEnvOptions): MachineEnv
   const ctx = createMockContext(options.ctxOptions);
   // Default escAware: run the operation, pass a real AbortController (no ESC)
   ctx.core.escAware = vi.fn(async (fn: (ac: AbortController) => Promise<unknown>) =>
-    fn(new AbortController()),
+    fn(new AbortController())
   ) as never;
 
   return {
@@ -187,7 +183,7 @@ export function createMockMachineEnv(options: MockMachineEnvOptions): MachineEnv
       markInjected: vi.fn(),
       hasInjected: vi.fn(() => false),
       clearInjected: vi.fn(),
-      ...options.conditions,
+      ...options.conditions
     } as unknown as ConditionRegistry,
     sequence: {
       add: vi.fn(),
@@ -209,18 +205,18 @@ export function createMockMachineEnv(options: MockMachineEnvOptions): MachineEnv
       incrementTotalTurns: vi.fn(),
       compactReset: vi.fn(),
       fullClear: vi.fn(),
-      ...options.sequence,
+      ...options.sequence
     } as unknown as Sequence,
     hookExecutor: {
       processToolCalls: vi.fn(async () => createMockHookResult()),
       resetTurn: vi.fn(),
-      ...options.hookExecutor,
+      ...options.hookExecutor
     } as unknown as HookExecutor,
     inputProvider: {
       getInput: vi.fn(),
       setMode: vi.fn(),
       promptRetry: vi.fn(async () => false),
-      ...options.inputProvider,
+      ...options.inputProvider
     } as unknown as InputProvider,
     sessionFilePath: options.sessionFilePath ?? '/tmp/test-session.json',
     pendingSlashQuery: null,
@@ -231,8 +227,8 @@ export function createMockMachineEnv(options: MockMachineEnvOptions): MachineEnv
       similarityToDelta: vi.fn(() => 0),
       getDuplicationReport: vi.fn(() => ''),
       clear: vi.fn(),
-      ...options.requestEmbeddingTracker,
+      ...options.requestEmbeddingTracker
     } as unknown as RequestEmbeddingTracker,
-    nextWtNudge: 0,
+    nextWtNudge: 0
   };
 }

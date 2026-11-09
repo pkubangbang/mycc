@@ -11,27 +11,29 @@
  * TOOL, (b) hook processing DOES run, and (c) no `[brief] blocked:` line is
  * ever logged.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 vi.mock('../../../loop/agent-io.js', () => {
   let neglected = false;
   return {
     agentIO: {
       isNeglectedMode: vi.fn(() => neglected),
-      setNeglectedMode: vi.fn((v: boolean) => { neglected = v; }),
+      setNeglectedMode: vi.fn((v: boolean) => {
+        neglected = v;
+      }),
       log: vi.fn(),
       verbose: vi.fn(),
-      brief: vi.fn(),
-    },
+      brief: vi.fn()
+    }
   };
 });
 
 vi.mock('../../../context/shared/loader.js', () => ({
-  loader: { getToolsForScope: vi.fn(() => []) },
+  loader: { getToolsForScope: vi.fn(() => []) }
 }));
 
 vi.mock('../../../hook/hook-preprocessor.js', () => ({
-  augmentToolCalls: vi.fn((calls: unknown[]) => calls),
+  augmentToolCalls: vi.fn((calls: unknown[]) => calls)
 }));
 
 vi.mock('../../../loop/triologue.js', () => {
@@ -56,7 +58,7 @@ import {
   createChatData,
   createMockMachineEnv,
   createMockAugmentedToolCall,
-  createMockHookResult,
+  createMockHookResult
 } from '../esc-test-helpers.js';
 
 describe('handleHook — brief batching', () => {
@@ -72,11 +74,11 @@ describe('handleHook — brief batching', () => {
     const bashCall = createMockAugmentedToolCall('bash', { command: 'ls' }, 'call_bash');
     const env = createMockMachineEnv({ triologue });
     env.hookExecutor.processToolCalls = vi.fn(async () =>
-      createMockHookResult({ calls: [briefCall, bashCall] }),
+      createMockHookResult({ calls: [briefCall, bashCall] })
     ) as never;
     const chat = createChatData({
       assistantContent: 'checking things',
-      rawToolCalls: [briefCall, bashCall] as never,
+      rawToolCalls: [briefCall, bashCall] as never
     });
 
     const result = await handleHook(env, createTurnVars(), chat);
@@ -93,12 +95,10 @@ describe('handleHook — brief batching', () => {
   it('lets a lone brief through to TOOL', async () => {
     const briefCall = createMockAugmentedToolCall('brief', { message: 'looking', confidence: 6 }, 'call_brief');
     const env = createMockMachineEnv({ triologue });
-    env.hookExecutor.processToolCalls = vi.fn(async () =>
-      createMockHookResult({ calls: [briefCall] }),
-    ) as never;
+    env.hookExecutor.processToolCalls = vi.fn(async () => createMockHookResult({ calls: [briefCall] })) as never;
     const chat = createChatData({
       assistantContent: 'checking things',
-      rawToolCalls: [briefCall] as never,
+      rawToolCalls: [briefCall] as never
     });
 
     const result = await handleHook(env, createTurnVars(), chat);
@@ -114,11 +114,11 @@ describe('handleHook — brief batching', () => {
     const readCall = createMockAugmentedToolCall('read_file', { path: 'x' }, 'call_read');
     const env = createMockMachineEnv({ triologue });
     env.hookExecutor.processToolCalls = vi.fn(async () =>
-      createMockHookResult({ calls: [bashCall, readCall] }),
+      createMockHookResult({ calls: [bashCall, readCall] })
     ) as never;
     const chat = createChatData({
       assistantContent: '',
-      rawToolCalls: [bashCall, readCall] as never,
+      rawToolCalls: [bashCall, readCall] as never
     });
 
     const result = await handleHook(env, createTurnVars(), chat);

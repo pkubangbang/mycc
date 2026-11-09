@@ -20,12 +20,12 @@ export function stripAnsi(text: string): string {
   // what an ANSI escape sequence IS — so disable no-control-regex for the
   // whole chain rather than per-line (the original single-line disable was
   // misplaced above the comment, leaving the regex lines un-suppressed).
-  /* eslint-disable no-control-regex */
+  /* oxlint-disable no-control-regex */
   return text
     .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
     .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '')
     .replace(/\x1b[@-Z\\-_]/g, '');
-  /* eslint-enable no-control-regex */
+  /* oxlint-enable no-control-regex */
 }
 
 /**

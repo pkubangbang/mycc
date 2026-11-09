@@ -1,6 +1,6 @@
 {
   "name": "@pkubangbang/mycc",
-  "version": "0.11.10",
+  "version": "0.11.11",
   "description": "Node.js agent implementations using Ollama - harness engineering for AI agents",
   "type": "module",
   "private": true,
@@ -23,18 +23,19 @@
   },
   "scripts": {
     "start": "tsx src/index.ts",
-    "test": "npm run typecheck:all && vitest run",
-    "test:tty": "cross-env MYCC_TTY_TESTS=1 vitest run src/tests/plain-output.test.ts",
+    "test": "npm run typecheck:all && vp test run",
+    "test:tty": "cross-env MYCC_TTY_TESTS=1 vp test run src/tests/plain-output.test.ts",
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json",
     "typecheck:web": "vue-tsc --noEmit -p src/web/tsconfig.json",
     "typecheck:all": "node scripts/typecheck-parallel.mjs",
-    "lint": "eslint src/",
+    "lint": "vp lint src/",
     "format": "node scripts/format.js --write",
     "format:check": "node scripts/format.js --check",
-    "test:cov": "vitest run --coverage",
-    "test:slow": "cross-env RUN_SLOW=1 vitest run"
+    "test:cov": "vp test run --coverage",
+    "test:slow": "cross-env RUN_SLOW=1 vp test run",
+    "prepare": "vp config"
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.27.2",
@@ -56,27 +57,21 @@
     "string-width": "^8.2.2",
     "strip-ansi": "^7.2.0",
     "tsx": "^4.23.13",
-    "vite": "^8.3.0",
+    "vite": "catalog:",
     "vue": "^3.5.42",
     "ws": "^8.21.3"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
     "@types/chai": "^5.2.3",
     "@types/express": "^5.0.6",
     "@types/json-schema": "^7.0.15",
     "@types/minimist": "^1.2.5",
     "@types/node": "^24.13.5",
     "@types/ws": "^8.18.1",
-    "@typescript-eslint/eslint-plugin": "^8.70.0",
-    "@typescript-eslint/parser": "^8.70.0",
     "chai": "^6.2.2",
-    "eslint": "^10.10.0",
-    "eslint-config-prettier": "^10.1.8",
-    "prettier": "^3.9.7",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.70.0",
-    "vitest": "^4.1.10",
-    "vue-tsc": "^3.3.11"
+    "vitest": "catalog:",
+    "vue-tsc": "^3.3.11",
+    "vite-plus": "catalog:"
   }
 }

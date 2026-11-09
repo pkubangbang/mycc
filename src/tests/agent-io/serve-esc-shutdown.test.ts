@@ -1,13 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const { tryGetServeHub, onServeHubReady } = vi.hoisted(() => ({
   tryGetServeHub: vi.fn(),
-  onServeHubReady: vi.fn(),
+  onServeHubReady: vi.fn()
 }));
 
 vi.mock('../../serve/serve-registry.js', () => ({
   tryGetServeHub,
-  onServeHubReady,
+  onServeHubReady
 }));
 
 import { agentIO } from '../../loop/agent-io.js';
@@ -48,11 +48,13 @@ afterEach(() => {
 describe('agentIO serve-mode ESC shutdown', () => {
   it('ignores a second ESC while graceful shutdown is pending even after isRunning flips false', async () => {
     let finishShutdown!: () => void;
-    const shutdownPromise = new Promise<void>((resolve) => { finishShutdown = resolve; });
+    const shutdownPromise = new Promise<void>((resolve) => {
+      finishShutdown = resolve;
+    });
     const hub = {
       isRunning: vi.fn().mockReturnValueOnce(true).mockReturnValue(false),
       gracefulShutdown: vi.fn(() => shutdownPromise),
-      setAutoStateProvider: vi.fn(),
+      setAutoStateProvider: vi.fn()
     };
     vi.mocked(tryGetServeHub).mockReturnValue(hub as never);
 

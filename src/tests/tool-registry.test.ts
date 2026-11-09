@@ -13,24 +13,18 @@
  * only owns the *contract* of the tool definition itself.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { builtInTools } from '../context/shared/registry.js';
 
-const TOOLS_DIR = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../tools'
-);
+const TOOLS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../tools');
 
 /** Files in src/tools/ that are infrastructure, not tool definitions. */
 const NON_TOOL_FILES = new Set(['types.ts', 'index.ts']);
 
-const REGISTRY_FILE = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../context/shared/registry.ts'
-);
+const REGISTRY_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '../context/shared/registry.ts');
 
 /**
  * File names (relative to src/tools/) that registry.ts imports tool
@@ -52,9 +46,7 @@ describe('builtInTools registry', () => {
   it('registers every tool with a well-formed name', () => {
     for (const tool of builtInTools) {
       expect(tool.name, `empty name in ${tool.name}`).toBeTruthy();
-      expect(tool.name, `name "${tool.name}" must be snake_case`).toMatch(
-        /^[a-z][a-z0-9_]*$/
-      );
+      expect(tool.name, `name "${tool.name}" must be snake_case`).toMatch(/^[a-z][a-z0-9_]*$/);
     }
   });
 
@@ -67,18 +59,15 @@ describe('builtInTools registry', () => {
   it('declares a non-empty description of meaningful length', () => {
     for (const tool of builtInTools) {
       expect(tool.description, `${tool.name} description`).toBeTruthy();
-      expect(tool.description.length, `${tool.name} description too short`)
-        .toBeGreaterThanOrEqual(20);
+      expect(tool.description.length, `${tool.name} description too short`).toBeGreaterThanOrEqual(20);
     }
   });
 
   it('declares a non-empty scope drawn from the known vocabulary', () => {
     for (const tool of builtInTools) {
-      expect(tool.scope.length, `${tool.name} has empty scope`)
-        .toBeGreaterThan(0);
+      expect(tool.scope.length, `${tool.name} has empty scope`).toBeGreaterThan(0);
       for (const s of tool.scope) {
-        expect(VALID_SCOPES.has(s), `${tool.name} has unknown scope "${s}"`)
-          .toBe(true);
+        expect(VALID_SCOPES.has(s), `${tool.name} has unknown scope "${s}"`).toBe(true);
       }
     }
   });
@@ -89,8 +78,7 @@ describe('builtInTools registry', () => {
       expect(schema.type, `${tool.name} schema.type`).toBe('object');
       const props = (schema.properties ?? {}) as Record<string, unknown>;
       for (const req of schema.required ?? []) {
-        expect(Object.keys(props), `${tool.name} requires undeclared "${req}"`)
-          .toContain(req);
+        expect(Object.keys(props), `${tool.name} requires undeclared "${req}"`).toContain(req);
       }
     }
   });
@@ -102,16 +90,13 @@ describe('builtInTools registry', () => {
     const sources = registrySources();
     expect(sources.size, 'no tool imports found in registry.ts').toBeGreaterThan(0);
     for (const source of sources) {
-      expect(fs.existsSync(path.join(TOOLS_DIR, source)), `missing src/tools/${source}`)
-        .toBe(true);
+      expect(fs.existsSync(path.join(TOOLS_DIR, source)), `missing src/tools/${source}`).toBe(true);
     }
   });
 
   it('registers every tool source file in src/tools/', () => {
     const registered = new Set(registrySources());
-    const onDisk = fs
-      .readdirSync(TOOLS_DIR)
-      .filter((f) => f.endsWith('.ts') && !NON_TOOL_FILES.has(f));
+    const onDisk = fs.readdirSync(TOOLS_DIR).filter((f) => f.endsWith('.ts') && !NON_TOOL_FILES.has(f));
     const unregistered = onDisk.filter((f) => !registered.has(f));
     expect(unregistered, 'tool files missing from builtInTools').toEqual([]);
   });

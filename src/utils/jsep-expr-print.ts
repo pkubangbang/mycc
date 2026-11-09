@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+/* oxlint-disable @typescript-eslint/no-explicit-any */
 import jsep, { Expression, CoreExpression } from 'jsep';
 import chalk from 'chalk';
 

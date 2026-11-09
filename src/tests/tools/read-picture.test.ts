@@ -7,7 +7,7 @@
  * not exercised here (readPictureCached is mocked).
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import { readPictureTool } from '../../tools/read-picture.js';
@@ -41,7 +41,7 @@ describe('readPictureTool', () => {
     makeImage('img.png');
     const result: PictureResult = {
       pairs: [{ focus: 'general description', description: 'A login form with two fields.' }],
-      cacheToken: 'aaaaaaaaaaaaaaaa',
+      cacheToken: 'aaaaaaaaaaaaaaaa'
     };
     (ctx.core.readPictureCached as ReturnType<typeof vi.fn>).mockResolvedValue(result);
 
@@ -65,17 +65,22 @@ describe('readPictureTool', () => {
     const result: PictureResult = {
       pairs: [
         { focus: 'general description', description: 'desc1' },
-        { focus: 'What text is visible?', description: 'desc2' },
+        { focus: 'What text is visible?', description: 'desc2' }
       ],
-      cacheToken: 'bbbbbbbbbbbbbbbb',
+      cacheToken: 'bbbbbbbbbbbbbbbb'
     };
     (ctx.core.readPictureCached as ReturnType<typeof vi.fn>).mockResolvedValue(result);
 
-    const out = await runTool(readPictureTool, ctx, {
-      path: 'img.png',
-      prompt: 'What text is visible?',
-      cache: 'aaaaaaaaaaaaaaaa',
-    }, testSignal);
+    const out = await runTool(
+      readPictureTool,
+      ctx,
+      {
+        path: 'img.png',
+        prompt: 'What text is visible?',
+        cache: 'aaaaaaaaaaaaaaaa'
+      },
+      testSignal
+    );
 
     const [absPath, prompt, cacheToken] = (ctx.core.readPictureCached as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(absPath).toBe(path.join(tempDir, 'img.png'));
@@ -93,7 +98,7 @@ describe('readPictureTool', () => {
     makeImage('img.png');
     const result: PictureResult = {
       pairs: [{ focus: 'general description', description: 'cached desc' }],
-      cacheToken: 'cccccccccccccccc',
+      cacheToken: 'cccccccccccccccc'
     };
     (ctx.core.readPictureCached as ReturnType<typeof vi.fn>).mockResolvedValue(result);
 
@@ -181,7 +186,7 @@ describe('readPictureTool', () => {
 
     (ctx.core.readPictureCached as ReturnType<typeof vi.fn>).mockResolvedValue({
       pairs: [{ focus: 'general description', description: 'nested' }],
-      cacheToken: 'dddddddddddddddd',
+      cacheToken: 'dddddddddddddddd'
     });
 
     const out = await runTool(readPictureTool, ctx, { path: 'sub/nested.png' }, testSignal);

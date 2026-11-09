@@ -13,7 +13,7 @@
  * policy belongs to that server or its configured backend.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test';
 import { webFetchTool } from '../../tools/web_fetch.js';
 import { createMockContext, createTempDir, removeTempDir, runTool, testSignal } from './test-utils.js';
 
@@ -51,7 +51,7 @@ describe('webFetchTool', () => {
     ['file:', 'file:///etc/passwd'],
     ['ftp:', 'ftp://example.com/file'],
     ['data:', 'data:text/plain,hello'],
-    ['javascript:', 'javascript:alert(1)'],
+    ['javascript:', 'javascript:alert(1)']
   ])('rejects a %s URL with an unsupported-protocol Error (no fetch)', async (_scheme, url) => {
     const out = await runTool(webFetchTool, ctx, { url }, testSignal);
     expect(out).toContain('Error:');
@@ -83,7 +83,7 @@ describe('webFetchTool', () => {
       title: 'Example Page',
       url: 'https://example.com',
       content: 'Main body text',
-      links: ['https://a.com', 'https://b.com'],
+      links: ['https://a.com', 'https://b.com']
     });
     const out = await runTool(webFetchTool, ctx, { url: 'https://example.com' }, testSignal);
     expect(out).toContain('Fetched: Example Page');
@@ -96,7 +96,10 @@ describe('webFetchTool', () => {
   it('caps the rendered links at 20 and notes the remainder', async () => {
     const links = Array.from({ length: 23 }, (_, i) => `https://l${i}.com`);
     vi.mocked(ctx.core.webFetch).mockResolvedValue({
-      title: 'T', url: 'https://x', content: 'c', links,
+      title: 'T',
+      url: 'https://x',
+      content: 'c',
+      links
     });
     const out = await runTool(webFetchTool, ctx, { url: 'https://x' }, testSignal);
     expect(out).toContain('- https://l19.com');

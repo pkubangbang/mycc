@@ -1,10 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import {
-  parseKeys,
-  isCtrlC,
-  isEscape,
-  KeyInfo,
-} from '../../utils/key-parser';
+import { describe, it, expect } from 'vite-plus/test';
+import { parseKeys, isCtrlC, isEscape, KeyInfo } from '../../utils/key-parser';
 
 /**
  * Helper to create a buffer from hex values
@@ -20,11 +15,9 @@ describe('key-parser', () => {
         expect(isCtrlC(hexBuf(0x03))).toBe(true);
       });
 
-
       it('should return false for multi-byte buffers', () => {
         expect(isCtrlC(hexBuf(0x03, 0x00))).toBe(false);
       });
-
     });
 
     describe('isEscape', () => {
@@ -35,8 +28,6 @@ describe('key-parser', () => {
       it('should return false for escape sequences', () => {
         expect(isEscape(hexBuf(0x1b, 0x5b, 0x41))).toBe(false);
       });
-
-
     });
 
     describe('Ctrl+A through Ctrl+Z', () => {
@@ -47,10 +38,9 @@ describe('key-parser', () => {
           ctrl: true,
           meta: false,
           shift: false,
-          sequence: 'a',
+          sequence: 'a'
         });
       });
-
 
       it('should parse Ctrl+D (0x04) - EOF', () => {
         const result = parseKeys(hexBuf(0x04));
@@ -59,11 +49,9 @@ describe('key-parser', () => {
           ctrl: true,
           meta: false,
           shift: false,
-          sequence: 'd',
+          sequence: 'd'
         });
       });
-
-
 
       it('should parse Ctrl+H (0x08) - should be backspace, not ctrl+h', () => {
         // Note: 0x08 is backspace in the implementation
@@ -73,7 +61,7 @@ describe('key-parser', () => {
           ctrl: false,
           meta: false,
           shift: false,
-          sequence: '\x7f',
+          sequence: '\x7f'
         });
       });
 
@@ -84,7 +72,7 @@ describe('key-parser', () => {
           ctrl: true,
           meta: false,
           shift: false,
-          sequence: 'i',
+          sequence: 'i'
         });
       });
 
@@ -96,7 +84,7 @@ describe('key-parser', () => {
           ctrl: false,
           meta: false,
           shift: false,
-          sequence: '\r',
+          sequence: '\r'
         });
       });
 
@@ -107,7 +95,7 @@ describe('key-parser', () => {
           ctrl: true,
           meta: false,
           shift: false,
-          sequence: 'k',
+          sequence: 'k'
         });
       });
 
@@ -118,7 +106,7 @@ describe('key-parser', () => {
           ctrl: true,
           meta: false,
           shift: false,
-          sequence: 'l',
+          sequence: 'l'
         });
       });
 
@@ -130,12 +118,9 @@ describe('key-parser', () => {
           ctrl: false,
           meta: false,
           shift: false,
-          sequence: '\r',
+          sequence: '\r'
         });
       });
-
-
-
 
       it('should parse Ctrl+R (0x12)', () => {
         const result = parseKeys(hexBuf(0x12));
@@ -144,10 +129,9 @@ describe('key-parser', () => {
           ctrl: true,
           meta: false,
           shift: false,
-          sequence: 'r',
+          sequence: 'r'
         });
       });
-
 
       it('should parse Ctrl+U (0x15)', () => {
         const result = parseKeys(hexBuf(0x15));
@@ -156,10 +140,9 @@ describe('key-parser', () => {
           ctrl: true,
           meta: false,
           shift: false,
-          sequence: 'u',
+          sequence: 'u'
         });
       });
-
 
       it('should parse Ctrl+W (0x17)', () => {
         const result = parseKeys(hexBuf(0x17));
@@ -168,12 +151,9 @@ describe('key-parser', () => {
           ctrl: true,
           meta: false,
           shift: false,
-          sequence: 'w',
+          sequence: 'w'
         });
       });
-
-
-
     });
   });
 });

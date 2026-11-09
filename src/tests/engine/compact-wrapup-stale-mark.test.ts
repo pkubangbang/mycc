@@ -28,7 +28,7 @@
  * and asserts neither the invariant violation nor the crash can recur.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 vi.mock('../../loop/agent-io.js', () => ({
   agentIO: {
@@ -36,8 +36,8 @@ vi.mock('../../loop/agent-io.js', () => ({
     verbose: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
-    error: vi.fn(),
-  },
+    error: vi.fn()
+  }
 }));
 
 // Mock config so runAutoCompact's getSessionContext/getSessionDir return safe
@@ -46,7 +46,7 @@ vi.mock('../../loop/agent-io.js', () => ({
 // MODEL = getOllamaModel()`) and the other config fns chat-provider/ollama
 // import eagerly. Mirrors the exhaustive list in tp-fix.test.ts.
 vi.mock('../../config.js', async (importOriginal) => {
-  const actual = await importOriginal() as Record<string, unknown>;
+  const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
     isDebuggingTp: () => false,
@@ -63,7 +63,7 @@ vi.mock('../../config.js', async (importOriginal) => {
     isVerbose: () => false,
     getSessionContext: () => 'test-session',
     getSessionDir: () => '/tmp/.mycc/sessions/test-session',
-    setSessionContext: () => {},
+    setSessionContext: () => {}
   };
 });
 
@@ -82,8 +82,8 @@ vi.mock('fs', () => ({
     createWriteStream: () => ({ write: () => {}, end: () => {} }),
     writeFileSync: () => {},
     readFileSync: () => '',
-    appendFileSync: () => {},
-  },
+    appendFileSync: () => {}
+  }
 }));
 
 vi.mock('../../engine/ollama.js', () => ({
@@ -96,7 +96,7 @@ vi.mock('../../engine/ollama.js', () => ({
   structuredChat: vi.fn(),
   healthCheck: vi.fn(),
   getEmbedding: vi.fn(),
-  MODEL: 'test-model',
+  MODEL: 'test-model'
 }));
 
 // chat-provider.ts re-exports from ollama.ts at module load, and runAutoCompact
@@ -109,7 +109,7 @@ vi.mock('../../engine/chat-provider.js', () => ({
   forkChat: vi.fn().mockResolvedValue(''),
   MODEL: 'test-model',
   retryMultipleChoice: vi.fn(),
-  healthCheck: vi.fn(),
+  healthCheck: vi.fn()
 }));
 
 import { Triologue } from '../../loop/triologue.js';
@@ -140,13 +140,14 @@ function internals(t: Triologue): TriologueInternals {
       return (t as unknown as { wrapUp: { value: number } }).wrapUp.value;
     },
     set wrapUpMark(value: number) {
-      const mgr = (t as unknown as { wrapUp: { value: number; commit(): void; reset(): void; begin(n: number): void } }).wrapUp;
+      const mgr = (t as unknown as { wrapUp: { value: number; commit(): void; reset(): void; begin(n: number): void } })
+        .wrapUp;
       if (value === -1) {
         mgr.reset();
       } else {
         mgr.begin(value);
       }
-    },
+    }
   };
 }
 

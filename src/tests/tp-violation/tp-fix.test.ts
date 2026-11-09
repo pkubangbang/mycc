@@ -8,7 +8,7 @@
  * _-prefixed methods. The mock builds that context directly — behavior
  * assertions are unchanged.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 import { attemptAutoFix } from '../../loop/triologue/tp-fix.js';
 import type { TpFixContext } from '../../loop/triologue/tp-fix.js';
 import type { Message, ToolCall } from '../../types.js';
@@ -16,7 +16,7 @@ import type { Message, ToolCall } from '../../types.js';
 // Use vi.hoisted for variables accessible in hoisted vi.mock factory
 const { mockDebuggingTp, mockApiProvider } = vi.hoisted(() => ({
   mockDebuggingTp: { current: false },
-  mockApiProvider: { current: 'ollama' },
+  mockApiProvider: { current: 'ollama' }
 }));
 
 // Mock config module - must include all exports that transitive imports need
@@ -56,7 +56,7 @@ vi.mock('../../config.js', () => ({
   getWikiDbDir: () => '/tmp/.mycc-store/wiki/db',
   getWikiDomainsFile: () => '/tmp/.mycc-store/wiki/domains.json',
   ensureToolTypeImports: () => {},
-  getRagProvider: () => 'nomic',
+  getRagProvider: () => 'nomic'
 }));
 
 // Mock agentIO (imported eagerly by tp-fix.ts)
@@ -66,8 +66,8 @@ vi.mock('../../loop/agent-io.js', () => ({
     verbose: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
-    error: vi.fn(),
-  },
+    error: vi.fn()
+  }
 }));
 
 function createMockContext(): TpFixContext & {
@@ -102,7 +102,7 @@ function createMockContext(): TpFixContext & {
     }),
     flushDeferredInputs: vi.fn(() => {
       ctx.flushCount += 1;
-    }),
+    })
   };
   return ctx;
 }
@@ -122,7 +122,14 @@ describe('attemptAutoFix', () => {
     it('should return debug_throw for all violation types when debugging TP', () => {
       mockDebuggingTp.current = true;
 
-      const types = ['user_after_tool', 'note_after_tool', 'tool_no_assistant', 'duplicate_assistant', 'agent_after_system', 'invalid_sequence'] as const;
+      const types = [
+        'user_after_tool',
+        'note_after_tool',
+        'tool_no_assistant',
+        'duplicate_assistant',
+        'agent_after_system',
+        'invalid_sequence'
+      ] as const;
       for (const type of types) {
         const result = attemptAutoFix(ctx, type, 'assistant');
         expect(result).toBe('debug_throw');
@@ -175,7 +182,7 @@ describe('attemptAutoFix', () => {
       expect(result).toBe('recovered');
       expect(ctx.injectBypass).toHaveBeenCalledWith({
         role: 'assistant',
-        content: '',
+        content: ''
       });
     });
   });
@@ -188,7 +195,7 @@ describe('attemptAutoFix', () => {
       expect(result).toBe('recovered');
       expect(ctx.injectBypass).toHaveBeenCalledWith({
         role: 'assistant',
-        content: '',
+        content: ''
       });
     });
   });
@@ -227,8 +234,14 @@ describe('attemptAutoFix', () => {
       // Set up pending tool calls
       const ctxWithPending = createMockContext();
       ctxWithPending.pendingToolCallOrder.push('call_1', 'call_2');
-      ctxWithPending.pendingToolCalls.set('call_1', { id: 'call_1', function: { name: 'bash', arguments: {} } } as ToolCall);
-      ctxWithPending.pendingToolCalls.set('call_2', { id: 'call_2', function: { name: 'edit_file', arguments: {} } } as ToolCall);
+      ctxWithPending.pendingToolCalls.set('call_1', {
+        id: 'call_1',
+        function: { name: 'bash', arguments: {} }
+      } as ToolCall);
+      ctxWithPending.pendingToolCalls.set('call_2', {
+        id: 'call_2',
+        function: { name: 'edit_file', arguments: {} }
+      } as ToolCall);
 
       const result = attemptAutoFix(ctxWithPending, 'duplicate_assistant', 'assistant');
       expect(result).toBe('recovered');
@@ -258,7 +271,10 @@ describe('attemptAutoFix', () => {
       // lingered until a boundary dropped it — an orphan note with no context.
       const ctxPending = createMockContext();
       ctxPending.pendingToolCallOrder.push('call_1');
-      ctxPending.pendingToolCalls.set('call_1', { id: 'call_1', function: { name: 'bash', arguments: {} } } as ToolCall);
+      ctxPending.pendingToolCalls.set('call_1', {
+        id: 'call_1',
+        function: { name: 'bash', arguments: {} }
+      } as ToolCall);
 
       const result = attemptAutoFix(ctxPending, 'duplicate_assistant', 'assistant');
 
@@ -309,7 +325,7 @@ describe('attemptAutoFix', () => {
       expect(result).toBe('recovered');
       expect(ctx.injectBypass).toHaveBeenCalledWith({
         role: 'user',
-        content: '[TP_RECOVERY] Continue.',
+        content: '[TP_RECOVERY] Continue.'
       });
     });
   });
@@ -320,7 +336,7 @@ describe('attemptAutoFix', () => {
       expect(result).toBe('recovered');
       expect(ctx.injectBypass).toHaveBeenCalledWith({
         role: 'assistant',
-        content: '',
+        content: ''
       });
     });
   });

@@ -25,7 +25,7 @@
  * mocked to drive the steering-note path; session/index is stubbed so
  * resolveHeadlessFirstQuery is a no-op.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 import type { KeywordExtractionResult } from '../../../loop/keyword-extractor.js';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
@@ -36,13 +36,13 @@ vi.mock('../../../loop/agent-io.js', () => ({
     setNeglectedMode: vi.fn(),
     log: vi.fn(),
     verbose: vi.fn(),
-    brief: vi.fn(),
-  },
+    brief: vi.fn()
+  }
 }));
 
 vi.mock('../../../loop/esc-wrap-up.js', () => ({
   evaluateWrapUp: vi.fn(),
-  clearWrapUp: vi.fn(),
+  clearWrapUp: vi.fn()
 }));
 
 vi.mock('../../../config.js', async (importOriginal) => {
@@ -60,12 +60,12 @@ vi.mock('../../../context/shared/loader.js', () => ({
     // wiki title (${scope}:${name}) via buildAllSkillEntries(). The tests use
     // the scope 'project', so stub entries with 'project:<name>' titles.
     // Tests that need a different scope override this via the helper below.
-    buildAllSkillEntries: vi.fn(() => []),
-  },
+    buildAllSkillEntries: vi.fn(() => [])
+  }
 }));
 
 vi.mock('../../../context/worktree-store.js', () => ({
-  listWorktrees: vi.fn(async () => []),
+  listWorktrees: vi.fn(async () => [])
 }));
 
 // extractKeywords is the SHARED extractor (src/loop/keyword-extractor.ts),
@@ -74,7 +74,7 @@ vi.mock('../../../context/worktree-store.js', () => ({
 // call counts (replacing the old private-method spy on the singleton, which
 // no longer exists — the method was folded out into the shared module).
 vi.mock('../../../loop/keyword-extractor.js', () => ({
-  extractKeywords: vi.fn().mockResolvedValue({ status: 'success', keywords: [], freeformQuery: '' }),
+  extractKeywords: vi.fn().mockResolvedValue({ status: 'success', keywords: [], freeformQuery: '' })
 }));
 
 // serve-registry: the hub is only touched for its NON-steering duties now —
@@ -105,19 +105,19 @@ vi.mock('../../../serve/serve-registry.js', () => ({
   getServeHub: vi.fn(() => ({
     isRunning: () => serveRunning,
     broadcast: vi.fn(),
-    drainFileUploads: () => [],
+    drainFileUploads: () => []
   })),
   tryGetServeHub: vi.fn(() => ({
     isRunning: () => serveRunning,
     broadcast: vi.fn(),
-    drainFileUploads: () => [],
+    drainFileUploads: () => []
   })),
-  onServeHubReady: vi.fn(),
+  onServeHubReady: vi.fn()
 }));
 
 // session/index: stub resolveHeadlessFirstQuery to a no-op (no session file).
 vi.mock('../../../session/index.js', () => ({
-  resolveHeadlessFirstQuery: vi.fn(() => false),
+  resolveHeadlessFirstQuery: vi.fn(() => false)
 }));
 
 // Triologue stub: the real handleCollect reads messages/tokens and injects
@@ -147,11 +147,7 @@ import { AgentState } from '../../../loop/state-machine.js';
 import { Triologue } from '../../../loop/triologue.js';
 import { getSteeringManager } from '../../../loop/steering-manager.js';
 import { skillSuggester, beginFreshSession } from '../../../loop/states/collect-skill.js';
-import {
-  createTurnVars,
-  createChatData,
-  createMockMachineEnv,
-} from '../esc-test-helpers.js';
+import { createTurnVars, createChatData, createMockMachineEnv } from '../esc-test-helpers.js';
 import { createMockContext } from '../../test-utils/mock-context.js';
 import type { TurnVars } from '../../../loop/state-machine.js';
 import { extractKeywords } from '../../../loop/keyword-extractor.js';
@@ -214,9 +210,9 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
       core: {
         getConfusionIndex: vi.fn(() => 0), // below threshold → hint block skipped
         brief: vi.fn(),
-        verbose: vi.fn(),
+        verbose: vi.fn()
       } as never,
-      skill: { listSkills: vi.fn(() => []) } as never,
+      skill: { listSkills: vi.fn(() => []) } as never
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
@@ -244,43 +240,47 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     skills: Array<{ name: string; description?: string; keywords?: string[] }>,
     wikiResults: Array<{ title: string; similarity?: number }> = [],
     wikiThrow = false,
-    scope = 'project',
+    scope = 'project'
   ) {
-    const fullSkills = skills.map(s => ({
+    const fullSkills = skills.map((s) => ({
       name: s.name,
       description: s.description ?? '',
       keywords: s.keywords ?? ['test'],
-      content: '',
+      content: ''
     }));
     // scoreSkills maps local skills to their qualified wiki titles; mirror
     // the chosen scope so wiki rows (built by the caller) can match.
     vi.mocked(loader.buildAllSkillEntries).mockReturnValue(
-      fullSkills.map(s => ({
+      fullSkills.map((s) => ({
         document: {
           domain: 'skills',
           title: `${scope}:${s.name}`,
           content: '',
-          references: [],
+          references: []
         },
-        contentHash: 'h',
-      })),
+        contentHash: 'h'
+      }))
     );
     const ctx = createMockContext({
       core: {
         getConfusionIndex: vi.fn(() => 0),
         brief: vi.fn(),
-        verbose: vi.fn(),
+        verbose: vi.fn()
       } as never,
       skill: { listSkills: vi.fn(() => fullSkills) } as never,
       wiki: {
         get: wikiThrow
-          ? vi.fn(async () => { throw new Error('embedding model unavailable'); })
-          : vi.fn(async () => wikiResults.map(r => ({
-              document: { title: r.title, content: '', references: [] },
-              similarity: r.similarity ?? 0.8,
-              hash: 'h',
-            }))),
-      } as never,
+          ? vi.fn(async () => {
+              throw new Error('embedding model unavailable');
+            })
+          : vi.fn(async () =>
+              wikiResults.map((r) => ({
+                document: { title: r.title, content: '', references: [] },
+                similarity: r.similarity ?? 0.8,
+                hash: 'h'
+              }))
+            )
+      } as never
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
@@ -294,7 +294,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
   function makeOversizeSkills(n: number): Array<{ name: string; description?: string }> {
     return Array.from({ length: n }, (_, i) => ({
       name: `skill-${i}`,
-      description: `Skill number ${i}`,
+      description: `Skill number ${i}`
     }));
   }
 
@@ -306,7 +306,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     setExtractionResult({ status: 'success', keywords: ['parser', 'test'], freeformQuery: 'parser testing' });
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
-      lastUserQuery: 'help me test the parser',
+      lastUserQuery: 'help me test the parser'
     });
 
     await handleCollect(env, turn, createChatData());
@@ -316,7 +316,6 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     expect(mockedExtractKeywords).toHaveBeenCalledTimes(1);
   });
 
-
   // ---------------------------------------------------------------------------
   // skipped path (trivial query)
   // ---------------------------------------------------------------------------
@@ -325,7 +324,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     setExtractionResult({ status: 'skipped' });
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
-      lastUserQuery: 'hello',
+      lastUserQuery: 'hello'
     });
 
     await handleCollect(env, turn, createChatData());
@@ -342,7 +341,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     setExtractionResult({ status: 'failed' });
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
-      lastUserQuery: 'help me test the parser',
+      lastUserQuery: 'help me test the parser'
     });
 
     await handleCollect(env, turn, createChatData());
@@ -351,7 +350,6 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     expect(skillSuggester.getLastQuery()).toBe('');
     expect(skillSuggester.getCooldown()).toBe(0);
   });
-
 
   it('FAILED via ESC cleanup: escAware cleanup returns {status:"failed"} → retry eligible', async () => {
     // Simulate ESC: escAware runs the cleanup branch (returns {status:'failed'})
@@ -362,7 +360,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
       return cleanup() as KeywordExtractionResult;
     }) as never;
     const turn: TurnVars = createTurnVars({
-      lastUserQuery: 'help me test the parser',
+      lastUserQuery: 'help me test the parser'
     });
 
     await handleCollect(env, turn, createChatData());
@@ -379,7 +377,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     setExtractionResult({ status: 'success', keywords: [], freeformQuery: '' });
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
-      lastUserQuery: 'same query',
+      lastUserQuery: 'same query'
     });
     skillSuggester.markQuerySeen('same query'); // already seen
 
@@ -387,7 +385,6 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     expect(mockedExtractKeywords).not.toHaveBeenCalled();
   });
-
 
   // ---------------------------------------------------------------------------
   // steering-note path (BUG 1 — no spurious double-trigger)
@@ -404,7 +401,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     getSteeringManager().addNote('focus on tests');
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
-      lastUserQuery: 'original user query',
+      lastUserQuery: 'original user query'
     });
 
     await handleCollect(env, turn, createChatData());
@@ -415,7 +412,6 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     expect(skillSuggester.getCooldown()).toBe(3);
   });
 
-
   // ---------------------------------------------------------------------------
   // sanity: handleCollect still returns LLM on the extraction path
   // ---------------------------------------------------------------------------
@@ -424,7 +420,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     setExtractionResult({ status: 'success', keywords: ['x'], freeformQuery: '' });
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
-      lastUserQuery: 'help me test the parser',
+      lastUserQuery: 'help me test the parser'
     });
 
     const result = await handleCollect(env, turn, createChatData());
@@ -444,7 +440,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const skills = makeOversizeSkills(4);
     const wikiResults = [
       { title: 'project:skill-3', similarity: 0.9 },
-      { title: 'project:skill-0', similarity: 0.7 },
+      { title: 'project:skill-0', similarity: 0.7 }
     ];
     const env = makeEnvWithSkills(skills, wikiResults, false, 'project');
     const turn: TurnVars = createTurnVars({ lastUserQuery: 'help me test things' });
@@ -454,10 +450,10 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     // wiki.get called with the freeform query + the FLAT topK=50 window.
     expect(env.ctx.wiki.get).toHaveBeenCalledWith(
       'test automation',
-      expect.objectContaining({ domain: 'skills', topK: 50 }),
+      expect.objectContaining({ domain: 'skills', topK: 50 })
     );
     // The two boosted skills clear the floor; the two unboosted (10.0) do not.
-    const hintCall = vi.mocked(triologue.note).mock.calls.find(c => c[0] === 'HINT');
+    const hintCall = vi.mocked(triologue.note).mock.calls.find((c) => c[0] === 'HINT');
     expect(hintCall).toBeDefined();
     const hintContent = hintCall ? String(hintCall[1]) : '';
     expect(hintContent).toContain('skill-3');
@@ -476,7 +472,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     setExtractionResult({
       status: 'success',
       keywords: ['restart', 'mycc'],
-      freeformQuery: 'restart the mycc instance',
+      freeformQuery: 'restart the mycc instance'
     });
     const skills = [{ name: 'mycc-online-hotfix', description: 'Hotfix', keywords: ['restart', 'mycc'] }];
     const env = makeEnvWithSkills(skills); // wiki returns no rows
@@ -499,11 +495,11 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     setExtractionResult({
       status: 'success',
       keywords: ['foo', 'bar'],
-      freeformQuery: 'bar handling',
+      freeformQuery: 'bar handling'
     });
     const skills = [
       { name: 'foo-pad', description: 'F', keywords: ['foo'] },
-      { name: 'weak-match', description: 'W', keywords: ['bar'] },
+      { name: 'weak-match', description: 'W', keywords: ['bar'] }
     ];
     const env = makeEnvWithSkills(skills, [{ title: 'project:weak-match', similarity: 0.9 }]);
     const turn: TurnVars = createTurnVars({ lastUserQuery: 'tell me about bar' });
@@ -531,7 +527,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     setExtractionResult({
       status: 'success',
       keywords: ['restart', 'mycc'],
-      freeformQuery: 'restart the mycc instance',
+      freeformQuery: 'restart the mycc instance'
     });
     const skills = [{ name: 'mycc-online-hotfix', description: 'Hotfix', keywords: ['restart', 'mycc'] }];
     const env = makeEnvWithSkills(skills, [], /* wikiThrow */ true);
@@ -542,7 +538,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('mycc-online-hotfix'));
   });
 
-  it('P1 SCOPE: another scope\'s wiki row does NOT boost the local same-named skill', async () => {
+  it("P1 SCOPE: another scope's wiki row does NOT boost the local same-named skill", async () => {
     // End-to-end through handleCollect: the local process holds skill-0 under
     // scope 'project'; the wiki returns a row for the SAME bare name under a
     // DIFFERENT scope with a high similarity. Before the P1 fix (bare-name
@@ -562,7 +558,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     expect(triologue.note).not.toHaveBeenCalledWith('HINT', expect.anything());
   });
 
-  it('P1 SCOPE positive control: the MATCHING scope\'s row DOES boost (HINT injected)', async () => {
+  it("P1 SCOPE positive control: the MATCHING scope's row DOES boost (HINT injected)", async () => {
     // Same as above but the wiki row's scope matches the local skill's, so the
     // 0.9 similarity boosts 10 pts → 10 × 1.5 = 15 > 10 → the skill surfaces.
     setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: 'test automation' });
@@ -589,15 +585,17 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const turn: TurnVars = createTurnVars({ lastUserQuery: 'do work' });
 
     await handleCollect(env, turn, createChatData());
-    const serveNotesAfterFirst = vi.mocked(triologue.note).mock.calls
-      .filter(c => c[0] === 'SYSTEM' && String(c[1]).includes('Web UI started'));
+    const serveNotesAfterFirst = vi
+      .mocked(triologue.note)
+      .mock.calls.filter((c) => c[0] === 'SYSTEM' && String(c[1]).includes('Web UI started'));
     expect(serveNotesAfterFirst.length).toBe(1);
 
     // Steady state: a second COLLECT stays SILENT (edge already reported).
     vi.mocked(triologue.note).mockClear();
     await handleCollect(env, turn, createChatData());
-    expect(vi.mocked(triologue.note).mock.calls
-      .filter(c => c[0] === 'SYSTEM' && String(c[1]).includes('Web UI'))).toHaveLength(0);
+    expect(
+      vi.mocked(triologue.note).mock.calls.filter((c) => c[0] === 'SYSTEM' && String(c[1]).includes('Web UI'))
+    ).toHaveLength(0);
 
     // The user clears the conversation. The triologue is emptied (losing the
     // note), but the session is STILL serving. Without the reconcile the
@@ -608,10 +606,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     // Next COLLECT: the edge re-armed → the CURRENT state is re-reported.
     vi.mocked(triologue.note).mockClear();
     await handleCollect(env, turn, createChatData());
-    expect(vi.mocked(triologue.note)).toHaveBeenCalledWith(
-      'SYSTEM',
-      expect.stringContaining('Web UI started'),
-    );
+    expect(vi.mocked(triologue.note)).toHaveBeenCalledWith('SYSTEM', expect.stringContaining('Web UI started'));
   });
 
   it('fail-fast: an empty freeformQuery grants ONE same-query retry (budget=1, cooldown=1), injects no HINT', async () => {
@@ -677,9 +672,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     // A lone 'test' keyword scores exactly 10 pts (first position) and does
     // NOT clear the strict >10 floor — seed ONE matching semantic row so the
     // retry pass's ranking (10 × 1.5 = 15) can actually surface a HINT.
-    const env = makeEnvWithSkills(makeOversizeSkills(3), [
-      { title: 'project:skill-0', similarity: 0.9 },
-    ]);
+    const env = makeEnvWithSkills(makeOversizeSkills(3), [{ title: 'project:skill-0', similarity: 0.9 }]);
     const turn: TurnVars = createTurnVars({ lastUserQuery: 'help me test things' });
 
     await handleCollect(env, turn, createChatData());
@@ -687,7 +680,11 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     // Pass 2 (the retry): the LLM produces a valid freeformQuery → ranking
     // runs and the HINT surfaces; the budget is cleared, not left dangling.
-    mockedExtractKeywords.mockResolvedValueOnce({ status: 'success', keywords: ['test'], freeformQuery: 'test automation' });
+    mockedExtractKeywords.mockResolvedValueOnce({
+      status: 'success',
+      keywords: ['test'],
+      freeformQuery: 'test automation'
+    });
     mockedExtractKeywords.mockClear();
     await handleCollect(env, turn, createChatData());
 
@@ -723,7 +720,11 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     // recompute would fall back to lastUserQuery ('original task A') — a
     // DIFFERENT task. The fix reuses the saved composite (task B).
     mockedExtractKeywords.mockClear();
-    mockedExtractKeywords.mockResolvedValueOnce({ status: 'success', keywords: ['b'], freeformQuery: 'task b semantic' });
+    mockedExtractKeywords.mockResolvedValueOnce({
+      status: 'success',
+      keywords: ['b'],
+      freeformQuery: 'task b semantic'
+    });
     await handleCollect(env, turn, createChatData());
 
     expect(mockedExtractKeywords).toHaveBeenCalledTimes(1);
@@ -749,7 +750,11 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     // valid freeformQuery for the new query's own extraction: the
     // assertions here are about budget retirement, not the new query's
     // fail-fast cycle.
-    mockedExtractKeywords.mockResolvedValueOnce({ status: 'success', keywords: ['test'], freeformQuery: 'a different semantic phrase' });
+    mockedExtractKeywords.mockResolvedValueOnce({
+      status: 'success',
+      keywords: ['test'],
+      freeformQuery: 'a different semantic phrase'
+    });
     mockedExtractKeywords.mockClear();
     turn.lastUserQuery = 'a different question entirely';
     await handleCollect(env, turn, createChatData());
@@ -759,9 +764,6 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     expect(skillSuggester.getCooldown()).toBe(3); // fresh armCooldown(), not the old 1-pass
     expect(skillSuggester.getRetryBudget()).toBe(0);
   });
-
-
-
 
   // ---------------------------------------------------------------------------
   // P1 regression: fresh-session clear (double-Ctrl+L / /clear) must not
@@ -774,7 +776,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'help me refactor the parser',
       lastBriefMessage: 'debugging the parser module',
-      lastHintFocus: 'parser refactor',
+      lastHintFocus: 'parser refactor'
     });
 
     // Pass 1: a genuine query triggers extraction and arms the throttle, so
@@ -797,5 +799,4 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     expect(mockedExtractKeywords).not.toHaveBeenCalled();
     expect(result).toBe(AgentState.LLM);
   });
-
 });

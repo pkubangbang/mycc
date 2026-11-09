@@ -20,7 +20,7 @@
  * is not testing environment-dependence.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vite-plus/test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -30,14 +30,14 @@ import {
   isPidAlive,
   getProcessStartTime,
   didPidStartAfter,
-  isOriginalHolderAlive,
+  isOriginalHolderAlive
 } from '../../utils/process-liveness.js';
 import { readProcessCommandLine } from '../../../scripts/mycc-compose/lib/peers-lifecycle.js';
 
 const HOSTILE_ENV = {
   LANG: 'zh_CN.UTF-8',
   LC_ALL: '',
-  COLUMNS: '20',
+  COLUMNS: '20'
 };
 
 let savedEnv: Record<string, string | undefined> = {};
@@ -59,7 +59,11 @@ afterAll(() => {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
-  try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* best effort */ }
+  try {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  } catch {
+    /* best effort */
+  }
 });
 
 /** `env` minus COLUMNS — ps truncates to an internal default when it is absent. */
@@ -69,9 +73,7 @@ function withoutColumns(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 /** The module whose `ps` argv this suite pins (identity read for stopPeer). */
-const LIFECYCLE_SRC = path.join(
-  process.cwd(), 'scripts', 'mycc-compose', 'lib', 'peers-lifecycle.ts',
-);
+const LIFECYCLE_SRC = path.join(process.cwd(), 'scripts', 'mycc-compose', 'lib', 'peers-lifecycle.ts');
 
 /** A live child whose argv is a known, long string we can search for.
  *
@@ -95,7 +97,7 @@ function spawnNamedChild(padding: number): Promise<{ pid: number; kill: () => vo
       // the host's own 100 is wide enough that truncation would not occur and
       // the test would pass with `-ww` removed. Absent is also what a real
       // daemon inherits when nobody exports one.
-      { stdio: 'ignore', env: withoutColumns(process.env) },
+      { stdio: 'ignore', env: withoutColumns(process.env) }
     );
     child.once('spawn', () => {
       // Let node finish exec'ing the script so `ps` reports the final argv,
@@ -116,7 +118,7 @@ describe('runPs — the single ps invocation primitive', () => {
     // The raw ps, WITHOUT the pinned locale, in the hostile env.
     const raw = execFileSync('ps', ['-p', String(process.pid), '-o', 'lstart='], {
       encoding: 'utf-8',
-      env: { ...process.env, LANG: HOSTILE_ENV.LANG, LC_ALL: HOSTILE_ENV.LC_ALL },
+      env: { ...process.env, LANG: HOSTILE_ENV.LANG, LC_ALL: HOSTILE_ENV.LC_ALL }
     }).trim();
     // Premise check: this host's zh_CN ps must actually produce a locale-
     // specific (unparseable) stamp, otherwise the test below proves nothing.
@@ -153,7 +155,7 @@ describe('runPs — the single ps invocation primitive', () => {
       // test cannot see a removed `-ww`.
       const raw = execFileSync('ps', ['-p', String(child.pid), '-o', 'args='], {
         encoding: 'utf-8',
-        env: { ...process.env, COLUMNS: '20' },
+        env: { ...process.env, COLUMNS: '20' }
       }).trim();
       expect(raw.length).toBeLessThanOrEqual(21);
       expect(raw).not.toContain('--name grp:owner');

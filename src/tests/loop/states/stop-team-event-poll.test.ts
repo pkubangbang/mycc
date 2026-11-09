@@ -29,7 +29,7 @@
  *
  * Sibling: stop-esc.test.ts covers the neglection branch.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
 
@@ -39,8 +39,8 @@ vi.mock('../../../loop/agent-io.js', () => ({
     isNeglectedMode: vi.fn(() => false),
     setNeglectedMode: vi.fn(),
     log: vi.fn(),
-    flushOutput: vi.fn(),
-  },
+    flushOutput: vi.fn()
+  }
 }));
 
 vi.mock('../../../loop/state-machine.js', () => ({
@@ -51,24 +51,24 @@ vi.mock('../../../loop/state-machine.js', () => ({
     HOOK: 'hook',
     TOOL: 'tool',
     STOP: 'stop',
-    AWAIT: 'await',
+    AWAIT: 'await'
   },
-  presentResult: vi.fn(),
+  presentResult: vi.fn()
 }));
 
 vi.mock('../../../loop/esc-wrap-up.js', () => ({
   startWrapUp: vi.fn(),
   evaluateWrapUp: vi.fn(),
   clearWrapUp: vi.fn(),
-  setWrapUpReporter: vi.fn(),
+  setWrapUpReporter: vi.fn()
 }));
 
 vi.mock('../../../context/shared/loader.js', () => ({
-  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) },
+  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) }
 }));
 
 vi.mock('../../../engine/chat-helpers.js', () => ({
-  stopSpinner: vi.fn(),
+  stopSpinner: vi.fn()
 }));
 
 vi.mock('../../../loop/triologue.js', () => {
@@ -91,12 +91,12 @@ vi.mock('../../../loop/triologue.js', () => {
 // dead hub facades were removed (hub keeps pushSteer/resolveSteering only).
 vi.mock('../../../serve/serve-registry.js', () => ({
   getServeHub: vi.fn(() => ({
-    isRunning: vi.fn(() => false),
-  })),
+    isRunning: vi.fn(() => false)
+  }))
 }));
 
 vi.mock('../../../loop/exit-auto.js', () => ({
-  exitAutoMode: vi.fn(() => true),
+  exitAutoMode: vi.fn(() => true)
 }));
 
 // --- Imports after mocks -----------------------------------------------------
@@ -131,8 +131,8 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
     const ctx = createMockContext({
       team: {
         listTeammates: vi.fn(() => []) as never,
-        awaitTeammates: vi.fn(async () => 'all done' as const) as never,
-      },
+        awaitTeammates: vi.fn(async () => 'all done' as const) as never
+      }
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
@@ -148,13 +148,13 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
 
   it('passes the full teammate-event reasons and a short timeout (bounded interactive wait)', async () => {
     const awaitTeammates = vi.fn<(opts?: { reasons?: string[]; timeoutMs?: number }) => Promise<'all done'>>(
-      async () => 'all done' as const,
+      async () => 'all done' as const
     );
     const ctx = createMockContext({
       team: {
         listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
-        awaitTeammates: awaitTeammates as never,
-      },
+        awaitTeammates: awaitTeammates as never
+      }
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
@@ -179,8 +179,8 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
     const ctx = createMockContext({
       team: {
         listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
-        awaitTeammates: vi.fn(async () => 'mail' as const) as never,
-      },
+        awaitTeammates: vi.fn(async () => 'mail' as const) as never
+      }
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
@@ -196,8 +196,8 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
       const ctx = createMockContext({
         team: {
           listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
-          awaitTeammates: vi.fn(async () => reason) as never,
-        },
+          awaitTeammates: vi.fn(async () => reason) as never
+        }
       });
       const env = createMockMachineEnv({ triologue });
       env.ctx = ctx;
@@ -214,10 +214,10 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
       team: {
         listTeammates: vi.fn(() => [
           { name: 'dev1', status: 'idle' },
-          { name: 'dev2', status: 'shutdown' },
+          { name: 'dev2', status: 'shutdown' }
         ]) as never,
-        awaitTeammates: vi.fn(async () => 'all done' as const) as never,
-      },
+        awaitTeammates: vi.fn(async () => 'all done' as const) as never
+      }
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
@@ -233,8 +233,8 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
     const ctx = createMockContext({
       team: {
         listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
-        awaitTeammates: vi.fn(async () => 'esc' as const) as never,
-      },
+        awaitTeammates: vi.fn(async () => 'esc' as const) as never
+      }
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
@@ -254,8 +254,8 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
     const ctx = createMockContext({
       team: {
         listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
-        awaitTeammates: awaitTeammates as never,
-      },
+        awaitTeammates: awaitTeammates as never
+      }
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
@@ -276,8 +276,8 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
       team: {
         listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
         printTeam: vi.fn(() => 'Team:\n  dev1 (coder): working') as never,
-        awaitTeammates: vi.fn(async () => 'timeout' as const) as never,
-      },
+        awaitTeammates: vi.fn(async () => 'timeout' as const) as never
+      }
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
@@ -291,7 +291,7 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
     expect(ctx.core.brief).toHaveBeenCalledWith(
       'warn',
       'stop',
-      expect.stringContaining('Still waiting on teammates after 60s'),
+      expect.stringContaining('Still waiting on teammates after 60s')
     );
   });
 
@@ -302,7 +302,10 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
   // (a teammate event / timeout is a turn CONTINUATION, not a new turn). The
   // AUTO-mode early return also ends the turn, so it fires there too.
   describe('turn boundary wiring (markTurnBoundary call sites)', () => {
-    const reasonToState: Array<{ reason: 'all done' | 'esc' | 'mail' | 'steering' | 'holding' | 'timeout'; state: 'PROMPT' | 'COLLECT' }> = [
+    const reasonToState: Array<{
+      reason: 'all done' | 'esc' | 'mail' | 'steering' | 'holding' | 'timeout';
+      state: 'PROMPT' | 'COLLECT';
+    }> = [
       { reason: 'all done', state: 'PROMPT' },
       { reason: 'esc', state: 'PROMPT' },
       // Teammate events continue the turn.
@@ -311,7 +314,7 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
       { reason: 'holding', state: 'COLLECT' },
       // 'timeout' ENDS the turn: the 60s bound is what returns the prompt to
       // the user. (It used to re-enter COLLECT and spin forever.)
-      { reason: 'timeout', state: 'PROMPT' },
+      { reason: 'timeout', state: 'PROMPT' }
     ];
 
     for (const { reason, state } of reasonToState) {
@@ -321,8 +324,8 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
           team: {
             listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
             printTeam: vi.fn(() => 'Team:\n  dev1 (coder): working') as never,
-            awaitTeammates: vi.fn(async () => reason) as never,
-          },
+            awaitTeammates: vi.fn(async () => reason) as never
+          }
         });
         const env = createMockMachineEnv({ triologue });
         env.ctx = ctx;
@@ -350,8 +353,8 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
       const ctx = createMockContext({
         team: {
           listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
-          awaitTeammates: vi.fn(async () => 'mail' as const) as never,
-        },
+          awaitTeammates: vi.fn(async () => 'mail' as const) as never
+        }
       });
       const env = createMockMachineEnv({ triologue });
       env.ctx = ctx;

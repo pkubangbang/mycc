@@ -2,36 +2,31 @@
  * Tests for incremental mindmap compilation via diff
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { diff_nodes } from '../../mindmap/diff-mindmap.js';
 import type { Node } from '../../mindmap/types.js';
 
 describe('diff_nodes', () => {
   // Helper to create a simple node
-  const createNode = (
-    id: string,
-    text: string,
-    children: Node[] = [],
-    title?: string
-  ): Node => ({
+  const createNode = (id: string, text: string, children: Node[] = [], title?: string): Node => ({
     id,
     text,
     title: title || id.split('/').pop() || '',
     summary: '',
     level: id.split('/').length - 1,
     children,
-    links: [],
+    links: []
   });
 
   it('should detect no changes when trees are identical', () => {
     const oldRoot = createNode('/', 'root text', [
       createNode('/child1', 'child1 text'),
-      createNode('/child2', 'child2 text'),
+      createNode('/child2', 'child2 text')
     ]);
 
     const newRoot = createNode('/', 'root text', [
       createNode('/child1', 'child1 text'),
-      createNode('/child2', 'child2 text'),
+      createNode('/child2', 'child2 text')
     ]);
 
     const result = diff_nodes(oldRoot, newRoot);
@@ -42,13 +37,9 @@ describe('diff_nodes', () => {
   });
 
   it('should detect text changes', () => {
-    const oldRoot = createNode('/', 'root text', [
-      createNode('/child1', 'old text'),
-    ]);
+    const oldRoot = createNode('/', 'root text', [createNode('/child1', 'old text')]);
 
-    const newRoot = createNode('/', 'root text', [
-      createNode('/child1', 'new text'),
-    ]);
+    const newRoot = createNode('/', 'root text', [createNode('/child1', 'new text')]);
 
     const result = diff_nodes(oldRoot, newRoot);
 
@@ -59,13 +50,11 @@ describe('diff_nodes', () => {
   });
 
   it('should detect added nodes', () => {
-    const oldRoot = createNode('/', 'root text', [
-      createNode('/child1', 'child1 text'),
-    ]);
+    const oldRoot = createNode('/', 'root text', [createNode('/child1', 'child1 text')]);
 
     const newRoot = createNode('/', 'root text', [
       createNode('/child1', 'child1 text'),
-      createNode('/child2', 'child2 text'),
+      createNode('/child2', 'child2 text')
     ]);
 
     const result = diff_nodes(oldRoot, newRoot);
@@ -79,12 +68,10 @@ describe('diff_nodes', () => {
   it('should detect removed nodes', () => {
     const oldRoot = createNode('/', 'root text', [
       createNode('/child1', 'child1 text'),
-      createNode('/child2', 'child2 text'),
+      createNode('/child2', 'child2 text')
     ]);
 
-    const newRoot = createNode('/', 'root text', [
-      createNode('/child1', 'child1 text'),
-    ]);
+    const newRoot = createNode('/', 'root text', [createNode('/child1', 'child1 text')]);
 
     const result = diff_nodes(oldRoot, newRoot);
 
@@ -97,12 +84,12 @@ describe('diff_nodes', () => {
   it('should detect combined changes (add, remove, change)', () => {
     const oldRoot = createNode('/', 'root text', [
       createNode('/child1', 'old child1 text'),
-      createNode('/child2', 'child2 text'),
+      createNode('/child2', 'child2 text')
     ]);
 
     const newRoot = createNode('/', 'root text', [
       createNode('/child1', 'new child1 text'), // changed
-      createNode('/child3', 'child3 text'), // added
+      createNode('/child3', 'child3 text') // added
     ]);
 
     const result = diff_nodes(oldRoot, newRoot);
@@ -117,15 +104,11 @@ describe('diff_nodes', () => {
 
   it('should detect changes in nested nodes', () => {
     const oldRoot = createNode('/', 'root', [
-      createNode('/parent', 'parent text', [
-        createNode('/parent/child', 'old child text'),
-      ]),
+      createNode('/parent', 'parent text', [createNode('/parent/child', 'old child text')])
     ]);
 
     const newRoot = createNode('/', 'root', [
-      createNode('/parent', 'parent text', [
-        createNode('/parent/child', 'new child text'),
-      ]),
+      createNode('/parent', 'parent text', [createNode('/parent/child', 'new child text')])
     ]);
 
     const result = diff_nodes(oldRoot, newRoot);
@@ -135,14 +118,10 @@ describe('diff_nodes', () => {
   });
 
   it('should detect added nested nodes', () => {
-    const oldRoot = createNode('/', 'root', [
-      createNode('/parent', 'parent text'),
-    ]);
+    const oldRoot = createNode('/', 'root', [createNode('/parent', 'parent text')]);
 
     const newRoot = createNode('/', 'root', [
-      createNode('/parent', 'parent text', [
-        createNode('/parent/newchild', 'new child text'),
-      ]),
+      createNode('/parent', 'parent text', [createNode('/parent/newchild', 'new child text')])
     ]);
 
     const result = diff_nodes(oldRoot, newRoot);
@@ -153,14 +132,10 @@ describe('diff_nodes', () => {
 
   it('should detect removed nested nodes', () => {
     const oldRoot = createNode('/', 'root', [
-      createNode('/parent', 'parent text', [
-        createNode('/parent/child', 'child text'),
-      ]),
+      createNode('/parent', 'parent text', [createNode('/parent/child', 'child text')])
     ]);
 
-    const newRoot = createNode('/', 'root', [
-      createNode('/parent', 'parent text'),
-    ]);
+    const newRoot = createNode('/', 'root', [createNode('/parent', 'parent text')]);
 
     const result = diff_nodes(oldRoot, newRoot);
 
@@ -170,19 +145,11 @@ describe('diff_nodes', () => {
 
   it('should handle deep nesting', () => {
     const oldRoot = createNode('/', 'root', [
-      createNode('/a', 'a', [
-        createNode('/a/b', 'b', [
-          createNode('/a/b/c', 'old c'),
-        ]),
-      ]),
+      createNode('/a', 'a', [createNode('/a/b', 'b', [createNode('/a/b/c', 'old c')])])
     ]);
 
     const newRoot = createNode('/', 'root', [
-      createNode('/a', 'a', [
-        createNode('/a/b', 'b', [
-          createNode('/a/b/c', 'new c'),
-        ]),
-      ]),
+      createNode('/a', 'a', [createNode('/a/b', 'b', [createNode('/a/b/c', 'new c')])])
     ]);
 
     const result = diff_nodes(oldRoot, newRoot);

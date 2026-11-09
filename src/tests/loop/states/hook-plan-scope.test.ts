@@ -22,7 +22,7 @@
  *   4. failure / ESC / empty output → fall through to the normal turn (a
  *      reflection never fails a brief).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 // vi.mock factories are hoisted, so shared mocks must come from vi.hoisted.
 const { forkChat } = vi.hoisted(() => ({ forkChat: vi.fn(async () => '') }));
@@ -38,7 +38,7 @@ vi.mock('../../../engine/chat-provider.js', () => ({ forkChat }));
 // contract: the wait indicator belongs to the CALLER.
 vi.mock('../../../engine/chat-helpers.js', () => ({
   startSpinner: vi.fn(),
-  stopSpinner: vi.fn(),
+  stopSpinner: vi.fn()
 }));
 
 vi.mock('../../../loop/agent-io.js', () => {
@@ -46,27 +46,29 @@ vi.mock('../../../loop/agent-io.js', () => {
   return {
     agentIO: {
       isNeglectedMode: vi.fn(() => neglected),
-      setNeglectedMode: vi.fn((v: boolean) => { neglected = v; }),
+      setNeglectedMode: vi.fn((v: boolean) => {
+        neglected = v;
+      }),
       log: vi.fn(),
       brief: vi.fn(),
       verbose: vi.fn(),
-      warn: vi.fn(),
-    },
+      warn: vi.fn()
+    }
   };
 });
 
 vi.mock('../../../context/shared/loader.js', () => ({
-  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'read_file' } }]) },
+  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'read_file' } }]) }
 }));
 
 vi.mock('../../../hook/hook-preprocessor.js', () => ({
-  augmentToolCalls: vi.fn((calls: unknown[]) => calls),
+  augmentToolCalls: vi.fn((calls: unknown[]) => calls)
 }));
 
 vi.mock('../../../mindmap/patch.js', () => ({ applyPatchAction: vi.fn(() => true) }));
 vi.mock('../../../mindmap/patch-jsonl.js', () => ({
   appendPatch: vi.fn(),
-  getPatchPath: vi.fn(() => '/tmp/.mycc/mindmap-patch.jsonl'),
+  getPatchPath: vi.fn(() => '/tmp/.mycc/mindmap-patch.jsonl')
 }));
 
 import { handleHook } from '../../../loop/states/hook.js';
@@ -80,7 +82,7 @@ import {
   createChatData,
   createMockMachineEnv,
   createMockAugmentedToolCall,
-  createMockHookResult,
+  createMockHookResult
 } from '../esc-test-helpers.js';
 
 const REFLECTION = 'The plan assumes parser.ts exposes a token stream; decide that interface before the CLI work.';
@@ -89,12 +91,9 @@ function makeEnv(mode: 'plan' | 'normal') {
   const triologue = new Triologue();
   const env = createMockMachineEnv({ triologue });
   env.ctx.core.getMode = vi.fn(() => mode) as never;
-  env.ctx.core.escAware = (async (fn: (ac: AbortController) => Promise<unknown>) =>
-    fn(new AbortController())) as never;
+  env.ctx.core.escAware = (async (fn: (ac: AbortController) => Promise<unknown>) => fn(new AbortController())) as never;
   const briefCall = createMockAugmentedToolCall('brief', { message: 'recon done', confidence: 7 });
-  env.hookExecutor.processToolCalls = vi.fn(async () =>
-    createMockHookResult({ calls: [briefCall] }),
-  ) as never;
+  env.hookExecutor.processToolCalls = vi.fn(async () => createMockHookResult({ calls: [briefCall] })) as never;
   const chat = createChatData({ rawToolCalls: [briefCall], assistantContent: 'briefing' });
   return { env, triologue, briefCall, chat };
 }
@@ -185,7 +184,9 @@ describe('HOOK-stage plan-mode scope reflection', () => {
     expect(prose![2]).toBe('briefing');
 
     // Ordering: prose → brief → plan-scope, the same order every other path uses.
-    const labels = brief.mock.calls.map((c) => c[1]).filter((l) => l === 'assistant' || l === 'brief' || l === 'plan-scope');
+    const labels = brief.mock.calls
+      .map((c) => c[1])
+      .filter((l) => l === 'assistant' || l === 'brief' || l === 'plan-scope');
     expect(labels).toEqual(['assistant', 'brief', 'plan-scope']);
   });
 

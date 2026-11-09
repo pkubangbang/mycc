@@ -22,7 +22,7 @@
  * and esc-loop integration tests.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { Sequence } from '../../hook/sequence.js';
 
 describe('turn-boundary-at-stop: revised turn.*/totalTurns semantics', () => {
@@ -33,7 +33,7 @@ describe('turn-boundary-at-stop: revised turn.*/totalTurns semantics', () => {
       tool,
       args: {},
       result,
-      timestamp: Date.now(),
+      timestamp: Date.now()
     });
   }
 
@@ -54,7 +54,7 @@ describe('turn-boundary-at-stop: revised turn.*/totalTurns semantics', () => {
     expect(seq.getTotalTurns()).toBe(0);
 
     stopToPrompt(seq);
-    expect(seq.turnCount()).toBe(0);   // cleared at boundary
+    expect(seq.turnCount()).toBe(0); // cleared at boundary
     expect(seq.getTotalTurns()).toBe(1); // incremented at boundary
   });
 
@@ -71,12 +71,12 @@ describe('turn-boundary-at-stop: revised turn.*/totalTurns semantics', () => {
     // (stop.ts returns COLLECT without calling markPromptBoundary/incrementTotalTurns)
     addTool(seq, 'edit_file');
     addTool(seq, 'bash');
-    expect(seq.turnCount()).toBe(5);     // still accumulating — NOT cleared
+    expect(seq.turnCount()).toBe(5); // still accumulating — NOT cleared
     expect(seq.getTotalTurns()).toBe(0); // NOT incremented
 
     // Final STOP→PROMPT: boundary fires
     stopToPrompt(seq);
-    expect(seq.turnCount()).toBe(0);   // cleared at final boundary
+    expect(seq.turnCount()).toBe(0); // cleared at final boundary
     expect(seq.getTotalTurns()).toBe(1); // one completed turn (the whole cycle)
   });
 

@@ -18,13 +18,13 @@
  *
  * Uses fake timers so the 30 s budget does not stall the test suite.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 
 // Mock agentIO before importing the module under test — serve-disconnect-timer
 // imports agentIO only for the suspend-detection verbose log, which we do not
 // exercise here, but the import must resolve.
 vi.mock('../../loop/agent-io.js', () => ({
-  agentIO: { verbose: vi.fn(), brief: vi.fn(), exec: vi.fn() },
+  agentIO: { verbose: vi.fn(), brief: vi.fn(), exec: vi.fn() }
 }));
 
 import { DisconnectTimer } from '../../serve/serve-disconnect-timer.js';
@@ -44,7 +44,7 @@ describe('DisconnectTimer', () => {
     const onSuspend = vi.fn();
     const timer = new DisconnectTimer(
       { onGenuineDisconnect, onSuspend },
-      () => true, // persistent
+      () => true // persistent
     );
 
     timer.start();
@@ -59,7 +59,7 @@ describe('DisconnectTimer', () => {
     const onSuspend = vi.fn();
     const timer = new DisconnectTimer(
       { onGenuineDisconnect, onSuspend },
-      () => false, // not persistent
+      () => false // not persistent
     );
 
     timer.start();
@@ -74,10 +74,7 @@ describe('DisconnectTimer', () => {
 
   it('start() is idempotent — a second call while counting is a no-op', () => {
     const onGenuineDisconnect = vi.fn();
-    const timer = new DisconnectTimer(
-      { onGenuineDisconnect, onSuspend: vi.fn() },
-      () => false,
-    );
+    const timer = new DisconnectTimer({ onGenuineDisconnect, onSuspend: vi.fn() }, () => false);
 
     timer.start();
     timer.start(); // second call — must NOT reset or arm a duplicate timer
@@ -88,10 +85,7 @@ describe('DisconnectTimer', () => {
 
   it('cancel() prevents onGenuineDisconnect from firing', () => {
     const onGenuineDisconnect = vi.fn();
-    const timer = new DisconnectTimer(
-      { onGenuineDisconnect, onSuspend: vi.fn() },
-      () => false,
-    );
+    const timer = new DisconnectTimer({ onGenuineDisconnect, onSuspend: vi.fn() }, () => false);
 
     timer.start();
     timer.cancel();
@@ -101,10 +95,7 @@ describe('DisconnectTimer', () => {
 
   it('can be re-armed after the timer fires', () => {
     const onGenuineDisconnect = vi.fn();
-    const timer = new DisconnectTimer(
-      { onGenuineDisconnect, onSuspend: vi.fn() },
-      () => false,
-    );
+    const timer = new DisconnectTimer({ onGenuineDisconnect, onSuspend: vi.fn() }, () => false);
 
     timer.start();
     vi.advanceTimersByTime(30_000);
@@ -122,10 +113,7 @@ describe('DisconnectTimer', () => {
     // moment the timer would arm — not frozen at construction.
     let persistent = false;
     const onGenuineDisconnect = vi.fn();
-    const timer = new DisconnectTimer(
-      { onGenuineDisconnect, onSuspend: vi.fn() },
-      () => persistent,
-    );
+    const timer = new DisconnectTimer({ onGenuineDisconnect, onSuspend: vi.fn() }, () => persistent);
 
     // First arm: not persistent → timer arms.
     timer.start();

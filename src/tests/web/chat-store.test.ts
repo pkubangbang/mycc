@@ -14,7 +14,7 @@
  * reactivity (computed getters over reactive refs) is exercised exactly as in
  * the browser.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { createPinia, setActivePinia } from 'pinia';
 import { useChatStore } from '../../web/src/stores/chat-store.js';
 import type { WebuiPhase } from '../../web/src/types.js';
@@ -154,7 +154,7 @@ describe('chat-store — no invalid flag combinations are reachable', () => {
       working: [false, true, false],
       prompt: [true, false, false],
       card: [true, false, true],
-      await: [false, false, false],
+      await: [false, false, false]
     };
     for (const p of Object.keys(expected) as WebuiPhase[]) {
       store.setPhase(p);

@@ -20,7 +20,7 @@
  *     loadRestoration / clear methods on the lite class.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 import type { Message, ToolCall } from '../../types.js';
 
 // agentIO is imported eagerly by sibling triologue modules (e.g. compact deps);
@@ -32,8 +32,8 @@ vi.mock('../../loop/agent-io.js', () => ({
     verbose: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
-    error: vi.fn(),
-  },
+    error: vi.fn()
+  }
 }));
 
 vi.mock('../../config.js', async () => {
@@ -76,7 +76,7 @@ vi.mock('../../config.js', async () => {
     getWikiLogsDir: () => path.join(tmpBase, 'wiki/logs'),
     getWikiDbDir: () => path.join(tmpBase, 'wiki/db'),
     getWikiDomainsFile: () => path.join(tmpBase, 'wiki/domains.json'),
-    getRagProvider: () => 'nomic',
+    getRagProvider: () => 'nomic'
   };
 });
 
@@ -94,7 +94,7 @@ vi.mock('../../engine/ollama.js', () => ({
   structuredChat: vi.fn(),
   healthCheck: vi.fn(),
   getEmbedding: vi.fn(),
-  MODEL: 'test-model',
+  MODEL: 'test-model'
 }));
 
 import { TriologueLite } from '../../loop/triologue-lite.js';
@@ -183,7 +183,7 @@ describe('TriologueLite', () => {
     it('agent() with toolCalls registers pending calls; tool() resolves them', () => {
       const tcs: ToolCall[] = [
         { id: 'c1', function: { name: 'bash', arguments: { command: 'ls' } } },
-        { id: 'c2', function: { name: 'read_file', arguments: { path: 'a' } } },
+        { id: 'c2', function: { name: 'read_file', arguments: { path: 'a' } } }
       ] as unknown as ToolCall[];
       t.user('go');
       t.agent('', tcs);
@@ -198,9 +198,7 @@ describe('TriologueLite', () => {
     });
 
     it('tool() resolves ids by function name when id omitted', () => {
-      const tcs: ToolCall[] = [
-        { id: 'x1', function: { name: 'grep', arguments: {} } },
-      ] as unknown as ToolCall[];
+      const tcs: ToolCall[] = [{ id: 'x1', function: { name: 'grep', arguments: {} } }] as unknown as ToolCall[];
       t.user('go');
       t.agent('', tcs);
       t.tool('grep', 'matches');
@@ -240,14 +238,14 @@ describe('TriologueLite', () => {
           x.user('B');
           x.note('REMINDER', 'nudge');
         },
-        ['new', 'new', 'new'],
+        ['new', 'new', 'new']
       ],
       [
         'tool call round-trip with a note between results',
         (x) => {
           const tcs: ToolCall[] = [
             { id: 'k1', function: { name: 'bash', arguments: {} } },
-            { id: 'k2', function: { name: 'read_file', arguments: {} } },
+            { id: 'k2', function: { name: 'read_file', arguments: {} } }
           ] as unknown as ToolCall[];
           x.user('go');
           x.agent('', tcs);
@@ -257,8 +255,8 @@ describe('TriologueLite', () => {
         },
         // user, assistant, tool, tool, + the note REPLAYED after the ledger
         // drained (it was deferred, not merged and not lost)
-        ['new', 'new', 'new', 'new', 'new'],
-      ],
+        ['new', 'new', 'new', 'new', 'new']
+      ]
     ];
 
     for (const provider of ['ollama', 'deepseek'] as const) {
@@ -282,9 +280,7 @@ describe('TriologueLite', () => {
     }
 
     it('a note arriving while tool_calls are outstanding is deferred, not merged or lost', () => {
-      const tcs: ToolCall[] = [
-        { id: 'z1', function: { name: 'bash', arguments: {} } },
-      ] as unknown as ToolCall[];
+      const tcs: ToolCall[] = [{ id: 'z1', function: { name: 'bash', arguments: {} } }] as unknown as ToolCall[];
       t.user('go');
       t.agent('', tcs);
       t.note('MAIL', 'mid batch');
@@ -297,9 +293,7 @@ describe('TriologueLite', () => {
     });
 
     it('compact() drops a still-deferred submission (no orphan note in the new context)', async () => {
-      const tcs: ToolCall[] = [
-        { id: 'd1', function: { name: 'bash', arguments: {} } },
-      ] as unknown as ToolCall[];
+      const tcs: ToolCall[] = [{ id: 'd1', function: { name: 'bash', arguments: {} } }] as unknown as ToolCall[];
       t.user('go');
       t.agent('', tcs);
       t.note('MAIL', 'stale');
@@ -314,7 +308,7 @@ describe('TriologueLite', () => {
     it('getMessages() prepends system prompt then project context', () => {
       t.registerProjectContextPopulator(() => [
         { role: 'user', content: '## Platform' },
-        { role: 'assistant', content: 'OK' },
+        { role: 'assistant', content: 'OK' }
       ]);
       t.rebuildProjectContext();
       t.setSystemPrompt('SYS');
@@ -332,7 +326,7 @@ describe('TriologueLite', () => {
       let version = 1;
       t.registerProjectContextPopulator(() => [
         { role: 'user', content: `ctx-v${version}` },
-        { role: 'assistant', content: 'OK' },
+        { role: 'assistant', content: 'OK' }
       ]);
       t.rebuildProjectContext();
       version = 2;
@@ -345,7 +339,7 @@ describe('TriologueLite', () => {
     it('registerProjectContextPopulator() disposer removes the populator', () => {
       const dispose = t.registerProjectContextPopulator(() => [
         { role: 'user', content: 'ctx' },
-        { role: 'assistant', content: 'OK' },
+        { role: 'assistant', content: 'OK' }
       ]);
       dispose();
       t.rebuildProjectContext();
@@ -421,7 +415,8 @@ describe('TriologueLite', () => {
       expect(kinds.filter((k) => k === 'compact')).toHaveLength(1);
       // The boundary piece's kind is a journaled ControlEvent and it
       // carries NO role (it is not a message).
-      const controlPiece = onMessage.mock.calls.map((args: unknown[]) => args[0] as Message & { kind?: string; event?: string })
+      const controlPiece = onMessage.mock.calls
+        .map((args: unknown[]) => args[0] as Message & { kind?: string; event?: string })
         .find((m) => m.kind === 'compact');
       expect(controlPiece?.event).toBeUndefined();
       expect((controlPiece as unknown as { role?: string }).role).toBeUndefined();
@@ -459,9 +454,13 @@ describe('TriologueLite', () => {
       // No synthetic TP-recovery tool message (role:'tool' with tool_name
       // '__tp_recovery_unknown_tool__' or content starting '[TP_RECOVERY]')
       // was injected between the compact and the real assistant.
-      const tpRecovery = t.getMessagesRaw().find(
-        (m) => m.role === 'tool' && (m.tool_name === '__tp_recovery_unknown_tool__' || (m.content ?? '').startsWith('[TP_RECOVERY]')),
-      );
+      const tpRecovery = t
+        .getMessagesRaw()
+        .find(
+          (m) =>
+            m.role === 'tool' &&
+            (m.tool_name === '__tp_recovery_unknown_tool__' || (m.content ?? '').startsWith('[TP_RECOVERY]'))
+        );
       expect(tpRecovery).toBeUndefined();
     });
 
@@ -469,7 +468,7 @@ describe('TriologueLite', () => {
       let version = 1;
       t.registerProjectContextPopulator(() => [
         { role: 'user', content: `env-v${version}` },
-        { role: 'assistant', content: 'OK' },
+        { role: 'assistant', content: 'OK' }
       ]);
       t.rebuildProjectContext();
       version = 2;
@@ -484,7 +483,7 @@ describe('TriologueLite', () => {
   describe('JSONL persistence contract (restoration.ts compatibility)', () => {
     it('onMessage delivers per-piece records carrying exactly one appended message', () => {
       const tcs: ToolCall[] = [
-        { id: 'p1', function: { name: 'bash', arguments: { command: 'ls' } } },
+        { id: 'p1', function: { name: 'bash', arguments: { command: 'ls' } } }
       ] as unknown as ToolCall[];
       t.user('go');
       t.agent('', tcs, { reasoningContent: 'why' });
@@ -513,14 +512,18 @@ describe('TriologueLite', () => {
       // Genuine user inputs carry user_origin; notes and tool results do not.
       const userPieces = pieces.filter((m) => m.role === 'user' && (m as { user_origin?: true }).user_origin === true);
       expect(userPieces.length).toBeGreaterThanOrEqual(1);
-      const notePiece = pieces.find((m) => m.role === 'user' && typeof m.content === 'string' && m.content.startsWith('[MAIL]'));
+      const notePiece = pieces.find(
+        (m) => m.role === 'user' && typeof m.content === 'string' && m.content.startsWith('[MAIL]')
+      );
       expect((notePiece as unknown as { user_origin?: true }).user_origin).toBeUndefined();
       // Every piece in this normal flow is a message piece: role present,
       // and NO stray control pseudo-kind leaks into message records
       // (boundary pieces are only journaled at truncation sites — none here).
       for (const m of pieces) {
         expect((m as unknown as { event?: string }).event).toBeUndefined();
-        expect(['new', 'merge', 'user', 'steer', 'clear', 'compact', 'rollback']).toContain((m as unknown as { kind?: string }).kind);
+        expect(['new', 'merge', 'user', 'steer', 'clear', 'compact', 'rollback']).toContain(
+          (m as unknown as { kind?: string }).kind
+        );
       }
       // getTriologue reflects the live store at call time.
       const lastCall = onMessage.mock.calls[onMessage.mock.calls.length - 1] as unknown[];
@@ -530,18 +533,18 @@ describe('TriologueLite', () => {
 
     it('assistant tool_calls survive a JSONL round-trip shape check', () => {
       const tcs: ToolCall[] = [
-        { id: 'q9', function: { name: 'edit_file', arguments: { path: 'x' } } },
+        { id: 'q9', function: { name: 'edit_file', arguments: { path: 'x' } } }
       ] as unknown as ToolCall[];
       t.user('go');
       t.agent('doing', tcs);
-      const assistantMsg = onMessage.mock.calls.map(
-        (args: unknown[]) => args[0] as Message,
-      ).find((m) => m.role === 'assistant');
+      const assistantMsg = onMessage.mock.calls
+        .map((args: unknown[]) => args[0] as Message)
+        .find((m) => m.role === 'assistant');
       const roundTrip = JSON.parse(JSON.stringify(assistantMsg)) as Message;
       expect(roundTrip.tool_calls).toHaveLength(1);
       // Message.tool_calls is typed via Ollama's ToolCall (no `id`); the
       // runtime data does carry the id, so widen through unknown to read it.
-      const tc = (roundTrip.tool_calls![0] as unknown as ToolCall);
+      const tc = roundTrip.tool_calls![0] as unknown as ToolCall;
       expect(tc.id).toBe('q9');
       expect(tc.function.name).toBe('edit_file');
     });
@@ -551,9 +554,17 @@ describe('TriologueLite', () => {
     it('does not expose wrap-up rollback / hint-round / restoration / clear', () => {
       const proto = Object.getOwnPropertyNames(Object.getPrototypeOf(t));
       for (const absent of [
-        'beginWrapUp', 'finishWrapUp', 'commitWrapUp', 'rollbackWrapUp',
-        'hasActiveWrapUp', 'getLastBrief', 'rewindToLastBrief', 'generateHintRound',
-        'loadRestoration', 'clear', 'skipPendingTools',
+        'beginWrapUp',
+        'finishWrapUp',
+        'commitWrapUp',
+        'rollbackWrapUp',
+        'hasActiveWrapUp',
+        'getLastBrief',
+        'rewindToLastBrief',
+        'generateHintRound',
+        'loadRestoration',
+        'clear',
+        'skipPendingTools'
       ]) {
         expect(proto).not.toContain(absent);
       }

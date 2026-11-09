@@ -10,7 +10,7 @@
  * Plus global isPlanMode() and call.* context.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+/* oxlint-disable @typescript-eslint/no-explicit-any */
 import jsep from 'jsep';
 import { type JsepEvaluatedNode, printJsepExpr, printJsepTree } from '../utils/jsep-expr-print';
 import { agentIO } from '../loop/agent-io';
@@ -350,14 +350,14 @@ function evaluateNodeInner(node: jsep.Expression, ctx: EvalContext): JsepEvaluat
         case '==':
           // The loose comparisons ARE the hook operator being evaluated here —
           // strictness would change the semantics of a user's condition.
-          // eslint-disable-next-line eqeqeq
+          // oxlint-disable-next-line eqeqeq
           value = left == right;
           break;
         case '===':
           value = left === right;
           break;
         case '!=':
-          // eslint-disable-next-line eqeqeq
+          // oxlint-disable-next-line eqeqeq
           value = left != right;
           break;
         case '!==':

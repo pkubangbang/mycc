@@ -5,7 +5,7 @@
  * visible to idle teammates for auto-claim.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { issuePublishTool } from '../../tools/issue_publish.js';
 import type { AgentContext, IssueModule, CoreModule, Issue } from '../../types.js';
 import { runTool, testSignal } from './test-utils.js';
@@ -24,7 +24,7 @@ function createMockIssueModule(): IssueModule {
     createBlockage: vi.fn().mockResolvedValue(undefined),
     removeBlockage: vi.fn().mockResolvedValue(undefined),
     releaseIssuesOwnedBy: vi.fn().mockResolvedValue([]),
-    clearAll: vi.fn(),
+    clearAll: vi.fn()
   };
 }
 
@@ -58,7 +58,7 @@ function createMockContext(issueModule: IssueModule): AgentContext {
     getConfusionIndex: vi.fn(() => 0),
     increaseConfusionIndex: vi.fn(),
     resetConfusionIndex: vi.fn(),
-    escAware: (vi.fn() as unknown) as CoreModule['escAware'],
+    escAware: vi.fn() as unknown as CoreModule['escAware']
   };
 
   return {
@@ -70,7 +70,7 @@ function createMockContext(issueModule: IssueModule): AgentContext {
     bg: {} as never,
     team: {} as never,
     wiki: {} as never,
-    peer: {} as never,
+    peer: {} as never
   };
 }
 
@@ -84,7 +84,7 @@ function createDraftIssue(): Issue {
     blockedBy: [],
     blocks: [],
     comments: [],
-    createdAt: new Date(),
+    createdAt: new Date()
   };
 }
 
@@ -98,7 +98,7 @@ function createPendingIssue(): Issue {
     blockedBy: [],
     blocks: [],
     comments: [],
-    createdAt: new Date(),
+    createdAt: new Date()
   };
 }
 
@@ -122,9 +122,14 @@ describe('issuePublishTool', () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createDraftIssue());
     mockIssue.publishIssue = vi.fn().mockResolvedValue(true);
 
-    const result = await runTool(issuePublishTool, ctx, {
-      id: 1,
-    }, testSignal);
+    const result = await runTool(
+      issuePublishTool,
+      ctx,
+      {
+        id: 1
+      },
+      testSignal
+    );
 
     expect(mockIssue.getIssue).toHaveBeenCalledWith(1);
     expect(mockIssue.publishIssue).toHaveBeenCalledWith(1);
@@ -137,9 +142,14 @@ describe('issuePublishTool', () => {
     mockIssue.publishIssue = vi.fn().mockResolvedValue(true);
     mockIssue.printIssues = vi.fn().mockResolvedValue('Issues:\n  [ ] #1: Draft Issue');
 
-    const result = await runTool(issuePublishTool, ctx, {
-      id: 1,
-    }, testSignal);
+    const result = await runTool(
+      issuePublishTool,
+      ctx,
+      {
+        id: 1
+      },
+      testSignal
+    );
 
     expect(result).toBe('Issues:\n  [ ] #1: Draft Issue');
   });
@@ -156,9 +166,14 @@ describe('issuePublishTool', () => {
   });
 
   it('should reject non-integer id', async () => {
-    const result = await runTool(issuePublishTool, ctx, {
-      id: 'abc',
-    }, testSignal);
+    const result = await runTool(
+      issuePublishTool,
+      ctx,
+      {
+        id: 'abc'
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: id must be an integer');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_publish', 'Invalid id parameter');
@@ -166,9 +181,14 @@ describe('issuePublishTool', () => {
   });
 
   it('should reject float id', async () => {
-    const result = await runTool(issuePublishTool, ctx, {
-      id: 1.5,
-    }, testSignal);
+    const result = await runTool(
+      issuePublishTool,
+      ctx,
+      {
+        id: 1.5
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: id must be an integer');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_publish', 'Invalid id parameter');
@@ -178,9 +198,14 @@ describe('issuePublishTool', () => {
   it('should return error for non-existent issue', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(undefined);
 
-    const result = await runTool(issuePublishTool, ctx, {
-      id: 999,
-    }, testSignal);
+    const result = await runTool(
+      issuePublishTool,
+      ctx,
+      {
+        id: 999
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: Issue #999 not found');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_publish', 'Issue #999 not found');
@@ -191,9 +216,14 @@ describe('issuePublishTool', () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createPendingIssue());
     mockIssue.publishIssue = vi.fn().mockResolvedValue(false);
 
-    const result = await runTool(issuePublishTool, ctx, {
-      id: 2,
-    }, testSignal);
+    const result = await runTool(
+      issuePublishTool,
+      ctx,
+      {
+        id: 2
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: Failed to publish issue #2. It may not be in draft status (current: pending).');
     expect(ctx.core.brief).toHaveBeenCalledWith('warn', 'issue_publish', 'Failed to publish issue #2');

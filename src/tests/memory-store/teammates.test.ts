@@ -7,14 +7,14 @@
  * - Teammate-related edge cases
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import {
   createTeammate,
   getTeammate,
   listTeammates,
   updateTeammateStatus,
   removeTeammate,
-  clearAll,
+  clearAll
 } from '../../context/memory-store.js';
 import type { TeammateStatus } from '../../types.js';
 

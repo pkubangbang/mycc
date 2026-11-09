@@ -24,7 +24,7 @@
  * its own message), and a CJK multi-byte round trip (UTF-8, no BOM).
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -34,7 +34,7 @@ import {
   readTranscript,
   collateMessages,
   collateEntries,
-  type TranscriptRecord,
+  type TranscriptRecord
 } from '../../loop/triologue/transcript.js';
 
 describe('JsonlTranscriptWriter ({A, AB} regression guard)', () => {
@@ -65,8 +65,8 @@ describe('JsonlTranscriptWriter ({A, AB} regression guard)', () => {
     const { records, skippedLines } = readTranscript(filePath);
     expect(skippedLines).toBe(0);
     expect(records).toHaveLength(2);
-    expect(records[0].content).toBe('A');                       // NOT "AB"
-    expect(records[0].kind).toBe('new');                       // NOT a resend
+    expect(records[0].content).toBe('A'); // NOT "AB"
+    expect(records[0].kind).toBe('new'); // NOT a resend
     expect(records[0].user_origin).toBe(true);
     expect(records[1].content).toBe('[HINT] X');
     expect(records[1].kind).toBe('merge');
@@ -105,10 +105,9 @@ describe('JsonlTranscriptWriter ({A, AB} regression guard)', () => {
   });
 
   it('an onError callback that THROWS never breaks the writer (never-throws contract)', () => {
-    const badWriter = new JsonlTranscriptWriter(
-      path.join(tmpDir, 'no-such-dir', 'y.jsonl'),
-      () => { throw new Error('oops'); },
-    );
+    const badWriter = new JsonlTranscriptWriter(path.join(tmpDir, 'no-such-dir', 'y.jsonl'), () => {
+      throw new Error('oops');
+    });
     expect(() => badWriter.append(asAppendablePiece({ role: 'user', content: 'x' }))).not.toThrow();
   });
 
@@ -128,7 +127,9 @@ describe('JsonlTranscriptWriter ({A, AB} regression guard)', () => {
   });
 
   it('round-trips CJK multi-byte content without mojibake', () => {
-    writer.append(asAppendablePiece({ role: 'user', content: '修复登录页面的中文乱码问题', kind: 'new', user_origin: true }));
+    writer.append(
+      asAppendablePiece({ role: 'user', content: '修复登录页面的中文乱码问题', kind: 'new', user_origin: true })
+    );
     writer.append(asAppendablePiece({ role: 'user', content: '——谢谢', kind: 'merge' }));
     const { records } = readTranscript(filePath);
     const messages = collateMessages(records);
@@ -154,9 +155,11 @@ describe('readTranscript (legacy tolerance + skippers)', () => {
     // Legacy full-snapshot line: no `kind`, plain {role, content, timestamp}.
     fs.writeFileSync(
       filePath,
-      JSON.stringify({ role: 'user', content: 'A', timestamp: 5 }) + '\n' +
-      JSON.stringify({ role: 'user', content: 'AB', timestamp: 6 }) + '\n',
-      'utf-8',
+      JSON.stringify({ role: 'user', content: 'A', timestamp: 5 }) +
+        '\n' +
+        JSON.stringify({ role: 'user', content: 'AB', timestamp: 6 }) +
+        '\n',
+      'utf-8'
     );
     const { records, skippedLines } = readTranscript(filePath);
     expect(skippedLines).toBe(0);
@@ -171,12 +174,14 @@ describe('readTranscript (legacy tolerance + skippers)', () => {
   it('skips malformed and partial trailing lines without throwing', () => {
     fs.writeFileSync(
       filePath,
-      JSON.stringify({ role: 'user', content: 'ok', kind: 'new', timestamp: 1 }) + '\n' +
-      '{"role":"assistant","content":"torn wri\n' +          // torn trailing write
-      '{not json at all}\n' +
-      '[]\n' +                                               // non-object JSON
-      JSON.stringify({ kind: 'future', content: '??' }) + '\n', // unknown kind
-      'utf-8',
+      JSON.stringify({ role: 'user', content: 'ok', kind: 'new', timestamp: 1 }) +
+        '\n' +
+        '{"role":"assistant","content":"torn wri\n' + // torn trailing write
+        '{not json at all}\n' +
+        '[]\n' + // non-object JSON
+        JSON.stringify({ kind: 'future', content: '??' }) +
+        '\n', // unknown kind
+      'utf-8'
     );
     const { records, skippedLines } = readTranscript(filePath);
     expect(records.map((r) => r.content)).toEqual(['ok']);
@@ -197,7 +202,7 @@ describe('collate projections (positional replay)', () => {
   const baseRecords = (): TranscriptRecord[] => [
     { role: 'user', content: 'task', kind: 'new', user_origin: true, timestamp: 100 },
     { role: 'assistant', content: 'hi', kind: 'new', timestamp: 110 },
-    { role: 'user', content: '[REMINDER] nudge', kind: 'merge', timestamp: 120 },
+    { role: 'user', content: '[REMINDER] nudge', kind: 'merge', timestamp: 120 }
   ];
 
   it('collateMessages folds a merge into the MOST RECENTLY COLLATED user message (positional)', () => {
@@ -232,7 +237,7 @@ describe('collate projections (positional replay)', () => {
     // note, not a user bubble), so it is skipped there without an anomaly.
     const records: TranscriptRecord[] = [
       { role: 'assistant', content: 'a', kind: 'new', timestamp: 1 },
-      { role: 'user', content: 'm', kind: 'merge', timestamp: 2 },
+      { role: 'user', content: 'm', kind: 'merge', timestamp: 2 }
     ];
     const anomalies: string[] = [];
     const messages = collateMessages(records, (a) => anomalies.push(a));
@@ -246,9 +251,7 @@ describe('collate projections (positional replay)', () => {
   it('replay stays O(n): a merge-heavy transcript folds in one pass', () => {
     // 1 user host + N merges collapse into ONE message without any backward
     // scan per merge (the cursor does the work).
-    const records: TranscriptRecord[] = [
-      { role: 'user', content: 'q', kind: 'new', user_origin: true, timestamp: 1 },
-    ];
+    const records: TranscriptRecord[] = [{ role: 'user', content: 'q', kind: 'new', user_origin: true, timestamp: 1 }];
     for (let i = 0; i < 500; i++) {
       records.push({ role: 'user', content: `n${i}`, kind: 'merge', timestamp: 2 + i });
     }
@@ -290,9 +293,13 @@ describe('control events (journaled truncation boundaries)', () => {
     // boundary marker does NOT cut it (only the restoration projection
     // resets). The pre-clear entry must survive so the durable history
     // stays a consistent superset across all serve-history sources.
-    writer.append(asAppendablePiece({ role: 'tool', tool_name: 'bash', content: 'old', kind: 'new' } as Record<string, unknown>));
+    writer.append(
+      asAppendablePiece({ role: 'tool', tool_name: 'bash', content: 'old', kind: 'new' } as Record<string, unknown>)
+    );
     writer.control('clear');
-    writer.append(asAppendablePiece({ role: 'tool', tool_name: 'bash', content: 'new', kind: 'new' } as Record<string, unknown>));
+    writer.append(
+      asAppendablePiece({ role: 'tool', tool_name: 'bash', content: 'new', kind: 'new' } as Record<string, unknown>)
+    );
     const { records } = readTranscript(filePath);
     const entries = collateEntries(records);
     expect(entries.map((e) => e.message.content)).toEqual(['old', 'new']);

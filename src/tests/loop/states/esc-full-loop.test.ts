@@ -18,7 +18,7 @@
  * recording the transition sequence. This mirrors the existing
  * state-machine.test.ts pattern but focuses on ESC-related transitions.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import { AgentStateMachine, AgentState } from '../../../loop/state-machine.js';
 import type { StateHandler } from '../../../loop/state-machine.js';
 import type { Triologue } from '../../../loop/triologue.js';
@@ -37,7 +37,7 @@ function createMockDeps() {
     getLastRole: vi.fn(() => null),
     getTokenCount: vi.fn(() => 0),
     needsCompact: vi.fn(() => false),
-    hasActiveWrapUp: vi.fn(() => false),
+    hasActiveWrapUp: vi.fn(() => false)
   } as unknown as Triologue;
 
   const ctx = {
@@ -48,43 +48,66 @@ function createMockDeps() {
       getMode: vi.fn(() => 'normal'),
       getAuto: vi.fn(() => false),
       setAuto: vi.fn(),
-    getAutoCommitBranches: vi.fn(() => [] as string[]),
-    addAutoCommitBranches: vi.fn(() => []),
-    removeAutoCommitBranches: vi.fn(() => []),
-    clearAutoCommitBranches: vi.fn(() => []),
-    effectiveAutoCommitBranches: vi.fn(() => [] as string[]),
+      getAutoCommitBranches: vi.fn(() => [] as string[]),
+      addAutoCommitBranches: vi.fn(() => []),
+      removeAutoCommitBranches: vi.fn(() => []),
+      clearAutoCommitBranches: vi.fn(() => []),
+      effectiveAutoCommitBranches: vi.fn(() => [] as string[]),
       brief: vi.fn(),
       verbose: vi.fn(),
-      escAware: vi.fn((fn: any) => fn(new AbortController())),
+      escAware: vi.fn((fn: any) => fn(new AbortController()))
     },
     todo: { hasOpenTodo: vi.fn(() => false), printTodoList: vi.fn(() => '') },
     mail: { collectMails: vi.fn(() => []), clearUnread: vi.fn() },
     skill: { listSkills: vi.fn(() => []), getSkill: vi.fn() },
-    team: { handlePendingQuestions: vi.fn() },
+    team: { handlePendingQuestions: vi.fn() }
   } as unknown as AgentContext;
 
   const conditions = {
-    getPending: vi.fn(() => []), load: vi.fn(), get: vi.fn(), set: vi.fn(),
-    findByTrigger: vi.fn(() => []), matches: vi.fn(() => []), save: vi.fn(),
-    markPending: vi.fn(), needsCompilation: vi.fn(() => false),
-    markInjected: vi.fn(), hasInjected: vi.fn(() => false), clearInjected: vi.fn(),
+    getPending: vi.fn(() => []),
+    load: vi.fn(),
+    get: vi.fn(),
+    set: vi.fn(),
+    findByTrigger: vi.fn(() => []),
+    matches: vi.fn(() => []),
+    save: vi.fn(),
+    markPending: vi.fn(),
+    needsCompilation: vi.fn(() => false),
+    markInjected: vi.fn(),
+    hasInjected: vi.fn(() => false),
+    clearInjected: vi.fn()
   } as unknown as ConditionRegistry;
 
   const sequence = {
-    add: vi.fn(), getEvents: vi.fn(() => []), clear: vi.fn(), has: vi.fn(() => false),
-    hasAny: vi.fn(() => false), lastIndexOf: vi.fn(() => -1), last: vi.fn(),
-    lastError: vi.fn(), count: vi.fn(() => 0), since: vi.fn(() => []),
-    sinceEdit: vi.fn(() => []), evaluate: vi.fn(() => false), isPlanMode: vi.fn(() => false),
-    hasSkillInConversation: vi.fn(() => false), totalCount: vi.fn(() => 0),
+    add: vi.fn(),
+    getEvents: vi.fn(() => []),
+    clear: vi.fn(),
+    has: vi.fn(() => false),
+    hasAny: vi.fn(() => false),
+    lastIndexOf: vi.fn(() => -1),
+    last: vi.fn(),
+    lastError: vi.fn(),
+    count: vi.fn(() => 0),
+    since: vi.fn(() => []),
+    sinceEdit: vi.fn(() => []),
+    evaluate: vi.fn(() => false),
+    isPlanMode: vi.fn(() => false),
+    hasSkillInConversation: vi.fn(() => false),
+    totalCount: vi.fn(() => 0),
     markPromptBoundary: vi.fn(),
-    incrementTotalTurns: vi.fn(), compactReset: vi.fn(), fullClear: vi.fn(),
+    incrementTotalTurns: vi.fn(),
+    compactReset: vi.fn(),
+    fullClear: vi.fn()
   } as unknown as Sequence;
 
   const hookExecutor = { processToolCalls: vi.fn() } as unknown as HookExecutor;
   const inputProvider = { getInput: vi.fn(), setMode: vi.fn() } as unknown as InputProvider;
   const requestEmbeddingTracker = {
-    addEntry: vi.fn(), getMaxSimilarity: vi.fn(() => 0),
-    similarityToDelta: vi.fn(() => 0), getDuplicationReport: vi.fn(() => ''), clear: vi.fn(),
+    addEntry: vi.fn(),
+    getMaxSimilarity: vi.fn(() => 0),
+    similarityToDelta: vi.fn(() => 0),
+    getDuplicationReport: vi.fn(() => ''),
+    clear: vi.fn()
   } as unknown as RequestEmbeddingTracker;
 
   return { triologue, ctx, conditions, sequence, hookExecutor, inputProvider, requestEmbeddingTracker };
@@ -92,9 +115,16 @@ function createMockDeps() {
 
 function buildMachine(deps: ReturnType<typeof createMockDeps>, handlers: Record<AgentState, StateHandler>) {
   return new AgentStateMachine(
-    deps.triologue, deps.ctx, 'main' as ToolScope,
-    deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-    '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
+    deps.triologue,
+    deps.ctx,
+    'main' as ToolScope,
+    deps.conditions,
+    deps.sequence,
+    deps.hookExecutor,
+    deps.inputProvider,
+    '/tmp/session.json',
+    handlers,
+    deps.requestEmbeddingTracker
   );
 }
 
@@ -114,19 +144,40 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
         return promptCalls === 1 ? AgentState.COLLECT : null; // exit on 2nd
       }),
       [AgentState.SLASH]: vi.fn(),
-      [AgentState.COLLECT]: vi.fn(async () => { visited.push(AgentState.COLLECT); return AgentState.LLM; }),
+      [AgentState.COLLECT]: vi.fn(async () => {
+        visited.push(AgentState.COLLECT);
+        return AgentState.LLM;
+      }),
       // LLM simulates ESC: returns STOP (not HOOK) → STOP handles wrap-up
-      [AgentState.LLM]: vi.fn(async () => { visited.push(AgentState.LLM); return AgentState.STOP; }),
-      [AgentState.HOOK]: vi.fn(async () => { visited.push(AgentState.HOOK); return AgentState.TOOL; }),
-      [AgentState.TOOL]: vi.fn(async () => { visited.push(AgentState.TOOL); return AgentState.STOP; }),
-      [AgentState.STOP]: vi.fn(async () => { visited.push(AgentState.STOP); return AgentState.PROMPT; }),
-      [AgentState.AWAIT]: vi.fn(),
+      [AgentState.LLM]: vi.fn(async () => {
+        visited.push(AgentState.LLM);
+        return AgentState.STOP;
+      }),
+      [AgentState.HOOK]: vi.fn(async () => {
+        visited.push(AgentState.HOOK);
+        return AgentState.TOOL;
+      }),
+      [AgentState.TOOL]: vi.fn(async () => {
+        visited.push(AgentState.TOOL);
+        return AgentState.STOP;
+      }),
+      [AgentState.STOP]: vi.fn(async () => {
+        visited.push(AgentState.STOP);
+        return AgentState.PROMPT;
+      }),
+      [AgentState.AWAIT]: vi.fn()
     };
 
     await buildMachine(deps, handlers).run();
 
     // Sequence: PROMPT → COLLECT → LLM → STOP → PROMPT (ESC routes through STOP)
-    expect(visited).toEqual([AgentState.PROMPT, AgentState.COLLECT, AgentState.LLM, AgentState.STOP, AgentState.PROMPT]);
+    expect(visited).toEqual([
+      AgentState.PROMPT,
+      AgentState.COLLECT,
+      AgentState.LLM,
+      AgentState.STOP,
+      AgentState.PROMPT
+    ]);
     // HOOK/TOOL must NOT have been visited (ESC skipped them)
     expect(handlers[AgentState.HOOK]).not.toHaveBeenCalled();
     expect(handlers[AgentState.TOOL]).not.toHaveBeenCalled();
@@ -147,19 +198,39 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
         return promptCalls === 1 ? AgentState.COLLECT : null;
       }),
       [AgentState.SLASH]: vi.fn(),
-      [AgentState.COLLECT]: vi.fn(async () => { visited.push(AgentState.COLLECT); return AgentState.LLM; }),
-      [AgentState.LLM]: vi.fn(async () => { visited.push(AgentState.LLM); return AgentState.HOOK; }),
-      [AgentState.HOOK]: vi.fn(async () => { visited.push(AgentState.HOOK); return AgentState.TOOL; }),
-      [AgentState.TOOL]: vi.fn(async () => { visited.push(AgentState.TOOL); return AgentState.STOP; }),
-      [AgentState.STOP]: vi.fn(async () => { visited.push(AgentState.STOP); return AgentState.PROMPT; }),
-      [AgentState.AWAIT]: vi.fn(),
+      [AgentState.COLLECT]: vi.fn(async () => {
+        visited.push(AgentState.COLLECT);
+        return AgentState.LLM;
+      }),
+      [AgentState.LLM]: vi.fn(async () => {
+        visited.push(AgentState.LLM);
+        return AgentState.HOOK;
+      }),
+      [AgentState.HOOK]: vi.fn(async () => {
+        visited.push(AgentState.HOOK);
+        return AgentState.TOOL;
+      }),
+      [AgentState.TOOL]: vi.fn(async () => {
+        visited.push(AgentState.TOOL);
+        return AgentState.STOP;
+      }),
+      [AgentState.STOP]: vi.fn(async () => {
+        visited.push(AgentState.STOP);
+        return AgentState.PROMPT;
+      }),
+      [AgentState.AWAIT]: vi.fn()
     };
 
     await buildMachine(deps, handlers).run();
 
     expect(visited).toEqual([
-      AgentState.PROMPT, AgentState.COLLECT, AgentState.LLM, AgentState.HOOK,
-      AgentState.TOOL, AgentState.STOP, AgentState.PROMPT,
+      AgentState.PROMPT,
+      AgentState.COLLECT,
+      AgentState.LLM,
+      AgentState.HOOK,
+      AgentState.TOOL,
+      AgentState.STOP,
+      AgentState.PROMPT
     ]);
     // Each non-PROMPT handler exactly once; PROMPT twice (start + after STOP)
     expect(handlers[AgentState.COLLECT]).toHaveBeenCalledTimes(1);
@@ -197,7 +268,7 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(async () => AgentState.PROMPT),
-      [AgentState.AWAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn()
     };
 
     await buildMachine(deps, handlers).run();
@@ -234,7 +305,7 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(async () => AgentState.PROMPT),
-      [AgentState.AWAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn()
     };
 
     await buildMachine(deps, handlers).run();
@@ -260,18 +331,33 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
         return promptCalls === 1 ? AgentState.COLLECT : null;
       }),
       [AgentState.SLASH]: vi.fn(),
-      [AgentState.COLLECT]: vi.fn(async () => { visited.push(AgentState.COLLECT); return AgentState.LLM; }),
-      [AgentState.LLM]: vi.fn(async () => { visited.push(AgentState.LLM); return AgentState.STOP; }),
+      [AgentState.COLLECT]: vi.fn(async () => {
+        visited.push(AgentState.COLLECT);
+        return AgentState.LLM;
+      }),
+      [AgentState.LLM]: vi.fn(async () => {
+        visited.push(AgentState.LLM);
+        return AgentState.STOP;
+      }),
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
-      [AgentState.STOP]: vi.fn(async () => { visited.push(AgentState.STOP); return AgentState.PROMPT; }),
-      [AgentState.AWAIT]: vi.fn(),
+      [AgentState.STOP]: vi.fn(async () => {
+        visited.push(AgentState.STOP);
+        return AgentState.PROMPT;
+      }),
+      [AgentState.AWAIT]: vi.fn()
     };
 
     await buildMachine(deps, handlers).run();
 
     // Loop terminated cleanly: PROMPT → COLLECT → LLM → STOP → PROMPT → exit
-    expect(visited).toEqual([AgentState.PROMPT, AgentState.COLLECT, AgentState.LLM, AgentState.STOP, AgentState.PROMPT]);
+    expect(visited).toEqual([
+      AgentState.PROMPT,
+      AgentState.COLLECT,
+      AgentState.LLM,
+      AgentState.STOP,
+      AgentState.PROMPT
+    ]);
     expect(handlers[AgentState.PROMPT]).toHaveBeenCalledTimes(2);
     // No SLASH branch was entered
     expect(handlers[AgentState.SLASH]).not.toHaveBeenCalled();

@@ -5,7 +5,7 @@
  * that may not be covered in standard tests.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import {
   createIssue,
   getIssue,
@@ -18,7 +18,7 @@ import {
   getTeammate,
   listTeammates,
   updateTeammateStatus,
-  clearAll,
+  clearAll
 } from '../../context/memory-store.js';
 import type { IssueStatus, TeammateStatus } from '../../types.js';
 
@@ -162,7 +162,6 @@ describe('memory-store edge cases', () => {
       expect(id4).toBe(4); // Not reusing ID 2
     });
 
-
     it('should start IDs at 1, not 0', () => {
       const id = createIssue('First Issue', 'Content', []);
       expect(id).toBe(1);
@@ -229,8 +228,6 @@ describe('memory-store edge cases', () => {
   // ============================================================================
 
   describe('Type Safety', () => {
-
-
     it('should default to draft status for new issues', () => {
       const id = createIssue('Test', 'Content', []);
       // Issues are created as 'draft' and transition to 'pending' via
@@ -248,7 +245,6 @@ describe('memory-store edge cases', () => {
   // ============================================================================
   // Blockage with Non-Existent Issues
   // ============================================================================
-
 
   // ============================================================================
   // Comment Timestamps
@@ -304,9 +300,6 @@ describe('memory-store edge cases', () => {
       expect(getIssue(id)?.title).toBe('');
     });
 
-
-
-
     it('should handle empty blockedBy array', () => {
       const id = createIssue('Test', 'Content', []);
       expect(getIssue(id)?.blockedBy).toEqual([]);
@@ -328,5 +321,4 @@ describe('memory-store edge cases', () => {
   // ============================================================================
   // Rapid Sequential Operations
   // ============================================================================
-
 });

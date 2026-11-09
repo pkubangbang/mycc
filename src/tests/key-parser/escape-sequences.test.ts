@@ -1,8 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import {
-  parseKeys,
-  KeyInfo,
-} from '../../utils/key-parser';
+import { describe, it, expect } from 'vite-plus/test';
+import { parseKeys, KeyInfo } from '../../utils/key-parser';
 
 /**
  * Helper to create a buffer from hex values
@@ -53,7 +50,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1b[A',
+        sequence: '\x1b[A'
       });
     });
 
@@ -65,7 +62,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1b[B',
+        sequence: '\x1b[B'
       });
     });
 
@@ -77,7 +74,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1b[C',
+        sequence: '\x1b[C'
       });
     });
 
@@ -89,7 +86,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1b[D',
+        sequence: '\x1b[D'
       });
     });
   });
@@ -103,7 +100,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1b[H',
+        sequence: '\x1b[H'
       });
     });
 
@@ -115,11 +112,9 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1b[F',
+        sequence: '\x1b[F'
       });
     });
-
-
   });
 
   describe('Escape Sequences - Navigation Keys', () => {
@@ -131,7 +126,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1b[2~',
+        sequence: '\x1b[2~'
       });
     });
 
@@ -143,11 +138,9 @@ describe('key-parser', () => {
         ctrl: false,
         meta: true,
         shift: false,
-        sequence: '\x1b[3~',
+        sequence: '\x1b[3~'
       });
     });
-
-
   });
 
   describe('Escape Sequences - Modifier-Extended (Shift/Ctrl+Arrow)', () => {
@@ -169,8 +162,6 @@ describe('key-parser', () => {
       expect(result[0].ctrl).toBe(false);
     });
 
-
-
     it('should parse Ctrl+Left (ESC[1;5D)', () => {
       const result = parseKeys(hexBuf(0x1b, 0x5b, 0x31, 0x3b, 0x35, 0x44));
       expect(result).toHaveLength(1);
@@ -186,15 +177,10 @@ describe('key-parser', () => {
       expect(result[0].ctrl).toBe(true);
     });
 
-
-
-
-
     it('should not produce garbled chars for Shift+Left (single key, not 6)', () => {
       const result = parseKeys(hexBuf(0x1b, 0x5b, 0x31, 0x3b, 0x32, 0x44));
       expect(result).toHaveLength(1);
       expect(result[0].name).toBe('left');
     });
-
   });
 });

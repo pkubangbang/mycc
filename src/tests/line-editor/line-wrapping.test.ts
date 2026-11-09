@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { LineEditor } from '../../utils/line-editor.js';
 
 import { key, charKey, createMockStdout } from '../test-utils/index.js';
@@ -35,11 +35,13 @@ describe('LineEditor - Line Wrapping', () => {
   /**
    * Create a LineEditor with standard options
    */
-  function createEditor(options: {
-    prompt?: string;
-    history?: string[];
-    columns?: number;
-  } = {}): LineEditor {
+  function createEditor(
+    options: {
+      prompt?: string;
+      history?: string[];
+      columns?: number;
+    } = {}
+  ): LineEditor {
     if (options.columns) {
       process.env.COLUMNS = String(options.columns);
     }
@@ -47,7 +49,7 @@ describe('LineEditor - Line Wrapping', () => {
       prompt: options.prompt ?? '> ',
       stdout: mockStdout,
       onDone: onDone as (value: string) => void,
-      history: options.history,
+      history: options.history
     });
     // Clear initial render calls
     writeCalls = [];
@@ -115,7 +117,7 @@ describe('LineEditor - Line Wrapping', () => {
     // Resize to smaller width
     editor.resize(20);
     // Wait for debounce
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
     // Should have re-rendered
     expect(mockStdout.write).toHaveBeenCalled();
   });

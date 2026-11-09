@@ -9,7 +9,7 @@
  * (registration order, sid mismatch, challenge send) fails here instead of in
  * a live sim.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach } from 'vite-plus/test';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { AddressInfo } from 'net';
 import * as reg from '../../peer/wire-registry.js';
@@ -17,7 +17,9 @@ import { handlePeerShares } from '../../peer/filesync/wire-codec.js';
 
 const SHARE = 'simtest1';
 
-afterEach(() => { /* sockets are closed per test */ });
+afterEach(() => {
+  /* sockets are closed per test */
+});
 
 describe('daemon-order share handshake', () => {
   it('challenges over the announcing socket and grants membership on proof', async () => {
@@ -32,20 +34,33 @@ describe('daemon-order share handshake', () => {
     peer.on('message', (d: Buffer) => received.push(d.toString()));
 
     reg.setWireHooks({
-      getSessionId: () => 'SELF', getWorkDir: () => '/tmp', getDaemon: () => false,
-      getRole: () => undefined, getShares: () => [SHARE], getServingEndpoint: () => null,
-      recordRemotePeerTodo: () => {}, appendLocalMail: () => {}, verbose: () => {},
+      getSessionId: () => 'SELF',
+      getWorkDir: () => '/tmp',
+      getDaemon: () => false,
+      getRole: () => undefined,
+      getShares: () => [SHARE],
+      getServingEndpoint: () => null,
+      recordRemotePeerTodo: () => {},
+      appendLocalMail: () => {},
+      verbose: () => {}
     });
 
     // 1. The peer announces (exactly what peer-wire.ts handles).
     const sid = 'PEERLIVE1234';
     reg.recordAnnounce({
-      endpoint: 'peer:1', dialed: false, socket: me, sid, initiatorSid: sid, meta: {},
+      endpoint: 'peer:1',
+      dialed: false,
+      socket: me,
+      sid,
+      initiatorSid: sid,
+      meta: {}
     });
     // 2. Then the announce-shares hook runs (peer-wire.ts:309).
     const target = {
-      onControlFrame: () => {}, onDataFrame: () => {},
-      localShares: () => [SHARE], onPartnerShares: () => {},
+      onControlFrame: () => {},
+      onDataFrame: () => {},
+      localShares: () => [SHARE],
+      onPartnerShares: () => {}
     };
     const challenged = handlePeerShares(target, sid, [reg.shareTag(SHARE)]);
     await new Promise((r) => setTimeout(r, 100));
@@ -60,6 +75,8 @@ describe('daemon-order share handshake', () => {
     expect(reg.confirmShareChallenges(sid, ch.challenge, proof)).toEqual([SHARE]);
     expect(reg.partnersForShare(SHARE)).toContain(sid);
 
-    me.close(); peer.close(); wss.close();
+    me.close();
+    peer.close();
+    wss.close();
   });
 });

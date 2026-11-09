@@ -11,7 +11,7 @@
  * point at a per-test temp dir, writeHeartbeatRaw helper).
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -29,13 +29,12 @@ vi.mock('../../config.js', () => ({
   getHeartbeatDir: () => heartbeatDir(),
   getHeartbeatFile: (sid: string) => heartbeatFile(sid),
   getChannelsDir: () => path.join(discoveryDir(), 'channels'),
-  getChannelFile: (sid: string, cid: string) =>
-    path.join(discoveryDir(), 'channels', `${sid}-${cid}.json`),
+  getChannelFile: (sid: string, cid: string) => path.join(discoveryDir(), 'channels', `${sid}-${cid}.json`),
   // identity.ts publishes this into identity.json on register(); the mock must
   // provide it or register() throws "No getLaunchArgs export on the mock".
   getLaunchArgs: () => '(none)',
   // identity.ts reads this at construction (--name); the mock must export it.
-  getPeerName: () => null,
+  getPeerName: () => null
 }));
 
 import { IdentityManager } from '../../peer/identity.js';

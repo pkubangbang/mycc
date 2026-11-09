@@ -23,7 +23,7 @@
  * can assert the livelog state a producer SAW when it emitted the piece.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { Triologue } from '../../loop/triologue.js';
 import type { Message, ToolCall } from '../../types.js';
 
@@ -41,7 +41,7 @@ function captureAll(): { captured: Captured[]; triologue: Triologue } {
       captured.push({ msg: msg as Captured['msg'], seen: getTriologue() });
     },
     tokenThreshold: 50000,
-    resultThreshold: 100000, // oversized-result dump path needs a big threshold
+    resultThreshold: 100000 // oversized-result dump path needs a big threshold
   });
   return { captured, triologue };
 }
@@ -52,7 +52,7 @@ function pieceOf(c: Captured): { role?: string; content?: string; kind?: string;
     role: c.msg.role,
     content: typeof c.msg.content === 'string' ? c.msg.content : undefined,
     kind: c.msg.kind,
-    user_origin: c.msg.user_origin,
+    user_origin: c.msg.user_origin
   };
 }
 
@@ -68,7 +68,10 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     triologue.user('hello');
     expect(captured).toHaveLength(1);
     expect(pieceOf(captured[0])).toEqual({
-      role: 'user', content: 'hello', kind: 'new', user_origin: true,
+      role: 'user',
+      content: 'hello',
+      kind: 'new',
+      user_origin: true
     });
     // The livelog the piece saw: exactly the appended message, nothing else.
     expect(captured[0].seen.map((m) => m.role)).toEqual(['user']);
@@ -84,10 +87,16 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     triologue.user('B');
     expect(captured).toHaveLength(2);
     expect(pieceOf(captured[0])).toEqual({
-      role: 'user', content: 'A', kind: 'new', user_origin: true,
+      role: 'user',
+      content: 'A',
+      kind: 'new',
+      user_origin: true
     });
     expect(pieceOf(captured[1])).toEqual({
-      role: 'user', content: 'B', kind: 'new', user_origin: true,
+      role: 'user',
+      content: 'B',
+      kind: 'new',
+      user_origin: true
     });
     // Two separate livelog messages — nothing grew.
     expect(triologue.getMessagesRaw().map((m) => m.content)).toEqual(['A', 'B']);
@@ -100,11 +109,16 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     triologue.note('REMINDER', 'nudge');
     expect(captured).toHaveLength(2);
     expect(pieceOf(captured[0])).toEqual({
-      role: 'user', content: 'task', kind: 'new', user_origin: true,
+      role: 'user',
+      content: 'task',
+      kind: 'new',
+      user_origin: true
     });
     // Standalone note: its own 'new' piece, carrying the [REMINDER] prefix.
     expect(pieceOf(captured[1])).toEqual({
-      role: 'user', content: '[REMINDER] nudge', kind: 'new',
+      role: 'user',
+      content: '[REMINDER] nudge',
+      kind: 'new'
     });
     // The note is NOT a user-origin record, so the serve projection will not
     // render it as a user bubble.
@@ -146,11 +160,9 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     triologue.user('do the thing');
     triologue.note('MAIL', 'm');
     triologue.note('SYSTEM', 's');
-    expect((triologue.getMessagesRaw()[0].content as string)).toBe('do the thing');
+    expect(triologue.getMessagesRaw()[0].content as string).toBe('do the thing');
     expect(triologue.getLastUserQuery()).toBe('do the thing');
-    expect(triologue.getMessagesRaw().map((m) => m.content)).toEqual([
-      'do the thing', '[MAIL] m', '[SYSTEM] s',
-    ]);
+    expect(triologue.getMessagesRaw().map((m) => m.content)).toEqual(['do the thing', '[MAIL] m', '[SYSTEM] s']);
   });
 
   it('a note arriving first is not promoted over a later note of higher priority', () => {
@@ -161,16 +173,17 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     triologue.user('go');
     triologue.note('HINT', 'h');
     triologue.note('URGENT', 'u');
-    expect(triologue.getMessagesRaw().map((m) => m.content)).toEqual([
-      'go', '[HINT] h', '[URGENT] u',
-    ]);
+    expect(triologue.getMessagesRaw().map((m) => m.content)).toEqual(['go', '[HINT] h', '[URGENT] u']);
   });
 
   it('hook notes NEVER combine: each hook note is its own new piece', () => {
     triologue.user('task');
     triologue.note('MAIL', 'from hook', 'some-hook');
     expect(captured).toHaveLength(2);
-    const hookPiece = captured[1].msg as Captured['msg'] & { hook_name?: string; kind?: 'new' | 'merge' | 'user' | 'steer' | 'clear' | 'compact' | 'rollback' };
+    const hookPiece = captured[1].msg as Captured['msg'] & {
+      hook_name?: string;
+      kind?: 'new' | 'merge' | 'user' | 'steer' | 'clear' | 'compact' | 'rollback';
+    };
     expect(hookPiece.kind).toBe('new');
     expect(hookPiece.hook_name).toBe('some-hook');
     expect(triologue.getMessagesRaw()).toHaveLength(2); // separate message
@@ -183,7 +196,7 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     // synthetic assistant first (the `no_pending_calls` bridge), which
     // would shift captured[1] to that bridge instead of the tool result.
     triologue.agent('calling', [
-      { id: 'tc1', function: { name: 'bash', arguments: { command: 'ls' } } } as unknown as ToolCall,
+      { id: 'tc1', function: { name: 'bash', arguments: { command: 'ls' } } } as unknown as ToolCall
     ]);
     triologue.tool('bash', 'out');
     expect(captured).toHaveLength(2);
@@ -200,7 +213,10 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     triologue.user('next query'); // tool → user: TP-fix allowed path
     expect(captured).toHaveLength(3);
     expect(pieceOf(captured[2])).toEqual({
-      role: 'user', content: 'next query', kind: 'new', user_origin: true,
+      role: 'user',
+      content: 'next query',
+      kind: 'new',
+      user_origin: true
     });
   });
 
@@ -209,7 +225,11 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     triologue.beginWrapUp(); // separate [WRAP_UP] user message (new piece)
     triologue.finishWrapUp('wrapping up');
     expect(captured).toHaveLength(3);
-    expect(pieceOf(captured[1])).toEqual({ role: 'user', content: '[WRAP_UP] LLM call interrupted. Please wrap up quickly and ask user for next steps.', kind: 'new' });
+    expect(pieceOf(captured[1])).toEqual({
+      role: 'user',
+      content: '[WRAP_UP] LLM call interrupted. Please wrap up quickly and ask user for next steps.',
+      kind: 'new'
+    });
     expect(pieceOf(captured[2])).toEqual({ role: 'assistant', content: 'wrapping up', kind: 'new' });
   });
 
@@ -223,14 +243,17 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     expect(captured[1].msg.role).toBeUndefined(); // bare boundary piece — no message fields
     expect(captured[1].seen).toEqual([]); // store already emptied when journaled
     expect(pieceOf(captured[2])).toEqual({
-      role: 'user', content: 'after clear', kind: 'new', user_origin: true,
+      role: 'user',
+      content: 'after clear',
+      kind: 'new',
+      user_origin: true
     });
   });
 
   it('loadRestoration() journals the pair as TWO new pieces (by-construction parity — review F1)', () => {
     const pair: [Message, Message] = [
       { role: 'user', content: '[Conversation compressed. Transcript: x]\nsummary...' },
-      { role: 'assistant', content: 'OK' },
+      { role: 'assistant', content: 'OK' }
     ];
     triologue.loadRestoration(pair);
     // Exactly 2 'new' pieces, one per pair message — the inherited context
@@ -238,10 +261,14 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     // restores and in serve-history).
     expect(captured).toHaveLength(2);
     expect(pieceOf(captured[0])).toEqual({
-      role: 'user', content: pair[0].content, kind: 'new',
+      role: 'user',
+      content: pair[0].content,
+      kind: 'new'
     });
     expect(pieceOf(captured[1])).toEqual({
-      role: 'assistant', content: 'OK', kind: 'new',
+      role: 'assistant',
+      content: 'OK',
+      kind: 'new'
     });
     // Neither piece claims genuine user input (restored context, not input).
     expect(captured[0].msg.user_origin).toBeUndefined();
@@ -277,19 +304,20 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
   });
 
   it('end-to-end piece sequence: replaying the emitted pieces reproduces the livelog', () => {
-    triologue.user('q1');        // new, user
+    triologue.user('q1'); // new, user
     triologue.note('HINT', 'h'); // new (standalone note — no merge)
-    triologue.agent('r1', [      // new (+ pending call registered)
-      { id: 'tc-e2e', function: { name: 'bash', arguments: { command: 'ls' } } } as unknown as ToolCall,
+    triologue.agent('r1', [
+      // new (+ pending call registered)
+      { id: 'tc-e2e', function: { name: 'bash', arguments: { command: 'ls' } } } as unknown as ToolCall
     ]);
     triologue.tool('bash', 'o'); // new
-    triologue.user('q2');        // new, user (post-tool fast path)
+    triologue.user('q2'); // new, user (post-tool fast path)
     expect(captured.map((c) => ({ kind: c.msg.kind }))).toEqual([
       { kind: 'new' },
       { kind: 'new' },
       { kind: 'new' },
       { kind: 'new' },
-      { kind: 'new' },
+      { kind: 'new' }
     ]);
     // NO-MERGE parity: pieces and livelog messages are 1:1 — every producer
     // appends exactly one message, so nothing can drift on replay. (Under the
@@ -321,8 +349,7 @@ describe('Triologue deferred-input guard (tool_calls outstanding)', () => {
     ({ captured, triologue } = captureAll());
   });
 
-  const pending = (id: string, name = 'bash') =>
-    ({ id, function: { name, arguments: {} } }) as unknown as ToolCall;
+  const pending = (id: string, name = 'bash') => ({ id, function: { name, arguments: {} } }) as unknown as ToolCall;
 
   /**
    * The provider's full tool-call pairing rules (measured live against DeepSeek
@@ -342,7 +369,7 @@ describe('Triologue deferred-input guard (tool_calls outstanding)', () => {
     const pending = new Set<string>();
     for (const m of msgs) {
       if (m.role === 'tool') {
-        const id = ((m as Message & { tool_call_id?: string }).tool_call_id ?? '');
+        const id = (m as Message & { tool_call_id?: string }).tool_call_id ?? '';
         if (!pending.has(id)) return true; // (2) orphan / duplicate / foreign id
         pending.delete(id);
         continue;
@@ -375,7 +402,7 @@ describe('Triologue deferred-input guard (tool_calls outstanding)', () => {
     const roles = triologue.getMessagesRaw().map((m) => m.role);
     expect(roles).toEqual(['assistant', 'tool', 'user']);
     expect(illegalSequence(triologue.getMessages() as Message[])).toBe(false);
-    expect((triologue.getMessagesRaw()[2].content as string)).toBe('[URGENT] act');
+    expect(triologue.getMessagesRaw()[2].content as string).toBe('[URGENT] act');
   });
 
   it('multi-call: no flush until the SECOND result lands (else p2 is orphaned)', () => {
@@ -478,7 +505,7 @@ describe('Triologue deferred-input guard (tool_calls outstanding)', () => {
     // The recovery answered p1 (tool), then the deferred note replayed ONCE
     // (user), then the new assistant message. No orphan, no lingering buffer.
     expect(raw.map((m) => m.role)).toEqual(['assistant', 'tool', 'user', 'assistant']);
-    expect((raw[2].content as string)).toBe('[URGENT] deferred steer');
+    expect(raw[2].content as string).toBe('[URGENT] deferred steer');
     // And the whole sequence is a legal wire shape (no open block, no
     // interposition).
     expect(illegalSequence(triologue.getMessages() as Message[])).toBe(false);
@@ -543,7 +570,7 @@ describe('Triologue deferred-input guard (tool_calls outstanding)', () => {
     // run the wrap-up turn; the facade must close the block first, so the tail
     // is a legal tool → user([WRAP_UP]) → assistant.
     triologue.agent('calling', [pending('p1')]);
-    triologue.beginWrapUp();      // must flush pending before the WRAP_UP user
+    triologue.beginWrapUp(); // must flush pending before the WRAP_UP user
     triologue.finishWrapUp('done');
     const roles = triologue.getMessagesRaw().map((m) => m.role);
     // assistant(TC) → tool(flushed) → user([WRAP_UP]) → assistant
@@ -570,7 +597,6 @@ describe('Triologue deferred-input guard (tool_calls outstanding)', () => {
   });
 });
 
-
 describe('Triologue sequence conformance (60 cases, provider-measured)', () => {
   /**
    * Deterministic CI oracle for the 60 hand-built conversations in
@@ -590,13 +616,15 @@ describe('Triologue sequence conformance (60 cases, provider-measured)', () => {
    * live in the split legs (`main.mjs --provider=deepseek|ollama`).
    */
   const U = (text: string): Message => ({ role: 'user', content: text });
-  const A = (text: string, calls?: ToolCall[]): Message =>
-    ({ role: 'assistant', content: text, ...(calls ? { tool_calls: calls } : {}) });
+  const A = (text: string, calls?: ToolCall[]): Message => ({
+    role: 'assistant',
+    content: text,
+    ...(calls ? { tool_calls: calls } : {})
+  });
   const T = (id: string, name = 'bash', text = 'ok'): Message =>
-    ({ role: 'tool', tool_name: name, tool_call_id: id, content: text } as unknown as Message);
+    ({ role: 'tool', tool_name: name, tool_call_id: id, content: text }) as unknown as Message;
   const N = (cat: string, text: string): Message => U(`[${cat}] ${text}`);
-  const call = (id: string, name = 'bash') =>
-    ({ id, function: { name, arguments: {} } }) as unknown as ToolCall;
+  const call = (id: string, name = 'bash') => ({ id, function: { name, arguments: {} } }) as unknown as ToolCall;
   const P1 = [call('p1', 'bash')];
   const P12 = [call('p1', 'bash'), call('p2', 'read')];
   const P123 = [call('p1', 'bash'), call('p2', 'read'), call('p3', 'grep')];
@@ -626,124 +654,368 @@ describe('Triologue sequence conformance (60 cases, provider-measured)', () => {
   }
 
   // `wantDeepseek` is the measured provider verdict: 'legal' ACCEPTED, 'illegal' REJECTED.
-  const SEQUENCES: { name: string; wantDeepseek: 'legal' | 'illegal'; wantOllama: 'legal' | 'illegal'; msgs: Message[] }[] = [
+  const SEQUENCES: {
+    name: string;
+    wantDeepseek: 'legal' | 'illegal';
+    wantOllama: 'legal' | 'illegal';
+    msgs: Message[];
+  }[] = [
     { name: '01 single turn, no tools', wantDeepseek: 'legal', wantOllama: 'legal', msgs: [U('q'), A('a')] },
-    { name: '02 tool round answered', wantDeepseek: 'legal', wantOllama: 'legal', msgs: [U('q'), A('calling', P1), T('p1'), A('done')] },
-    { name: '03 tool round, then user asks again', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P1), T('p1'), A('done'), U('again'), A('done2')] },
-    { name: '04 two sequential tool rounds', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'), A('r1', P1), T('p1'), A('r2', P12), T('p1'), T('p2'), A('end')] },
-    { name: '05 parallel calls answered in ORDER', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P123), T('p1'), T('p2'), T('p3'), A('end')] },
-    { name: '06 parallel calls answered REVERSED (order-free)', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P123), T('p3'), T('p2'), T('p1'), A('end')] },
-    { name: '07 tool result then user (tool to user native)', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P1), T('p1'), U('steer now')] },
-    { name: '08 tool result then note (tool to note native)', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P1), T('p1'), N('REMINDER', 'steer')] },
-    { name: '09 consecutive user turns', wantDeepseek: 'legal', wantOllama: 'legal', msgs: [U('q1'), U('q2'), U('q3')] },
-    { name: '10 consecutive user turns then a tool round', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q1'), U('q2'), U('q3'), A('calling', P1), T('p1'), A('end')] },
-    { name: '11 empty assistant bridge is answered', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P1), T('p1'), A(''), A('answer')] },
+    {
+      name: '02 tool round answered',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P1), T('p1'), A('done')]
+    },
+    {
+      name: '03 tool round, then user asks again',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P1), T('p1'), A('done'), U('again'), A('done2')]
+    },
+    {
+      name: '04 two sequential tool rounds',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('r1', P1), T('p1'), A('r2', P12), T('p1'), T('p2'), A('end')]
+    },
+    {
+      name: '05 parallel calls answered in ORDER',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P123), T('p1'), T('p2'), T('p3'), A('end')]
+    },
+    {
+      name: '06 parallel calls answered REVERSED (order-free)',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P123), T('p3'), T('p2'), T('p1'), A('end')]
+    },
+    {
+      name: '07 tool result then user (tool to user native)',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P1), T('p1'), U('steer now')]
+    },
+    {
+      name: '08 tool result then note (tool to note native)',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P1), T('p1'), N('REMINDER', 'steer')]
+    },
+    {
+      name: '09 consecutive user turns',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q1'), U('q2'), U('q3')]
+    },
+    {
+      name: '10 consecutive user turns then a tool round',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q1'), U('q2'), U('q3'), A('calling', P1), T('p1'), A('end')]
+    },
+    {
+      name: '11 empty assistant bridge is answered',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P1), T('p1'), A(''), A('answer')]
+    },
     { name: '12 no user at all (assistant first)', wantDeepseek: 'legal', wantOllama: 'legal', msgs: [A('hello')] },
-    { name: '13 multi-round with a note between rounds', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'), A('r1', P1), T('p1'), N('HINT', 'hint'), A('r2', P12), T('p1'), T('p2'), A('end')] },
+    {
+      name: '13 multi-round with a note between rounds',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('r1', P1), T('p1'), N('HINT', 'hint'), A('r2', P12), T('p1'), T('p2'), A('end')]
+    },
 
-    { name: '14 note BEFORE the only tool result', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P1), N('REMINDER', 'steer'), T('p1')] },
-    { name: '15 user BEFORE the only tool result', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P1), U('new direction'), T('p1')] },
-    { name: '16 note AFTER first of TWO results', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P12), T('p1'), N('HINT', 'mid'), T('p2')] },
-    { name: '17 user AFTER first of TWO results', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P12), T('p1'), U('q2'), T('p2')] },
-    { name: '18 note AFTER first of THREE results', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P123), T('p1'), N('URGENT', 'now'), T('p2'), T('p3')] },
-    { name: '19 assistant bridge interposed mid-batch', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P12), T('p1'), A('bridging'), T('p2')] },
-    { name: '20 tool result interposed, then another assistant block', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P12), T('p1'), A('second', [call('p9', 'grep')]), T('p2'), T('p9')] },
-    { name: '21 note between rounds leaves p2 unanswered', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P12), T('p1'), N('MAIL', 'm'), A('next turn', [call('p3', 'grep')]), T('p2'), T('p3')] },
+    {
+      name: '14 note BEFORE the only tool result',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P1), N('REMINDER', 'steer'), T('p1')]
+    },
+    {
+      name: '15 user BEFORE the only tool result',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P1), U('new direction'), T('p1')]
+    },
+    {
+      name: '16 note AFTER first of TWO results',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P12), T('p1'), N('HINT', 'mid'), T('p2')]
+    },
+    {
+      name: '17 user AFTER first of TWO results',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P12), T('p1'), U('q2'), T('p2')]
+    },
+    {
+      name: '18 note AFTER first of THREE results',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P123), T('p1'), N('URGENT', 'now'), T('p2'), T('p3')]
+    },
+    {
+      name: '19 assistant bridge interposed mid-batch',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P12), T('p1'), A('bridging'), T('p2')]
+    },
+    {
+      name: '20 tool result interposed, then another assistant block',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P12), T('p1'), A('second', [call('p9', 'grep')]), T('p2'), T('p9')]
+    },
+    {
+      name: '21 note between rounds leaves p2 unanswered',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P12), T('p1'), N('MAIL', 'm'), A('next turn', [call('p3', 'grep')]), T('p2'), T('p3')]
+    },
 
-    { name: '22 trailing unanswered block (REJECTED: unfinished block)', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P12), T('p1')] },
-    { name: '23 trailing unanswered block, nothing after (REJECTED)', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P1)] },
-    { name: '24 unanswered block followed by a fresh assistant turn', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P1), A('never mind')] },
-    { name: '25 unanswered block followed by a user turn', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P1), U('hello?')] },
-    { name: '26 unanswered block followed by a note', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P1), N('SYSTEM', 'worker paused')] },
-    { name: '27 partial answer then a fresh user turn', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P12), T('p1'), U('stop')] },
+    {
+      name: '22 trailing unanswered block (REJECTED: unfinished block)',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P12), T('p1')]
+    },
+    {
+      name: '23 trailing unanswered block, nothing after (REJECTED)',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P1)]
+    },
+    {
+      name: '24 unanswered block followed by a fresh assistant turn',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P1), A('never mind')]
+    },
+    {
+      name: '25 unanswered block followed by a user turn',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P1), U('hello?')]
+    },
+    {
+      name: '26 unanswered block followed by a note',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P1), N('SYSTEM', 'worker paused')]
+    },
+    {
+      name: '27 partial answer then a fresh user turn',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P12), T('p1'), U('stop')]
+    },
 
-    { name: '28 tool result with no assistant at all', wantDeepseek: 'illegal', wantOllama: 'legal', msgs: [U('q'), T('p1')] },
-    { name: '29 tool result directly after a plain user message', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), T('p1'), A('end')] },
-    { name: '30 tool result after an assistant WITHOUT tool_calls', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('no calls here'), T('p1')] },
-    { name: '31 tool result after a plain assistant then user', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('plain'), U('q2'), T('p1')] },
-    { name: '32 orphan tool result between user turns', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P1), T('p1'), U('q2'), T('p1')] },
-    { name: '33 tool result after a NOTE (note to tool)', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), N('REMINDER', 'steer'), T('p1')] },
-    { name: '34 the reported sequence: user/user/user/tool', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q1'), U('q2'), U('q3'), T('p1')] },
+    {
+      name: '28 tool result with no assistant at all',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), T('p1')]
+    },
+    {
+      name: '29 tool result directly after a plain user message',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), T('p1'), A('end')]
+    },
+    {
+      name: '30 tool result after an assistant WITHOUT tool_calls',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('no calls here'), T('p1')]
+    },
+    {
+      name: '31 tool result after a plain assistant then user',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('plain'), U('q2'), T('p1')]
+    },
+    {
+      name: '32 orphan tool result between user turns',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P1), T('p1'), U('q2'), T('p1')]
+    },
+    {
+      name: '33 tool result after a NOTE (note to tool)',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), N('REMINDER', 'steer'), T('p1')]
+    },
+    {
+      name: '34 the reported sequence: user/user/user/tool',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q1'), U('q2'), U('q3'), T('p1')]
+    },
 
-    { name: '35 same tool_call_id answered twice', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P1), T('p1'), T('p1')] },
-    { name: '36 extra tool result answering an unannounced id', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P1), T('p1'), T('p_unknown')] },
-    { name: '37 two results for p1, p2 left unanswered (still trailing here)', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P12), T('p1'), T('p1')] },
-    { name: '38 second assistant interposed while p1 pending', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P12), T('p2'), A('next', [call('p3', 'grep')]), T('p1'), T('p3')] },
-    { name: '39 interleave a foreign id between valid results', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P123), T('p1'), T('pX'), T('p2'), T('p3')] },
+    {
+      name: '35 same tool_call_id answered twice',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P1), T('p1'), T('p1')]
+    },
+    {
+      name: '36 extra tool result answering an unannounced id',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P1), T('p1'), T('p_unknown')]
+    },
+    {
+      name: '37 two results for p1, p2 left unanswered (still trailing here)',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P12), T('p1'), T('p1')]
+    },
+    {
+      name: '38 second assistant interposed while p1 pending',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P12), T('p2'), A('next', [call('p3', 'grep')]), T('p1'), T('p3')]
+    },
+    {
+      name: '39 interleave a foreign id between valid results',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P123), T('p1'), T('pX'), T('p2'), T('p3')]
+    },
 
-    { name: '40 truncation leaves a bare tool result', wantDeepseek: 'illegal', wantOllama: 'legal', msgs: [U('q'), T('p1')] },
-    { name: '41 truncation leaves a trailing unanswered block (REJECTED)', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P1)] },
-    { name: '42 truncation leaves assistant then user (no tools)', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [A('answer'), U('next')] },
-    { name: '43 tool result kept, assistant dropped, then user', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [T('p1'), U('next')] },
-    { name: '44 wrap-up: tool results flushed then [WRAP_UP] user', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P12), T('p1'), T('p2'), U('[WRAP_UP] wrap up quickly')] },
+    {
+      name: '40 truncation leaves a bare tool result',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), T('p1')]
+    },
+    {
+      name: '41 truncation leaves a trailing unanswered block (REJECTED)',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P1)]
+    },
+    {
+      name: '42 truncation leaves assistant then user (no tools)',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [A('answer'), U('next')]
+    },
+    {
+      name: '43 tool result kept, assistant dropped, then user',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [T('p1'), U('next')]
+    },
+    {
+      name: '44 wrap-up: tool results flushed then [WRAP_UP] user',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P12), T('p1'), T('p2'), U('[WRAP_UP] wrap up quickly')]
+    },
 
-    { name: '45 assistant with EMPTY tool_calls array', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'), A('plain', []), A('answer')] },
-    { name: '46 assistant with empty content but real tool_calls', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'), A('', P1), T('p1'), A('answer')] },
-    { name: '47 tool result with empty content', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P1), T('p1', 'bash', ''), A('answer')] },
-    { name: '48 system message first (facade always prepends one)', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [{ role: 'system', content: 'You are mycc.' } as unknown as Message, U('q'), A('calling', P1), T('p1'), A('answer')] },
-    { name: '49 system message mid-conversation', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'), A('a'), { role: 'system', content: 'note to self' } as unknown as Message, U('q2')] },
-    { name: '50 consecutive assistant turns (no tools)', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'), A('a1'), A('a2')] },
+    {
+      name: '45 assistant with EMPTY tool_calls array',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('plain', []), A('answer')]
+    },
+    {
+      name: '46 assistant with empty content but real tool_calls',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('', P1), T('p1'), A('answer')]
+    },
+    {
+      name: '47 tool result with empty content',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P1), T('p1', 'bash', ''), A('answer')]
+    },
+    {
+      name: '48 system message first (facade always prepends one)',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [
+        { role: 'system', content: 'You are mycc.' } as unknown as Message,
+        U('q'),
+        A('calling', P1),
+        T('p1'),
+        A('answer')
+      ]
+    },
+    {
+      name: '49 system message mid-conversation',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('a'), { role: 'system', content: 'note to self' } as unknown as Message, U('q2')]
+    },
+    {
+      name: '50 consecutive assistant turns (no tools)',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('a1'), A('a2')]
+    },
 
-    { name: '51 three rounds with notes at every boundary', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'),
-        A('r1', P1), T('p1'), N('REMINDER', 's1'),
-        A('r2', P12), T('p1'), T('p2'), N('HINT', 's2'),
-        A('r3', P123), T('p1'), T('p2'), T('p3'),
-        N('MAIL', 'wrap'), U('final'), A('end')] },
-    { name: '52 two rounds where round 2 orphans one call', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'),
-        A('r1', P1), T('p1'),
-        A('r2', P12), T('p1'), U('interrupt'), T('p2')] },
-    { name: '53 note + user deferred after last result (PART-2 replay shape)', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P12), T('p1'), T('p2'), N('REMINDER', 'note'), U('genuine query')] },
-    { name: '54 the exact pre-fix facade shape (must be rejected)', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P1), U('[REMINDER] steer'), A('', [call('tp_recovery_1', 'bash')]), T('tp_recovery_1'), T('p1')] },
-    { name: '55 double violation: interpose AND orphan', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P12), U('interrupt'), T('p2'), A('plain'), T('p9')] },
+    {
+      name: '51 three rounds with notes at every boundary',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [
+        U('q'),
+        A('r1', P1),
+        T('p1'),
+        N('REMINDER', 's1'),
+        A('r2', P12),
+        T('p1'),
+        T('p2'),
+        N('HINT', 's2'),
+        A('r3', P123),
+        T('p1'),
+        T('p2'),
+        T('p3'),
+        N('MAIL', 'wrap'),
+        U('final'),
+        A('end')
+      ]
+    },
+    {
+      name: '52 two rounds where round 2 orphans one call',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('r1', P1), T('p1'), A('r2', P12), T('p1'), U('interrupt'), T('p2')]
+    },
+    {
+      name: '53 note + user deferred after last result (PART-2 replay shape)',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P12), T('p1'), T('p2'), N('REMINDER', 'note'), U('genuine query')]
+    },
+    {
+      name: '54 the exact pre-fix facade shape (must be rejected)',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [
+        U('q'),
+        A('calling', P1),
+        U('[REMINDER] steer'),
+        A('', [call('tp_recovery_1', 'bash')]),
+        T('tp_recovery_1'),
+        T('p1')
+      ]
+    },
+    {
+      name: '55 double violation: interpose AND orphan',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P12), U('interrupt'), T('p2'), A('plain'), T('p9')]
+    },
 
     // ════ 9. THE NO-MERGE CONTRACT ════
     //  With the merge removed, a note that arrives while the last role is
@@ -751,16 +1023,36 @@ describe('Triologue sequence conformance (60 cases, provider-measured)', () => {
     //  both providers — case 09 proved consecutive user turns are accepted).
     //  #60 is the regression guard: removing the merge must NOT be read as
     //  permission to interpose a note mid-batch.
-    { name: '56 no-merge: note after a genuine query (user → note-user)', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('do the thing'), N('REMINDER', 'nudge')] },
-    { name: '57 no-merge: query then three standalone notes of mixed priority', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'), N('REMINDER', 'r'), N('URGENT', 'u'), N('HINT', 'h')] },
-    { name: '58 no-merge: two consecutive genuine queries', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q1'), U('q2')] },
-    { name: '59 no-merge: standalone note then a tool round', wantDeepseek: 'legal', wantOllama: 'legal',
-      msgs: [U('q'), N('MAIL', 'm'), A('calling', P1), T('p1'), A('end')] },
-    { name: '60 no-merge regression guard: a note mid-batch is STILL rejected', wantDeepseek: 'illegal', wantOllama: 'legal',
-      msgs: [U('q'), A('calling', P12), T('p1'), N('HINT', 'note'), T('p2')] },
+    {
+      name: '56 no-merge: note after a genuine query (user → note-user)',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('do the thing'), N('REMINDER', 'nudge')]
+    },
+    {
+      name: '57 no-merge: query then three standalone notes of mixed priority',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), N('REMINDER', 'r'), N('URGENT', 'u'), N('HINT', 'h')]
+    },
+    {
+      name: '58 no-merge: two consecutive genuine queries',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q1'), U('q2')]
+    },
+    {
+      name: '59 no-merge: standalone note then a tool round',
+      wantDeepseek: 'legal',
+      wantOllama: 'legal',
+      msgs: [U('q'), N('MAIL', 'm'), A('calling', P1), T('p1'), A('end')]
+    },
+    {
+      name: '60 no-merge regression guard: a note mid-batch is STILL rejected',
+      wantDeepseek: 'illegal',
+      wantOllama: 'legal',
+      msgs: [U('q'), A('calling', P12), T('p1'), N('HINT', 'note'), T('p2')]
+    }
   ];
 
   it('covers the ~50-case matrix (60 conversations)', () => {
@@ -769,7 +1061,7 @@ describe('Triologue sequence conformance (60 cases, provider-measured)', () => {
     expect(SEQUENCES.filter((s) => s.wantDeepseek === 'legal').length).toBe(27);
   });
 
-  it('encoder: every case carries BOTH providers\' measured expectations', () => {
+  it("encoder: every case carries BOTH providers' measured expectations", () => {
     // A drift in either provider's measured verdict must be a deliberate edit,
     // not a silent default. DeepSeek rejects 33 shapes; Ollama rejects none —
     // the tolerance split is the reason the defect survived dev.

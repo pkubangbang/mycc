@@ -5,14 +5,14 @@
  * - createIssue, getIssue, listIssues, updateIssue, addIssueComment
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import {
   createIssue,
   getIssue,
   listIssues,
   updateIssue,
   addIssueComment,
-  clearAll,
+  clearAll
 } from '../../context/memory-store.js';
 import type { IssueStatus } from '../../types.js';
 
@@ -189,7 +189,7 @@ describe('memory-store', () => {
           title: 'New Title',
           content: 'New Content',
           status: 'completed' as IssueStatus,
-          owner: 'test-agent',
+          owner: 'test-agent'
         });
 
         expect(result).toBe(true);

@@ -12,7 +12,7 @@
  * chdir into that temp dir so the export file lands there too.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -32,7 +32,7 @@ vi.mock('../../config.js', () => ({
   getWikiDomainsFile: () => domainsFile(),
   ensureDirs: () => {
     if (!fs.existsSync(walLogsDir())) fs.mkdirSync(walLogsDir(), { recursive: true });
-  },
+  }
 }));
 
 // Capture console.log output to assert on the import summary.
@@ -42,7 +42,12 @@ function captureConsole(): { logs: string[]; restore: () => void } {
   console.log = (...args: unknown[]) => {
     logs.push(stripAnsi(args.map((a) => String(a)).join(' ')));
   };
-  return { logs, restore: () => { console.log = orig; } };
+  return {
+    logs,
+    restore: () => {
+      console.log = orig;
+    }
+  };
 }
 
 // --- Helpers --------------------------------------------------------------
@@ -53,7 +58,7 @@ function makeEntry(doc: WikiDocument, opts: Partial<WALEntry> = {}): WALEntry {
     hash: opts.hash ?? computeWikiHash(doc),
     document: doc,
     approved: opts.approved ?? true,
-    namespace: opts.namespace ?? 'nomic-embed-text',
+    namespace: opts.namespace ?? 'nomic-embed-text'
   };
 }
 
@@ -71,7 +76,7 @@ function makeDomain(name: string): WikiDomain {
     domain_name: name,
     description: `test domain ${name}`,
     created_at: new Date().toISOString(),
-    project_folder: '/test',
+    project_folder: '/test'
   };
 }
 
@@ -97,12 +102,12 @@ function writeExportFile(opts: {
     exported_at: new Date().toISOString(),
     project_dir: '/test',
     domains,
-    entries,
+    entries
   };
   if (opts.includeManifest !== false && (opts.version ?? '1.1') === '1.1') {
     data.manifest = {
       entry_count: entries.length,
-      content_sha256: computeManifestHash(domains, entries),
+      content_sha256: computeManifestHash(domains, entries)
     };
   }
   if (opts.corrupt) opts.corrupt(data);
@@ -114,11 +119,13 @@ function writeExportFile(opts: {
  * Build a mock WikiModule that records put() calls and can be configured to
  * return success or failure per call. Default put() returns success.
  */
-function makeMockWiki(opts: {
-  existingDomains?: WikiDomain[];
-  putResults?: Array<{ success: boolean; hash: string; error?: string; alreadyExisted?: boolean }>;
-  putThrows?: boolean;
-} = {}): WikiModule & { putCalls: Array<{ hash: string; document: WikiDocument }>; registeredDomains: string[] } {
+function makeMockWiki(
+  opts: {
+    existingDomains?: WikiDomain[];
+    putResults?: Array<{ success: boolean; hash: string; error?: string; alreadyExisted?: boolean }>;
+    putThrows?: boolean;
+  } = {}
+): WikiModule & { putCalls: Array<{ hash: string; document: WikiDocument }>; registeredDomains: string[] } {
   const putCalls: Array<{ hash: string; document: WikiDocument }> = [];
   const registeredDomains: string[] = [];
   const domains = new Map<string, WikiDomain>();
@@ -129,7 +136,13 @@ function makeMockWiki(opts: {
       putCalls.push({ hash, document });
       if (opts.putThrows) throw new Error('boom');
       const preset = opts.putResults?.[putResultIdx++];
-      if (preset) return { success: preset.success, hash: preset.hash, error: preset.error, alreadyExisted: preset.alreadyExisted };
+      if (preset)
+        return {
+          success: preset.success,
+          hash: preset.hash,
+          error: preset.error,
+          alreadyExisted: preset.alreadyExisted
+        };
       return { success: true, hash };
     }),
     prepare: vi.fn(async () => ({ accepted: true, hash: 'mock' })),
@@ -143,12 +156,17 @@ function makeMockWiki(opts: {
     getDomain: vi.fn(async (name: string) => domains.get(name)),
     registerDomain: vi.fn(async (name: string, description?: string) => {
       if (!domains.has(name)) {
-        domains.set(name, { domain_name: name, description: description || '', created_at: new Date().toISOString(), project_folder: '/test' });
+        domains.set(name, {
+          domain_name: name,
+          description: description || '',
+          created_at: new Date().toISOString(),
+          project_folder: '/test'
+        });
         registeredDomains.push(name);
       }
     }),
     // expose state via closure-bound references the test reads
-    ...(({ putCalls, registeredDomains } as any)),
+    ...({ putCalls, registeredDomains } as any)
   } as any;
 }
 
@@ -159,9 +177,19 @@ async function runCommand(args: string[], wiki: WikiModule): Promise<string[]> {
   const ctx: SlashCommandContext = {
     query: `/wiki ${args.join(' ')}`,
     args: ['/wiki', ...args],
-    ctx: { core: {} as any, todo: {} as any, mail: {} as any, skill: {} as any, issue: {} as any, bg: {} as any, team: {} as any, wiki, peer: {} as any },
+    ctx: {
+      core: {} as any,
+      todo: {} as any,
+      mail: {} as any,
+      skill: {} as any,
+      issue: {} as any,
+      bg: {} as any,
+      team: {} as any,
+      wiki,
+      peer: {} as any
+    },
     triologue: {},
-    sessionFilePath: '',
+    sessionFilePath: ''
   };
   const { logs, restore } = captureConsole();
   try {
@@ -318,7 +346,7 @@ describe('wiki import integrity (Layer A: manifest, Layer B: per-entry hash, Lay
       entries: [entry],
       corrupt: (data) => {
         data.entries[0].document.content = 'TAMPERED CONTENT THAT CHANGES THE MANIFEST HASH';
-      },
+      }
     });
 
     const wiki = makeMockWiki();
@@ -338,7 +366,7 @@ describe('wiki import integrity (Layer A: manifest, Layer B: per-entry hash, Lay
       domains: [domain],
       entries: [entry],
       version: '1.1',
-      includeManifest: false,
+      includeManifest: false
     });
 
     const wiki = makeMockWiki();
@@ -358,7 +386,7 @@ describe('wiki import integrity (Layer A: manifest, Layer B: per-entry hash, Lay
         // Claim 5 entries but only ship 1 — content_sha256 still matches the
         // shipped arrays, but entry_count is inconsistent.
         data.manifest.entry_count = 5;
-      },
+      }
     });
 
     const wiki = makeMockWiki();
@@ -373,7 +401,7 @@ describe('wiki import integrity (Layer A: manifest, Layer B: per-entry hash, Lay
     const good = makeEntry(makeDoc('project', 'Good', LONG_CONTENT));
     const tampered = makeEntry(makeDoc('project', 'Bad', LONG_CONTENT), {
       // give it a hash that does NOT match its content
-      hash: '0000000000000000',
+      hash: '0000000000000000'
     });
     const exportPath = writeExportFile({ domains: [domain], entries: [good, tampered] });
 
@@ -397,7 +425,7 @@ describe('wiki import integrity (Layer A: manifest, Layer B: per-entry hash, Lay
     // put() returns success:false (e.g. unknown domain, length violation) —
     // it does NOT throw. The old loop would have counted this as imported++.
     const wiki = makeMockWiki({
-      putResults: [{ success: false, hash: entry.hash, error: 'Unknown domain "project"' }],
+      putResults: [{ success: false, hash: entry.hash, error: 'Unknown domain "project"' }]
     });
     const logs = await runCommand(['import', exportPath], wiki);
 
@@ -430,7 +458,7 @@ describe('wiki import integrity (Layer A: manifest, Layer B: per-entry hash, Lay
     // Simulate a re-import on the same machine: put() finds an exact copy and
     // short-circuits with alreadyExisted:true (no LanceDB/WAL write).
     const wiki = makeMockWiki({
-      putResults: [{ success: true, hash: entry.hash, alreadyExisted: true }],
+      putResults: [{ success: true, hash: entry.hash, alreadyExisted: true }]
     });
     const logs = await runCommand(['import', exportPath], wiki);
 
@@ -450,10 +478,10 @@ describe('wiki import integrity (Layer A: manifest, Layer B: per-entry hash, Lay
 
     const wiki = makeMockWiki({
       putResults: [
-        { success: true, hash: eNew.hash },                                   // newly stored
-        { success: true, hash: eExisting.hash, alreadyExisted: true },        // exact copy present
-        { success: false, hash: eFailing.hash, error: 'Unknown domain "x"' }, // put rejected
-      ],
+        { success: true, hash: eNew.hash }, // newly stored
+        { success: true, hash: eExisting.hash, alreadyExisted: true }, // exact copy present
+        { success: false, hash: eFailing.hash, error: 'Unknown domain "x"' } // put rejected
+      ]
     });
     const logs = await runCommand(['import', exportPath], wiki);
 
@@ -487,7 +515,7 @@ describe('wiki import integrity (Layer A: manifest, Layer B: per-entry hash, Lay
       domains: [domain],
       entries: [entry],
       version: '1.0',
-      includeManifest: false,
+      includeManifest: false
     });
 
     const wiki = makeMockWiki();
@@ -508,7 +536,7 @@ describe('wiki import integrity (Layer A: manifest, Layer B: per-entry hash, Lay
       domains: [domain],
       entries: [good, tampered],
       version: '1.0',
-      includeManifest: false,
+      includeManifest: false
     });
 
     const wiki = makeMockWiki();

@@ -8,7 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { vi } from 'vitest';
+import { vi } from 'vite-plus/test';
 import type { AgentContext, CoreModule, AskResult, ToolDefinition } from '../../types.js';
 
 // Re-export comprehensive mock utilities
@@ -35,7 +35,7 @@ export function runTool(
   tool: { handler: ToolDefinition['handler'] },
   ctx: AgentContext,
   args: Record<string, unknown>,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): string | Promise<string> {
   return tool.handler(ctx, args, signal ?? testSignal);
 }
@@ -53,7 +53,7 @@ export function askResult(answer: string, source: 'user' | 'auto' = 'user'): Ask
     question: '',
     answer,
     reason: source === 'auto' ? 'auto mode: question auto-replied with onEsc default' : '',
-    source,
+    source
   };
 }
 
@@ -74,7 +74,11 @@ export function createMockContext(workdir: string): AgentContext {
     imgDescribe: vi.fn(),
     readPictureCached: vi.fn(),
     requestGrant: vi.fn(async () => ({ approved: true })),
-    requestExternalPathAccess: vi.fn(async () => ({ approved: false, resolvedPath: '', reason: 'Path escapes workspace' })),
+    requestExternalPathAccess: vi.fn(async () => ({
+      approved: false,
+      resolvedPath: '',
+      reason: 'Path escapes workspace'
+    })),
     addExternalAutoGrant: vi.fn(),
     getMode: vi.fn(() => 'normal' as const),
     // Auto mode is lead-only; default false so existing tests that hit the
@@ -93,13 +97,13 @@ export function createMockContext(workdir: string): AgentContext {
     getConfusionIndex: vi.fn(() => 0),
     increaseConfusionIndex: vi.fn(),
     resetConfusionIndex: vi.fn(),
-    escAware: (vi.fn() as unknown) as CoreModule['escAware'],
+    escAware: vi.fn() as unknown as CoreModule['escAware']
   };
 
   return {
     core,
     todo: {
-      createTodo: vi.fn(),
+      createTodo: vi.fn()
     } as never,
     mail: {} as never,
     skill: {} as never,
@@ -109,11 +113,11 @@ export function createMockContext(workdir: string): AgentContext {
       getOutput: vi.fn(),
       list: vi.fn(),
       remove: vi.fn(),
-      awaitExit: vi.fn(),
+      awaitExit: vi.fn()
     } as never,
     team: {} as never,
     wiki: {
-      indexSkills: vi.fn().mockResolvedValue(undefined),
+      indexSkills: vi.fn().mockResolvedValue(undefined)
     } as never,
     peer: {
       listIdentities: vi.fn(() => []),
@@ -130,8 +134,8 @@ export function createMockContext(workdir: string): AgentContext {
       getBriefs: vi.fn(() => []),
       getLatestHeartbeat: vi.fn(() => null),
       getPid: vi.fn(() => null),
-      setOnChannelJoin: vi.fn(),
-    } as never,
+      setOnChannelJoin: vi.fn()
+    } as never
   };
 }
 
@@ -157,10 +161,7 @@ export function removeTempDir(dir: string): void {
  * error code). Replaces fragment-only `toContain('Error')` assertions that
  * could not distinguish a real guard from an incidental failure.
  */
-export function expectToolError(
-  result: string,
-  expected: { message?: string | RegExp; code?: string },
-): void {
+export function expectToolError(result: string, expected: { message?: string | RegExp; code?: string }): void {
   const { message, code } = expected;
   if (message instanceof RegExp) expect(result).toMatch(message);
   else if (message !== undefined) expect(result).toContain(message);
@@ -173,5 +174,5 @@ export const pathTraversalPatterns = [
   '....//....//etc/passwd',
   '..\\..\\..\\windows\\system32',
   '/etc/passwd',
-  '/root/.ssh/id_rsa',
+  '/root/.ssh/id_rsa'
 ];

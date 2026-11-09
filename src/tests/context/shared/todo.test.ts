@@ -3,7 +3,7 @@
  * Verifies hash integrity, auto-clear-on-all-done, and monotonic nextId.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { Todo } from '../../../context/shared/todo.js';
 
 describe('Todo', () => {
@@ -303,5 +303,4 @@ describe('Todo', () => {
     const result = todo.updateTodo(a.id, oldHash, 'Renamed again', false);
     expect(result).toBeNull();
   });
-
 });

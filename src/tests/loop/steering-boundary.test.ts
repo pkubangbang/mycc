@@ -26,7 +26,7 @@
  * may reference the removed `steering-queue` module (it must stay deleted,
  * not shimmed).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -49,7 +49,7 @@ const SERVE_REGISTRY_ALLOWLIST = new Set([
   'states/collect.ts',
   'states/prompt.ts',
   // Output mirroring / prompt abort plumbing (pre-existing, non-steering).
-  'agent-io.ts',
+  'agent-io.ts'
 ]);
 
 /** Hub STEERING members loop code must never call (A6 + Δ3).
@@ -58,10 +58,7 @@ const SERVE_REGISTRY_ALLOWLIST = new Set([
  * deleted from the hub — loop code reads the manager directly, and a call to
  * the removed members would fail typecheck, so only the live members need
  * the runtime regex guard. */
-const HUB_STEERING_MEMBERS = [
-  'resolveSteering',
-  'pushSteer',
-] as const;
+const HUB_STEERING_MEMBERS = ['resolveSteering', 'pushSteer'] as const;
 
 /** Recursively collect .ts files under dir. */
 function collectTsFiles(dir: string, acc: string[] = []): string[] {

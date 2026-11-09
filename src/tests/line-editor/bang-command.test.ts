@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 import { LineEditor } from '../../utils/line-editor.js';
 
 import { key, charKey, createMockStdout } from '../test-utils/index.js';
@@ -23,7 +23,7 @@ describe('LineEditor - Bang Command', () => {
     return new LineEditor({
       prompt: options.prompt ?? '> ',
       stdout: mockStdout,
-      onDone: onDone as (value: string) => void,
+      onDone: onDone as (value: string) => void
     });
   }
 

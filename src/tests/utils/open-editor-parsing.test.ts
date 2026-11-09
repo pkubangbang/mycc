@@ -2,7 +2,7 @@
  * open-editor-parsing.test.ts - File parsing tests
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 
 // Import the function
 import { parseFile } from '../../utils/open-editor.js';

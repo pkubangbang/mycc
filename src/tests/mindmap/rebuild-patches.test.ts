@@ -9,7 +9,7 @@
  *   (so content survives even though MYCC.md no longer has it)
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { rebuildPatches } from '../../mindmap/patch-jsonl.js';
 import type { Node } from '../../mindmap/types.js';
 
@@ -18,7 +18,7 @@ function makeNode(
   id: string,
   text: string,
   children: Node[] = [],
-  opts: { is_mycc?: boolean; is_patch?: boolean; title?: string } = {},
+  opts: { is_mycc?: boolean; is_patch?: boolean; title?: string } = {}
 ): Node {
   const segments = id.split('/').filter((s) => s.length > 0);
   return {
@@ -30,7 +30,7 @@ function makeNode(
     children,
     links: [],
     is_mycc: opts.is_mycc ?? true,
-    is_patch: opts.is_patch ?? false,
+    is_patch: opts.is_patch ?? false
   };
 }
 
@@ -38,27 +38,19 @@ const HASH = 'newhash123';
 
 describe('rebuildPatches', () => {
   it('emits no actions when merged tree == base tree (all pure MYCC.md)', () => {
-    const base = makeNode('/', 'root', [
-      makeNode('/A', 'a text'),
-      makeNode('/B', 'b text'),
-    ]);
+    const base = makeNode('/', 'root', [makeNode('/A', 'a text'), makeNode('/B', 'b text')]);
     // merged is identical (same structure, all is_mycc=true, is_patch=false)
-    const merged = makeNode('/', 'root', [
-      makeNode('/A', 'a text'),
-      makeNode('/B', 'b text'),
-    ]);
+    const merged = makeNode('/', 'root', [makeNode('/A', 'a text'), makeNode('/B', 'b text')]);
 
     const actions = rebuildPatches(merged, base, HASH);
     expect(actions).toHaveLength(0);
   });
 
   it('emits add for patch-added nodes (is_mycc=false)', () => {
-    const base = makeNode('/', 'root', [
-      makeNode('/A', 'a text'),
-    ]);
+    const base = makeNode('/', 'root', [makeNode('/A', 'a text')]);
     const merged = makeNode('/', 'root', [
       makeNode('/A', 'a text'),
-      makeNode('/P1', 'patch text', [], { is_mycc: false, is_patch: true }),
+      makeNode('/P1', 'patch text', [], { is_mycc: false, is_patch: true })
     ]);
 
     const actions = rebuildPatches(merged, base, HASH);
@@ -71,12 +63,8 @@ describe('rebuildPatches', () => {
   });
 
   it('emits update for MYCC.md nodes modified by patch (is_mycc=true, is_patch=true)', () => {
-    const base = makeNode('/', 'root', [
-      makeNode('/A', 'original a'),
-    ]);
-    const merged = makeNode('/', 'root', [
-      makeNode('/A', 'patched a', [], { is_mycc: true, is_patch: true }),
-    ]);
+    const base = makeNode('/', 'root', [makeNode('/A', 'original a')]);
+    const merged = makeNode('/', 'root', [makeNode('/A', 'patched a', [], { is_mycc: true, is_patch: true })]);
 
     const actions = rebuildPatches(merged, base, HASH);
     expect(actions).toHaveLength(1);
@@ -87,13 +75,11 @@ describe('rebuildPatches', () => {
 
   it('PRESERVES MYCC.md-deleted nodes as add patches (is_mycc=true, absent from base)', () => {
     // base (fresh compile, MYCC.md no longer has /B): only /A
-    const base = makeNode('/', 'root', [
-      makeNode('/A', 'a text'),
-    ]);
+    const base = makeNode('/', 'root', [makeNode('/A', 'a text')]);
     // merged (old in-memory): /A and /B, where /B is is_mycc=true (was in MYCC.md)
     const merged = makeNode('/', 'root', [
       makeNode('/A', 'a text'),
-      makeNode('/B', 'b text that should be preserved', [], { is_mycc: true, is_patch: false }),
+      makeNode('/B', 'b text that should be preserved', [], { is_mycc: true, is_patch: false })
     ]);
 
     const actions = rebuildPatches(merged, base, HASH);
@@ -109,15 +95,11 @@ describe('rebuildPatches', () => {
 
   it('preserves an entire deleted subtree (parent + children) as add patches', () => {
     // base: only /A (MYCC.md deleted /B and its child /B/C)
-    const base = makeNode('/', 'root', [
-      makeNode('/A', 'a text'),
-    ]);
+    const base = makeNode('/', 'root', [makeNode('/A', 'a text')]);
     // merged: /A, /B (is_mycc), /B/C (is_mycc)
     const merged = makeNode('/', 'root', [
       makeNode('/A', 'a text'),
-      makeNode('/B', 'b text', [
-        makeNode('/B/C', 'c text', [], { is_mycc: true }),
-      ], { is_mycc: true }),
+      makeNode('/B', 'b text', [makeNode('/B/C', 'c text', [], { is_mycc: true })], { is_mycc: true })
     ]);
 
     const actions = rebuildPatches(merged, base, HASH);
@@ -136,10 +118,7 @@ describe('rebuildPatches', () => {
 
   it('handles mixed scenario: add + update + preserved-deletion', () => {
     // base (fresh): /A, /C
-    const base = makeNode('/', 'root', [
-      makeNode('/A', 'a text'),
-      makeNode('/C', 'c text'),
-    ]);
+    const base = makeNode('/', 'root', [makeNode('/A', 'a text'), makeNode('/C', 'c text')]);
     // merged (old in-memory):
     //   /A — is_mycc=true, is_patch=true (was updated by patch)
     //   /B — is_mycc=true, NOT in base (deleted from MYCC.md) → preserve as add
@@ -149,7 +128,7 @@ describe('rebuildPatches', () => {
       makeNode('/A', 'patched a', [], { is_mycc: true, is_patch: true }),
       makeNode('/B', 'deleted from mycc', [], { is_mycc: true, is_patch: false }),
       makeNode('/C', 'c text'),
-      makeNode('/P1', 'patch added', [], { is_mycc: false, is_patch: true }),
+      makeNode('/P1', 'patch added', [], { is_mycc: false, is_patch: true })
     ]);
 
     const actions = rebuildPatches(merged, base, HASH);
@@ -167,13 +146,8 @@ describe('rebuildPatches', () => {
   });
 
   it('never emits delete actions (deleted nodes are preserved, not removed)', () => {
-    const base = makeNode('/', 'root', [
-      makeNode('/A', 'a text'),
-    ]);
-    const merged = makeNode('/', 'root', [
-      makeNode('/A', 'a text'),
-      makeNode('/B', 'deleted', [], { is_mycc: true }),
-    ]);
+    const base = makeNode('/', 'root', [makeNode('/A', 'a text')]);
+    const merged = makeNode('/', 'root', [makeNode('/A', 'a text'), makeNode('/B', 'deleted', [], { is_mycc: true })]);
 
     const actions = rebuildPatches(merged, base, HASH);
     expect(actions.some((a) => a.action === 'delete')).toBe(false);

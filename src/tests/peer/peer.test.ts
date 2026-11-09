@@ -13,7 +13,7 @@
  * gated by freshness.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 
 const configMock = vi.hoisted(() => ({ getPeerName: vi.fn<() => string | null>(() => null) }));
 import * as fs from 'fs';
@@ -41,7 +41,7 @@ vi.mock('../../config.js', () => ({
   getLaunchArgs: () => '(none)',
   // identity.ts reads this at construction (--name); the mock must export it
   // or IdentityManager construction throws "No getPeerName export on the mock".
-  getPeerName: () => configMock.getPeerName(),
+  getPeerName: () => configMock.getPeerName()
 }));
 
 // Import AFTER mocks are registered.
@@ -108,16 +108,24 @@ describe('IdentityManager', () => {
   it('allows restart when an old same-name entry is stale despite its PID being reused', () => {
     configMock.getPeerName.mockReturnValue('group:worker');
     const old = Date.now() - 2 * 60 * 60 * 1000;
-    fs.writeFileSync(identityFile(), JSON.stringify({
-      [SID_B]: {
-        sessionId: SID_B,
-        name: 'group:worker',
-        pid: process.pid, // simulates an old PID now reused by this test runner
-        workDir: '/work/old',
-        mailbox: makeMailboxPath(SID_B),
-        startedAt: old,
-      },
-    }, null, 2), 'utf-8');
+    fs.writeFileSync(
+      identityFile(),
+      JSON.stringify(
+        {
+          [SID_B]: {
+            sessionId: SID_B,
+            name: 'group:worker',
+            pid: process.pid, // simulates an old PID now reused by this test runner
+            workDir: '/work/old',
+            mailbox: makeMailboxPath(SID_B),
+            startedAt: old
+          }
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    );
     writeHeartbeatRaw(SID_B, [old]);
     // The recorded PID began after this heartbeat evidence, so the live PID is
     // unambiguously recycled and must not reserve the old name.
@@ -131,16 +139,24 @@ describe('IdentityManager', () => {
   it('does not free a durable name merely because its heartbeat is stale while the PID remains plausible', () => {
     configMock.getPeerName.mockReturnValue('group:worker');
     const old = Date.now() - 2 * 60 * 60 * 1000;
-    fs.writeFileSync(identityFile(), JSON.stringify({
-      [SID_B]: {
-        sessionId: SID_B,
-        name: 'group:worker',
-        pid: process.pid,
-        workDir: '/work/old',
-        mailbox: makeMailboxPath(SID_B),
-        startedAt: old,
-      },
-    }, null, 2), 'utf-8');
+    fs.writeFileSync(
+      identityFile(),
+      JSON.stringify(
+        {
+          [SID_B]: {
+            sessionId: SID_B,
+            name: 'group:worker',
+            pid: process.pid,
+            workDir: '/work/old',
+            mailbox: makeMailboxPath(SID_B),
+            startedAt: old
+          }
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    );
     // The heartbeat payload is stale, but its file's mtime follows this
     // already-running PID: the process may be hung, so it still reserves the name.
     writeHeartbeatRaw(SID_B, [old]);
@@ -157,17 +173,28 @@ describe('IdentityManager', () => {
     // prune, name claims, listIdentities (→ the loop's todo nudge), isFresh,
     // getRemoteMailbox — sees only well-formed entries.
     const now = Date.now();
-    fs.writeFileSync(identityFile(), JSON.stringify({
-      [SID_A]: {
-        sessionId: SID_A, workDir: '/work/a', mailbox: makeMailboxPath(SID_A),
-        startedAt: now, pid: process.pid,
-      },
-      'null-entry': null,
-      'string-entry': 'not-an-object',
-      'array-entry': [],
-      'missing-session-id': { workDir: '/work/x', mailbox: '/tmp/x' },
-      'missing-mailbox': { sessionId: 'no-mailbox-sid', workDir: '/work/y' },
-    }, null, 2), 'utf-8');
+    fs.writeFileSync(
+      identityFile(),
+      JSON.stringify(
+        {
+          [SID_A]: {
+            sessionId: SID_A,
+            workDir: '/work/a',
+            mailbox: makeMailboxPath(SID_A),
+            startedAt: now,
+            pid: process.pid
+          },
+          'null-entry': null,
+          'string-entry': 'not-an-object',
+          'array-entry': [],
+          'missing-session-id': { workDir: '/work/x', mailbox: '/tmp/x' },
+          'missing-mailbox': { sessionId: 'no-mailbox-sid', workDir: '/work/y' }
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    );
 
     const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
     // Only the well-formed entry survives, and nothing throws.
@@ -192,9 +219,23 @@ describe('IdentityManager', () => {
     // Pre-seed identity.json with an orphan entry for SID_B whose heartbeat
     // is 2h old — well beyond the 1h prune cutoff.
     const now = Date.now();
-    fs.writeFileSync(identityFile(), JSON.stringify({
-      [SID_B]: { sessionId: SID_B, workDir: '/work/b', mailbox: makeMailboxPath(SID_B), pid: 99999999, startedAt: now - 2 * 60 * 60 * 1000 },
-    }, null, 2), 'utf-8');
+    fs.writeFileSync(
+      identityFile(),
+      JSON.stringify(
+        {
+          [SID_B]: {
+            sessionId: SID_B,
+            workDir: '/work/b',
+            mailbox: makeMailboxPath(SID_B),
+            pid: 99999999,
+            startedAt: now - 2 * 60 * 60 * 1000
+          }
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    );
     writeHeartbeatRaw(SID_B, [now - 2 * 60 * 60 * 1000, now - 7000 * 1000, now - 7200 * 1000]);
 
     const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
@@ -208,45 +249,71 @@ describe('IdentityManager', () => {
   it('register() does not prune a stale heartbeat while its recorded process is still alive', () => {
     const now = Date.now();
     const stale = now - 2 * 60 * 60 * 1000;
-    fs.writeFileSync(identityFile(), JSON.stringify({
-      [SID_B]: {
-        sessionId: SID_B,
-        workDir: '/work/b',
-        mailbox: makeMailboxPath(SID_B),
-        pid: process.pid,
-        startedAt: stale,
-      },
-    }, null, 2), 'utf-8');
+    fs.writeFileSync(
+      identityFile(),
+      JSON.stringify(
+        {
+          [SID_B]: {
+            sessionId: SID_B,
+            workDir: '/work/b',
+            mailbox: makeMailboxPath(SID_B),
+            pid: process.pid,
+            startedAt: stale
+          }
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    );
     // The payload says the last beat is old, but its PID and file mtime still
     // belong to this live process. Staleness must not erase its discoverability.
-    fs.writeFileSync(heartbeatFile(SID_B), JSON.stringify({
-      heartbeats: [stale],
-      briefs: [],
-      pid: process.pid,
-    }), 'utf-8');
+    fs.writeFileSync(
+      heartbeatFile(SID_B),
+      JSON.stringify({
+        heartbeats: [stale],
+        briefs: [],
+        pid: process.pid
+      }),
+      'utf-8'
+    );
 
     const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
     id.register();
 
-    expect(id.listIdentities().map((entry) => entry.sessionId).sort()).toEqual([SID_A, SID_B]);
+    expect(
+      id
+        .listIdentities()
+        .map((entry) => entry.sessionId)
+        .sort()
+    ).toEqual([SID_A, SID_B]);
   });
 
   it('register() preserves fresh identity entries (heartbeat within 1h)', () => {
     // Pre-seed identity.json with a fresh entry for SID_B (beat 10s ago).
     const now = Date.now();
-    fs.writeFileSync(identityFile(), JSON.stringify({
-      [SID_B]: { sessionId: SID_B, workDir: '/work/b', mailbox: makeMailboxPath(SID_B), startedAt: now - 10_000 },
-    }, null, 2), 'utf-8');
+    fs.writeFileSync(
+      identityFile(),
+      JSON.stringify(
+        {
+          [SID_B]: { sessionId: SID_B, workDir: '/work/b', mailbox: makeMailboxPath(SID_B), startedAt: now - 10_000 }
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    );
     writeHeartbeatRaw(SID_B, [now - 30_000, now - 20_000, now - 10_000]);
 
     const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
     id.register();
 
-    const sids = id.listIdentities().map(e => e.sessionId).sort();
+    const sids = id
+      .listIdentities()
+      .map((e) => e.sessionId)
+      .sort();
     expect(sids).toEqual([SID_A, SID_B]); // both present
   });
-
-
 
   it('register() includes the role field when provided', () => {
     const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A), 'skill-manager');
@@ -258,8 +325,6 @@ describe('IdentityManager', () => {
     const raw = JSON.parse(fs.readFileSync(identityFile(), 'utf-8'));
     expect(raw[SID_A].role).toBe('skill-manager');
   });
-
-
 
   it('isFresh() is true when remote heartbeat is newer than local oldest', () => {
     const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
@@ -295,12 +360,24 @@ describe('ChannelManager', () => {
     // Two-sided channel: A owns a file, B owns the sibling with same channelId.
     const cid = 'chan-001';
     writeChannelRaw(SID_A, cid, {
-      channelId: cid, ownerSessionId: SID_A, peerSessionId: null,
-      title: 'sync', firstQuery: null, joined: false, firstQuerySent: false, createdAt: 1,
+      channelId: cid,
+      ownerSessionId: SID_A,
+      peerSessionId: null,
+      title: 'sync',
+      firstQuery: null,
+      joined: false,
+      firstQuerySent: false,
+      createdAt: 1
     });
     writeChannelRaw(SID_B, cid, {
-      channelId: cid, ownerSessionId: SID_B, peerSessionId: null,
-      title: 'sync', firstQuery: null, joined: false, firstQuerySent: false, createdAt: 1,
+      channelId: cid,
+      ownerSessionId: SID_B,
+      peerSessionId: null,
+      title: 'sync',
+      firstQuery: null,
+      joined: false,
+      firstQuerySent: false,
+      createdAt: 1
     });
 
     const idA = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
@@ -311,7 +388,6 @@ describe('ChannelManager', () => {
     // Sibling scan should have discovered SID_B and persisted it.
     expect(list[0].peerSessionId).toBe(SID_B);
   });
-
 
   it('joinChannel() throws if the channel file does not exist', () => {
     const idA = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
@@ -334,12 +410,14 @@ describe('ChannelManager', () => {
     const ch = new ChannelManager(SID_A, idA, makeMailboxPath(SID_A));
 
     const warns: string[] = [];
-    const spy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => { warns.push(args.join(' ')); });
+    const spy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      warns.push(args.join(' '));
+    });
     const list = ch.listChannels();
     spy.mockRestore();
 
-    expect(list).toEqual([]);              // malformed entry excluded
-    expect(warns.some(w => w.includes('malformed channel file'))).toBe(true);
+    expect(list).toEqual([]); // malformed entry excluded
+    expect(warns.some((w) => w.includes('malformed channel file'))).toBe(true);
   });
 
   it('sweepChannels() warns (and does not throw) when joinChannel throws for an unjoined channel', () => {
@@ -354,25 +432,34 @@ describe('ChannelManager', () => {
     const cid = 'chan-sweep-throw';
     const mailbox = makeMailboxPath(SID_A);
     writeChannelRaw(SID_A, cid, {
-      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
-      title: 't', firstQuery: null, joined: false, firstQuerySent: false, createdAt: 1,
+      channelId: cid,
+      ownerSessionId: SID_A,
+      peerSessionId: SID_B,
+      title: 't',
+      firstQuery: null,
+      joined: false,
+      firstQuerySent: false,
+      createdAt: 1
     });
     const idA = new IdentityManager(SID_A, '/work/a', mailbox);
     const ch = new ChannelManager(SID_A, idA, mailbox);
     // Stub joinChannel so the sweep's auto-join throws — emulates the
     // race where the channel file disappears between list and join.
-    vi.spyOn(ch as unknown as { joinChannel: () => never }, 'joinChannel')
-      .mockImplementation(() => { throw new Error('Channel file not found: race'); });
+    vi.spyOn(ch as unknown as { joinChannel: () => never }, 'joinChannel').mockImplementation(() => {
+      throw new Error('Channel file not found: race');
+    });
 
     const warns: string[] = [];
-    const spy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => { warns.push(args.join(' ')); });
+    const spy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      warns.push(args.join(' '));
+    });
     // startChannelPoll() calls sweepChannels() once immediately.
     ch.startChannelPoll();
     ch.stopChannelPoll();
     spy.mockRestore();
 
-    expect(warns.some(w => w.includes('auto-join failed'))).toBe(true);
-    expect(warns.some(w => w.includes(cid))).toBe(true);
+    expect(warns.some((w) => w.includes('auto-join failed'))).toBe(true);
+    expect(warns.some((w) => w.includes(cid))).toBe(true);
     // Row peer-003: the failure is also RECORDED, counted, and given a backoff,
     // so `/channel list` can show "join failed N× — <reason>" and the sweep
     // stops retrying a permanently broken file every tick.
@@ -386,8 +473,14 @@ describe('ChannelManager', () => {
     const cid = 'chan-002';
     const mailbox = makeMailboxPath(SID_A);
     writeChannelRaw(SID_A, cid, {
-      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
-      title: 'theme-x', firstQuery: 'Hello there', joined: false, firstQuerySent: false, createdAt: 1,
+      channelId: cid,
+      ownerSessionId: SID_A,
+      peerSessionId: SID_B,
+      title: 'theme-x',
+      firstQuery: 'Hello there',
+      joined: false,
+      firstQuerySent: false,
+      createdAt: 1
     });
     const idA = new IdentityManager(SID_A, '/work/a', mailbox);
     idA.register();
@@ -422,8 +515,14 @@ describe('ChannelManager', () => {
     const cid = 'chan-003';
     const mailbox = makeMailboxPath(SID_A);
     writeChannelRaw(SID_A, cid, {
-      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
-      title: 't', firstQuery: null, joined: true, firstQuerySent: false, createdAt: 1,
+      channelId: cid,
+      ownerSessionId: SID_A,
+      peerSessionId: SID_B,
+      title: 't',
+      firstQuery: null,
+      joined: true,
+      firstQuerySent: false,
+      createdAt: 1
     });
     const idA = new IdentityManager(SID_A, '/work/a', mailbox);
     idA.register();
@@ -443,8 +542,14 @@ describe('ChannelManager', () => {
     const mailboxA = makeMailboxPath(SID_A);
     const mailboxB = makeMailboxPath(SID_B);
     writeChannelRaw(SID_A, cid, {
-      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
-      title: 't', firstQuery: null, joined: true, firstQuerySent: false, createdAt: 1,
+      channelId: cid,
+      ownerSessionId: SID_A,
+      peerSessionId: SID_B,
+      title: 't',
+      firstQuery: null,
+      joined: true,
+      firstQuerySent: false,
+      createdAt: 1
     });
     const idA = new IdentityManager(SID_A, '/work/a', mailboxA);
     idA.register();
@@ -510,22 +615,26 @@ describe('ChannelManager', () => {
     const cid = 'chan-join-cb';
     const mailbox = makeMailboxPath(SID_A);
     writeChannelRaw(SID_A, cid, {
-      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
-      title: 't', firstQuery: 'hi', joined: false, firstQuerySent: false, createdAt: 1,
+      channelId: cid,
+      ownerSessionId: SID_A,
+      peerSessionId: SID_B,
+      title: 't',
+      firstQuery: 'hi',
+      joined: false,
+      firstQuerySent: false,
+      createdAt: 1
     });
     const idA = new IdentityManager(SID_A, '/work/a', mailbox);
     const ch = new ChannelManager(SID_A, idA, mailbox);
 
     const calls: string[] = [];
-    ch.setOnChannelJoin(() => { calls.push('joined'); });
+    ch.setOnChannelJoin(() => {
+      calls.push('joined');
+    });
 
     ch.joinChannel(cid);
     expect(calls).toEqual(['joined']);
   });
-
-
-
-
 });
 
 describe('PeerManager facade', () => {
@@ -543,13 +652,18 @@ describe('PeerManager facade', () => {
     expect(peer.listIdentities()).toHaveLength(0);
   });
 
-
   it('hasActiveChannel() is true when a joined channel has a fresh peer', () => {
     const cid = 'chan-005';
     const mailbox = makeMailboxPath(SID_A);
     writeChannelRaw(SID_A, cid, {
-      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
-      title: 't', firstQuery: null, joined: true, firstQuerySent: false, createdAt: 1,
+      channelId: cid,
+      ownerSessionId: SID_A,
+      peerSessionId: SID_B,
+      title: 't',
+      firstQuery: null,
+      joined: true,
+      firstQuerySent: false,
+      createdAt: 1
     });
     const peer = new PeerManager(SID_A, '/work/a', mailbox);
     peer.start();
@@ -568,8 +682,14 @@ describe('PeerManager facade', () => {
     const cid = 'chan-006';
     const mailbox = makeMailboxPath(SID_A);
     writeChannelRaw(SID_A, cid, {
-      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
-      title: 't', firstQuery: null, joined: true, firstQuerySent: false, createdAt: 1,
+      channelId: cid,
+      ownerSessionId: SID_A,
+      peerSessionId: SID_B,
+      title: 't',
+      firstQuery: null,
+      joined: true,
+      firstQuerySent: false,
+      createdAt: 1
     });
     const peer = new PeerManager(SID_A, '/work/a', mailbox);
     peer.start();
@@ -588,8 +708,14 @@ describe('PeerManager facade', () => {
     const cid = 'chan-delegate';
     const mailbox = makeMailboxPath(SID_A);
     writeChannelRaw(SID_A, cid, {
-      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
-      title: 't', firstQuery: null, joined: false, firstQuerySent: false, createdAt: 1,
+      channelId: cid,
+      ownerSessionId: SID_A,
+      peerSessionId: SID_B,
+      title: 't',
+      firstQuery: null,
+      joined: false,
+      firstQuerySent: false,
+      createdAt: 1
     });
     const peer = new PeerManager(SID_A, '/work/a', mailbox);
     peer.start();
@@ -597,7 +723,9 @@ describe('PeerManager facade', () => {
     idA.register();
 
     const calls: string[] = [];
-    peer.setOnChannelJoin(() => { calls.push('fired'); });
+    peer.setOnChannelJoin(() => {
+      calls.push('fired');
+    });
     peer.joinChannel(cid);
     expect(calls).toEqual(['fired']);
     peer.stop();

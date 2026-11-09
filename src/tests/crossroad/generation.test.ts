@@ -20,7 +20,7 @@
  *   - chat-helpers: startSpinner/stopSpinner/sleep no-op'd
  *   - stripInternalMarkup: real (pure function, no side effects)
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 // Detection is owned by @pkubangbang/crossroad-detector, which spawns an ONNX
 // inference server on first use — the package is MOCKED below so no test boots
@@ -51,21 +51,21 @@ vi.mock('@pkubangbang/crossroad-detector', async (importOriginal) => {
 
 vi.mock('../../engine/chat-provider.js', () => ({
   forkChat: vi.fn(),
-  MODEL: 'test-model',
+  MODEL: 'test-model'
 }));
 
 vi.mock('../../loop/agent-io.js', () => ({
   agentIO: {
     verbose: vi.fn(),
     log: vi.fn(),
-    brief: vi.fn(),
-  },
+    brief: vi.fn()
+  }
 }));
 
 vi.mock('../../engine/chat-helpers.js', () => ({
   startSpinner: vi.fn(),
   stopSpinner: vi.fn(),
-  sleep: vi.fn(() => Promise.resolve()),
+  sleep: vi.fn(() => Promise.resolve())
 }));
 
 // --- Imports after mocks ----------------------------------------------------
@@ -80,7 +80,7 @@ import {
   selectBestContinuation,
   handleCrossroad,
   stripAndValidate,
-  extractWordsBeforeTurn,
+  extractWordsBeforeTurn
 } from '../../loop/crossroad.js';
 import type { Message, Tool } from '../../types.js';
 
@@ -156,13 +156,11 @@ describe('stripAndValidate', () => {
     expect(stripAndValidate('Last sentence.', continuation, prefix)).toBe('Pivot to the API layer.');
   });
 
-
   it('should handle anchor with trailing punctuation (Chinese)', () => {
     const anchor = '数据库连接正常。';
     const cont = '数据库连接正常。但缓存策略有问题。';
     expect(stripAndValidate(anchor, cont)).toBe('但缓存策略有问题。');
   });
-
 });
 
 describe('extractWordsBeforeTurn', () => {
@@ -196,8 +194,6 @@ describe('extractWordsBeforeTurn', () => {
     expect(extractWordsBeforeTurn(prefix)).toBe('Final one.');
   });
 
-
-
   it('should trim whitespace around the extracted sentence', () => {
     const prefix = 'First.   Second with spaces.   ';
     expect(extractWordsBeforeTurn(prefix)).toBe('Second with spaces.');
@@ -215,13 +211,13 @@ describe('generateContinuations', () => {
     queueForkChat(
       'The schema looks correct. Let me proceed with the API fix.',
       'The schema looks correct. Let me proceed with the API fix.',
-      'The schema looks correct. Let me proceed with the API fix.',
+      'The schema looks correct. Let me proceed with the API fix.'
     );
 
     const results = await generateContinuations(MESSAGES, TOOLS, PREFIX, undefined, anchor);
 
     expect(results).toHaveLength(3);
-    expect(results.every(r => r === 'Let me proceed with the API fix.')).toBe(true);
+    expect(results.every((r) => r === 'Let me proceed with the API fix.')).toBe(true);
     expect(forkChat).toHaveBeenCalledTimes(3);
   });
 
@@ -233,10 +229,10 @@ describe('generateContinuations', () => {
     //   [0] dir1 attempt1 (fail), [1] dir2 attempt1 (success), [2] dir3 attempt1 (success),
     //   [3] dir1 retry (success)
     queueForkChat(
-      'Let me proceed differently.',                          // dir1 attempt1 — no anchor → fail
-      'The schema looks correct. Go backward now.',           // dir2 — success
-      'The schema looks correct. Synthesize high level.',     // dir3 — success
-      'The schema looks correct. Retried successfully.',      // dir1 retry — success
+      'Let me proceed differently.', // dir1 attempt1 — no anchor → fail
+      'The schema looks correct. Go backward now.', // dir2 — success
+      'The schema looks correct. Synthesize high level.', // dir3 — success
+      'The schema looks correct. Retried successfully.' // dir1 retry — success
     );
 
     const results = await generateContinuations(MESSAGES, TOOLS, PREFIX, undefined, anchor);
@@ -258,10 +254,10 @@ describe('generateContinuations', () => {
     // Queue order (concurrent): dir1-attempt1, dir2-attempt1, dir3-attempt1,
     // then dir1-retry (after sleep).
     queueForkChat(
-      'No anchor here attempt 1.',        // dir1 attempt1 — fail
-      'The schema looks correct. Dir2 content.',  // dir2 — success
-      'The schema looks correct. Dir3 content.',  // dir3 — success
-      'Still no anchor attempt 2.',       // dir1 retry — fail → skip
+      'No anchor here attempt 1.', // dir1 attempt1 — fail
+      'The schema looks correct. Dir2 content.', // dir2 — success
+      'The schema looks correct. Dir3 content.', // dir3 — success
+      'Still no anchor attempt 2.' // dir1 retry — fail → skip
     );
 
     const results = await generateContinuations(MESSAGES, TOOLS, PREFIX, undefined, anchor);
@@ -290,7 +286,7 @@ describe('generateContinuations', () => {
     const results = await generateContinuations(MESSAGES, TOOLS, PREFIX, undefined, '');
 
     expect(results).toHaveLength(3);
-    expect(results.every(r => r === 'Just some content without anchor.')).toBe(true);
+    expect(results.every((r) => r === 'Just some content without anchor.')).toBe(true);
     // No retries needed (empty anchor = always valid)
     expect(forkChat).toHaveBeenCalledTimes(3);
   });
@@ -298,19 +294,13 @@ describe('generateContinuations', () => {
   it('should skip directions that throw (rejected promises)', async () => {
     const anchor = 'The schema looks correct.';
     // dir1: throws, dir2: success, dir3: throws
-    queueForkChat(
-      new Error('network error'),
-      'The schema looks correct. Dir2 ok.',
-      new Error('timeout'),
-    );
+    queueForkChat(new Error('network error'), 'The schema looks correct. Dir2 ok.', new Error('timeout'));
 
     const results = await generateContinuations(MESSAGES, TOOLS, PREFIX, undefined, anchor);
 
     expect(results).toHaveLength(1);
     expect(results[0]).toBe('Dir2 ok.');
   });
-
-
 });
 
 describe('selectBestContinuation', () => {
@@ -386,12 +376,13 @@ describe('selectBestContinuation', () => {
   });
 
   it('should fall back to first continuation when forkChat throws', async () => {
-    vi.mocked(forkChat).mockImplementation(async () => { throw new Error('network'); });
+    vi.mocked(forkChat).mockImplementation(async () => {
+      throw new Error('network');
+    });
     const conts = ['first', 'second', 'third'];
     const result = await selectBestContinuation(MESSAGES, TOOLS, PREFIX, conts);
     expect(result).toEqual({ text: 'first', index: 0 });
   });
-
 });
 
 describe('handleCrossroad', () => {
@@ -433,7 +424,7 @@ describe('handleCrossroad', () => {
       `${anchor} Go forward direction.`,
       `${anchor} Go backward direction.`,
       `${anchor} Synthesize direction.`,
-      '2',
+      '2'
     );
 
     const result = await handleCrossroad(MESSAGES, content, TOOLS);
@@ -479,10 +470,10 @@ describe('handleCrossroad', () => {
     scriptTurn(content, 'But');
     // dir1 succeeds, dir2 throws, dir3 fails validation twice → only 1 continuation
     queueForkChat(
-      `${anchor} Only valid direction.`,   // dir1 success
-      new Error('fail'),                    // dir2 throws
-      'No anchor.',                         // dir3 attempt1 fail
-      'Still no anchor.',                   // dir3 retry fail
+      `${anchor} Only valid direction.`, // dir1 success
+      new Error('fail'), // dir2 throws
+      'No anchor.', // dir3 attempt1 fail
+      'Still no anchor.' // dir3 retry fail
     );
 
     const result = await handleCrossroad(MESSAGES, content, TOOLS);
@@ -519,12 +510,7 @@ describe('handleCrossroad — turning point integration (detector-owned)', () =>
     detectMock.mockResolvedValueOnce({ word: '但', index: content.indexOf('但'), score: 0.93 });
     // generation: 3 dirs, each starts with anchor
     // selection: "3" → returns continuations[2]
-    queueForkChat(
-      `${anchor} 重新检查配置。`,
-      `${anchor} 回顾基础假设。`,
-      `${anchor} 从更高层次综合。`,
-      '3',
-    );
+    queueForkChat(`${anchor} 重新检查配置。`, `${anchor} 回顾基础假设。`, `${anchor} 从更高层次综合。`, '3');
 
     const result = await handleCrossroad(MESSAGES, content, TOOLS);
 
@@ -554,7 +540,7 @@ describe('handleCrossroad — turning point integration (detector-owned)', () =>
       `${anchor} Go forward direction.`,
       `${anchor} Go backward direction.`,
       `${anchor} Synthesize direction.`,
-      '2',
+      '2'
     );
 
     const result = await handleCrossroad(MESSAGES, content, TOOLS);
@@ -602,5 +588,3 @@ describe('handleCrossroad — turning point integration (detector-owned)', () =>
     expect(forkChat).not.toHaveBeenCalled();
   });
 });
-
-

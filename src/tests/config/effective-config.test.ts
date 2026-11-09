@@ -8,7 +8,7 @@
  * source. These tests pin the precedence order and the docs/code default
  * agreement (TOKEN_THRESHOLD used to be 100000 in code and 50000 in the README).
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -17,7 +17,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mycc-effcfg-'));
 
 vi.mock('../../setup/paths.js', () => ({
   getUserConfigPath: () => process.env.__TEST_USER_CFG as string,
-  getProjectConfigPath: () => process.env.__TEST_PROJ_CFG as string,
+  getProjectConfigPath: () => process.env.__TEST_PROJ_CFG as string
 }));
 
 import { describeEffectiveConfig, DEFAULT_TOKEN_THRESHOLD, getTokenThreshold } from '../../config.js';

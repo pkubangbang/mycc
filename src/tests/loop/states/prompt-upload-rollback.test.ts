@@ -18,14 +18,14 @@
  * and a mocked evaluateWrapUp() returning 'rollback'. It asserts the uploaded
  * file reminder is still present in the final triologue messages.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 import * as path from 'path';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
 
 // config.js: controllable isDebugAutofly.
 vi.mock('../../../config.js', () => ({
-  isDebugAutofly: vi.fn(() => false),
+  isDebugAutofly: vi.fn(() => false)
 }));
 
 // auto-state.js: controllable auto/streak/threshold.
@@ -36,18 +36,26 @@ vi.mock('../../../loop/auto-state.js', () => {
   return {
     autoState: {
       getAuto: vi.fn(() => auto),
-      setAuto: vi.fn((v: boolean) => { auto = v; }),
+      setAuto: vi.fn((v: boolean) => {
+        auto = v;
+      }),
       getAutoCommitBranches: vi.fn(() => [] as string[]),
       addAutoCommitBranches: vi.fn(() => []),
       removeAutoCommitBranches: vi.fn(() => []),
       clearAutoCommitBranches: vi.fn(() => []),
       effectiveAutoCommitBranches: vi.fn(() => [] as string[]),
       getStreak: vi.fn(() => streak),
-      setStreak: vi.fn((n: number) => { streak = n; }),
-      resetStreak: vi.fn(() => { streak = 0; }),
+      setStreak: vi.fn((n: number) => {
+        streak = n;
+      }),
+      resetStreak: vi.fn(() => {
+        streak = 0;
+      }),
       getAutoflyThreshold: vi.fn(() => threshold),
-      setAutoflyThreshold: vi.fn((n: number) => { threshold = n; }),
-    },
+      setAutoflyThreshold: vi.fn((n: number) => {
+        threshold = n;
+      })
+    }
   };
 });
 
@@ -61,9 +69,9 @@ vi.mock('../../../loop/agent-io.js', () => {
   }
   return {
     agentIO: {
-      verbose: vi.fn(),
+      verbose: vi.fn()
     },
-    PromptAbortError,
+    PromptAbortError
   };
 });
 
@@ -77,9 +85,9 @@ vi.mock('../../../loop/state-machine.js', () => ({
     HOOK: 'hook',
     TOOL: 'tool',
     STOP: 'stop',
-    AWAIT: 'await',
+    AWAIT: 'await'
   },
-  presentResult: vi.fn(),
+  presentResult: vi.fn()
 }));
 
 // serve-registry.js: a controllable hub that reports running and returns one
@@ -96,41 +104,41 @@ vi.mock('../../../serve/serve-registry.js', () => ({
   getServeHub: vi.fn(() => ({
     isRunning: vi.fn(() => true),
     drainFileUploads,
-    broadcast: vi.fn(),
+    broadcast: vi.fn()
   })),
   tryGetServeHub: vi.fn(() => ({
     isRunning: vi.fn(() => true),
     drainFileUploads,
-    broadcast: vi.fn(),
+    broadcast: vi.fn()
   })),
-  onServeHubReady: vi.fn(),
+  onServeHubReady: vi.fn()
 }));
 
 // context/shared/loader.js: stub execute/getToolsForScope.
 vi.mock('../../../context/shared/loader.js', () => ({
   loader: {
     execute: vi.fn(),
-    getToolsForScope: vi.fn(() => []),
-  },
+    getToolsForScope: vi.fn(() => [])
+  }
 }));
 
 // session/index.js: stub readSession/writeSession + resolveHeadlessFirstQuery.
 vi.mock('../../../session/index.js', () => ({
   readSession: vi.fn(() => null),
   writeSession: vi.fn(),
-  resolveHeadlessFirstQuery: vi.fn(() => false),
+  resolveHeadlessFirstQuery: vi.fn(() => false)
 }));
 
 // states/slash.js: stub setSlashQuery.
 vi.mock('../../../loop/states/slash.js', () => ({
-  setSlashQuery: vi.fn(),
+  setSlashQuery: vi.fn()
 }));
 
 // esc-wrap-up.js: stubbed for any transitive importers; the real LLM
 // orchestration is irrelevant to this test.
 vi.mock('../../../loop/esc-wrap-up.js', () => ({
   evaluateWrapUp: vi.fn(),
-  clearWrapUp: vi.fn(),
+  clearWrapUp: vi.fn()
 }));
 
 // wrap-up-state.js: since the wrap-up-state extraction (steering-manager
@@ -152,12 +160,12 @@ vi.mock('../../../loop/wrap-up-state.js', async (importOriginal) => {
 // engine/chat-provider.js: stub forkChat / MODEL.
 vi.mock('../../../engine/chat-provider.js', () => ({
   forkChat: vi.fn(),
-  MODEL: 'test-model',
+  MODEL: 'test-model'
 }));
 
 // utils/multiline-input.js: stub openMultilineEditor.
 vi.mock('../../../utils/multiline-input.js', () => ({
-  openMultilineEditor: vi.fn(),
+  openMultilineEditor: vi.fn()
 }));
 
 // --- Import after mocks ------------------------------------------------------
@@ -172,7 +180,7 @@ const uploadedImage = {
   filename: 'image-1786587692871.png',
   data: 'aGVsbG8=', // base64 for "hello" — content is irrelevant to the assertion
   mimeType: 'image/png',
-  text: 'here is the screenshot: ',
+  text: 'here is the screenshot: '
 };
 
 describe('handlePrompt — uploaded-file reminder survives wrap-up rollback', () => {
@@ -195,7 +203,7 @@ describe('handlePrompt — uploaded-file reminder survives wrap-up rollback', ()
     env.inputProvider = {
       getInput: vi.fn(async () => 'here is the screenshot: '),
       setMode: vi.fn(),
-      promptRetry: vi.fn(async () => false),
+      promptRetry: vi.fn(async () => false)
     } as never;
 
     const result = await handlePrompt(env, createTurnVars(), createChatData());
@@ -218,7 +226,9 @@ describe('handlePrompt — uploaded-file reminder survives wrap-up rollback', ()
     manager.addNote('stale note from the interrupted run');
 
     let resolveSynthesis!: (value: string) => void;
-    const synthesis = new Promise<string>((resolve) => { resolveSynthesis = resolve; });
+    const synthesis = new Promise<string>((resolve) => {
+      resolveSynthesis = resolve;
+    });
     vi.mocked(forkChat).mockReturnValueOnce(synthesis as never);
 
     drainFileUploads.mockReturnValue([]);
@@ -227,10 +237,9 @@ describe('handlePrompt — uploaded-file reminder survives wrap-up rollback', ()
     env.inputProvider = {
       getInput: vi.fn(async () => 'fresh user query'),
       setMode: vi.fn(),
-      promptRetry: vi.fn(async () => false),
+      promptRetry: vi.fn(async () => false)
     } as never;
-    env.ctx.core.escAware = vi.fn(async (operation: any) =>
-      await operation(new AbortController())) as never;
+    env.ctx.core.escAware = vi.fn(async (operation: any) => await operation(new AbortController())) as never;
 
     const running = handlePrompt(env, createTurnVars(), createChatData());
     try {
@@ -263,14 +272,17 @@ describe('handlePrompt — uploaded-file reminder survives wrap-up rollback', ()
     env.inputProvider = {
       getInput: vi.fn(async () => 'here is the screenshot: '),
       setMode: vi.fn(),
-      promptRetry: vi.fn(async () => false),
+      promptRetry: vi.fn(async () => false)
     } as never;
 
     const result = await handlePrompt(env, createTurnVars(), createChatData());
 
     expect(result).toBe(AgentState.COLLECT);
 
-    const combinedText = triologue.getMessages().map((m) => m.content ?? '').join('\n');
+    const combinedText = triologue
+      .getMessages()
+      .map((m) => m.content ?? '')
+      .join('\n');
     // Commit keeps the wrap-up turn AND the uploaded-file reminder.
     expect(combinedText).toContain('[WRAP_UP] LLM call interrupted');
     expect(combinedText).toContain('wrapped up.');

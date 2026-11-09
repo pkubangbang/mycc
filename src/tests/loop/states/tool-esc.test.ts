@@ -31,7 +31,7 @@
  *
  *  [E] No hookResult — early return COLLECT (guard at top).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
 
@@ -40,14 +40,16 @@ vi.mock('../../../loop/agent-io.js', () => {
   return {
     agentIO: {
       isNeglectedMode: vi.fn(() => neglected),
-      setNeglectedMode: vi.fn((v: boolean) => { neglected = v; }),
-      verbose: vi.fn(),
-    },
+      setNeglectedMode: vi.fn((v: boolean) => {
+        neglected = v;
+      }),
+      verbose: vi.fn()
+    }
   };
 });
 
 vi.mock('../../../context/shared/loader.js', () => ({
-  loader: { execute: vi.fn() },
+  loader: { execute: vi.fn() }
 }));
 
 vi.mock('../../../config.js', () => ({ isVerbose: vi.fn(() => false) }));
@@ -59,7 +61,7 @@ vi.mock('../../../engine/chat-provider.js', () => ({
   forkChat: vi.fn(),
   MODEL: 'test-model',
   retryChat: vi.fn(),
-  stopSpinner: vi.fn(),
+  stopSpinner: vi.fn()
 }));
 
 // Minimal Triologue stub — tool.ts needs triologue.tool/skipPendingTools/etc.
@@ -90,7 +92,7 @@ import {
   createChatData,
   createMockMachineEnv,
   createMockAugmentedToolCall,
-  createMockHookResult,
+  createMockHookResult
 } from '../esc-test-helpers.js';
 
 describe('handleTool — ESC handling before / between / during tool execution', () => {
@@ -119,8 +121,8 @@ describe('handleTool — ESC handling before / between / during tool execution',
     const turn = createTurnVars();
     const chat = createChatData({
       hookResult: createMockHookResult({
-        calls: [createMockAugmentedToolCall('bash', { command: 'ls' })],
-      }),
+        calls: [createMockAugmentedToolCall('bash', { command: 'ls' })]
+      })
     });
 
     // Simulate ESC already pressed before entering handleTool
@@ -155,7 +157,7 @@ describe('handleTool — ESC handling before / between / during tool execution',
     const call2 = createMockAugmentedToolCall('read_file', { path: 'b.ts' });
     const turn = createTurnVars();
     const chat = createChatData({
-      hookResult: createMockHookResult({ calls: [call1, call2] }),
+      hookResult: createMockHookResult({ calls: [call1, call2] })
     });
 
     const result = await handleTool(env, turn, chat);
@@ -179,8 +181,8 @@ describe('handleTool — ESC handling before / between / during tool execution',
     const chat = createChatData({
       hookResult: createMockHookResult({
         calls: [call],
-        blockedCalls: new Map([[call.id, blockedMsg]]),
-      }),
+        blockedCalls: new Map([[call.id, blockedMsg]])
+      })
     });
 
     const result = await handleTool(env, turn, chat);
@@ -202,7 +204,7 @@ describe('handleTool — ESC handling before / between / during tool execution',
     const call = createMockAugmentedToolCall('read_file', { path: 'a.ts' });
     const turn = createTurnVars();
     const chat = createChatData({
-      hookResult: createMockHookResult({ calls: [call] }),
+      hookResult: createMockHookResult({ calls: [call] })
     });
 
     vi.mocked(loader.execute).mockResolvedValueOnce('file contents here');

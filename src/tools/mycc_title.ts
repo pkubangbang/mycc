@@ -41,7 +41,7 @@ function printBanner(title: string): void {
 
   // Center the title text within the full-width bar
   const label = `  ${displayTitle}  `;
-  // eslint-disable-next-line no-control-regex
+  // oxlint-disable-next-line no-control-regex
   const stripped = label.replace(/\x1b\[[0-9;]*m/g, '');
   const labelWidth = stringWidth(stripped);
   const padLeft = Math.floor((width - labelWidth) / 2);

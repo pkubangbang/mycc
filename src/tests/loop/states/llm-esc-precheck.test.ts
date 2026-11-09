@@ -17,7 +17,7 @@
  * IMPORTANT: vi.mock() paths resolve relative to the TEST FILE location
  * (src/tests/loop/states/), so all paths need ../../../ (3 levels up to src/).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 // --- Mocks (must be set up BEFORE importing modules that use them) ----------
 // All paths are relative to this test file: src/tests/loop/states/
@@ -25,21 +25,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock the chat-provider (the actual module llm.ts imports retryChat/MODEL from)
 vi.mock('../../../engine/chat-provider.js', () => ({
   retryChat: vi.fn(),
-  MODEL: 'test-model',
+  MODEL: 'test-model'
 }));
 
 // agentIO: isNeglectedMode() returns true (ESC already pressed)
 vi.mock('../../../loop/agent-io.js', () => ({
   agentIO: {
     isNeglectedMode: vi.fn(() => true),
-    setNeglectedMode: vi.fn(),
-  },
+    setNeglectedMode: vi.fn()
+  }
 }));
 
 // Mock esc-wrap-up so we can assert startWrapUp was called without firing LLM
 vi.mock('../../../loop/esc-wrap-up.js', () => ({
   evaluateWrapUp: vi.fn(),
-  clearWrapUp: vi.fn(),
+  clearWrapUp: vi.fn()
 }));
 
 vi.mock('../../../loop/crossroad.js', () => ({ handleCrossroad: vi.fn(), initCrossroad: vi.fn() }));
@@ -48,11 +48,11 @@ vi.mock('../../../engine/chat-helpers.js', () => ({ stopSpinner: vi.fn() }));
 vi.mock('../../../loop/prompts/lead.js', () => ({
   buildPlanModePrompt: vi.fn(() => 'plan-prompt'),
   buildNormalModePrompt: vi.fn(() => 'normal-prompt'),
-  isInPlanMode: vi.fn(() => false),
+  isInPlanMode: vi.fn(() => false)
 }));
 
 vi.mock('../../../context/shared/loader.js', () => ({
-  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) },
+  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) }
 }));
 
 // Minimal Triologue stub — we only need a reference object to pass around.
@@ -76,11 +76,7 @@ import { agentIO } from '../../../loop/agent-io.js';
 import { stopSpinner } from '../../../engine/chat-helpers.js';
 import { retryChat } from '../../../engine/chat-provider.js';
 import { Triologue } from '../../../loop/triologue.js';
-import {
-  createTurnVars,
-  createChatData,
-  createMockMachineEnv,
-} from '../esc-test-helpers.js';
+import { createTurnVars, createChatData, createMockMachineEnv } from '../esc-test-helpers.js';
 
 describe('handleLlm — ESC pre-check (isNeglectedMode before escAware)', () => {
   let triologue: Triologue;

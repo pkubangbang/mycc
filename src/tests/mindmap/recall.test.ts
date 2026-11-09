@@ -8,24 +8,18 @@
  * titled "Code Cleanup". Deleting the normalisation left the old suite green.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import {
   get_node,
   get_node_result,
   get_ancestors,
   get_descendants,
-  get_descendants_at_depth,
+  get_descendants_at_depth
 } from '../../mindmap/get-node.js';
 import { safeNodeId } from '../../utils/sanitize.js';
 import type { Link, Mindmap, Node } from '../../mindmap/types.js';
 
-function node(
-  id: string,
-  title: string,
-  level: number,
-  children: Node[] = [],
-  links: Link[] = [],
-): Node {
+function node(id: string, title: string, level: number, children: Node[] = [], links: Link[] = []): Node {
   return { id, text: `${'#'.repeat(level + 1)} ${title}`, title, summary: `${title} summary`, level, children, links };
 }
 
@@ -39,15 +33,15 @@ function createTestMindmap(): Mindmap {
     root: node('/', 'Root', 0, [
       node('/architecture', 'Architecture', 1, [
         node('/architecture/core', 'Core', 2),
-        node('/architecture/utils', 'Utils', 2),
+        node('/architecture/utils', 'Utils', 2)
       ]),
       node('/development', 'Development', 1, [
         node('/development/testing', 'Testing', 2, [
           node('/development/testing/unit', 'Unit Tests', 3),
-          node('/development/testing/integration', 'Integration Tests', 3),
-        ]),
-      ]),
-    ]),
+          node('/development/testing/integration', 'Integration Tests', 3)
+        ])
+      ])
+    ])
   };
 }
 
@@ -79,8 +73,8 @@ describe('get_node', () => {
     expect(get_node(mindmap, '/nope')).toBeNull();
     expect(get_node(mindmap, '/architecture/nope')).toBeNull();
     expect(get_node(mindmap, '/a/b/c/d/e')).toBeNull();
-    expect(get_node(mindmap, '/arch')).toBeNull();          // partial segment, not a prefix match
-    expect(get_node(mindmap, '/Architecture')).toBeNull();  // case-sensitive
+    expect(get_node(mindmap, '/arch')).toBeNull(); // partial segment, not a prefix match
+    expect(get_node(mindmap, '/Architecture')).toBeNull(); // case-sensitive
   });
 
   it('resolves a segment through safeNodeId(title), not the literal id', () => {
@@ -149,7 +143,7 @@ describe('get_descendants / get_descendants_at_depth', () => {
     expect(d.map((n) => n.id)).toEqual([
       '/development/testing',
       '/development/testing/unit',
-      '/development/testing/integration',
+      '/development/testing/integration'
     ]);
   });
 
@@ -168,7 +162,7 @@ describe('get_descendants / get_descendants_at_depth', () => {
     expect(get_descendants_at_depth(createTestMindmap().root, 2).map((n) => n.id)).toEqual([
       '/architecture/core',
       '/architecture/utils',
-      '/development/testing',
+      '/development/testing'
     ]);
   });
 
@@ -185,7 +179,7 @@ describe('get_descendants / get_descendants_at_depth', () => {
       summary: 'Core summary',
       level: 2,
       children: [],
-      links: [],
+      links: []
     });
     // In-memory flags are set by load_mindmap(), NOT by traversal — get_node on
     // a plain fixture must not invent them (that would hide a loader regression).

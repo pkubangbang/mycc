@@ -19,13 +19,13 @@
  * observable without killing the test runner.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 
 // --- Mock config so daemon-init sees a service skill name + daemon mode ------
 let daemonSkill: string | null = 'svc-skill';
 vi.mock('../../config.js', () => ({
   shouldDaemon: () => true,
-  getDaemonSkill: () => daemonSkill,
+  getDaemonSkill: () => daemonSkill
 }));
 
 // --- autoState: no-op (daemon-init only calls resetStreak/setAuto) -----------
@@ -37,8 +37,8 @@ vi.mock('../../loop/auto-state.js', () => ({
     addAutoCommitBranches: vi.fn(() => []),
     removeAutoCommitBranches: vi.fn(() => []),
     clearAutoCommitBranches: vi.fn(() => []),
-    effectiveAutoCommitBranches: vi.fn(() => [] as string[]),
-  },
+    effectiveAutoCommitBranches: vi.fn(() => [] as string[])
+  }
 }));
 
 import { initDaemonMode } from '../../loop/daemon-init.js';
@@ -65,11 +65,11 @@ function makeCtx(opts: {
     getPid: (sid: string) => opts.pid(sid),
     stop: () => {
       stops++;
-    },
+    }
   };
   const ctx = {
     peer,
-    mail: { appendMail: vi.fn() },
+    mail: { appendMail: vi.fn() }
   } as unknown as AgentContext;
   return { ctx, stopCalls: () => stops };
 }
@@ -83,7 +83,7 @@ function daemonEntry(overrides: Partial<IdentityEntry> = {}): IdentityEntry {
     pid: 4242,
     role: 'svc-skill',
     daemon: true,
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -112,8 +112,8 @@ const loader = {
     name,
     description: 'test',
     keywords: [],
-    content: 'x',
-  }),
+    content: 'x'
+  })
 };
 
 /** A triologue stub — only note() is called. */
@@ -126,15 +126,13 @@ describe('initDaemonMode dedup gate — FIX B (pid-aware liveness)', () => {
     const { ctx, stopCalls } = makeCtx({
       identities: [daemonEntry()],
       fresh: () => true,
-      pid: () => 999999, // dead pid
+      pid: () => 999999 // dead pid
     });
 
     // Must NOT throw (exit intercepted) and must NOT stop the peer.
     expect(() => initDaemonMode(ctx, loader, triologue)).not.toThrow();
     expect(stopCalls()).toBe(0);
-    expect(errorSpy).not.toHaveBeenCalledWith(
-      expect.stringContaining('is already running for this workDir'),
-    );
+    expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining('is already running for this workDir'));
   });
 
   it('FRESH heartbeat + ALIVE pid → relaunch IS refused', () => {
@@ -142,7 +140,7 @@ describe('initDaemonMode dedup gate — FIX B (pid-aware liveness)', () => {
     const { ctx, stopCalls } = makeCtx({
       identities: [daemonEntry()],
       fresh: () => true,
-      pid: () => process.pid, // our own pid: definitely alive
+      pid: () => process.pid // our own pid: definitely alive
     });
 
     expect(() => initDaemonMode(ctx, loader, triologue)).toThrow(/process\.exit\(1\)/);
@@ -156,7 +154,7 @@ describe('initDaemonMode dedup gate — FIX B (pid-aware liveness)', () => {
     const { ctx, stopCalls } = makeCtx({
       identities: [entry],
       fresh: () => true,
-      pid: () => null,
+      pid: () => null
     });
 
     expect(() => initDaemonMode(ctx, loader, triologue)).toThrow(/process\.exit\(1\)/);
@@ -168,7 +166,7 @@ describe('initDaemonMode dedup gate — FIX B (pid-aware liveness)', () => {
     const { ctx, stopCalls } = makeCtx({
       identities: [daemonEntry()],
       fresh: () => false,
-      pid: () => process.pid,
+      pid: () => process.pid
     });
 
     expect(() => initDaemonMode(ctx, loader, triologue)).not.toThrow();
@@ -179,10 +177,10 @@ describe('initDaemonMode dedup gate — FIX B (pid-aware liveness)', () => {
     const { ctx, stopCalls } = makeCtx({
       identities: [
         daemonEntry({ sessionId: 'other-role-0000-0000-000000000000', role: 'different-role' }),
-        daemonEntry({ sessionId: 'other-wd-0000-0000-0000-000000000000', workDir: '/some/other/dir' }),
+        daemonEntry({ sessionId: 'other-wd-0000-0000-0000-000000000000', workDir: '/some/other/dir' })
       ],
       fresh: () => true,
-      pid: () => process.pid,
+      pid: () => process.pid
     });
 
     expect(() => initDaemonMode(ctx, loader, triologue)).not.toThrow();
@@ -193,7 +191,7 @@ describe('initDaemonMode dedup gate — FIX B (pid-aware liveness)', () => {
     const { ctx, stopCalls } = makeCtx({
       identities: [daemonEntry({ sessionId: SELF_SID })],
       fresh: () => true,
-      pid: () => process.pid,
+      pid: () => process.pid
     });
 
     expect(() => initDaemonMode(ctx, loader, triologue)).not.toThrow();

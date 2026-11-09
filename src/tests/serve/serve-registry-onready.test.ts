@@ -23,7 +23,7 @@
  * `__resetForTest()` export on production code — would add test-only surface
  * to the module purely to work around shared state.)
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import type { ServeHubLike } from '../../serve/serve-registry.js';
 
 /** A minimal structural ServeHubLike stub — only the members these tests touch. */
@@ -32,7 +32,7 @@ function makeStubHub(): ServeHubLike {
     isRunning: () => true,
     isRestarting: () => false,
     setTranscriptPath: () => {},
-    setUserJournalProvider: () => {},
+    setUserJournalProvider: () => {}
   } as unknown as ServeHubLike;
 }
 
@@ -51,7 +51,9 @@ describe('onServeHubReady: queued callbacks drain when the hub materializes (P1 
     // Register BEFORE any factory exists — exactly the agent-repl boot order
     // (onServeHubReady runs before activateServe()). Nothing must throw and the
     // callback must NOT run yet.
-    reg.onServeHubReady((h) => { received = h; });
+    reg.onServeHubReady((h) => {
+      received = h;
+    });
     expect(received).toBeNull();
 
     // The serve layer materializes: register the factory. This drains the queue.
@@ -67,7 +69,9 @@ describe('onServeHubReady: queued callbacks drain when the hub materializes (P1 
     reg.registerServeHubFactory(() => hub);
 
     let received: ServeHubLike | null = null;
-    reg.onServeHubReady((h) => { received = h; });
+    reg.onServeHubReady((h) => {
+      received = h;
+    });
     // Immediate — no queue involved.
     expect(received).toBe(hub);
   });
@@ -89,8 +93,12 @@ describe('onServeHubReady: queued callbacks drain when the hub materializes (P1 
     const hub = makeStubHub();
     let secondRan = false;
 
-    reg.onServeHubReady(() => { throw new Error('bad provider'); });
-    reg.onServeHubReady(() => { secondRan = true; });
+    reg.onServeHubReady(() => {
+      throw new Error('bad provider');
+    });
+    reg.onServeHubReady(() => {
+      secondRan = true;
+    });
 
     // Draining must isolate the throw and still deliver to the second.
     expect(() => reg.registerServeHubFactory(() => hub)).not.toThrow();

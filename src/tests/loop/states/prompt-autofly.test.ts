@@ -32,13 +32,13 @@
  * reset, the "auto mode is on" note, plus the Layer B mid-PROMPT abort
  * path, isolating the top guard from the rest of the prompt handler.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
 
 // config.js: controllable isDebugAutofly.
 vi.mock('../../../config.js', () => ({
-  isDebugAutofly: vi.fn(() => false),
+  isDebugAutofly: vi.fn(() => false)
 }));
 
 // auto-state.js: controllable auto/streak/threshold. Tracks setAuto calls.
@@ -49,18 +49,26 @@ vi.mock('../../../loop/auto-state.js', () => {
   return {
     autoState: {
       getAuto: vi.fn(() => auto),
-      setAuto: vi.fn((v: boolean) => { auto = v; }),
+      setAuto: vi.fn((v: boolean) => {
+        auto = v;
+      }),
       getAutoCommitBranches: vi.fn(() => [] as string[]),
       addAutoCommitBranches: vi.fn(() => []),
       removeAutoCommitBranches: vi.fn(() => []),
       clearAutoCommitBranches: vi.fn(() => []),
       effectiveAutoCommitBranches: vi.fn(() => [] as string[]),
       getStreak: vi.fn(() => streak),
-      setStreak: vi.fn((n: number) => { streak = n; }),
-      resetStreak: vi.fn(() => { streak = 0; }),
+      setStreak: vi.fn((n: number) => {
+        streak = n;
+      }),
+      resetStreak: vi.fn(() => {
+        streak = 0;
+      }),
       getAutoflyThreshold: vi.fn(() => threshold),
-      setAutoflyThreshold: vi.fn((n: number) => { threshold = n; }),
-    },
+      setAutoflyThreshold: vi.fn((n: number) => {
+        threshold = n;
+      })
+    }
   };
 });
 
@@ -75,9 +83,9 @@ vi.mock('../../../loop/agent-io.js', () => {
   }
   return {
     agentIO: {
-      verbose: vi.fn(),
+      verbose: vi.fn()
     },
-    PromptAbortError,
+    PromptAbortError
   };
 });
 
@@ -91,9 +99,9 @@ vi.mock('../../../loop/state-machine.js', () => ({
     HOOK: 'hook',
     TOOL: 'tool',
     STOP: 'stop',
-    AWAIT: 'await',
+    AWAIT: 'await'
   },
-  presentResult: vi.fn(),
+  presentResult: vi.fn()
 }));
 
 // serve-registry.js: hub stub — isRunning false so steering/file paths are skipped.
@@ -107,39 +115,39 @@ vi.mock('../../../loop/state-machine.js', () => ({
 vi.mock('../../../serve/serve-registry.js', () => ({
   getServeHub: vi.fn(() => ({
     isRunning: vi.fn(() => false),
-    drainFileUploads: vi.fn(() => []),
+    drainFileUploads: vi.fn(() => [])
   })),
   tryGetServeHub: vi.fn(() => ({
     isRunning: vi.fn(() => false),
-    drainFileUploads: vi.fn(() => []),
+    drainFileUploads: vi.fn(() => [])
   })),
-  onServeHubReady: vi.fn(),
+  onServeHubReady: vi.fn()
 }));
 
 // context/shared/loader.js: stub execute/getToolsForScope (not reached by the guard).
 vi.mock('../../../context/shared/loader.js', () => ({
   loader: {
     execute: vi.fn(),
-    getToolsForScope: vi.fn(() => []),
-  },
+    getToolsForScope: vi.fn(() => [])
+  }
 }));
 
 // session/index.js: stub readSession/writeSession + resolveHeadlessFirstQuery.
 vi.mock('../../../session/index.js', () => ({
   readSession: vi.fn(() => null),
   writeSession: vi.fn(),
-  resolveHeadlessFirstQuery: vi.fn(() => false),
+  resolveHeadlessFirstQuery: vi.fn(() => false)
 }));
 
 // states/slash.js: stub setSlashQuery.
 vi.mock('../../../loop/states/slash.js', () => ({
-  setSlashQuery: vi.fn(),
+  setSlashQuery: vi.fn()
 }));
 
 // esc-wrap-up.js: stub evaluateWrapUp/clearWrapUp.
 vi.mock('../../../loop/esc-wrap-up.js', () => ({
   evaluateWrapUp: vi.fn(),
-  clearWrapUp: vi.fn(),
+  clearWrapUp: vi.fn()
 }));
 
 // (extractKeywords was folded into SkillSuggester as a private method, so
@@ -148,12 +156,12 @@ vi.mock('../../../loop/esc-wrap-up.js', () => ({
 // engine/chat-provider.js: stub forkChat (not reached by the guard).
 vi.mock('../../../engine/chat-provider.js', () => ({
   forkChat: vi.fn(),
-  MODEL: 'test-model',
+  MODEL: 'test-model'
 }));
 
 // utils/multiline-input.js: stub openMultilineEditor (not reached by the guard).
 vi.mock('../../../utils/multiline-input.js', () => ({
-  openMultilineEditor: vi.fn(),
+  openMultilineEditor: vi.fn()
 }));
 
 // --- Import after mocks ------------------------------------------------------
@@ -174,7 +182,7 @@ function makeEnv(): { env: ReturnType<typeof createMockMachineEnv>; triologue: T
   env.inputProvider = {
     getInput: vi.fn(async () => 'sentinel-fallthrough-query'),
     setMode: vi.fn(),
-    promptRetry: vi.fn(async () => false),
+    promptRetry: vi.fn(async () => false)
   } as never;
   return { env, triologue };
 }
@@ -207,7 +215,6 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       // setAuto(true) is the idempotent re-sync (no-op, keeps onAutoChange calm)
       expect(autoState.setAuto).toHaveBeenCalledWith(true);
     });
-
   });
 
   describe('case 2: --debug-autofly autofly trigger', () => {
@@ -224,13 +231,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       // No per-turn reset on the engage path — setAuto(true) just reset the streak.
       expect(autoState.resetStreak).not.toHaveBeenCalled();
     });
-
-
-
   });
-
-
-
 
   describe('autonomous null-skip path resets per-turn hook state', () => {
     // Bug fix: the autonomous null-skip early return (p0Input === null) used
@@ -245,7 +246,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       env.inputProvider = {
         getInput: vi.fn(async () => null),
         setMode: vi.fn(),
-        promptRetry: vi.fn(async () => false),
+        promptRetry: vi.fn(async () => false)
       } as never;
 
       const result = await handlePrompt(env, createTurnVars(), createChatData());
@@ -270,9 +271,11 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       (env.ctx.peer.hasActiveChannel as ReturnType<typeof vi.fn>).mockReturnValue(false);
       // getInput rejects with PromptAbortError (simulates a mid-PROMPT channel join).
       env.inputProvider = {
-        getInput: vi.fn(async () => { throw new PromptAbortError(); }),
+        getInput: vi.fn(async () => {
+          throw new PromptAbortError();
+        }),
         setMode: vi.fn(),
-        promptRetry: vi.fn(async () => false),
+        promptRetry: vi.fn(async () => false)
       } as never;
 
       const result = await handlePrompt(env, createTurnVars(), createChatData());
@@ -287,9 +290,11 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       (env.ctx.peer.hasActiveChannel as ReturnType<typeof vi.fn>).mockReturnValue(false);
       const genuine = new Error('input provider crashed');
       env.inputProvider = {
-        getInput: vi.fn(async () => { throw genuine; }),
+        getInput: vi.fn(async () => {
+          throw genuine;
+        }),
         setMode: vi.fn(),
-        promptRetry: vi.fn(async () => false),
+        promptRetry: vi.fn(async () => false)
       } as never;
 
       await expect(handlePrompt(env, createTurnVars(), createChatData())).rejects.toBe(genuine);

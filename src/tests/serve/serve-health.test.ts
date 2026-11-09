@@ -24,7 +24,7 @@
  * socket. It skips cleanly when tmux or the global `mycc` command are not
  * available (CI without tmux should not fail).
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vite-plus/test';
 import { execSync } from 'child_process';
 
 const PORT = 3191; // dedicated to this test suite; unlikely to collide
@@ -58,12 +58,18 @@ const DEVNULL = process.platform === 'win32' ? '2>nul' : '2>/dev/null';
  *  DOES start a server if none exists, so probe by creating + killing a
  *  throwaway session: if that round-trips, the live-tmux suite can run. */
 function hasTmux(): boolean {
-  try { sh('tmux -V', 3000); } catch { return false; }      // binary present?
+  try {
+    sh('tmux -V', 3000);
+  } catch {
+    return false;
+  } // binary present?
   try {
     sh('tmux new-session -d -s __probe__ 2>/dev/null', 3000);
     sh('tmux kill-session -t __probe__ 2>/dev/null', 3000);
     return true;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 /** True when the global `mycc` command resolves (npm link present).
@@ -75,7 +81,9 @@ function hasMycc(): boolean {
   try {
     const out = sh(lookup, 5000);
     return out.trim().length > 0;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 const tmuxOk = hasTmux();
@@ -92,7 +100,11 @@ async function fetchJson(url: string): Promise<Record<string, unknown>> {
 /** Start the serve instance in a detached tmux session and wait until the
  *  "Web UI started" banner appears (or timeout). */
 function startServe(): void {
-  try { sh(`tmux kill-session -t ${SESSION} ${DEVNULL}`, 3000); } catch { /* no server / no session — best-effort cleanup */ }
+  try {
+    sh(`tmux kill-session -t ${SESSION} ${DEVNULL}`, 3000);
+  } catch {
+    /* no server / no session — best-effort cleanup */
+  }
   sh(`tmux new-session -s ${SESSION} -d -x 120 -y 40`);
   // Send the command WITHOUT Enter, pause, then Enter — the mycc Enter
   // throttle rejects a text+Enter typed back-to-back.
@@ -113,9 +125,17 @@ function startServe(): void {
 }
 
 function stopServe(): void {
-  try { sh(`tmux send-keys -t ${SESSION} Escape`, 3000); } catch { /* ignore */ }
+  try {
+    sh(`tmux send-keys -t ${SESSION} Escape`, 3000);
+  } catch {
+    /* ignore */
+  }
   sleepSync(1);
-  try { sh(`tmux kill-session -t ${SESSION}`, 3000); } catch { /* already gone */ }
+  try {
+    sh(`tmux kill-session -t ${SESSION}`, 3000);
+  } catch {
+    /* already gone */
+  }
 }
 
 describe.skipIf(!canRun)('ServeHub /health + /config (live tmux)', () => {

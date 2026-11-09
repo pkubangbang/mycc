@@ -527,7 +527,8 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
       const assistantMessage = response.message;
       const reasoningContent = (assistantMessage as unknown as Record<string, unknown>).reasoning_content as
-        string | undefined;
+        | string
+        | undefined;
       const toolCalls = assistantMessage.tool_calls as ToolCall[] | undefined;
 
       // No per-turn confusion increment: the main process scores confusion
@@ -856,7 +857,9 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
                 : 'The attempted notice to lead could not be sent.'
             }`
         );
-        consecutiveFailures = 0; // reset on entering idle
+        // No reset here: this branch always `continue`s, so the next iteration
+        // re-reads the counter before any write — assigning 0 would be dead.
+        // The success path above already resets it (LLM turn succeeded).
         const result = await enterIdleState(triologue);
         if (result === 'shutdown') {
           process.exit(0);

@@ -2,7 +2,7 @@
  * issue-claim.test.ts - Tests for the issue_claim tool
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { issueClaimTool } from '../../tools/issue_claim.js';
 import type { AgentContext, IssueModule, CoreModule, Issue } from '../../types.js';
 import { runTool, testSignal } from './test-utils.js';
@@ -21,7 +21,7 @@ function createMockIssueModule(): IssueModule {
     removeBlockage: vi.fn().mockResolvedValue(undefined),
     publishIssue: vi.fn().mockResolvedValue(true),
     releaseIssuesOwnedBy: vi.fn().mockResolvedValue([]),
-    clearAll: vi.fn(),
+    clearAll: vi.fn()
   };
 }
 
@@ -55,7 +55,7 @@ function createMockContext(issueModule: IssueModule): AgentContext {
     getConfusionIndex: vi.fn(() => 0),
     increaseConfusionIndex: vi.fn(),
     resetConfusionIndex: vi.fn(),
-    escAware: (vi.fn() as unknown) as CoreModule['escAware'],
+    escAware: vi.fn() as unknown as CoreModule['escAware']
   };
 
   return {
@@ -67,7 +67,7 @@ function createMockContext(issueModule: IssueModule): AgentContext {
     bg: {} as never,
     team: {} as never,
     wiki: {} as never,
-    peer: {} as never,
+    peer: {} as never
   };
 }
 
@@ -81,7 +81,7 @@ function createPendingIssue(): Issue {
     blockedBy: [],
     blocks: [],
     comments: [],
-    createdAt: new Date(),
+    createdAt: new Date()
   };
 }
 
@@ -96,7 +96,7 @@ function createInProgressIssue(): Issue {
     blockedBy: [],
     blocks: [],
     comments: [],
-    createdAt: new Date(),
+    createdAt: new Date()
   };
 }
 
@@ -111,7 +111,7 @@ function createCompletedIssue(): Issue {
     blockedBy: [],
     blocks: [],
     comments: [],
-    createdAt: new Date(),
+    createdAt: new Date()
   };
 }
 
@@ -135,10 +135,15 @@ describe('issueClaimTool', () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createPendingIssue());
     mockIssue.claimIssue = vi.fn().mockResolvedValue(true);
 
-    const result = await runTool(issueClaimTool, ctx, {
-      id: 1,
-      owner: 'test-agent',
-    }, testSignal);
+    const result = await runTool(
+      issueClaimTool,
+      ctx,
+      {
+        id: 1,
+        owner: 'test-agent'
+      },
+      testSignal
+    );
 
     expect(mockIssue.getIssue).toHaveBeenCalledWith(1);
     expect(mockIssue.claimIssue).toHaveBeenCalledWith(1, 'test-agent');
@@ -150,10 +155,15 @@ describe('issueClaimTool', () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createPendingIssue());
     mockIssue.claimIssue = vi.fn().mockResolvedValue(true);
 
-    const result = await runTool(issueClaimTool, ctx, {
-      id: 1,
-      owner: 'developer-123',
-    }, testSignal);
+    const result = await runTool(
+      issueClaimTool,
+      ctx,
+      {
+        id: 1,
+        owner: 'developer-123'
+      },
+      testSignal
+    );
 
     expect(mockIssue.claimIssue).toHaveBeenCalledWith(1, 'developer-123');
     expect(result).toBe('No issues.');
@@ -162,9 +172,14 @@ describe('issueClaimTool', () => {
   // ========== Error Case Tests ==========
 
   it('should reject missing id', async () => {
-    const result = await runTool(issueClaimTool, ctx, {
-      owner: 'test-agent',
-    }, testSignal);
+    const result = await runTool(
+      issueClaimTool,
+      ctx,
+      {
+        owner: 'test-agent'
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: id must be an integer');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_claim', 'Invalid id parameter');
@@ -173,10 +188,15 @@ describe('issueClaimTool', () => {
   });
 
   it('should reject non-integer id', async () => {
-    const result = await runTool(issueClaimTool, ctx, {
-      id: 'abc',
-      owner: 'test-agent',
-    }, testSignal);
+    const result = await runTool(
+      issueClaimTool,
+      ctx,
+      {
+        id: 'abc',
+        owner: 'test-agent'
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: id must be an integer');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_claim', 'Invalid id parameter');
@@ -184,10 +204,15 @@ describe('issueClaimTool', () => {
   });
 
   it('should reject float id', async () => {
-    const result = await runTool(issueClaimTool, ctx, {
-      id: 1.5,
-      owner: 'test-agent',
-    }, testSignal);
+    const result = await runTool(
+      issueClaimTool,
+      ctx,
+      {
+        id: 1.5,
+        owner: 'test-agent'
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: id must be an integer');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_claim', 'Invalid id parameter');
@@ -195,9 +220,14 @@ describe('issueClaimTool', () => {
   });
 
   it('should reject missing owner', async () => {
-    const result = await runTool(issueClaimTool, ctx, {
-      id: 1,
-    }, testSignal);
+    const result = await runTool(
+      issueClaimTool,
+      ctx,
+      {
+        id: 1
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: owner parameter is required and must be a string');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_claim', 'Missing or invalid owner parameter');
@@ -206,10 +236,15 @@ describe('issueClaimTool', () => {
   });
 
   it('should reject empty owner', async () => {
-    const result = await runTool(issueClaimTool, ctx, {
-      id: 1,
-      owner: '',
-    }, testSignal);
+    const result = await runTool(
+      issueClaimTool,
+      ctx,
+      {
+        id: 1,
+        owner: ''
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: owner parameter is required and must be a string');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_claim', 'Missing or invalid owner parameter');
@@ -217,10 +252,15 @@ describe('issueClaimTool', () => {
   });
 
   it('should reject non-string owner', async () => {
-    const result = await runTool(issueClaimTool, ctx, {
-      id: 1,
-      owner: 123,
-    }, testSignal);
+    const result = await runTool(
+      issueClaimTool,
+      ctx,
+      {
+        id: 1,
+        owner: 123
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: owner parameter is required and must be a string');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_claim', 'Missing or invalid owner parameter');
@@ -229,10 +269,15 @@ describe('issueClaimTool', () => {
   it('should return error for non-existent issue', async () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(undefined);
 
-    const result = await runTool(issueClaimTool, ctx, {
-      id: 999,
-      owner: 'test-agent',
-    }, testSignal);
+    const result = await runTool(
+      issueClaimTool,
+      ctx,
+      {
+        id: 999,
+        owner: 'test-agent'
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: Issue #999 not found');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_claim', 'Issue #999 not found');
@@ -243,10 +288,15 @@ describe('issueClaimTool', () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
     mockIssue.claimIssue = vi.fn().mockResolvedValue(false);
 
-    const result = await runTool(issueClaimTool, ctx, {
-      id: 2,
-      owner: 'test-agent',
-    }, testSignal);
+    const result = await runTool(
+      issueClaimTool,
+      ctx,
+      {
+        id: 2,
+        owner: 'test-agent'
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: Failed to claim issue #2. It may not be in pending status or is already claimed.');
     expect(ctx.core.brief).toHaveBeenCalledWith('warn', 'issue_claim', 'Failed to claim issue #2');
@@ -256,10 +306,15 @@ describe('issueClaimTool', () => {
     mockIssue.getIssue = vi.fn().mockResolvedValue(createCompletedIssue());
     mockIssue.claimIssue = vi.fn().mockResolvedValue(false);
 
-    const result = await runTool(issueClaimTool, ctx, {
-      id: 3,
-      owner: 'test-agent',
-    }, testSignal);
+    const result = await runTool(
+      issueClaimTool,
+      ctx,
+      {
+        id: 3,
+        owner: 'test-agent'
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: Failed to claim issue #3. It may not be in pending status or is already claimed.');
     expect(ctx.core.brief).toHaveBeenCalledWith('warn', 'issue_claim', 'Failed to claim issue #3');

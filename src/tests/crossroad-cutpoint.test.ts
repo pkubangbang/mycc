@@ -37,7 +37,7 @@
  * WHAT IS NOT TESTED HERE — turning-word detection. mycc carries no heuristic of
  * its own; detection belongs solely to @pkubangbang/crossroad-detector.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vite-plus/test';
 import {
   initCrossroad,
   usePackageSegmenter,
@@ -231,8 +231,7 @@ describe('resolveTurningPoint — rejects unusable cuts (I8)', () => {
   });
 
   it('rejects a turn in a non-final unit that leaves too little after it', () => {
-    const content =
-      'The full test suite passes and the lint step is clean on the branch.\n\nHowever, done.\n\nok';
+    const content = 'The full test suite passes and the lint step is clean on the branch.\n\nHowever, done.\n\nok';
     expect(resolveTurningPoint(content, matchFor(content, 'However'))).toBeNull();
   });
 
@@ -384,13 +383,3 @@ describe('segmentation blind spots', () => {
     expect(point.cutpoint).toBe('However, the real issue is in the API layer.');
   });
 });
-
-
-
-
-
-
-
-
-
-

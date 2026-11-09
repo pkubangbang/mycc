@@ -15,7 +15,7 @@
  *   5. buildCmdArgsEnv() maps only set flags, as strings.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import minimist from 'minimist';
 import {
   BOOLEAN_FLAGS,
@@ -30,7 +30,7 @@ import {
   canonicalArgs,
   buildReloadArgs,
   argsMatch,
-  buildCmdArgsEnv,
+  buildCmdArgsEnv
 } from '../utils/arg-canonical.js';
 
 /** The exact minimist invocation config.ts uses, for parity comparison. */
@@ -39,7 +39,7 @@ function minimistParse(raw: string) {
     boolean: BOOLEAN_FLAGS,
     string: STRING_FLAGS,
     alias: { v: 'verbose' },
-    default: DEFAULTS,
+    default: DEFAULTS
   });
 }
 
@@ -78,7 +78,11 @@ function significant(obj: Record<string, unknown>): Record<string, unknown> {
   for (const [k, v] of Object.entries(obj)) {
     if (k === '_' || k === 'alias') continue;
     if (v === undefined || v === false || v === null) continue;
-    out[k] = Array.isArray(v) ? v.map((x) => (typeof x === 'number' ? String(x) : x)) : typeof v === 'number' ? String(v) : v;
+    out[k] = Array.isArray(v)
+      ? v.map((x) => (typeof x === 'number' ? String(x) : x))
+      : typeof v === 'number'
+        ? String(v)
+        : v;
   }
   return out;
 }
@@ -92,7 +96,7 @@ function significant(obj: Record<string, unknown>): Record<string, unknown> {
 function publishedParity(raw: string): { mine: string; theirs: string } {
   return {
     mine: formatLaunchArgs(parseArgString(raw)),
-    theirs: formatLaunchArgs(minimistParse(raw)),
+    theirs: formatLaunchArgs(minimistParse(raw))
   };
 }
 
@@ -106,7 +110,7 @@ describe('arg-canonical: parseArgString ↔ minimist parity', () => {
     '--wire-token secret --api-provider deepseek',
     '--daemon skill-manager',
     '--max-upload-mb 100 --skill-match-threshold 0.6',
-    '--allow-auto-commit main,release-candidate',
+    '--allow-auto-commit main,release-candidate'
   ];
 
   for (const raw of fixtures) {
@@ -197,9 +201,7 @@ describe('arg-canonical: canonicalArgs + argsMatch', () => {
   });
 
   it('argsMatch: a real difference fails', () => {
-    expect(
-      argsMatch('--auto --ollama-model glm-5:cloud', '--auto --ollama-model other'),
-    ).toBe(false);
+    expect(argsMatch('--auto --ollama-model glm-5:cloud', '--auto --ollama-model other')).toBe(false);
   });
 
   it('argsMatch: *** on either side is a wildcard', () => {
@@ -215,21 +217,11 @@ describe('arg-canonical: canonicalArgs + argsMatch', () => {
   it('argsMatch: ignores launcher-managed flags (--name)', () => {
     expect(LAUNCHER_FLAGS).toContain('name');
     expect(LAUNCHER_FLAGS).not.toContain('session-id');
-    expect(
-      argsMatch(
-        '--auto --skip-healthcheck --name proj:alpha',
-        '--auto --skip-healthcheck',
-      ),
-    ).toBe(true);
+    expect(argsMatch('--auto --skip-healthcheck --name proj:alpha', '--auto --skip-healthcheck')).toBe(true);
   });
 
   it('argsMatch: launcher-flag exclusion does not hide a real difference', () => {
-    expect(
-      argsMatch(
-        '--auto --name proj:alpha --ollama-model x',
-        '--auto --ollama-model y',
-      ),
-    ).toBe(false);
+    expect(argsMatch('--auto --name proj:alpha --ollama-model x', '--auto --ollama-model y')).toBe(false);
   });
 
   it('canonicalArgs still renders launcher flags (display form is faithful)', () => {
@@ -286,8 +278,9 @@ describe('arg-canonical: argsMatch multiplicity (P1-2 regression)', () => {
     // The `-v` alias contract from the earlier fix: the published alias pair
     // folds onto ONE key, and must render/count as ONE repeat, not two.
     expect(argsMatch('--v --verbose --auto', '--verbose --auto')).toBe(true);
-    expect(canonicalArgs(parseArgString('--v --verbose --auto')))
-      .toBe(canonicalArgs(parseArgString('--verbose --auto')));
+    expect(canonicalArgs(parseArgString('--v --verbose --auto'))).toBe(
+      canonicalArgs(parseArgString('--verbose --auto'))
+    );
   });
 });
 
@@ -314,7 +307,7 @@ describe('arg-canonical: published-rendering parity (the argsMatch contract)', (
     // A SECRET is redacted by BOTH sides (each renders `--wire-token ***`),
     // so the redacted forms compare equal — this is the display/publish path.
     ['--wire-token abc --auto', '--wire-token *** --auto'],
-    ['--ollama-model gemma4:31b-cloud --auto', '--ollama-model gemma4:31b-cloud --auto'],
+    ['--ollama-model gemma4:31b-cloud --auto', '--ollama-model gemma4:31b-cloud --auto']
   ];
 
   for (const [raw, expectedMine] of cases) {
@@ -344,15 +337,17 @@ describe('arg-canonical: published-rendering parity (the argsMatch contract)', (
     // spec. Canonical group map folds `v` -> `verbose` first-wins, so this is
     // true even though the published string contains BOTH alias keys.
     expect(argsMatch('--v --verbose --auto', '--verbose --auto')).toBe(true);
-    expect(canonicalArgs(parseArgString('--v --verbose --auto')))
-      .toBe(canonicalArgs(parseArgString('--verbose --auto')));
+    expect(canonicalArgs(parseArgString('--v --verbose --auto'))).toBe(
+      canonicalArgs(parseArgString('--verbose --auto'))
+    );
   });
 
   it('documents the supported daemon syntax', () => {
     expect(formatLaunchArgs(minimistParse('--daemon'))).toBe('(none)');
     expect(formatLaunchArgs(parseArgString('--daemon'))).toBe('--daemon');
-    expect(canonicalArgs(minimistParse('--daemon skill-manager')))
-      .toBe(canonicalArgs(parseArgString('--daemon skill-manager')));
+    expect(canonicalArgs(minimistParse('--daemon skill-manager'))).toBe(
+      canonicalArgs(parseArgString('--daemon skill-manager'))
+    );
   });
 });
 
@@ -386,8 +381,8 @@ describe('arg-canonical: spawn rendering preserves secrets', () => {
     // a spec renders `--editor --name` only if an operator authored the literal
     // string `--name` in `peers[].args`, which no compose usage produces.
     const parsed = parseArgString('--editor --name');
-    expect(parsed.editor).toBe(true);      // not consumed as a value — --name is a flag
-    expect(parsed.name).toBe(true);        // parsed as its own bare flag
+    expect(parsed.editor).toBe(true); // not consumed as a value — --name is a flag
+    expect(parsed.name).toBe(true); // parsed as its own bare flag
     const spawn = formatLaunchArgsForSpawn(parsed);
     expect(spawn).toBe('--editor --name'); // re-emitted as a bare --name token
     // The `=` spelling is unambiguous: `--editor=--name` glues the value to the
@@ -432,11 +427,18 @@ describe('arg-canonical: buildReloadArgs (/reload respawn argv)', () => {
   it('replays every launch flag (not just serve) when serve is off', () => {
     const out = buildReloadArgs(
       ['--auto', '--allow-auto-commit', 'main,dev', '--token-threshold', '80000', '--ollama-model', 'glm-5:cloud'],
-      false, 0, null,
+      false,
+      0,
+      null
     );
     expect(out).toEqual([
-      '--auto', '--allow-auto-commit', 'main,dev',
-      '--token-threshold', '80000', '--ollama-model', 'glm-5:cloud',
+      '--auto',
+      '--allow-auto-commit',
+      'main,dev',
+      '--token-threshold',
+      '80000',
+      '--ollama-model',
+      'glm-5:cloud'
     ]);
   });
 
@@ -460,11 +462,11 @@ describe('arg-canonical: buildReloadArgs (/reload respawn argv)', () => {
   });
 
   it('strips --serve/--port/--host when serve is now OFF', () => {
-    expect(buildReloadArgs(['--serve', '3100', '--port', '8080', '--host', '0.0.0.0', '--auto'], false, 0, null))
-      .toEqual(['--auto']);
+    expect(
+      buildReloadArgs(['--serve', '3100', '--port', '8080', '--host', '0.0.0.0', '--auto'], false, 0, null)
+    ).toEqual(['--auto']);
     // `=` spellings too.
-    expect(buildReloadArgs(['--serve=3100', '--host=0.0.0.0', '--auto'], false, 0, null))
-      .toEqual(['--auto']);
+    expect(buildReloadArgs(['--serve=3100', '--host=0.0.0.0', '--auto'], false, 0, null)).toEqual(['--auto']);
   });
 
   it('emits bare --serve port when active and no host given (localhost bind)', () => {

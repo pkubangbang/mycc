@@ -11,7 +11,7 @@
  * the producer-side mismatch — this test does.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { augmentCall } from '../../hook/hook-preprocessor.js';
 import type { ToolCall } from '../../types.js';
 
@@ -19,7 +19,7 @@ function makeCall(name: string, args: Record<string, unknown>): ToolCall {
   return {
     id: 'call_1',
     type: 'function',
-    function: { name, arguments: args },
+    function: { name, arguments: args }
   } as unknown as ToolCall;
 }
 

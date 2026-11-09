@@ -11,7 +11,7 @@
  * os.networkInterfaces() and are environment-sensitive, so they are not
  * asserted here (would need interface injection and are CI-fragile).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { stripAnsi } from '../../serve/serve-utils.js';
 
 describe('stripAnsi', () => {

@@ -12,7 +12,7 @@
  * a regression test that passes against a stand-in proves nothing about the real
  * producer.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vite-plus/test';
 import {
   initCrossroad,
   segmentsOf,
@@ -62,8 +62,7 @@ describe('grid edges — the review regressions', () => {
   it('N4: a genuine numeric token still carries its units (0.9.7 is never cut)', () => {
     // The rule must not be lost while fixing the false positive above: a
     // separator with a digit on BOTH sides is still inside a token.
-    const content =
-      'The pinned version is a very deliberate choice for this project. Version 0.9.7 fixes it.';
+    const content = 'The pinned version is a very deliberate choice for this project. Version 0.9.7 fixes it.';
     for (const seg of segmentsOf(content)) {
       const at = content.slice(seg.start, seg.end);
       expect(at.startsWith('9.')).toBe(false);
@@ -95,10 +94,7 @@ describe('grid edges — the review regressions', () => {
   // decision, so a future lattice that makes the capped unit cuttable trips this.
   it('forced: the size-cap boundary is never offered as a cut, even when N1 makes the unit showable', () => {
     const content =
-      'A long committed opening paragraph that sets the direction clearly.\n\n' +
-      'However, ' +
-      'x'.repeat(400) +
-      '.';
+      'A long committed opening paragraph that sets the direction clearly.\n\n' + 'However, ' + 'x'.repeat(400) + '.';
 
     // Producer lattice: [0,67) sentence, [69,77) clause, [77,301) forced, [301,479) sentence.
     // N1 extends the first unit over the gap in front of the clause, N2 carries

@@ -1,6 +1,6 @@
 /** Tests for mycc-owned Ollama REST transport (no ollama-js runtime). */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 import { OllamaHttpClient, OllamaHttpError, normalizeHost, parseRetryAfter } from '../../engine/ollama-http.js';
 import { isTransientError } from '../../engine/chat-helpers.js';
 
@@ -13,15 +13,18 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function ndjson(...chunks: unknown[]): Response {
   const encoder = new TextEncoder();
-  return new Response(new ReadableStream({
-    start(controller) {
-      // Exercise split UTF-8/NDJSON frames, not only one-line-per-chunk mocks.
-      const bytes = encoder.encode(chunks.map((chunk) => JSON.stringify(chunk) + '\n').join(''));
-      controller.enqueue(bytes.slice(0, 17));
-      controller.enqueue(bytes.slice(17));
-      controller.close();
-    },
-  }), { status: 200 });
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        // Exercise split UTF-8/NDJSON frames, not only one-line-per-chunk mocks.
+        const bytes = encoder.encode(chunks.map((chunk) => JSON.stringify(chunk) + '\n').join(''));
+        controller.enqueue(bytes.slice(0, 17));
+        controller.enqueue(bytes.slice(17));
+        controller.close();
+      }
+    }),
+    { status: 200 }
+  );
 }
 
 describe('OllamaHttpClient', () => {
@@ -38,7 +41,7 @@ describe('OllamaHttpClient', () => {
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
       'http://127.0.0.1:11434/api/tags',
       'http://127.0.0.1:11434/api/show',
-      'http://127.0.0.1:11434/api/embed',
+      'http://127.0.0.1:11434/api/embed'
     ]);
     expect(new Headers(fetchMock.mock.calls[2][1]?.headers).get('authorization')).toBe('Bearer key');
     expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toEqual({ model: 'embed', input: ['a', 'b'] });
@@ -46,10 +49,23 @@ describe('OllamaHttpClient', () => {
 
   it('parses streamed NDJSON chat into provider-neutral responses', async () => {
     const client = new OllamaHttpClient({ host: 'http://127.0.0.1:11434' });
-    fetchMock.mockResolvedValue(ndjson(
-      { model: 'm', created_at: '2026-01-01', message: { role: 'assistant', content: 'hel', thinking: 'why' }, done: false },
-      { model: 'm', created_at: '2026-01-01', message: { role: 'assistant', content: 'lo' }, done: true, done_reason: 'stop' },
-    ));
+    fetchMock.mockResolvedValue(
+      ndjson(
+        {
+          model: 'm',
+          created_at: '2026-01-01',
+          message: { role: 'assistant', content: 'hel', thinking: 'why' },
+          done: false
+        },
+        {
+          model: 'm',
+          created_at: '2026-01-01',
+          message: { role: 'assistant', content: 'lo' },
+          done: true,
+          done_reason: 'stop'
+        }
+      )
+    );
     const stream = await client.chat({ model: 'm', messages: [], stream: true });
     const chunks = [];
     for await (const chunk of stream) chunks.push(chunk);
@@ -71,10 +87,18 @@ describe('OllamaHttpClient', () => {
   it('releases an abandoned stream body on abort, and abort is idempotent', async () => {
     const client = new OllamaHttpClient({ host: 'http://127.0.0.1:11434' });
     let cancelled = false;
-    fetchMock.mockResolvedValue(new Response(new ReadableStream({
-      start() { /* never produces data: simulates a hung/large stream */ },
-      cancel() { cancelled = true; },
-    })));
+    fetchMock.mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start() {
+            /* never produces data: simulates a hung/large stream */
+          },
+          cancel() {
+            cancelled = true;
+          }
+        })
+      )
+    );
     const stream = await client.chat({ model: 'm', stream: true });
     stream.abort();
     // Let the cancel() microtask run.
@@ -91,10 +115,18 @@ describe('OllamaHttpClient', () => {
     // cancel() rather than leaving the body (and its socket) pinned.
     const client = new OllamaHttpClient({ host: 'http://127.0.0.1:11434' });
     let cancelled = false;
-    fetchMock.mockResolvedValue(new Response(new ReadableStream({
-      start() { /* no chunks yet: the consumer is parked in read() */ },
-      cancel() { cancelled = true; },
-    })));
+    fetchMock.mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start() {
+            /* no chunks yet: the consumer is parked in read() */
+          },
+          cancel() {
+            cancelled = true;
+          }
+        })
+      )
+    );
     const stream = await client.chat({ model: 'm', stream: true });
     const iterator = stream[Symbol.asyncIterator]();
     const pendingRead = iterator.next();
@@ -108,7 +140,7 @@ describe('OllamaHttpClient', () => {
     ['120', 120_000],
     [new Date(Date.now() + 60_000).toUTCString(), 60_000],
     ['not-a-date', undefined],
-    [null, undefined],
+    [null, undefined]
   ])('parses Retry-After %s in both wire forms', (raw, expected) => {
     const parsed = parseRetryAfter(raw as string | null);
     if (expected === undefined) expect(parsed).toBeUndefined();
@@ -138,7 +170,7 @@ describe('OllamaHttpClient', () => {
     ['127.0.0.1:11434', 'http://127.0.0.1:11434'],
     ['http://example.com', 'http://example.com'],
     ['https://example.com', 'https://example.com'],
-    ['http://proxy/ollama/', 'http://proxy/ollama'],
+    ['http://proxy/ollama/', 'http://proxy/ollama']
   ])('normalizes legacy host %s', (host, expected) => {
     expect(normalizeHost(host)).toBe(expected);
   });
@@ -166,7 +198,9 @@ describe('OllamaHttpClient', () => {
     const stream = await client.chat({ model: 'm', stream: true });
     let error: unknown;
     try {
-      for await (const _chunk of stream) { /* consume truncated stream */ }
+      for await (const _chunk of stream) {
+        /* consume truncated stream */
+      }
     } catch (caught) {
       error = caught;
     }
@@ -186,10 +220,16 @@ describe('OllamaHttpClient', () => {
     const client = new OllamaHttpClient({ host: 'http://127.0.0.1:11434' });
     const images: Array<string | Uint8Array> = ['already-base64', new Uint8Array([1, 2, 253, 254])];
     const request = { model: 'm', messages: [{ role: 'user', content: 'look', images }] };
-    fetchMock.mockResolvedValueOnce(ndjson({ model: 'm', created_at: '2026-01-01', message: { role: 'assistant', content: 'ok' }, done: true }));
+    fetchMock.mockResolvedValueOnce(
+      ndjson({ model: 'm', created_at: '2026-01-01', message: { role: 'assistant', content: 'ok' }, done: true })
+    );
     const stream = await client.chat({ ...request, stream: true });
-    for await (const _chunk of stream) { /* consume */ }
-    fetchMock.mockResolvedValueOnce(jsonResponse({ model: 'm', created_at: '2026-01-01', message: { role: 'assistant', content: 'ok' }, done: true }));
+    for await (const _chunk of stream) {
+      /* consume */
+    }
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ model: 'm', created_at: '2026-01-01', message: { role: 'assistant', content: 'ok' }, done: true })
+    );
     await client.chat({ ...request, stream: false });
     for (const call of fetchMock.mock.calls) {
       expect(JSON.parse(String(call[1]?.body)).messages[0].images).toEqual(['already-base64', 'AQL9/g==']);
@@ -198,16 +238,23 @@ describe('OllamaHttpClient', () => {
 
   it('returns structured non-streaming chat and parses HTTP errors', async () => {
     const client = new OllamaHttpClient({ host: 'http://127.0.0.1:11434' });
-    fetchMock.mockResolvedValueOnce(jsonResponse({
-      model: 'm', created_at: '2026-01-01', message: { role: 'assistant', content: 'ok' }, done: true,
-    }));
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        model: 'm',
+        created_at: '2026-01-01',
+        message: { role: 'assistant', content: 'ok' },
+        done: true
+      })
+    );
     const response = await client.chat({ model: 'm', messages: [] });
     expect(response.created_at).toBeInstanceOf(Date);
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ stream: false });
 
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'model missing' }, 404));
     await expect(client.show('missing')).rejects.toMatchObject({
-      name: 'OllamaHttpError', message: 'HTTP 404: model missing', status: 404,
+      name: 'OllamaHttpError',
+      message: 'HTTP 404: model missing',
+      status: 404
     } satisfies Partial<OllamaHttpError>);
   });
 });

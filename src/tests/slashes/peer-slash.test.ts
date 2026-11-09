@@ -14,7 +14,7 @@
  * command handler with a mock context and capture console.log output.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { peerCommand } from '../../slashes/peer.js';
 import { createMockContext as createFullMockContext } from '../test-utils/mock-context.js';
 import type { AgentContext, IdentityEntry, SlashCommandContext } from '../../types.js';
@@ -27,7 +27,7 @@ function mkIdentity(over: Partial<IdentityEntry> = {}): IdentityEntry {
     workDir: 'C:\\Proj\\mycc',
     mailbox: '/mb/x/unread-lead.jsonl',
     startedAt: Date.now() - 60_000,
-    ...over,
+    ...over
   };
 }
 
@@ -43,7 +43,7 @@ function run(args: string[], ctx: AgentContext): string {
       args,
       ctx,
       triologue: undefined,
-      sessionFilePath: '',
+      sessionFilePath: ''
     } as unknown as SlashCommandContext;
     peerCommand.handler(slashCtx);
   } finally {
@@ -78,9 +78,7 @@ describe('/peer slash command', () => {
   });
 
   it('surfaces the optional compose NAME when present (stable handle)', () => {
-    (ctx.peer.listIdentities as ReturnType<typeof vi.fn>).mockReturnValue([
-      mkIdentity({ name: 'demo:worker-1' }),
-    ]);
+    (ctx.peer.listIdentities as ReturnType<typeof vi.fn>).mockReturnValue([mkIdentity({ name: 'demo:worker-1' })]);
 
     const out = run(['/peer'], ctx);
 
@@ -109,11 +107,9 @@ describe('/peer slash command', () => {
   it('marks online/offline and counts them in the header', () => {
     (ctx.peer.listIdentities as ReturnType<typeof vi.fn>).mockReturnValue([
       mkIdentity({ sessionId: 'aaaa0000-0000-0000-0000-000000000001' }),
-      mkIdentity({ sessionId: 'bbbb0000-0000-0000-0000-000000000002' }),
+      mkIdentity({ sessionId: 'bbbb0000-0000-0000-0000-000000000002' })
     ]);
-    (ctx.peer.isFresh as ReturnType<typeof vi.fn>)
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    (ctx.peer.isFresh as ReturnType<typeof vi.fn>).mockReturnValueOnce(true).mockReturnValueOnce(false);
 
     const out = run(['/peer', '--all'], ctx);
 
@@ -125,7 +121,7 @@ describe('/peer slash command', () => {
   it('still applies the 1h cutoff (a long-dead peer is omitted and counted)', () => {
     const HOUR = 60 * 60 * 1000;
     (ctx.peer.listIdentities as ReturnType<typeof vi.fn>).mockReturnValue([
-      mkIdentity({ sessionId: 'dead0000-0000-0000-0000-000000000003' }),
+      mkIdentity({ sessionId: 'dead0000-0000-0000-0000-000000000003' })
     ]);
     (ctx.peer.getLatestHeartbeat as ReturnType<typeof vi.fn>).mockReturnValue(Date.now() - 2 * HOUR);
 
@@ -139,7 +135,7 @@ describe('/peer slash command', () => {
     const long = 'x'.repeat(500);
     (ctx.peer.listIdentities as ReturnType<typeof vi.fn>).mockReturnValue([mkIdentity()]);
     (ctx.peer.getBriefs as ReturnType<typeof vi.fn>).mockReturnValue([
-      { time: Date.now(), content: long, confidence: 8 },
+      { time: Date.now(), content: long, confidence: 8 }
     ]);
 
     const out = run(['/peer'], ctx);

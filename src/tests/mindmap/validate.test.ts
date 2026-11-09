@@ -12,7 +12,7 @@
  *   - link `target_type` includes `'term'`
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -21,7 +21,7 @@ import {
   compute_file_hash,
   validate_mindmap,
   validate_mindmap_structure,
-  parse_mindmap_json,
+  parse_mindmap_json
 } from '../../mindmap/validate.js';
 import type { MindmapJSON } from '../../mindmap/types.js';
 
@@ -39,9 +39,9 @@ function jsonFixture(overrides: Partial<MindmapJSON> = {}): MindmapJSON {
       summary: 'Root summary',
       level: 0,
       children: [],
-      links: [],
+      links: []
     },
-    ...overrides,
+    ...overrides
   } as MindmapJSON;
 }
 
@@ -86,15 +86,12 @@ describe('validate_mindmap_structure (real module)', () => {
     expect(validate_mindmap_structure(undefined)).toBe(false);
   });
 
-  it.each(['dir', 'hash', 'compiled_at', 'updated_at'] as const)(
-    'rejects a missing/ill-typed %s',
-    (field) => {
-      const j = jsonFixture() as unknown as Record<string, unknown>;
-      delete j[field];
-      expect(validate_mindmap_structure(j)).toBe(false);
-      expect(validate_mindmap_structure({ ...jsonFixture(), [field]: 42 })).toBe(false);
-    },
-  );
+  it.each(['dir', 'hash', 'compiled_at', 'updated_at'] as const)('rejects a missing/ill-typed %s', (field) => {
+    const j = jsonFixture() as unknown as Record<string, unknown>;
+    delete j[field];
+    expect(validate_mindmap_structure(j)).toBe(false);
+    expect(validate_mindmap_structure({ ...jsonFixture(), [field]: 42 })).toBe(false);
+  });
 
   it('rejects a missing source_file (the old local copy accepted it)', () => {
     const j = jsonFixture() as unknown as Record<string, unknown>;
@@ -122,11 +119,9 @@ describe('validate_mindmap_structure (real module)', () => {
         title: 'A',
         summary: '',
         level: 1,
-        children: [
-          { id: '/a/b', text: 'b', title: 'AB', summary: '', level: 2, children: [], links: [] },
-        ],
-        links: [],
-      },
+        children: [{ id: '/a/b', text: 'b', title: 'AB', summary: '', level: 2, children: [], links: [] }],
+        links: []
+      }
     ];
     expect(validate_mindmap_structure(j)).toBe(true);
   });
@@ -177,7 +172,7 @@ describe('validate_mindmap (hash gate)', () => {
 
   it('returns false when the markdown changed after compilation', () => {
     fs.writeFileSync(mdPath, '# Test');
-    const stale = mm('# Test');          // hash of the OLD content
+    const stale = mm('# Test'); // hash of the OLD content
     fs.writeFileSync(mdPath, '# Test CHANGED');
     expect(validate_mindmap(stale, mdPath)).toBe(false);
   });

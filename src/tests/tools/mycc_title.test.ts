@@ -8,7 +8,7 @@
  * were removed. These tests spy on process.stdout.write to pin the actual
  * title-setting behavior and the normalizeTitle prefix-stripping logic.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { myccTitleTool } from '../../tools/mycc_title.js';
 import { runTool, testSignal } from './test-utils.js';
 describe('myccTitleTool', () => {
@@ -70,7 +70,7 @@ describe('myccTitleTool', () => {
       runTool(myccTitleTool, ctx, { title: 'fixing bash tool' }, testSignal);
       // The OSC 0 sequence: ESC ] 0 ; <title> BEL. The normalized title gets the
       // canonical "mycc: " prefix applied.
-      const osc = writes.find(w => w.includes('\x1b]0;') && w.includes('\x07'));
+      const osc = writes.find((w) => w.includes('\x1b]0;') && w.includes('\x07'));
       expect(osc).toBeDefined();
       expect(osc).toContain('\x1b]0;mycc: fixing bash tool\x07');
     });
@@ -87,7 +87,7 @@ describe('myccTitleTool', () => {
     it('should NOT write the OSC sequence when the title is missing (early return)', () => {
       const ctx = { core: { getWorkDir: () => '/tmp', isPlainOutput: () => false } } as any;
       runTool(myccTitleTool, ctx, {}, testSignal);
-      expect(writes.some(w => w.includes('\x1b]0;'))).toBe(false);
+      expect(writes.some((w) => w.includes('\x1b]0;'))).toBe(false);
     });
 
     // --- normalizeTitle prefix-stripping coverage ---
@@ -95,7 +95,7 @@ describe('myccTitleTool', () => {
     it('normalizeTitle: strips an existing "mycc: " prefix and re-applies the canonical one', () => {
       const ctx = { core: { getWorkDir: () => '/tmp', isPlainOutput: () => false } } as any;
       runTool(myccTitleTool, ctx, { title: 'mycc: fixing bash' }, testSignal);
-      const osc = writes.find(w => w.includes('\x1b]0;'))!;
+      const osc = writes.find((w) => w.includes('\x1b]0;'))!;
       expect(osc).toContain('\x1b]0;mycc: fixing bash\x07');
       // No double prefix.
       expect(osc).not.toContain('mycc: mycc');
@@ -104,21 +104,21 @@ describe('myccTitleTool', () => {
     it('normalizeTitle: strips "mycc - " separator variant', () => {
       const ctx = { core: { getWorkDir: () => '/tmp', isPlainOutput: () => false } } as any;
       runTool(myccTitleTool, ctx, { title: 'mycc - peer work' }, testSignal);
-      const osc = writes.find(w => w.includes('\x1b]0;'))!;
+      const osc = writes.find((w) => w.includes('\x1b]0;'))!;
       expect(osc).toContain('\x1b]0;mycc: peer work\x07');
     });
 
     it('normalizeTitle: strips a case-insensitive "MyCC:" prefix', () => {
       const ctx = { core: { getWorkDir: () => '/tmp', isPlainOutput: () => false } } as any;
       runTool(myccTitleTool, ctx, { title: 'MyCC: session work' }, testSignal);
-      const osc = writes.find(w => w.includes('\x1b]0;'))!;
+      const osc = writes.find((w) => w.includes('\x1b]0;'))!;
       expect(osc).toContain('\x1b]0;mycc: session work\x07');
     });
 
     it('normalizeTitle: collapses to bare "mycc" when only the prefix is given', () => {
       const ctx = { core: { getWorkDir: () => '/tmp', isPlainOutput: () => false } } as any;
       runTool(myccTitleTool, ctx, { title: 'mycc' }, testSignal);
-      const osc = writes.find(w => w.includes('\x1b]0;'))!;
+      const osc = writes.find((w) => w.includes('\x1b]0;'))!;
       expect(osc).toContain('\x1b]0;mycc\x07');
     });
   });
@@ -145,7 +145,7 @@ describe('myccTitleTool', () => {
     it('writes the OSC escape and banner when ctx reports decorated output', () => {
       const ctx = { core: { isPlainOutput: () => false } } as any;
       runTool(myccTitleTool, ctx, { title: 'decorated' }, testSignal);
-      expect(writes.some(w => w.includes('\x1b]0;mycc: decorated\x07'))).toBe(true);
+      expect(writes.some((w) => w.includes('\x1b]0;mycc: decorated\x07'))).toBe(true);
       expect(writes.join('')).toContain('mycc: decorated');
     });
 

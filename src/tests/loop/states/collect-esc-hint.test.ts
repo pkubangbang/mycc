@@ -24,7 +24,7 @@
  * and stub triologue.getMessagesRaw() to return enough messages (>= 6) plus
  * ctx.core.getConfusionIndex() to return >= 10 to enter the hint block.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
 
@@ -33,31 +33,33 @@ vi.mock('../../../loop/agent-io.js', () => {
   return {
     agentIO: {
       isNeglectedMode: vi.fn(() => neglected),
-      setNeglectedMode: vi.fn((v: boolean) => { neglected = v; }),
-      log: vi.fn(),
-    },
+      setNeglectedMode: vi.fn((v: boolean) => {
+        neglected = v;
+      }),
+      log: vi.fn()
+    }
   };
 });
 
 vi.mock('../../../loop/esc-wrap-up.js', () => ({
   evaluateWrapUp: vi.fn(),
-  clearWrapUp: vi.fn(),
+  clearWrapUp: vi.fn()
 }));
 
 vi.mock('../../../config.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../config.js')>();
   return {
     ...actual,
-    isVerbose: vi.fn(() => false),
+    isVerbose: vi.fn(() => false)
   };
 });
 
 vi.mock('../../../context/shared/loader.js', () => ({
-  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) },
+  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) }
 }));
 
 vi.mock('../../../context/worktree-store.js', () => ({
-  listWorktrees: vi.fn(async () => []),
+  listWorktrees: vi.fn(async () => [])
 }));
 
 // HintRound singleton seam: hint-round.ts owns the WHOLE feature (gate +
@@ -69,8 +71,8 @@ vi.mock('../../../loop/hint-round.js', () => ({
   hintRound: {
     init: vi.fn(),
     reset: vi.fn(),
-    run: hintRun,
-  },
+    run: hintRun
+  }
 }));
 
 // Triologue stub: configurable message count + the methods collect.ts touches.
@@ -95,11 +97,7 @@ import { handleCollect } from '../../../loop/states/collect.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { agentIO } from '../../../loop/agent-io.js';
 import { Triologue } from '../../../loop/triologue.js';
-import {
-  createTurnVars,
-  createChatData,
-  createMockMachineEnv,
-} from '../esc-test-helpers.js';
+import { createTurnVars, createChatData, createMockMachineEnv } from '../esc-test-helpers.js';
 import { createMockContext } from '../../test-utils/mock-context.js';
 import { hintRound } from '../../../loop/hint-round.js';
 
@@ -136,7 +134,7 @@ describe('handleCollect — ESC during hint generation', () => {
     // Configure triologue to have enough messages to enter the hint block
     vi.mocked(triologue.getMessagesRaw).mockReturnValue(makeMessages(8));
     const ctx = createMockContext({
-      core: { getConfusionIndex: vi.fn(() => 15) } as never,
+      core: { getConfusionIndex: vi.fn(() => 15) } as never
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
@@ -160,8 +158,8 @@ describe('handleCollect — ESC during hint generation', () => {
     const ctx = createMockContext({
       core: {
         getConfusionIndex: vi.fn(() => 15),
-        resetConfusionIndex: vi.fn(),
-      } as never,
+        resetConfusionIndex: vi.fn()
+      } as never
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
@@ -186,8 +184,8 @@ describe('handleCollect — ESC during hint generation', () => {
       core: {
         getConfusionIndex: vi.fn(() => 12),
         resetConfusionIndex: resetFn,
-        brief: vi.fn(),
-      } as never,
+        brief: vi.fn()
+      } as never
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
@@ -217,7 +215,7 @@ describe('handleCollect — ESC during hint generation', () => {
     // exactly once and let its 'continue' verdict proceed to LLM.
     vi.mocked(triologue.getMessagesRaw).mockReturnValue(makeMessages(8));
     const ctx = createMockContext({
-      core: { getConfusionIndex: vi.fn(() => 5) } as never, // < 10
+      core: { getConfusionIndex: vi.fn(() => 5) } as never // < 10
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
@@ -233,7 +231,6 @@ describe('handleCollect — ESC during hint generation', () => {
     expect(hintRun).toHaveBeenCalledTimes(1);
   });
 
-
   describe('hint-round failure (result === "failed")', () => {
     // Helper to build an env wired for the 'failed' branch: enough messages,
     // high confusion, escAware runs the operation and returns 'failed'.
@@ -244,8 +241,8 @@ describe('handleCollect — ESC during hint generation', () => {
         core: {
           getConfusionIndex: vi.fn(() => 12),
           resetConfusionIndex: vi.fn(),
-          brief: vi.fn(),
-        } as never,
+          brief: vi.fn()
+        } as never
       });
       const env = createMockMachineEnv({ triologue });
       env.ctx = ctx;
@@ -288,10 +285,8 @@ describe('handleCollect — ESC during hint generation', () => {
     agentIO.setNeglectedMode(true);
     const ctx = createMockContext({
       mail: {
-        collectMails: vi.fn(() => [
-          { from: 'dev1', title: 'hi', content: 'working on it' },
-        ]) as never,
-      },
+        collectMails: vi.fn(() => [{ from: 'dev1', title: 'hi', content: 'working on it' }]) as never
+      }
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
@@ -304,13 +299,9 @@ describe('handleCollect — ESC during hint generation', () => {
     // A note was injected with the 'URGENT' tag (neglected-mode ESC directive),
     // and the mail keeps its own separate 'MAIL' note (the concern split of #16
     // — welding them made mail wear [URGENT] and lose its sender/reply routing).
-    const urgentCalls = vi.mocked(triologue.note).mock.calls.filter(
-      (c) => c[0] === 'URGENT',
-    );
+    const urgentCalls = vi.mocked(triologue.note).mock.calls.filter((c) => c[0] === 'URGENT');
     expect(urgentCalls.length).toBeGreaterThanOrEqual(1);
-    const mailCalls = vi.mocked(triologue.note).mock.calls.filter(
-      (c) => c[0] === 'MAIL',
-    );
+    const mailCalls = vi.mocked(triologue.note).mock.calls.filter((c) => c[0] === 'MAIL');
     expect(mailCalls).toHaveLength(1);
   });
 });

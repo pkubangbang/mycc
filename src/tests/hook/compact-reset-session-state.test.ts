@@ -39,7 +39,7 @@
  *   turn.events[] and totalTurns.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import { HookExecutor } from '../../hook/hook-executor.js';
 import { ConditionRegistry } from '../../hook/conditions.js';
 import { Sequence } from '../../hook/sequence.js';
@@ -74,7 +74,7 @@ function createMockCore(): CoreModule {
     getConfusionIndex: vi.fn(() => 0),
     increaseConfusionIndex: vi.fn(),
     resetConfusionIndex: vi.fn(),
-    escAware: (vi.fn() as unknown) as CoreModule['escAware'],
+    escAware: vi.fn() as unknown as CoreModule['escAware']
   };
 }
 
@@ -88,7 +88,7 @@ function createMockContext(): AgentContext {
     bg: {} as AgentContext['bg'],
     team: {} as AgentContext['team'],
     wiki: {} as AgentContext['wiki'],
-    peer: {} as AgentContext['peer'],
+    peer: {} as AgentContext['peer']
   };
 }
 
@@ -103,9 +103,9 @@ describe('session.* reset on /clear or /compact re-enables session-dedup hooks',
       action: {
         type: 'replace',
         tool: 'skill_load',
-        args: { name: 'plan-quality' },
+        args: { name: 'plan-quality' }
       },
-      version: 1,
+      version: 1
     });
   }
 
@@ -131,7 +131,7 @@ describe('session.* reset on /clear or /compact re-enables session-dedup hooks',
       tool: 'skill_load',
       args: { name: 'plan-quality' },
       result: 'skill body',
-      timestamp: Date.now(),
+      timestamp: Date.now()
     });
 
     // session.count is now 1 → condition false → hook must NOT fire
@@ -149,7 +149,7 @@ describe('session.* reset on /clear or /compact re-enables session-dedup hooks',
       tool: 'edit_file',
       args: { path: '/test/a.ts' },
       result: 'OK',
-      timestamp: Date.now(),
+      timestamp: Date.now()
     });
     expect(sequence.turnCount('edit_file')).toBe(1);
     sequence.compactReset();

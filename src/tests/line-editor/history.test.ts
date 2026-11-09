@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { LineEditor } from '../../utils/line-editor.js';
 
 import { key, charKey, createMockStdout } from '../test-utils/index.js';
@@ -35,11 +35,13 @@ describe('LineEditor - History Navigation', () => {
   /**
    * Create a LineEditor with standard options
    */
-  function createEditor(options: {
-    prompt?: string;
-    history?: string[];
-    columns?: number;
-  } = {}): LineEditor {
+  function createEditor(
+    options: {
+      prompt?: string;
+      history?: string[];
+      columns?: number;
+    } = {}
+  ): LineEditor {
     if (options.columns) {
       process.env.COLUMNS = String(options.columns);
     }
@@ -47,7 +49,7 @@ describe('LineEditor - History Navigation', () => {
       prompt: options.prompt ?? '> ',
       stdout: mockStdout,
       onDone: onDone as (value: string) => void,
-      history: options.history,
+      history: options.history
     });
     // Clear initial render calls
     writeCalls = [];
@@ -155,7 +157,7 @@ describe('LineEditor - History Navigation', () => {
 
     const history = editor.getHistory();
     // Should only have one 'a' entry
-    expect(history.filter(h => h === 'a')).toHaveLength(1);
+    expect(history.filter((h) => h === 'a')).toHaveLength(1);
   });
 
   it('should not add empty lines to history', () => {

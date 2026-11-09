@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { parseKeys, KeyInfo } from '../../utils/key-parser';
 
 /**
@@ -17,7 +17,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: false,
         shift: false,
-        sequence: '\r',
+        sequence: '\r'
       });
     });
 
@@ -28,7 +28,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: false,
         shift: false,
-        sequence: '\r',
+        sequence: '\r'
       });
     });
 
@@ -39,7 +39,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: false,
         shift: false,
-        sequence: '\x7f',
+        sequence: '\x7f'
       });
     });
 
@@ -50,7 +50,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: false,
         shift: false,
-        sequence: '\x7f',
+        sequence: '\x7f'
       });
     });
 
@@ -62,7 +62,7 @@ describe('key-parser', () => {
         ctrl: false,
         meta: false,
         shift: false,
-        sequence: '\x1b',
+        sequence: '\x1b'
       });
     });
 
@@ -82,21 +82,21 @@ describe('key-parser', () => {
         ctrl: false,
         meta: false,
         shift: false,
-        sequence: 'a',
+        sequence: 'a'
       });
       expect(result[1]).toEqual<KeyInfo>({
         name: 'b',
         ctrl: false,
         meta: false,
         shift: false,
-        sequence: 'b',
+        sequence: 'b'
       });
       expect(result[2]).toEqual<KeyInfo>({
         name: 'c',
         ctrl: false,
         meta: false,
         shift: false,
-        sequence: 'c',
+        sequence: 'c'
       });
     });
 
@@ -108,21 +108,21 @@ describe('key-parser', () => {
         ctrl: false,
         meta: false,
         shift: true,
-        sequence: 'A',
+        sequence: 'A'
       });
       expect(result[1]).toEqual<KeyInfo>({
         name: 'b',
         ctrl: false,
         meta: false,
         shift: true,
-        sequence: 'B',
+        sequence: 'B'
       });
       expect(result[2]).toEqual<KeyInfo>({
         name: 'c',
         ctrl: false,
         meta: false,
         shift: true,
-        sequence: 'C',
+        sequence: 'C'
       });
     });
 

@@ -17,7 +17,7 @@
  * module load, so imports must follow the override).
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test';
 import { mutedSlowSuite } from './utils/slow-suite.js';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -37,7 +37,7 @@ function runStop(argv: string[]): { code: number; stdout: string; stderr: string
     const stdout = execFileSync(process.execPath, [STOP_BIN, ...argv], {
       encoding: 'utf-8',
       env: { ...process.env, MYCC_DISCOVERY_DIR: storeDir },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe']
     });
     return { code: 0, stdout, stderr: '' };
   } catch (err) {
@@ -50,10 +50,7 @@ function runStop(argv: string[]): { code: number; stdout: string; stderr: string
 function seedLivePeer(sid: string, name: string, pid: number): void {
   const hbDir = path.join(storeDir, 'heartbeat');
   fs.mkdirSync(hbDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(hbDir, `${sid}.json`),
-    JSON.stringify({ heartbeats: [Date.now()], briefs: [], pid }),
-  );
+  fs.writeFileSync(path.join(hbDir, `${sid}.json`), JSON.stringify({ heartbeats: [Date.now()], briefs: [], pid }));
   const idFile = path.join(storeDir, 'identity.json');
   const map = fs.existsSync(idFile) ? JSON.parse(fs.readFileSync(idFile, 'utf-8')) : {};
   map[sid] = { sessionId: sid, name, pid, workDir: tempDir, args: '--auto', startedAt: Date.now() };
@@ -72,7 +69,11 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.MYCC_DISCOVERY_DIR;
-  try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+  try {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  } catch {
+    /* best-effort */
+  }
 });
 
 describe.skipIf(mutedSlowSuite(import.meta.url))('mycc-stop CLI — form dispatch + exit codes', () => {

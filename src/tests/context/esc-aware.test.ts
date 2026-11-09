@@ -2,7 +2,7 @@
  * esc-aware.test.ts - Unit tests for escAware functionality
  */
 
-import { describe, test, beforeEach, afterEach } from 'vitest';
+import { describe, test, beforeEach, afterEach } from 'vite-plus/test';
 import { expect } from 'chai';
 import { Core } from '../../context/parent/core.js';
 import { agentIO } from '../../loop/agent-io.js';
@@ -23,7 +23,7 @@ describe('escAware', () => {
       bg: {} as any,
       team: {} as any,
       wiki: {} as any,
-      peer: {} as any,
+      peer: {} as any
     };
 
     // Initialize agentIO for main process
@@ -42,7 +42,7 @@ describe('escAware', () => {
         expect(abortController).to.not.be.undefined;
         expect(abortController.signal).to.not.be.undefined;
         // Simulate a slow operation that completes
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise((resolve) => setTimeout(resolve, 100));
         return 'operation-result';
       },
       () => 'cleanup-result'
@@ -60,7 +60,7 @@ describe('escAware', () => {
     const result = await ctx.core.escAware(
       async (_abortController) => {
         operationCalled = true;
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise((resolve) => setTimeout(resolve, 100));
         return 'operation-result';
       },
       () => 'cleanup-result'
@@ -79,7 +79,7 @@ describe('escAware', () => {
       async (abortController) => {
         abortControllerReceived = abortController;
         // Simulate a slow operation
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 500));
         operationCompleted = true;
         return 'operation-result';
       },
@@ -102,10 +102,10 @@ describe('escAware', () => {
 
     // Should return cleanup result, not operation result
     expect(result).to.equal('cleanup-result');
-    
+
     // AbortController should have been provided
     expect(abortControllerReceived).to.not.be.undefined;
-    
+
     // Operation should NOT have completed (we returned early)
     expect(operationCompleted).to.be.false;
   });
@@ -116,7 +116,7 @@ describe('escAware', () => {
     const result = await ctx.core.escAware(
       async (_abortController) => 'operation-result',
       async () => {
-        await new Promise(resolve => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 10));
         return 'async-cleanup-result';
       }
     );
@@ -133,11 +133,11 @@ describe('escAware', () => {
     const result = await ctx.core.escAware<ComplexResult>(
       async (_abortController) => ({
         status: 'success',
-        data: [1, 2, 3],
+        data: [1, 2, 3]
       }),
       () => ({
         status: 'interrupted',
-        data: [],
+        data: []
       })
     );
 
@@ -155,7 +155,7 @@ describe('escAware', () => {
           abortSignalAborted = true;
         });
         // Simulate a slow operation
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 500));
         return 'operation-result';
       },
       () => 'cleanup-result'
@@ -174,7 +174,7 @@ describe('escAware', () => {
 
     // Should return cleanup result
     expect(result).to.equal('cleanup-result');
-    
+
     // Abort controller should have been triggered
     expect(abortSignalAborted).to.be.true;
   });

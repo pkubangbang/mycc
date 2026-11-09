@@ -28,11 +28,16 @@
  * files are created/removed for throwaway UUIDs only — never for a real
  * running session.
  */
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { cleanupEmptySessions, markHeadlessSession, resolveHeadlessFirstQuery, HEADLESS_FIRST_QUERY_MARKER } from '../../session/index.js';
+import {
+  cleanupEmptySessions,
+  markHeadlessSession,
+  resolveHeadlessFirstQuery,
+  HEADLESS_FIRST_QUERY_MARKER
+} from '../../session/index.js';
 
 const PROJECT_TMP = path.join(os.tmpdir(), `mycc-cleanup-test-${Date.now()}-${process.pid}`);
 const USER_TMP = path.join(os.tmpdir(), `mycc-cleanup-user-${Date.now()}-${process.pid}`);
@@ -43,13 +48,25 @@ const heartbeatFiles: string[] = [];
 
 afterAll(() => {
   for (const f of heartbeatFiles) {
-    try { fs.rmSync(f, { force: true }); } catch { /* best-effort */ }
+    try {
+      fs.rmSync(f, { force: true });
+    } catch {
+      /* best-effort */
+    }
   }
   // Windows: the temp dirs can still hold an open handle for a moment
   // (EPERM) — retry with backoff instead of failing the run.
   const rmOpts = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 } as const;
-  try { fs.rmSync(PROJECT_TMP, rmOpts); } catch { /* best-effort */ }
-  try { fs.rmSync(USER_TMP, rmOpts); } catch { /* best-effort */ }
+  try {
+    fs.rmSync(PROJECT_TMP, rmOpts);
+  } catch {
+    /* best-effort */
+  }
+  try {
+    fs.rmSync(USER_TMP, rmOpts);
+  } catch {
+    /* best-effort */
+  }
 });
 
 /** Session file with NO first_query (the daemon-session signature). */
@@ -64,7 +81,7 @@ function makeEmptySession(sessionsRoot: string, id: string, createdMinutesAgo: n
     lead_triologue: path.join(dir, `triologue-lead.jsonl`),
     child_triologues: [],
     teammates: [],
-    first_query: firstQuery,
+    first_query: firstQuery
   };
   fs.writeFileSync(path.join(dir, `session-${id}.json`), JSON.stringify(session), 'utf-8');
   fs.writeFileSync(path.join(dir, 'triologue-lead.jsonl'), '', 'utf-8');
@@ -132,7 +149,11 @@ describe('cleanupEmptySessions live-session guard', () => {
     makeEmptySession(PROJECT_TMP, id, 30); // 30 min old — would be deleted without the heartbeat guard
     fs.mkdirSync(HEARTBEAT_DIR, { recursive: true });
     const file = path.join(HEARTBEAT_DIR, `${id}.json`);
-    fs.writeFileSync(file, JSON.stringify({ heartbeats: [Date.now() - 10_000, Date.now() - 10 * 60_000], briefs: [] }), 'utf-8');
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ heartbeats: [Date.now() - 10_000, Date.now() - 10 * 60_000], briefs: [] }),
+      'utf-8'
+    );
     heartbeatFiles.push(file);
 
     chdirTo(PROJECT_TMP);
@@ -183,7 +204,7 @@ describe('HEADLESS_FIRST_QUERY_MARKER lifecycle', () => {
       lead_triologue: path.join(dir, 'triologue-lead.jsonl'),
       child_triologues: [],
       teammates: [],
-      first_query: '',
+      first_query: ''
     };
     fs.writeFileSync(sessionPath, JSON.stringify(session), 'utf-8');
 
@@ -205,7 +226,7 @@ describe('HEADLESS_FIRST_QUERY_MARKER lifecycle', () => {
       lead_triologue: path.join(dir, 'triologue-lead.jsonl'),
       child_triologues: [],
       teammates: [],
-      first_query: 'a real user query',
+      first_query: 'a real user query'
     };
     fs.writeFileSync(sessionPath, JSON.stringify(session), 'utf-8');
 
@@ -236,7 +257,7 @@ describe('HEADLESS_FIRST_QUERY_MARKER lifecycle', () => {
       lead_triologue: path.join(dir, 'triologue-lead.jsonl'),
       child_triologues: [],
       teammates: [],
-      first_query: '',
+      first_query: ''
     };
     fs.writeFileSync(sessionPath, JSON.stringify(session), 'utf-8');
 
@@ -259,7 +280,7 @@ describe('HEADLESS_FIRST_QUERY_MARKER lifecycle', () => {
       lead_triologue: path.join(dirA, 'triologue-lead.jsonl'),
       child_triologues: [],
       teammates: [],
-      first_query: HEADLESS_FIRST_QUERY_MARKER,
+      first_query: HEADLESS_FIRST_QUERY_MARKER
     };
     fs.writeFileSync(pathA, JSON.stringify(sessionA), 'utf-8');
 
@@ -280,7 +301,7 @@ describe('HEADLESS_FIRST_QUERY_MARKER lifecycle', () => {
       lead_triologue: path.join(dirB, 'triologue-lead.jsonl'),
       child_triologues: [],
       teammates: [],
-      first_query: 'genuine first query',
+      first_query: 'genuine first query'
     };
     fs.writeFileSync(pathB, JSON.stringify(sessionB), 'utf-8');
 

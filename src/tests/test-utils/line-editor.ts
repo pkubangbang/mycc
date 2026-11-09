@@ -7,7 +7,7 @@
  * behaviour under test.
  */
 
-import { vi } from 'vitest';
+import { vi } from 'vite-plus/test';
 import type { KeyInfo } from '../../utils/key-parser.js';
 
 /**
@@ -20,7 +20,7 @@ export function key(name: string, options: Partial<KeyInfo> = {}): KeyInfo {
     meta: false,
     shift: false,
     sequence: '',
-    ...options,
+    ...options
   };
 }
 
@@ -33,7 +33,7 @@ export function charKey(c: string): KeyInfo {
     ctrl: false,
     meta: false,
     shift: false,
-    sequence: c,
+    sequence: c
   };
 }
 
@@ -47,6 +47,6 @@ export function createMockStdout(): NodeJS.WriteStream {
     rows: 24,
     isTTY: true,
     on: vi.fn(),
-    removeListener: vi.fn(),
+    removeListener: vi.fn()
   } as unknown as NodeJS.WriteStream;
 }

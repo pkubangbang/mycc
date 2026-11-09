@@ -2,11 +2,11 @@
  * web-routing.test.ts - Ollama web tools follow the configured Ollama host.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import type { WebSearchResult } from '../../engine/provider-types.js';
 
 vi.mock('../../loop/agent-io.js', () => ({
-  agentIO: { verbose: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  agentIO: { verbose: vi.fn(), warn: vi.fn(), error: vi.fn() }
 }));
 
 vi.mock('../../config.js', () => ({
@@ -14,19 +14,21 @@ vi.mock('../../config.js', () => ({
   getOllamaApiKey: vi.fn(() => 'must-not-be-forwarded'),
   getOllamaModel: vi.fn(() => 'test-model'),
   getVisionModel: vi.fn(() => 'test-vision'),
-  isVisionEnabled: vi.fn(() => false),
+  isVisionEnabled: vi.fn(() => false)
 }));
 
 vi.mock('../../engine/health-check.js', () => ({
   probeModel: vi.fn(),
-  probeEmbeddingModel: vi.fn(),
+  probeEmbeddingModel: vi.fn()
 }));
 
 vi.mock('../../engine/ollama-http.js', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../engine/ollama-http.js')>(),
+  ...(await importOriginal<typeof import('../../engine/ollama-http.js')>()),
   OllamaHttpClient: class {
-    chat = vi.fn(() => { throw new Error('HTTP chat must not be called by web tools'); });
-  },
+    chat = vi.fn(() => {
+      throw new Error('HTTP chat must not be called by web tools');
+    });
+  }
 }));
 
 vi.mock('../../engine/chat-helpers.js', async (importOriginal) => {
@@ -44,7 +46,7 @@ import { normalizeHost } from '../../engine/ollama-http.js';
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' }
   });
 }
 
@@ -57,58 +59,72 @@ describe('Ollama web routing', () => {
     vi.useRealTimers();
   });
 
-  it.each([
-    'https://ollama.com',
-    'https://ollama.com:443',
-    'https://api.ollama.com',
-    'https://OLLAMA.COM',
-  ])('recognizes direct cloud host %s', (host) => {
-    expect(isDirectOllamaCloud(host)).toBe(true);
-  });
+  it.each(['https://ollama.com', 'https://ollama.com:443', 'https://api.ollama.com', 'https://OLLAMA.COM'])(
+    'recognizes direct cloud host %s',
+    (host) => {
+      expect(isDirectOllamaCloud(host)).toBe(true);
+    }
+  );
 
   it('uses cloud /api/web_search and credentials for a direct cloud host', async () => {
     const cloud = createOllamaWebClient({ host: 'https://ollama.com', apiKey: 'cloud-key' });
     fetchMock.mockResolvedValue(jsonResponse({ results: [{ content: 'cloud result' }] }));
     await expect(cloud.webSearch({ query: 'cloud routing' })).resolves.toEqual({
-      results: [{ content: 'cloud result' }],
+      results: [{ content: 'cloud result' }]
     });
-    expect(fetchMock).toHaveBeenCalledWith('https://ollama.com/api/web_search', expect.objectContaining({
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer cloud-key' },
-      body: JSON.stringify({ query: 'cloud routing' }),
-    }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://ollama.com/api/web_search',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer cloud-key' },
+        body: JSON.stringify({ query: 'cloud routing' })
+      })
+    );
   });
 
   it('uses cloud /api/web_fetch and credentials for a direct cloud host', async () => {
     const cloud = createOllamaWebClient({ host: 'https://ollama.com/', apiKey: 'cloud-key' });
-    fetchMock.mockResolvedValue(jsonResponse({
-      title: 'Cloud', url: 'https://example.com', content: 'cloud content', links: [],
-    }));
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        title: 'Cloud',
+        url: 'https://example.com',
+        content: 'cloud content',
+        links: []
+      })
+    );
     await expect(cloud.webFetch({ url: 'https://example.com' })).resolves.toEqual({
-      title: 'Cloud', url: 'https://example.com', content: 'cloud content', links: [],
+      title: 'Cloud',
+      url: 'https://example.com',
+      content: 'cloud content',
+      links: []
     });
-    expect(fetchMock).toHaveBeenCalledWith('https://ollama.com/api/web_fetch', expect.objectContaining({
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer cloud-key' },
-      body: JSON.stringify({ url: 'https://example.com' }),
-    }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://ollama.com/api/web_fetch',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer cloud-key' },
+        body: JSON.stringify({ url: 'https://example.com' })
+      })
+    );
   });
 
   it('posts web_search to OLLAMA_HOST without forwarding the API key', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({
-      results: [{ title: 'Local', url: 'http://local/result', content: 'result text' }],
-    }));
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        results: [{ title: 'Local', url: 'http://local/result', content: 'result text' }]
+      })
+    );
 
     await expect(webSearch('local routing')).resolves.toEqual([
-      { title: 'Local', url: 'http://local/result', content: 'result text' },
+      { title: 'Local', url: 'http://local/result', content: 'result text' }
     ]);
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:11434/api/experimental/web_search',
       expect.objectContaining({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: 'local routing' }),
-      }),
+        body: JSON.stringify({ query: 'local routing' })
+      })
     );
   });
 
@@ -116,49 +132,54 @@ describe('Ollama web routing', () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ results: null }));
     await expect(webSearch('empty')).rejects.toThrow('results must be an array');
 
-    fetchMock.mockResolvedValueOnce(jsonResponse({
-      results: [
-        { content: 'kept' },
-        { title: 'missing content' },
-        { content: 42 },
-        null,
-      ],
-    }));
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        results: [{ content: 'kept' }, { title: 'missing content' }, { content: 42 }, null]
+      })
+    );
     const results: WebSearchResult[] = await webSearch('filter');
     expect(results).toEqual([{ content: 'kept' }]);
   });
 
   it('posts web_fetch to OLLAMA_HOST and normalizes the response contract', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({
-      title: 'Local page',
-      content: 'page text',
-      links: null,
-    }));
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        title: 'Local page',
+        content: 'page text',
+        links: null
+      })
+    );
 
     await expect(webFetch('http://local/page')).resolves.toEqual({
       title: 'Local page',
       url: 'http://local/page',
       content: 'page text',
-      links: [],
+      links: []
     });
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:11434/api/experimental/web_fetch',
       expect.objectContaining({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: 'http://local/page' }),
-      }),
+        body: JSON.stringify({ url: 'http://local/page' })
+      })
     );
   });
 
   it('preserves a returned fetch URL and filters non-string links', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({
-      title: 'Page', url: 'https://example.com/final', content: 'body',
-      links: ['https://example.com/a', 42, null],
-    }));
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        title: 'Page',
+        url: 'https://example.com/final',
+        content: 'body',
+        links: ['https://example.com/a', 42, null]
+      })
+    );
     await expect(webFetch('https://example.com/start')).resolves.toEqual({
-      title: 'Page', url: 'https://example.com/final', content: 'body',
-      links: ['https://example.com/a'],
+      title: 'Page',
+      url: 'https://example.com/final',
+      content: 'body',
+      links: ['https://example.com/a']
     });
   });
 
@@ -177,9 +198,7 @@ describe('Ollama web routing', () => {
 
   it('does not retry a 404 from a server without experimental web routes', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ error: 'not found' }, 404));
-    await expect(webSearch('unsupported')).rejects.toThrow(
-      'HTTP 404: not found',
-    );
+    await expect(webSearch('unsupported')).rejects.toThrow('HTTP 404: not found');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -203,11 +222,17 @@ describe('Ollama web routing', () => {
 
   it('retries HTTP 429 and honors Retry-After', async () => {
     fetchMock
-      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Too Many Requests' }), { status: 429, headers: { 'Retry-After': '1' } }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'Too Many Requests' }), { status: 429, headers: { 'Retry-After': '1' } })
+      )
       .mockResolvedValueOnce(jsonResponse({ results: [] }));
     let caught: unknown;
     const client = createOllamaWebClient({ host: 'http://127.0.0.1:11434' });
-    try { await client.webSearch({ query: 'rate limit' }); } catch (error) { caught = error; }
+    try {
+      await client.webSearch({ query: 'rate limit' });
+    } catch (error) {
+      caught = error;
+    }
     expect(caught).toMatchObject({ status: 429, retryAfterMs: 1000 });
     fetchMock.mockResolvedValueOnce(jsonResponse({ results: [] }));
     await webSearch('rate limit');
@@ -218,7 +243,9 @@ describe('Ollama web routing', () => {
     let requestSignal: AbortSignal | null | undefined;
     fetchMock.mockImplementationOnce((_url, init) => {
       requestSignal = init?.signal;
-      return new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
+      return new Promise<Response>((_resolve, reject) =>
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+      );
     });
     const controller = new AbortController();
     const pending = webSearch('cancel', controller.signal);
@@ -236,7 +263,7 @@ describe('Ollama web routing', () => {
     await expect(webSearch('unauthorized')).rejects.toMatchObject({
       kind: 'auth',
       status: 401,
-      signinUrl: 'https://ollama.com/signin',
+      signinUrl: 'https://ollama.com/signin'
     });
     fetchMock.mockResolvedValueOnce(jsonResponse({}));
     await expect(webFetch('https://example.com')).rejects.toThrow('missing string content');
@@ -255,23 +282,20 @@ describe('Ollama web routing', () => {
 
   it('rejects invalid successful JSON instead of silently returning empty content', async () => {
     fetchMock.mockResolvedValue(jsonResponse([]));
-    await expect(webFetch('https://example.com')).rejects.toThrow(
-      /returned a non-object response/,
-    );
+    await expect(webFetch('https://example.com')).rejects.toThrow(/returned a non-object response/);
   });
 
   // ── Credential boundary ────────────────────────────────────────────────
   // The allow-list is exact: an attacker-controlled or newly delegated
   // subdomain under ollama.com must NOT receive the user's cloud key.
-  it.each([
-    'https://evil.ollama.com',
-    'https://ollama.com.evil.test',
-    'https://api.evil.ollama.com',
-  ])('does not treat %s as the direct cloud endpoint', (host) => {
-    // Valid URL, valid host — just not on the credential allow-list. The route
-    // falls back to the non-forwarding local/experimental form.
-    expect(isDirectOllamaCloud(host)).toBe(false);
-  });
+  it.each(['https://evil.ollama.com', 'https://ollama.com.evil.test', 'https://api.evil.ollama.com'])(
+    'does not treat %s as the direct cloud endpoint',
+    (host) => {
+      // Valid URL, valid host — just not on the credential allow-list. The route
+      // falls back to the non-forwarding local/experimental form.
+      expect(isDirectOllamaCloud(host)).toBe(false);
+    }
+  );
 
   it('refuses a host with embedded credentials outright', () => {
     expect(() => isDirectOllamaCloud('https://user:pw@ollama.com')).toThrow(/credentials/);

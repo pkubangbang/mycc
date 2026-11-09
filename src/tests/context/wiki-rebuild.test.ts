@@ -21,7 +21,7 @@
  * `../../config.js` is mocked to point wiki paths at a temp dir.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -43,7 +43,7 @@ vi.mock('../../config.js', () => ({
   getRagProvider: () => 'nomic',
   ensureDirs: () => {
     if (!fs.existsSync(logsDir())) fs.mkdirSync(logsDir(), { recursive: true });
-  },
+  }
 }));
 
 // --- Embedding mock -------------------------------------------------------
@@ -60,7 +60,7 @@ vi.mock('../../engine/rag-provider.js', () => ({
   getEmbeddings: async (texts: string[]) => {
     embedCalls.push(texts);
     return texts.map(() => new Array(8).fill(0.1));
-  },
+  }
 }));
 
 // --- LanceDB mock ---------------------------------------------------------
@@ -72,7 +72,11 @@ vi.mock('../../engine/rag-provider.js', () => ({
 //   delete(PRED)                       — remove matching rows
 // It parses just enough SQL to be faithful for these predicates, so the
 // state-machine (PENDING → LIVE → SUBMERGED) is exercised end to end.
-interface FakeTableState { rows: Array<Record<string, unknown>>; addCalls: number; deleteCalls: number; }
+interface FakeTableState {
+  rows: Array<Record<string, unknown>>;
+  addCalls: number;
+  deleteCalls: number;
+}
 const tableState: FakeTableState = { rows: [], addCalls: 0, deleteCalls: 0 };
 
 function sqlVal(v: unknown): string {
@@ -124,11 +128,11 @@ vi.mock('@lancedb/lancedb', () => {
     },
     query: () => ({
       where: (predicate: string) => ({
-        toArray: async () => tableState.rows.filter((r) => rowMatches(r, predicate)),
+        toArray: async () => tableState.rows.filter((r) => rowMatches(r, predicate))
       }),
-      toArray: async () => tableState.rows,
+      toArray: async () => tableState.rows
     }),
-    schema: async () => ({ fields: [{ name: 'state' }] }),
+    schema: async () => ({ fields: [{ name: 'state' }] })
   };
   return {
     connect: async () => ({
@@ -138,8 +142,10 @@ vi.mock('@lancedb/lancedb', () => {
         tableState.rows = [...rows];
         return fakeTable;
       },
-      dropTable: async () => { tableState.rows = []; },
-    }),
+      dropTable: async () => {
+        tableState.rows = [];
+      }
+    })
   };
 });
 
@@ -155,7 +161,7 @@ function makeEntry(doc: WikiDocument, opts: Partial<WALEntry> = {}): WALEntry {
     document: doc,
     approved: opts.approved ?? true,
     ...(opts.deleted !== undefined ? { deleted: opts.deleted } : {}),
-    ...(opts.namespace !== undefined ? { namespace: opts.namespace } : {}),
+    ...(opts.namespace !== undefined ? { namespace: opts.namespace } : {})
   } as WALEntry;
 }
 
@@ -171,7 +177,8 @@ function writeWal(fileName: string, entries: WALEntry[]): void {
 
 function walBytes(): number {
   if (!fs.existsSync(logsDir())) return 0;
-  return fs.readdirSync(logsDir())
+  return fs
+    .readdirSync(logsDir())
     .filter((f) => f.endsWith('.wal'))
     .reduce((sum, f) => sum + fs.statSync(path.join(logsDir(), f)).size, 0);
 }
@@ -188,9 +195,11 @@ describe('WikiManager.rebuild()', () => {
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mycc-wiki-rebuild-'));
     fs.mkdirSync(logsDir(), { recursive: true });
-    fs.writeFileSync(domainsFile(), JSON.stringify([
-      { domain_name: 'project', description: '', created_at: '', project_folder: tempDir },
-    ]), 'utf-8');
+    fs.writeFileSync(
+      domainsFile(),
+      JSON.stringify([{ domain_name: 'project', description: '', created_at: '', project_folder: tempDir }]),
+      'utf-8'
+    );
     embedCalls.length = 0;
     tableState.rows = [];
     tableState.addCalls = 0;
@@ -210,7 +219,7 @@ describe('WikiManager.rebuild()', () => {
     // 5 docs → expect a single batched getEmbeddings call with 5 inputs,
     // never 5 separate getEmbedding calls.
     const entries = Array.from({ length: 5 }, (_, i) =>
-      makeEntry(makeDoc('project', `t${i}`, `${C} ${i}`), { hash: `000000000000000${i}` }),
+      makeEntry(makeDoc('project', `t${i}`, `${C} ${i}`), { hash: `000000000000000${i}` })
     );
     writeWal('2026-01-01.wal', entries);
 
@@ -249,7 +258,7 @@ describe('WikiManager.rebuild()', () => {
     // dir would grow after each rebuild. Assert the WAL bytes are unchanged.
     writeWal('2026-01-01.wal', [
       makeEntry(makeDoc('project', 'a', `${C} a`), { hash: '1111111111111111' }),
-      makeEntry(makeDoc('project', 'b', `${C} b`), { hash: '2222222222222222' }),
+      makeEntry(makeDoc('project', 'b', `${C} b`), { hash: '2222222222222222' })
     ]);
     const before = walBytes();
 
@@ -267,7 +276,7 @@ describe('WikiManager.rebuild()', () => {
       makeEntry(makeDoc('project', 'keep', `${C} keep`), { hash: 'aaaaaaaaaaaaaaaa' }),
       makeEntry(makeDoc('project', 'del', `${C} del`), { hash: 'bbbbbbbbbbbbbbbb', deleted: true }),
       makeEntry(makeDoc('project', 'unap', `${C} unap`), { hash: 'cccccccccccccccc', approved: false }),
-      makeEntry(makeDoc('project', 'foreign', `${C} foreign`), { hash: 'dddddddddddddddd', namespace: 'other-model' }),
+      makeEntry(makeDoc('project', 'foreign', `${C} foreign`), { hash: 'dddddddddddddddd', namespace: 'other-model' })
     ]);
 
     const wiki = await newManager();
@@ -285,7 +294,7 @@ describe('WikiManager.rebuild()', () => {
 
   it('accepts legacy entries with no namespace (re-embedded with the current model)', async () => {
     writeWal('2026-01-01.wal', [
-      makeEntry(makeDoc('project', 'legacy', `${C} legacy`), { hash: 'eeeeeeeeeeeeeeee' }), // no namespace field
+      makeEntry(makeDoc('project', 'legacy', `${C} legacy`), { hash: 'eeeeeeeeeeeeeeee' }) // no namespace field
     ]);
 
     const wiki = await newManager();
@@ -295,25 +304,24 @@ describe('WikiManager.rebuild()', () => {
     expect(tableState.rows.map((r) => r.hash)).toContain('eeeeeeeeeeeeeeee');
   });
 
-  it('preserves each entry\'s original createdAt from the WAL', async () => {
+  it("preserves each entry's original createdAt from the WAL", async () => {
     writeWal('2026-01-01.wal', [
       makeEntry(makeDoc('project', 'old', `${C} old`), {
         hash: 'ffffffffffffffff',
-        timestamp: '2025-12-31T23:59:59.000Z',
-      }),
+        timestamp: '2025-12-31T23:59:59.000Z'
+      })
     ]);
 
     const wiki = await newManager();
     await wiki.rebuild();
 
-    expect(tableState.rows.find((r) => r.hash === 'ffffffffffffffff')?.createdAt)
-      .toBe('2025-12-31T23:59:59.000Z');
+    expect(tableState.rows.find((r) => r.hash === 'ffffffffffffffff')?.createdAt).toBe('2025-12-31T23:59:59.000Z');
   });
 
   it('recreates the table then inserts (dropTable, not delete)', async () => {
     writeWal('2026-01-01.wal', [
       makeEntry(makeDoc('project', 'a', `${C} a`), { hash: '1111111111111111' }),
-      makeEntry(makeDoc('project', 'b', `${C} b`), { hash: '2222222222222222' }),
+      makeEntry(makeDoc('project', 'b', `${C} b`), { hash: '2222222222222222' })
     ]);
 
     const wiki = await newManager();
@@ -332,16 +340,16 @@ describe('WikiManager.rebuild()', () => {
     writeWal('2026-01-01.wal', [
       makeEntry(makeDoc('project', 'a', `${C} a`), { hash: '1111111111111111' }),
       makeEntry(makeDoc('project', 'b', `${C} b`), { hash: '2222222222222222' }),
-      makeEntry(makeDoc('project', 'c', `${C} c`), { hash: '3333333333333333' }),
+      makeEntry(makeDoc('project', 'c', `${C} c`), { hash: '3333333333333333' })
     ]);
 
     const wiki = await newManager();
     const events: Array<{ processed: number; total: number; batchIndex: number; batchCount: number }> = [];
-    await wiki.rebuild((p) => events.push({ processed: p.processed, total: p.total, batchIndex: p.batchIndex, batchCount: p.batchCount }));
+    await wiki.rebuild((p) =>
+      events.push({ processed: p.processed, total: p.total, batchIndex: p.batchIndex, batchCount: p.batchCount })
+    );
 
-    expect(events).toEqual([
-      { processed: 3, total: 3, batchIndex: 1, batchCount: 1 },
-    ]);
+    expect(events).toEqual([{ processed: 3, total: 3, batchIndex: 1, batchCount: 1 }]);
   });
 
   it('emits NO progress events when there are no entries to rebuild', async () => {
@@ -360,14 +368,16 @@ describe('WikiManager.rebuild()', () => {
     // floor(129/16) = 8 full batches of 16 + 1 final batch of 1.
     const entries = Array.from({ length: 129 }, (_, i) =>
       makeEntry(makeDoc('project', `t${i}`, `${C} ${i}`), {
-        hash: i.toString(16).padStart(16, '0'),
-      }),
+        hash: i.toString(16).padStart(16, '0')
+      })
     );
     writeWal('2026-01-01.wal', entries);
 
     const wiki = await newManager();
     const events: Array<{ processed: number; batchIndex: number; batchCount: number }> = [];
-    await wiki.rebuild((p) => events.push({ processed: p.processed, batchIndex: p.batchIndex, batchCount: p.batchCount }));
+    await wiki.rebuild((p) =>
+      events.push({ processed: p.processed, batchIndex: p.batchIndex, batchCount: p.batchCount })
+    );
 
     expect(events).toHaveLength(9);
     expect(events[0]).toEqual({ processed: 16, batchIndex: 1, batchCount: 9 });
@@ -388,9 +398,11 @@ describe('WikiManager.batchPut() — alreadyExisted reporting', () => {
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mycc-wiki-batchput-'));
     fs.mkdirSync(logsDir(), { recursive: true });
-    fs.writeFileSync(domainsFile(), JSON.stringify([
-      { domain_name: 'project', description: '', created_at: '', project_folder: tempDir },
-    ]), 'utf-8');
+    fs.writeFileSync(
+      domainsFile(),
+      JSON.stringify([{ domain_name: 'project', description: '', created_at: '', project_folder: tempDir }]),
+      'utf-8'
+    );
     embedCalls.length = 0;
     tableState.rows = [];
     tableState.addCalls = 0;
@@ -426,7 +438,7 @@ describe('WikiManager.batchPut() — alreadyExisted reporting', () => {
     // One batch: existingDoc (already present) + freshDoc (new).
     const results = await wiki.batchPut([
       { document: existingDoc, embedding: new Array(8).fill(0.1) },
-      { document: freshDoc, embedding: new Array(8).fill(0.1) },
+      { document: freshDoc, embedding: new Array(8).fill(0.1) }
     ]);
 
     // Order preserved, per-entry flagging correct.

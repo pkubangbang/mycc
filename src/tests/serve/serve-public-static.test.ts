@@ -33,7 +33,7 @@
  * AFTER `start()` — that is the whole point (the pre-boot snapshot is what
  * regressed).
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach } from 'vite-plus/test';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
 import * as path from 'node:path';
@@ -60,7 +60,9 @@ describe('ServeHub public-dir static serving (post-boot files, no HMR crash)', (
 
   afterEach(async () => {
     if (hub) {
-      await hub.stop(true).catch(() => { /* ignore */ });
+      await hub.stop(true).catch(() => {
+        /* ignore */
+      });
       hub = null;
     }
   });
@@ -132,7 +134,7 @@ describe('ServeHub public-dir static serving (post-boot files, no HMR crash)', (
         `http://127.0.0.1:${port}/../${path.basename(secret)}`,
         `http://127.0.0.1:${port}/%2e%2e/${path.basename(secret)}`,
         `http://127.0.0.1:${port}/..%2f${path.basename(secret)}`,
-        `http://127.0.0.1:${port}/subdir/../../${path.basename(secret)}`,
+        `http://127.0.0.1:${port}/subdir/../../${path.basename(secret)}`
       ]) {
         const res = await fetch(target);
         const body = await res.text();

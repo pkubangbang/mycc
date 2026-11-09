@@ -17,13 +17,13 @@
  * worth of `which`/`where` calls), not a fixed candidate count.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test';
 
 // Mock child_process.execSync so no real `which`/`where`/capture runs.
 // Returning a non-empty buffer makes every probe "succeed" so the candidate
 // list is populated and the env result is stable/cached.
 vi.mock('child_process', () => ({
-  execSync: vi.fn(() => Buffer.from('/usr/local/bin/found')),
+  execSync: vi.fn(() => Buffer.from('/usr/local/bin/found'))
 }));
 
 import { execSync } from 'child_process';

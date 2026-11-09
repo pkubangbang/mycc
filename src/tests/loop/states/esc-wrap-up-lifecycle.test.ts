@@ -16,22 +16,22 @@
  * The module holds a MODULE-LEVEL singleton (wrapUpState), so tests MUST call
  * clearWrapUp() in beforeEach to isolate state.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
 
 vi.mock('../../../engine/chat-provider.js', () => ({
   retryChat: vi.fn(),
-  MODEL: 'test-model',
+  MODEL: 'test-model'
 }));
 
 vi.mock('../../../config.js', () => ({
   getApiProvider: vi.fn(() => 'ollama'),
-  isVerbose: vi.fn(() => false),
+  isVerbose: vi.fn(() => false)
 }));
 
 vi.mock('../../../utils/letter-box.js', () => ({
-  displayLetterBox: vi.fn(),
+  displayLetterBox: vi.fn()
 }));
 
 vi.mock('../../../loop/triologue.js', () => {
@@ -58,7 +58,7 @@ import {
   abortWrapUpCapsule,
   beginWrapUpState,
   isWrapUpInFlight,
-  setWrapUpStateReporter,
+  setWrapUpStateReporter
 } from '../../../loop/wrap-up-state.js';
 import { retryChat } from '../../../engine/chat-provider.js';
 import { displayLetterBox } from '../../../utils/letter-box.js';
@@ -85,7 +85,7 @@ describe('ESC wrap-up lifecycle (esc-wrap-up.ts state management)', () => {
     // Make retryChat resolve so the background promise settles quickly
     vi.mocked(retryChat).mockResolvedValueOnce({
       message: { role: 'assistant', content: 'wrap-up text' },
-      done: true,
+      done: true
     } as never);
 
     startWrapUp(triologue, [{ type: 'function', function: { name: 'bash' } }]);
@@ -115,7 +115,7 @@ describe('ESC wrap-up lifecycle (esc-wrap-up.ts state management)', () => {
   it('should return commit from evaluateWrapUp when past 3s grace period', async () => {
     vi.mocked(retryChat).mockResolvedValueOnce({
       message: { role: 'assistant', content: 'done' },
-      done: true,
+      done: true
     } as never);
 
     startWrapUp(triologue);
@@ -167,11 +167,7 @@ describe('ESC wrap-up lifecycle (esc-wrap-up.ts state management)', () => {
 
     expect(isWrapUpInFlight()).toBe(false);
     expect(getWrapUpState().promise).toBeNull();
-    expect(reporter).toHaveBeenCalledWith(
-      'info',
-      'wrap-up',
-      expect.stringContaining('compact'),
-    );
+    expect(reporter).toHaveBeenCalledWith('info', 'wrap-up', expect.stringContaining('compact'));
     setWrapUpStateReporter(null);
   });
 

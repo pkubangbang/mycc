@@ -2,7 +2,7 @@
  * Tests for compileCondition() and ConditionValidator.validate()
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { compileCondition, ConditionValidator } from '../hook/condition-validator.js';
 import type { Condition } from '../hook/conditions.js';
 
@@ -12,7 +12,11 @@ describe('compileCondition()', () => {
       const jsonResponse = JSON.stringify({
         trigger: ['git_commit'],
         condition: 'turn.count("edit_file") > 0',
-        action: { type: 'inject_before', tool: 'bash', args: { command: 'pnpm lint', intent: 'TEST ARTIFACT TO verify lint' } },
+        action: {
+          type: 'inject_before',
+          tool: 'bash',
+          args: { command: 'pnpm lint', intent: 'TEST ARTIFACT TO verify lint' }
+        }
       });
 
       const result = await compileCondition(jsonResponse, 'run lint before commit', 'test-skill', 0);
@@ -27,7 +31,7 @@ describe('compileCondition()', () => {
       const jsonResponse = JSON.stringify({
         trigger: ['bash'],
         condition: 'true',
-        action: { type: 'block' },
+        action: { type: 'block' }
       });
 
       const result = await compileCondition(jsonResponse, 'block force push', 'test-skill', 2);
@@ -77,7 +81,7 @@ describe('compileCondition()', () => {
         // Missing required 'when' field - will fail because when must be non-empty string
         trigger: ['bash'],
         condition: 'true',
-        action: { type: 'message' },
+        action: { type: 'message' }
       });
 
       const result = await compileCondition(jsonResponse, '', 'test-skill', 0);
@@ -90,7 +94,7 @@ describe('compileCondition()', () => {
       const jsonResponse = JSON.stringify({
         trigger: ['bash'],
         condition: 'eval("malicious")',
-        action: { type: 'message' },
+        action: { type: 'message' }
       });
 
       const result = await compileCondition(jsonResponse, 'test', 'test-skill', 0);
@@ -104,7 +108,7 @@ describe('compileCondition()', () => {
       const jsonResponse = JSON.stringify({
         trigger: ['bash'],
         condition: 'turn.count(', // Invalid syntax
-        action: { type: 'message' },
+        action: { type: 'message' }
       });
 
       const result = await compileCondition(jsonResponse, 'test', 'test-skill', 0);
@@ -123,7 +127,7 @@ describe('ConditionValidator.validate()', () => {
       when: 'test',
       condition: 'turn.count("edit_file") > 0',
       action: { type: 'message' },
-      version: 1,
+      version: 1
     };
 
     const result = ConditionValidator.validate(condition);
@@ -137,7 +141,7 @@ describe('ConditionValidator.validate()', () => {
       when: 'test',
       condition: 'eval("x")', // Expression error
       action: { type: 'message' },
-      version: 1,
+      version: 1
     };
 
     const result = ConditionValidator.validate(condition);

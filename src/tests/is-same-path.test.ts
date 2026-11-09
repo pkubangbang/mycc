@@ -18,7 +18,7 @@
  * both Windows (case-insensitive) and POSIX (case-sensitive) CI.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import * as path from 'path';
 import * as os from 'os';
 import { isSamePath, isInsideWorkspace } from '../utils/path.js';

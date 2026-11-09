@@ -21,7 +21,7 @@
  * awaits a controllable promise so the test can assert the flag DURING the
  * teardown await (the exact window the bug exposed).
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test';
 import { ServeHub } from '../../serve/serve-hub.js';
 import { isWebUiUp, setWebUiUp } from '../../loop/loop-events.js';
 
@@ -45,12 +45,18 @@ describe('restartServe() keeps isWebUiUp() true throughout the recycle (P2 #3)',
     // A controllable gate inside stop() so the test can observe the flag while
     // the async teardown is IN FLIGHT (the window the bug exposed).
     let releaseStop!: () => void;
-    const stopGate = new Promise<void>((resolve) => { releaseStop = resolve; });
+    const stopGate = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
 
     // Stub the heavy start/stop so no port is bound. stop() sets `restarting`
     // via restartServe() BEFORE calling it — exactly the real call order.
-    vi.spyOn(hub, 'stop').mockImplementation(async () => { await stopGate; });
-    vi.spyOn(hub, 'start').mockImplementation(async () => { /* no-op */ });
+    vi.spyOn(hub, 'stop').mockImplementation(async () => {
+      await stopGate;
+    });
+    vi.spyOn(hub, 'start').mockImplementation(async () => {
+      /* no-op */
+    });
 
     // Kick off the recycle (don't await yet — we need to inspect mid-flight).
     const recycle = hub.restartServe();
@@ -79,7 +85,9 @@ describe('restartServe() keeps isWebUiUp() true throughout the recycle (P2 #3)',
 
     // stop(true) no-ops (real recycle would tear down; here we only care that
     // it does NOT publish `false` mid-flight), and start() REJECTS.
-    vi.spyOn(hub, 'stop').mockImplementation(async () => { /* no-op */ });
+    vi.spyOn(hub, 'stop').mockImplementation(async () => {
+      /* no-op */
+    });
     vi.spyOn(hub, 'start').mockImplementation(async () => {
       throw new Error('start failed');
     });
@@ -101,7 +109,9 @@ describe('restartServe() keeps isWebUiUp() true throughout the recycle (P2 #3)',
     // blocking inside getInput() while the user clicks 重启).
     const pendingWait = hub.waitForInput();
 
-    vi.spyOn(hub, 'stop').mockImplementation(async () => { /* no-op */ });
+    vi.spyOn(hub, 'stop').mockImplementation(async () => {
+      /* no-op */
+    });
     vi.spyOn(hub, 'start').mockImplementation(async () => {
       throw new Error('start failed');
     });
@@ -113,7 +123,7 @@ describe('restartServe() keeps isWebUiUp() true throughout the recycle (P2 #3)',
     // guard reads to apply daemon-exit / terminal-fallback handling.
     const settled = await Promise.race([
       pendingWait.then((v) => ({ status: 'settled' as const, value: v })),
-      new Promise<{ status: 'pending' }>((resolve) => setTimeout(() => resolve({ status: 'pending' }), 50)),
+      new Promise<{ status: 'pending' }>((resolve) => setTimeout(() => resolve({ status: 'pending' }), 50))
     ]);
     expect(settled.status).toBe('settled');
     expect((settled as { value: string | null }).value).toBeNull();
@@ -135,10 +145,7 @@ describe('restartServe() keeps isWebUiUp() true throughout the recycle (P2 #3)',
     // spurious transition even if the behavioural stub above were refactored.
     const fs = await import('node:fs');
     const path = await import('node:path');
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '..', '..', 'serve', 'serve-hub.ts'),
-      'utf-8',
-    );
+    const src = fs.readFileSync(path.resolve(__dirname, '..', '..', 'serve', 'serve-hub.ts'), 'utf-8');
     // Two legitimate setWebUiUp(false) call sites now exist:
     //   1. stop()'s down-publish — MUST be guarded by !this.restarting.
     //   2. restartServe()'s failure-path down-publish (catch block) — only

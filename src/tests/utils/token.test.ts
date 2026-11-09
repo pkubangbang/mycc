@@ -1,13 +1,13 @@
 /**
  * Tests for token.ts - Token estimation utility
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import {
   estimateTokens,
   estimateTokensForMessages,
   estimateTextTokens,
   truncateToTokens,
-  estimateToolSchemaTokens,
+  estimateToolSchemaTokens
 } from '../../utils/token.js';
 
 describe('estimateTokens', () => {
@@ -45,9 +45,9 @@ describe('estimateTokens', () => {
       tool_calls: [
         {
           id: 'call_123',
-          function: { name: 'read_file', arguments: { path: 'test.ts' } },
-        } as any,
-      ],
+          function: { name: 'read_file', arguments: { path: 'test.ts' } }
+        } as any
+      ]
     });
     expect(tokens).toBeGreaterThan(0);
   });
@@ -73,7 +73,7 @@ describe('estimateTokensForMessages', () => {
     const single = estimateTokensForMessages([{ role: 'user', content: 'hello' }]);
     const multiple = estimateTokensForMessages([
       { role: 'user', content: 'hello' },
-      { role: 'assistant', content: 'world' },
+      { role: 'assistant', content: 'world' }
     ]);
     expect(multiple).toBeGreaterThan(single);
   });
@@ -81,7 +81,7 @@ describe('estimateTokensForMessages', () => {
   it('should be exactly the sum of individual estimates', () => {
     const msgs = [
       { role: 'user', content: 'hello' },
-      { role: 'assistant', content: 'world' },
+      { role: 'assistant', content: 'world' }
     ];
     const sum = estimateTokens(msgs[0]) + estimateTokens(msgs[1]);
     expect(estimateTokensForMessages(msgs)).toBe(sum);
@@ -92,7 +92,7 @@ describe('estimateTokensForMessages', () => {
       { role: 'system', content: 'System prompt here.' },
       { role: 'user', content: 'User query here.' },
       { role: 'assistant', content: 'Assistant response here.' },
-      { role: 'tool', content: 'Tool result here.', tool_name: 'bash', tool_call_id: 'call_1' },
+      { role: 'tool', content: 'Tool result here.', tool_name: 'bash', tool_call_id: 'call_1' }
     ]);
     expect(tokens).toBeGreaterThan(0);
   });
@@ -106,11 +106,11 @@ describe('estimateTokensForMessages', () => {
         tool_calls: [
           {
             id: 'call_1',
-            function: { name: 'read_file', arguments: { path: 'test.ts' } },
-          } as any,
-        ],
+            function: { name: 'read_file', arguments: { path: 'test.ts' } }
+          } as any
+        ]
       },
-      { role: 'tool', content: 'file content', tool_name: 'read_file', tool_call_id: 'call_1' },
+      { role: 'tool', content: 'file content', tool_name: 'read_file', tool_call_id: 'call_1' }
     ]);
     expect(tokens).toBeGreaterThan(0);
   });
@@ -151,8 +151,7 @@ describe('truncateToTokens', () => {
   it('truncates pure CJK (spaceless) text to a leading prefix instead of discarding it', () => {
     // Pure CJK: no whitespace, so split(/\s+/) yields one element. Without the
     // character-level fallback, pop() would empty the array and return "".
-    const longText =
-      '你好世界测试中文截断逻辑验证这是一个很长的中文句子用来测试截断功能是否正常工作'.repeat(4);
+    const longText = '你好世界测试中文截断逻辑验证这是一个很长的中文句子用来测试截断功能是否正常工作'.repeat(4);
     expect(estimateTextTokens(longText)).toBeGreaterThan(200);
     const truncated = truncateToTokens(longText, 200);
     // Must fit the budget.
@@ -197,9 +196,9 @@ describe('estimateToolSchemaTokens', () => {
         function: {
           name: 'bash',
           description: 'Run a command in the platform shell',
-          parameters: { type: 'object', properties: { command: { type: 'string' } } },
-        },
-      },
+          parameters: { type: 'object', properties: { command: { type: 'string' } } }
+        }
+      }
     ];
     expect(estimateToolSchemaTokens(tools)).toBeGreaterThan(0);
   });
@@ -209,7 +208,7 @@ describe('estimateToolSchemaTokens', () => {
     const many = [
       ...one,
       { type: 'function', function: { name: 'b', description: 'y', parameters: {} } },
-      { type: 'function', function: { name: 'c', description: 'z', parameters: {} } },
+      { type: 'function', function: { name: 'c', description: 'z', parameters: {} } }
     ];
     expect(estimateToolSchemaTokens(many)).toBeGreaterThan(estimateToolSchemaTokens(one));
   });
@@ -219,7 +218,7 @@ describe('estimateToolSchemaTokens', () => {
     // return a positive estimate from the name/description fields.
     const circular: Record<string, unknown> = {
       type: 'function',
-      function: { name: 'loopy', description: 'a tool with a circular param' },
+      function: { name: 'loopy', description: 'a tool with a circular param' }
     };
     (circular.function as Record<string, unknown>).parameters = circular;
     const tokens = estimateToolSchemaTokens([circular]);

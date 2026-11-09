@@ -11,13 +11,13 @@
  *   - it must fit under tool()'s result threshold (an over-size result is
  *     dumped to a file instead of stored).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 vi.mock('../../engine/chat-provider.js', () => ({
-  forkChat: vi.fn(async () => ''),
+  forkChat: vi.fn(async () => '')
 }));
 vi.mock('../../loop/agent-io.js', () => ({
-  agentIO: { verbose: vi.fn(), log: vi.fn(), warn: vi.fn(), error: vi.fn(), brief: vi.fn() },
+  agentIO: { verbose: vi.fn(), log: vi.fn(), warn: vi.fn(), error: vi.fn(), brief: vi.fn() }
 }));
 
 import { forkChat } from '../../engine/chat-provider.js';
@@ -28,15 +28,14 @@ import type { Message, Tool } from '../../types.js';
 const messages: Message[] = [{ role: 'user', content: 'plan the parser refactor' }];
 const tools: Tool[] = [];
 /** The caller's ESC-aware runner: here it just runs the operation. */
-const escAware = async <T>(fn: (ac: AbortController) => Promise<T>): Promise<T> =>
-  fn(new AbortController());
+const escAware = async <T>(fn: (ac: AbortController) => Promise<T>): Promise<T> => fn(new AbortController());
 
 const BASE = {
   messages,
   tools,
   briefMessage: 'recon done',
   resultThreshold: 25_000,
-  escAware,
+  escAware
 };
 
 describe('buildPlanScopeNote', () => {
@@ -53,7 +52,7 @@ describe('buildPlanScopeNote', () => {
     vi.mocked(forkChat).mockResolvedValue('a reflection');
     await buildPlanScopeNote(BASE);
 
-    const args = (vi.mocked(forkChat).mock.calls[0] as unknown[]) as [unknown, unknown, string];
+    const args = vi.mocked(forkChat).mock.calls[0] as unknown[] as [unknown, unknown, string];
     const prompt = args[2];
     // The four framings that make this a GLOBAL check, not a progress review.
     for (const label of ['TUNNEL', 'SUBLATE', 'WRONG PRB', 'REVERSIBLE']) {

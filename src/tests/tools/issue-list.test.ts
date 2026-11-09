@@ -2,7 +2,7 @@
  * issue-list.test.ts - Tests for the issue_list tool
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { issueListTool } from '../../tools/issue_list.js';
 import type { AgentContext, IssueModule, CoreModule } from '../../types.js';
 import { runTool, testSignal } from './test-utils.js';
@@ -21,7 +21,7 @@ function createMockIssueModule(): IssueModule {
     removeBlockage: vi.fn().mockResolvedValue(undefined),
     publishIssue: vi.fn().mockResolvedValue(true),
     releaseIssuesOwnedBy: vi.fn().mockResolvedValue([]),
-    clearAll: vi.fn(),
+    clearAll: vi.fn()
   };
 }
 
@@ -55,7 +55,7 @@ function createMockContext(issueModule: IssueModule): AgentContext {
     getConfusionIndex: vi.fn(() => 0),
     increaseConfusionIndex: vi.fn(),
     resetConfusionIndex: vi.fn(),
-    escAware: (vi.fn() as unknown) as CoreModule['escAware'],
+    escAware: vi.fn() as unknown as CoreModule['escAware']
   };
 
   return {
@@ -67,7 +67,7 @@ function createMockContext(issueModule: IssueModule): AgentContext {
     bg: {} as never,
     team: {} as never,
     wiki: {} as never,
-    peer: {} as never,
+    peer: {} as never
   };
 }
 
@@ -168,10 +168,15 @@ describe('issueListTool', () => {
   it('should ignore extra parameters', async () => {
     mockIssue.printIssues = vi.fn().mockResolvedValue('No issues.');
 
-    const result = await runTool(issueListTool, ctx, {
-      extra: 'parameter',
-      another: 123,
-    }, testSignal);
+    const result = await runTool(
+      issueListTool,
+      ctx,
+      {
+        extra: 'parameter',
+        another: 123
+      },
+      testSignal
+    );
 
     expect(mockIssue.printIssues).toHaveBeenCalled();
     expect(result).toBe('No issues.');

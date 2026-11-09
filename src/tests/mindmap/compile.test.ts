@@ -11,7 +11,7 @@
  * To run them, remove the .skip or run with a longer timeout.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { parse_markdown, get_bottom_up_nodes } from '../../mindmap/compile.js';
 import type { Node } from '../../mindmap/types.js';
 
@@ -235,7 +235,7 @@ describe('get_bottom_up_nodes', () => {
     summary: '',
     level: 1,
     children,
-    links: [],
+    links: []
   });
 
   // root
@@ -250,12 +250,12 @@ describe('get_bottom_up_nodes', () => {
   const root = node('root', [a, d]);
 
   it('visits every node exactly once, deepest first', () => {
-    const titles = get_bottom_up_nodes(root).map(n => n.title);
+    const titles = get_bottom_up_nodes(root).map((n) => n.title);
     expect(titles).toEqual(['C', 'B', 'A', 'D', 'root']);
   });
 
   it('places each child before its parent and the root last', () => {
-    const titles = get_bottom_up_nodes(root).map(n => n.title);
+    const titles = get_bottom_up_nodes(root).map((n) => n.title);
     for (const parent of [root, a, b]) {
       for (const child of parent.children) {
         expect(titles.indexOf(child.title)).toBeLessThan(titles.indexOf(parent.title));
@@ -265,6 +265,6 @@ describe('get_bottom_up_nodes', () => {
   });
 
   it('returns a single node for a leaf-only tree', () => {
-    expect(get_bottom_up_nodes(c).map(n => n.title)).toEqual(['C']);
+    expect(get_bottom_up_nodes(c).map((n) => n.title)).toEqual(['C']);
   });
 });

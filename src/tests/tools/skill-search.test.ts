@@ -14,7 +14,7 @@
  * the collect-skill tests (peer-owned); here we assert the SCORING contract.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 import { skillSearchTool } from '../../tools/skill_search.js';
 
 import type { AgentContext, Skill, SkillModule, WikiModule } from '../../types.js';
@@ -24,7 +24,7 @@ import type { AgentContext, Skill, SkillModule, WikiModule } from '../../types.j
 // Mock it so tests control the extracted keywords directly. The default
 // mock returns success with empty keywords; each test overrides it.
 vi.mock('../../loop/keyword-extractor.js', () => ({
-  extractKeywords: vi.fn().mockResolvedValue({ status: 'success', keywords: [], freeformQuery: '' }),
+  extractKeywords: vi.fn().mockResolvedValue({ status: 'success', keywords: [], freeformQuery: '' })
 }));
 
 // Mock the loader singleton. `buildAllSkillEntries` returns the qualified
@@ -39,13 +39,13 @@ vi.mock('../../context/shared/loader.js', () => ({
     getSkillKeywords: vi.fn(() => []),
     getSkillLayer: vi.fn(() => 'project'),
     buildSkillIndexEntry: vi.fn(() => null),
-    buildAllSkillEntries: vi.fn(() => currentScopeEntries),
-  },
+    buildAllSkillEntries: vi.fn(() => currentScopeEntries)
+  }
 }));
 
 // Mock config (threshold = 0.5 → boost neutral point at sim=0.5).
 vi.mock('../../config.js', () => ({
-  getSkillMatchThreshold: vi.fn(() => 0.5),
+  getSkillMatchThreshold: vi.fn(() => 0.5)
 }));
 
 // Import the mocked extractor so tests can override its return per-case.
@@ -59,17 +59,17 @@ const mockedExtractKeywords = vi.mocked(extractKeywords);
 function createMockContextWithSkills(
   workdir: string,
   skills: Skill[],
-  wikiGetResult: Array<{ document: { title: string; content: string }; similarity: number; hash?: string }> = [],
+  wikiGetResult: Array<{ document: { title: string; content: string }; similarity: number; hash?: string }> = []
 ): AgentContext {
   const skillModule: SkillModule = {
     loadSkills: vi.fn().mockResolvedValue(undefined),
     listSkills: vi.fn().mockReturnValue(skills),
-    getSkill: vi.fn().mockImplementation((name: string) => skills.find(s => s.name === name)),
+    getSkill: vi.fn().mockImplementation((name: string) => skills.find((s) => s.name === name)),
     listAllTools: vi.fn().mockReturnValue([]),
     compileCondition: vi.fn().mockResolvedValue({}),
     replaceCondition: vi.fn().mockResolvedValue({ success: true }),
     buildSkillIndexEntry: vi.fn(() => null),
-    buildAllSkillEntries: vi.fn(() => []),
+    buildAllSkillEntries: vi.fn(() => [])
   };
 
   const wikiModule: WikiModule = {
@@ -85,7 +85,7 @@ function createMockContextWithSkills(
     appendWAL: vi.fn().mockResolvedValue(undefined),
     rebuild: vi.fn().mockResolvedValue({ success: true, documentsProcessed: 0, errors: [] }),
     listDomains: vi.fn().mockResolvedValue([]),
-    getDomain: vi.fn().mockResolvedValue(undefined),
+    getDomain: vi.fn().mockResolvedValue(undefined)
   };
 
   const ctx = createMockContext(workdir);
@@ -100,7 +100,7 @@ function createSampleSkill(overrides: Partial<Skill> = {}): Skill {
     description: 'A test skill for unit testing',
     keywords: ['test', 'example'],
     content: '# Test Skill\n\nThis is the content of the test skill.',
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -113,9 +113,9 @@ function createSampleSkill(overrides: Partial<Skill> = {}): Skill {
  * its REAL path (matching qualified wiki titles to local qualified titles).
  */
 function setLocalScope(skills: Skill[], scope: string): void {
-  currentScopeEntries = skills.map(s => ({
+  currentScopeEntries = skills.map((s) => ({
     document: { title: `${scope}:${s.name}`, content: `Scope: ${scope}\nName: ${s.name}` },
-    contentHash: 'hash',
+    contentHash: 'hash'
   }));
 }
 
@@ -128,7 +128,7 @@ function wikiRow(name: string, scope: string, similarity: number) {
   return {
     document: { title: `${scope}:${name}`, content: `Scope: ${scope}\nName: ${name}` },
     similarity,
-    hash: 'h',
+    hash: 'h'
   };
 }
 
@@ -165,9 +165,7 @@ describe('skillSearchTool - Basics', () => {
   it('scores a skill that owns the 1st keyword at weight 10 (above floor 10? strict >)', async () => {
     // 1 keyword (weight 10), no semantic boost → score = 10, which is NOT > 10
     // (strict), so it is gated out. This pins the STRICT > 10 boundary.
-    const skills = [
-      createSampleSkill({ name: 'review', keywords: ['code'] }),
-    ];
+    const skills = [createSampleSkill({ name: 'review', keywords: ['code'] })];
     ctx = createMockContextWithSkills('/tmp/test', skills);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code'], freeformQuery: 'code review' });
 
@@ -180,10 +178,14 @@ describe('skillSearchTool - Basics', () => {
     // keywords: ['code','review'] → weights 10 + 7 = 17. No semantic → score 17 > 10.
     const skills = [
       createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] }),
-      createSampleSkill({ name: 'unrelated', keywords: ['deploy'] }),
+      createSampleSkill({ name: 'unrelated', keywords: ['deploy'] })
     ];
     ctx = createMockContextWithSkills('/tmp/test', skills);
-    mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
+    mockedExtractKeywords.mockResolvedValue({
+      status: 'success',
+      keywords: ['code', 'review'],
+      freeformQuery: 'code review'
+    });
 
     const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
@@ -197,11 +199,13 @@ describe('skillSearchTool - Basics', () => {
   it('applies positional weights by keyword ORDER, not by skill keyword position', async () => {
     // The 1st query keyword is worth 10. A skill owning only the 2nd keyword
     // earns 7 — below the strict > 10 floor → gated out.
-    const skills = [
-      createSampleSkill({ name: 'only-second', keywords: ['review'] }),
-    ];
+    const skills = [createSampleSkill({ name: 'only-second', keywords: ['review'] })];
     ctx = createMockContextWithSkills('/tmp/test', skills);
-    mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
+    mockedExtractKeywords.mockResolvedValue({
+      status: 'success',
+      keywords: ['code', 'review'],
+      freeformQuery: 'code review'
+    });
 
     const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
@@ -213,13 +217,13 @@ describe('skillSearchTool - Basics', () => {
     // earns 0 points → never enters the scoreboard → not surfaced.
     const skills = [
       createSampleSkill({ name: 'extra-only', keywords: ['extra'] }),
-      createSampleSkill({ name: 'first-kw', keywords: ['kw1'] }), // weight 10 → score 10, gated (strict)
+      createSampleSkill({ name: 'first-kw', keywords: ['kw1'] }) // weight 10 → score 10, gated (strict)
     ];
     ctx = createMockContextWithSkills('/tmp/test', skills);
     mockedExtractKeywords.mockResolvedValue({
       status: 'success',
       keywords: ['kw1', 'kw2', 'kw3', 'kw4', 'kw5', 'extra'],
-      freeformQuery: 'many',
+      freeformQuery: 'many'
     });
 
     const result = await runTool(skillSearchTool, ctx, { search: 'many keywords' }, testSignal);
@@ -239,13 +243,9 @@ describe('skillSearchTool - Basics', () => {
     // → score = 10 * 1.2 = 12 > 10 → surfaced. Uses the scope-aware path:
     // the local skill is indexed under "[user]:code-review" and the wiki row
     // carries that SAME qualified title, so the match resolves correctly.
-    const skills = [
-      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code'] }),
-    ];
+    const skills = [createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code'] })];
     setLocalScope(skills, '[user]');
-    ctx = createMockContextWithSkills('/tmp/test', skills, [
-      wikiRow('code-review', '[user]', 0.7),
-    ]);
+    ctx = createMockContextWithSkills('/tmp/test', skills, [wikiRow('code-review', '[user]', 0.7)]);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code'], freeformQuery: 'code review' });
 
     const result = await runTool(skillSearchTool, ctx, { search: 'code' }, testSignal);
@@ -266,13 +266,15 @@ describe('skillSearchTool - Basics', () => {
     // in the regression block below; here the wiki simply returns a different
     // bare skill under the local scope).
     const skills = [
-      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] }),
+      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] })
     ];
     setLocalScope(skills, '[user]');
-    ctx = createMockContextWithSkills('/tmp/test', skills, [
-      wikiRow('other-skill', '[user]', 0.9),
-    ]);
-    mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
+    ctx = createMockContextWithSkills('/tmp/test', skills, [wikiRow('other-skill', '[user]', 0.9)]);
+    mockedExtractKeywords.mockResolvedValue({
+      status: 'success',
+      keywords: ['code', 'review'],
+      freeformQuery: 'code review'
+    });
 
     const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
@@ -287,13 +289,15 @@ describe('skillSearchTool - Basics', () => {
     // sim == threshold (0.5) exactly → boost NOT applied (strict >) → boost 1.0.
     // 2 keywords (17 pts) clear the floor; assert no boost tag.
     const skills = [
-      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] }),
+      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] })
     ];
     setLocalScope(skills, '[user]');
-    ctx = createMockContextWithSkills('/tmp/test', skills, [
-      wikiRow('code-review', '[user]', 0.5),
-    ]);
-    mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
+    ctx = createMockContextWithSkills('/tmp/test', skills, [wikiRow('code-review', '[user]', 0.5)]);
+    mockedExtractKeywords.mockResolvedValue({
+      status: 'success',
+      keywords: ['code', 'review'],
+      freeformQuery: 'code review'
+    });
 
     const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
@@ -310,13 +314,15 @@ describe('skillSearchTool - Basics', () => {
     // Extraction yields keywords the skill does NOT own → 0 points → not in
     // scoreboard → even a 0.99 semantic similarity cannot surface it.
     const skills = [
-      createSampleSkill({ name: 'semantic-only', description: 'No keyword overlap', keywords: ['unrelated'] }),
+      createSampleSkill({ name: 'semantic-only', description: 'No keyword overlap', keywords: ['unrelated'] })
     ];
     setLocalScope(skills, '[user]');
-    ctx = createMockContextWithSkills('/tmp/test', skills, [
-      wikiRow('semantic-only', '[user]', 0.99),
-    ]);
-    mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
+    ctx = createMockContextWithSkills('/tmp/test', skills, [wikiRow('semantic-only', '[user]', 0.99)]);
+    mockedExtractKeywords.mockResolvedValue({
+      status: 'success',
+      keywords: ['code', 'review'],
+      freeformQuery: 'code review'
+    });
 
     const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
@@ -331,18 +337,22 @@ describe('skillSearchTool - Basics', () => {
     // Four skills each owning the 1st keyword (weight 10). Add a 2nd keyword
     // to control relative points, plus semantic boosts to vary scores.
     const skills = [
-      createSampleSkill({ name: 'a-top', keywords: ['code', 'review'] }),       // 10+7=17, sim 0.9 → *1.4 = 23.8
-      createSampleSkill({ name: 'b-mid', keywords: ['code', 'review'] }),       // 17, sim 0.7 → *1.2 = 20.4
-      createSampleSkill({ name: 'c-low', keywords: ['code', 'review'] }),       // 17, sim 0.6 → *1.1 = 18.7
-      createSampleSkill({ name: 'd-out', keywords: ['code', 'review'] }),       // 17, no sim → 17
+      createSampleSkill({ name: 'a-top', keywords: ['code', 'review'] }), // 10+7=17, sim 0.9 → *1.4 = 23.8
+      createSampleSkill({ name: 'b-mid', keywords: ['code', 'review'] }), // 17, sim 0.7 → *1.2 = 20.4
+      createSampleSkill({ name: 'c-low', keywords: ['code', 'review'] }), // 17, sim 0.6 → *1.1 = 18.7
+      createSampleSkill({ name: 'd-out', keywords: ['code', 'review'] }) // 17, no sim → 17
     ];
     setLocalScope(skills, '[user]');
     ctx = createMockContextWithSkills('/tmp/test', skills, [
       wikiRow('a-top', '[user]', 0.9),
       wikiRow('b-mid', '[user]', 0.7),
-      wikiRow('c-low', '[user]', 0.6),
+      wikiRow('c-low', '[user]', 0.6)
     ]);
-    mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
+    mockedExtractKeywords.mockResolvedValue({
+      status: 'success',
+      keywords: ['code', 'review'],
+      freeformQuery: 'code review'
+    });
 
     const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
@@ -379,17 +389,17 @@ describe('skillSearchTool - Basics', () => {
 
   it('handles wiki.get failure gracefully (boost defaults to 1.0, keyword-only ranking)', async () => {
     const skills = [
-      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] }),
+      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] })
     ];
     const skillModule: SkillModule = {
       loadSkills: vi.fn().mockResolvedValue(undefined),
       listSkills: vi.fn().mockReturnValue(skills),
-      getSkill: vi.fn().mockImplementation((name: string) => skills.find(s => s.name === name)),
+      getSkill: vi.fn().mockImplementation((name: string) => skills.find((s) => s.name === name)),
       listAllTools: vi.fn().mockReturnValue([]),
       compileCondition: vi.fn().mockResolvedValue({}),
       replaceCondition: vi.fn().mockResolvedValue({ success: true }),
       buildSkillIndexEntry: vi.fn(() => null),
-      buildAllSkillEntries: vi.fn(() => []),
+      buildAllSkillEntries: vi.fn(() => [])
     };
     const wikiModule: WikiModule = {
       get: vi.fn().mockRejectedValue(new Error('Embedding model not available')),
@@ -404,12 +414,16 @@ describe('skillSearchTool - Basics', () => {
       appendWAL: vi.fn().mockResolvedValue(undefined),
       rebuild: vi.fn().mockResolvedValue({ success: true, documentsProcessed: 0, errors: [] }),
       listDomains: vi.fn().mockResolvedValue([]),
-      getDomain: vi.fn().mockResolvedValue(undefined),
+      getDomain: vi.fn().mockResolvedValue(undefined)
     };
     const ctx2 = createMockContext('/tmp/test');
     ctx2.skill = skillModule;
     ctx2.wiki = wikiModule;
-    mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
+    mockedExtractKeywords.mockResolvedValue({
+      status: 'success',
+      keywords: ['code', 'review'],
+      freeformQuery: 'code review'
+    });
 
     const result = await runTool(skillSearchTool, ctx2, { search: 'code review' }, testSignal);
 
@@ -420,9 +434,7 @@ describe('skillSearchTool - Basics', () => {
   });
 
   it('reports no matches when extraction yields no keywords', async () => {
-    ctx = createMockContextWithSkills('/tmp/test', [
-      createSampleSkill({ name: 'code-review', keywords: ['code'] }),
-    ]);
+    ctx = createMockContextWithSkills('/tmp/test', [createSampleSkill({ name: 'code-review', keywords: ['code'] })]);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: [], freeformQuery: '' });
 
     const result = await runTool(skillSearchTool, ctx, { search: 'something vague' }, testSignal);
@@ -431,9 +443,7 @@ describe('skillSearchTool - Basics', () => {
   });
 
   it('reports no matches when extraction is skipped (trivial query)', async () => {
-    ctx = createMockContextWithSkills('/tmp/test', [
-      createSampleSkill({ name: 'code-review', keywords: ['code'] }),
-    ]);
+    ctx = createMockContextWithSkills('/tmp/test', [createSampleSkill({ name: 'code-review', keywords: ['code'] })]);
     mockedExtractKeywords.mockResolvedValue({ status: 'skipped' });
 
     const result = await runTool(skillSearchTool, ctx, { search: 'hello' }, testSignal);
@@ -442,9 +452,7 @@ describe('skillSearchTool - Basics', () => {
   });
 
   it('reports no matches when extraction fails (transient/abort)', async () => {
-    ctx = createMockContextWithSkills('/tmp/test', [
-      createSampleSkill({ name: 'code-review', keywords: ['code'] }),
-    ]);
+    ctx = createMockContextWithSkills('/tmp/test', [createSampleSkill({ name: 'code-review', keywords: ['code'] })]);
     mockedExtractKeywords.mockResolvedValue({ status: 'failed' });
 
     const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
@@ -454,29 +462,42 @@ describe('skillSearchTool - Basics', () => {
 
   it('calls brief with the match summary', async () => {
     const skills = [
-      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] }),
+      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] })
     ];
     ctx = createMockContextWithSkills('/tmp/test', skills);
-    mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
+    mockedExtractKeywords.mockResolvedValue({
+      status: 'success',
+      keywords: ['code', 'review'],
+      freeformQuery: 'code review'
+    });
 
     await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
-    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'skill_search', expect.stringContaining('code-review'), 'code review');
+    expect(ctx.core.brief).toHaveBeenCalledWith(
+      'info',
+      'skill_search',
+      expect.stringContaining('code-review'),
+      'code review'
+    );
   });
 
   it('passes topK=50 (flat) to ctx.wiki.get', async () => {
     const skills = [
-      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] }),
+      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] })
     ];
     setLocalScope(skills, '[user]');
     ctx = createMockContextWithSkills('/tmp/test', skills);
-    mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
+    mockedExtractKeywords.mockResolvedValue({
+      status: 'success',
+      keywords: ['code', 'review'],
+      freeformQuery: 'code review'
+    });
 
     await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
     expect(ctx.wiki.get).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ domain: 'skills', topK: 50, threshold: 0.5 }),
+      expect.objectContaining({ domain: 'skills', topK: 50, threshold: 0.5 })
     );
   });
 
@@ -489,19 +510,23 @@ describe('skillSearchTool - Basics', () => {
   // user/built-in same-named skill collides with EVERY project's copy.
   // =========================================================================
 
-  it('P1: does NOT apply another PROJECT scope\'s similarity to a local same-named skill', async () => {
+  it("P1: does NOT apply another PROJECT scope's similarity to a local same-named skill", async () => {
     // Local process loaded "code-review" under scope "mycc". The wiki (shared
     // domain) also has "[user]:code-review" with a high similarity from a
     // DIFFERENT process. The local skill must keep boost 1.0 (not inherit
     // the [user] row's 0.9). Use 2 keywords (17 pts) to clear the floor.
     const skills = [
-      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] }),
+      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] })
     ];
     setLocalScope(skills, 'mycc'); // local scope = project name "mycc"
     ctx = createMockContextWithSkills('/tmp/test', skills, [
-      wikiRow('code-review', '[user]', 0.9), // a DIFFERENT scope's row
+      wikiRow('code-review', '[user]', 0.9) // a DIFFERENT scope's row
     ]);
-    mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
+    mockedExtractKeywords.mockResolvedValue({
+      status: 'success',
+      keywords: ['code', 'review'],
+      freeformQuery: 'code review'
+    });
 
     const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
@@ -512,18 +537,20 @@ describe('skillSearchTool - Basics', () => {
     expect(result).not.toContain('% semantic');
   });
 
-  it('P1: does NOT apply a [user] scope\'s similarity to a local [built-in] same-named skill', async () => {
+  it("P1: does NOT apply a [user] scope's similarity to a local [built-in] same-named skill", async () => {
     // [user] and [built-in] are CONSTANT scopes on every machine — the most
     // insidious collision. Local skill under [built-in]; wiki row under
     // [user] with sim 0.8. The [built-in] skill must NOT inherit it.
     const skills = [
-      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] }),
+      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] })
     ];
     setLocalScope(skills, '[built-in]');
-    ctx = createMockContextWithSkills('/tmp/test', skills, [
-      wikiRow('code-review', '[user]', 0.8),
-    ]);
-    mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
+    ctx = createMockContextWithSkills('/tmp/test', skills, [wikiRow('code-review', '[user]', 0.8)]);
+    mockedExtractKeywords.mockResolvedValue({
+      status: 'success',
+      keywords: ['code', 'review'],
+      freeformQuery: 'code review'
+    });
 
     const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 
@@ -532,18 +559,20 @@ describe('skillSearchTool - Basics', () => {
     expect(result).not.toContain('x1.');
   });
 
-  it('P1: DOES apply the matching scope\'s similarity (positive control)', async () => {
+  it("P1: DOES apply the matching scope's similarity (positive control)", async () => {
     // Same setup as the project-scope collision test, but the wiki row IS
     // under the local scope "mycc" → the boost MUST apply. This confirms the
     // fix does not over-restrict (a genuine same-scope match still boosts).
     const skills = [
-      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] }),
+      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] })
     ];
     setLocalScope(skills, 'mycc');
-    ctx = createMockContextWithSkills('/tmp/test', skills, [
-      wikiRow('code-review', 'mycc', 0.9),
-    ]);
-    mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
+    ctx = createMockContextWithSkills('/tmp/test', skills, [wikiRow('code-review', 'mycc', 0.9)]);
+    mockedExtractKeywords.mockResolvedValue({
+      status: 'success',
+      keywords: ['code', 'review'],
+      freeformQuery: 'code review'
+    });
 
     const result = await runTool(skillSearchTool, ctx, { search: 'code review' }, testSignal);
 

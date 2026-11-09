@@ -31,7 +31,7 @@
  *   batch.afterWalAppend — whole batch WAL-appended, then crash before flip
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -53,7 +53,7 @@ vi.mock('../../config.js', () => ({
   getRagProvider: () => 'nomic',
   ensureDirs: () => {
     if (!fs.existsSync(logsDir())) fs.mkdirSync(logsDir(), { recursive: true });
-  },
+  }
 }));
 
 // --- Embedding mock -------------------------------------------------------
@@ -61,7 +61,7 @@ vi.mock('../../engine/rag-provider.js', () => ({
   EMBEDDING_DIM: 4,
   NAMESPACE: 'test-ns',
   getEmbedding: async (text: string) => embedFor(text),
-  getEmbeddings: async (texts: string[]) => texts.map(embedFor),
+  getEmbeddings: async (texts: string[]) => texts.map(embedFor)
 }));
 
 function embedFor(text: string): number[] {
@@ -74,11 +74,7 @@ function embedFor(text: string): number[] {
 // --- Fault injection ------------------------------------------------------
 // A single armed fault point. When set, the corresponding real boundary throws.
 // `null` = no fault armed (normal execution).
-type FaultPoint =
-  | 'put.afterDbAdd'
-  | 'put.afterWalAppend'
-  | 'delete.afterWalAppend'
-  | 'batch.afterWalAppend';
+type FaultPoint = 'put.afterDbAdd' | 'put.afterWalAppend' | 'delete.afterWalAppend' | 'batch.afterWalAppend';
 
 let armedFault: FaultPoint | null = null;
 /** Which boundary just fired (so a test can assert the fault actually hit). */
@@ -104,7 +100,9 @@ function faultAfterTableOp(op: 'add' | 'updateSolidify'): FaultPoint | null {
 // --- LanceDB mock (persistent across manager restarts within a test) ------
 // The in-memory table survives `newManager()` calls WITHIN a test; we reset it
 // explicitly in beforeEach. This models the persistent on-disk DB.
-interface Row { [k: string]: unknown }
+interface Row {
+  [k: string]: unknown;
+}
 const tableState = { rows: [] as Row[] };
 
 function rowMatches(row: Row, predicate: string): boolean {
@@ -154,7 +152,10 @@ vi.mock('@lancedb/lancedb', () => {
       if (Number((opts.values as Row).state) === 1) maybeThrowAfter('updateSolidify');
       let n = 0;
       for (const row of tableState.rows) {
-        if (!opts.where || rowMatches(row, opts.where)) { Object.assign(row, opts.values); n++; }
+        if (!opts.where || rowMatches(row, opts.where)) {
+          Object.assign(row, opts.values);
+          n++;
+        }
       }
       return { rowsUpdated: n, version: 1 };
     },
@@ -162,38 +163,55 @@ vi.mock('@lancedb/lancedb', () => {
       const state: { predicate: string; limit: number } = { predicate: 'true', limit: 10 };
       const builder = {
         distanceType: () => builder,
-        where: (p: string) => { state.predicate = p; return builder; },
-        limit: (n: number) => { state.limit = n; return builder; },
+        where: (p: string) => {
+          state.predicate = p;
+          return builder;
+        },
+        limit: (n: number) => {
+          state.limit = n;
+          return builder;
+        },
         toArray: async () =>
           tableState.rows
             .filter((r) => rowMatches(r, state.predicate))
             .map((r) => ({ ...r, _distance: cosineDistance(query, r.embedding as number[]) }))
             .sort((a, b) => (a._distance as number) - (b._distance as number))
-            .slice(0, state.limit),
+            .slice(0, state.limit)
       };
       return builder;
     },
     query: () => ({
       where: (predicate: string) => ({
-        toArray: async () => tableState.rows.filter((r) => rowMatches(r, predicate)),
+        toArray: async () => tableState.rows.filter((r) => rowMatches(r, predicate))
       }),
-      toArray: async () => tableState.rows,
+      toArray: async () => tableState.rows
     }),
-    schema: async () => ({ fields: staleSchema ? [{ name: 'hash' }] : [{ name: 'hash' }, { name: 'state' }] }),
+    schema: async () => ({ fields: staleSchema ? [{ name: 'hash' }] : [{ name: 'hash' }, { name: 'state' }] })
   };
   return {
     connect: async () => ({
       tableNames: async () => (staleSchema ? ['wiki_test-ns'] : ['wiki_test-ns']),
       openTable: async () => fakeTable,
-      createTable: async (_name: string, rows: Row[]) => { tableState.rows = [...rows]; return fakeTable; },
-      dropTable: async () => { tableState.rows = []; },
-    }),
+      createTable: async (_name: string, rows: Row[]) => {
+        tableState.rows = [...rows];
+        return fakeTable;
+      },
+      dropTable: async () => {
+        tableState.rows = [];
+      }
+    })
   };
 });
 
 function cosineDistance(a: number[], b: number[]): number {
-  let dot = 0, na = 0, nb = 0;
-  for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+  let dot = 0,
+    na = 0,
+    nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
   if (na === 0 || nb === 0) return 1;
   return 1 - dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
@@ -209,17 +227,19 @@ vi.mock('../../context/parent/wiki-wal.js', async (importOriginal) => {
     appendWALEntry: (entry: WALEntry) => {
       actual.appendWALEntry(entry); // real, durable write
       if (armedFault === 'delete.afterWalAppend' && entry.deleted) {
-        firedFault = armedFault; armedFault = null;
+        firedFault = armedFault;
+        armedFault = null;
         throw new Error('injected fault at delete.afterWalAppend');
       }
     },
     appendWALEntries: (entries: WALEntry[]) => {
       actual.appendWALEntries(entries); // real, durable write
       if (armedFault === 'batch.afterWalAppend') {
-        firedFault = armedFault; armedFault = null;
+        firedFault = armedFault;
+        armedFault = null;
         throw new Error('injected fault at batch.afterWalAppend');
       }
-    },
+    }
   };
 });
 
@@ -244,7 +264,10 @@ const C = 'a document content long enough to be a realistic wiki body';
 function allWalEntries(): WALEntry[] {
   if (!fs.existsSync(logsDir())) return [];
   const out: WALEntry[] = [];
-  for (const f of fs.readdirSync(logsDir()).filter((x) => x.endsWith('.wal')).sort()) {
+  for (const f of fs
+    .readdirSync(logsDir())
+    .filter((x) => x.endsWith('.wal'))
+    .sort()) {
     for (const line of fs.readFileSync(path.join(logsDir(), f), 'utf-8').trim().split('\n')) {
       if (line.trim()) out.push(JSON.parse(line) as WALEntry);
     }
@@ -290,9 +313,11 @@ describe('wiki crash recovery (WAL-as-truth, fault-injected)', () => {
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mycc-wiki-crash-'));
     fs.mkdirSync(logsDir(), { recursive: true });
-    fs.writeFileSync(domainsFile(), JSON.stringify([
-      { domain_name: 'project', description: '', created_at: '', project_folder: tempDir },
-    ]), 'utf-8');
+    fs.writeFileSync(
+      domainsFile(),
+      JSON.stringify([{ domain_name: 'project', description: '', created_at: '', project_folder: tempDir }]),
+      'utf-8'
+    );
     tableState.rows = [];
     staleSchema = false;
     armFault(null);
@@ -419,7 +444,7 @@ describe('wiki crash recovery (WAL-as-truth, fault-injected)', () => {
     const docs = [
       makeDoc('project', 'ba', `${C} batch-a`),
       makeDoc('project', 'bb', `${C} batch-b`),
-      makeDoc('project', 'bc', `${C} batch-c`),
+      makeDoc('project', 'bc', `${C} batch-c`)
     ];
     const hashes = docs.map(hashOf).sort();
 

@@ -12,7 +12,7 @@
  * git binary or repo is required.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { gitCommitTool } from '../../tools/git_commit.js';
 import { agentIO } from '../../loop/agent-io.js';
 
@@ -23,20 +23,20 @@ import { askResult, createMockContext, createTempDir, removeTempDir, runTool, te
 vi.mock('../../loop/agent-io.js', () => ({
   agentIO: {
     exec: vi.fn(),
-    isMainProcess: vi.fn(() => true),
-  },
+    isMainProcess: vi.fn(() => true)
+  }
 }));
 
 // Mock findWorktreeByName so the teammate branch never shells out to git.
 vi.mock('../../context/worktree-store.js', () => ({
-  findWorktreeByName: vi.fn(async () => null),
+  findWorktreeByName: vi.fn(async () => null)
 }));
 
 // Mock the config seed ONLY: git_commit reads the LIVE allow-list from
 // ctx.core.getAutoCommitBranches(), which the tests control directly.
 vi.mock('../../config.js', () => ({
   isAllowAutoCommit: vi.fn(() => false),
-  getAllowAutoCommitBranches: vi.fn(() => [] as string[]),
+  getAllowAutoCommitBranches: vi.fn(() => [] as string[])
 }));
 
 describe('gitCommitTool', () => {
@@ -56,7 +56,7 @@ describe('gitCommitTool', () => {
       stderr: '',
       interrupted: false,
       exitCode: 0,
-      timedOut: false,
+      timedOut: false
     });
     // Default: empty question response (Enter = No)
     vi.mocked(ctx.core.question).mockResolvedValue(askResult(''));
@@ -182,7 +182,7 @@ describe('gitCommitTool', () => {
         stderr: '',
         interrupted: false,
         exitCode: 0,
-        timedOut: false,
+        timedOut: false
       });
       const result = await runTool(gitCommitTool, ctx, { message: 'test commit' }, testSignal);
       expect(result).toBe('Error: No staged changes to commit. Use `git add` to stage changes first.');
@@ -356,9 +356,9 @@ describe('gitCommitTool', () => {
       expect(ctx.core.question).toHaveBeenCalled();
       expect(result).toContain('auto mode is ON');
       // An empty list short-circuits before any branch lookup.
-      const asked = vi.mocked(agentIO.exec).mock.calls.some(
-        ([a]) => String((a as { command: string }).command).includes('rev-parse'),
-      );
+      const asked = vi
+        .mocked(agentIO.exec)
+        .mock.calls.some(([a]) => String((a as { command: string }).command).includes('rev-parse'));
       expect(asked).toBe(false);
     });
   });

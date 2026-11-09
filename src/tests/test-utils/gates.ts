@@ -20,7 +20,7 @@
  * running, and `tmux kill-session` against no server throws.
  */
 
-import { describe } from 'vitest';
+import { describe } from 'vite-plus/test';
 import { execSync } from 'child_process';
 
 /** The null-redirection token for this platform. `2>nul` is Windows-only; on
@@ -41,7 +41,11 @@ export function hasLiveTmux(): boolean {
 }
 
 function probeTmux(): boolean {
-  try { sh('tmux -V', 3000); } catch { return false; }
+  try {
+    sh('tmux -V', 3000);
+  } catch {
+    return false;
+  }
   try {
     sh(`tmux new-session -d -s __mycc_gate_probe__ ${DEVNULL}`, 3000);
     sh(`tmux kill-session -t __mycc_gate_probe__ ${DEVNULL}`, 3000);
@@ -90,11 +94,7 @@ export function describeIfLiveTmux(name: string, fn: () => void): void {
  * @example describeIfOs('win32', 'taskkill paths', () => { … });
  * @example describeIfOs(['linux', 'darwin'], 'posix signal paths', () => { … });
  */
-export function describeIfOs(
-  platforms: NodeJS.Platform | NodeJS.Platform[],
-  name: string,
-  fn: () => void,
-): void {
+export function describeIfOs(platforms: NodeJS.Platform | NodeJS.Platform[], name: string, fn: () => void): void {
   const wanted = Array.isArray(platforms) ? platforms : [platforms];
   describe.skipIf(!wanted.includes(process.platform))(name, fn);
 }

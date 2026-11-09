@@ -13,7 +13,7 @@
  * entries and minifyMessages(getFullMessages()) completes.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { Triologue } from '../../loop/triologue.js';
 import { minifyMessages } from '../../utils/llm-chat-minifier.js';
 import type { Message, ToolCall } from '../../types.js';
@@ -27,8 +27,12 @@ function userMsg(text: string): Message {
 describe('installCompacted + wrap-up mark lifecycle', () => {
   const triple: Message[] = [
     userMsg('[summary] archived'),
-    { role: 'assistant', content: '', tool_calls: [{ id: 'x', type: 'function', function: { name: 'brief', arguments: {} } } as ToolCall] },
-    { role: 'tool', tool_name: 'brief', content: 'OK', tool_call_id: 'x' },
+    {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{ id: 'x', type: 'function', function: { name: 'brief', arguments: {} } } as ToolCall]
+    },
+    { role: 'tool', tool_name: 'brief', content: 'OK', tool_call_id: 'x' }
   ];
 
   function buildSixMsgTriologue(): Triologue {
@@ -102,7 +106,7 @@ describe('installCompacted + wrap-up mark lifecycle', () => {
     const t4 = build();
     t4.agent('', [
       { id: 'y1', type: 'function', function: { name: 'brief', arguments: {} } } as ToolCall,
-      { id: 'y2', type: 'function', function: { name: 'read_file', arguments: { path: 'p' } } } as ToolCall,
+      { id: 'y2', type: 'function', function: { name: 'read_file', arguments: { path: 'p' } } } as ToolCall
     ]);
     t4.tool('brief', 'OK', 'y1');
     t4.tool('read_file', 'X', 'y2');
@@ -111,7 +115,11 @@ describe('installCompacted + wrap-up mark lifecycle', () => {
     // A malformed HEAD is refused all-or-nothing.
     const badHead: Message[] = [
       userMsg('[summary]'),
-      { role: 'assistant', content: '', tool_calls: [{ id: 's', type: 'function', function: { name: 'brief', arguments: {} } } as ToolCall] }, // unanswered
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{ id: 's', type: 'function', function: { name: 'brief', arguments: {} } } as ToolCall]
+      } // unanswered
     ];
     const t5 = build();
     expect(t5.installCompacted(badHead, 4)).toBe(false);

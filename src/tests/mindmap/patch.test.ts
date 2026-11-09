@@ -12,29 +12,22 @@
  * call that leaves the process, so it is the one seam stubbed here.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vite-plus/test';
 
 const summarize = vi.hoisted(() => ({
-  calls: [] as Array<{ title: string; text: string; ancestorContext: string; workDir: string }>,
+  calls: [] as Array<{ title: string; text: string; ancestorContext: string; workDir: string }>
 }));
 
 vi.mock('../../mindmap/explorer-agent.js', () => ({
-  summarizeWithExplorer: vi.fn(
-    async (title: string, text: string, ancestorContext: string, workDir: string) => {
-      summarize.calls.push({ title, text, ancestorContext, workDir });
-      // Echo the inputs so a cascade bug shows up as wrong summary TEXT, not
-      // merely as a missing call.
-      return { summary: `S(${title}) [anc:${ancestorContext.split('\n')[0] || ''}]` };
-    },
-  ),
+  summarizeWithExplorer: vi.fn(async (title: string, text: string, ancestorContext: string, workDir: string) => {
+    summarize.calls.push({ title, text, ancestorContext, workDir });
+    // Echo the inputs so a cascade bug shows up as wrong summary TEXT, not
+    // merely as a missing call.
+    return { summary: `S(${title}) [anc:${ancestorContext.split('\n')[0] || ''}]` };
+  })
 }));
 
-import {
-  patch_mindmap,
-  summarize_node,
-  add_child_node,
-  applyPatchAction,
-} from '../../mindmap/patch.js';
+import { patch_mindmap, summarize_node, add_child_node, applyPatchAction } from '../../mindmap/patch.js';
 import { get_node, get_ancestors, get_descendants } from '../../mindmap/get-node.js';
 import type { Link, Mindmap, MindmapPatchAction, Node } from '../../mindmap/types.js';
 
@@ -43,12 +36,14 @@ import type { Link, Mindmap, MindmapPatchAction, Node } from '../../mindmap/type
  * mindmap_hash) in the real type — build fixtures through this helper so the
  * optional-vs-required split stays honest instead of `as never`.
  */
-function patchAction(partial: Pick<MindmapPatchAction, 'action' | 'path'> & Partial<MindmapPatchAction>): MindmapPatchAction {
+function patchAction(
+  partial: Pick<MindmapPatchAction, 'action' | 'path'> & Partial<MindmapPatchAction>
+): MindmapPatchAction {
   return {
     timestamp: '2024-01-15T10:00:00Z',
     reason: 'test',
     mindmap_hash: 'test-hash',
-    ...partial,
+    ...partial
   };
 }
 
@@ -65,9 +60,9 @@ function createTestMindmap(): Mindmap {
     updated_at: '2024-01-15T10:00:00Z',
     root: node('/', 'Root', 0, [
       node('/parent', 'Parent', 1, [
-        node('/parent/child', 'Child', 2, [node('/parent/child/grandchild', 'Grandchild', 3)]),
-      ]),
-    ]),
+        node('/parent/child', 'Child', 2, [node('/parent/child/grandchild', 'Grandchild', 3)])
+      ])
+    ])
   };
 }
 
@@ -182,7 +177,9 @@ describe('applyPatchAction (real implementation)', () => {
   });
 
   it('add: creates a node whose id is safeNodeId(title) and flags it as a patch node', () => {
-    expect(applyPatchAction(mindmap, patchAction({ action: 'add', path: '/parent', title: 'Code Cleanup', text: 't' }))).toBe(true);
+    expect(
+      applyPatchAction(mindmap, patchAction({ action: 'add', path: '/parent', title: 'Code Cleanup', text: 't' }))
+    ).toBe(true);
     const added = get_node(mindmap, '/parent/code-cleanup');
     expect(added?.title).toBe('Code Cleanup');
     expect(added?.is_patch).toBe(true);
@@ -199,26 +196,33 @@ describe('applyPatchAction (real implementation)', () => {
 
   it('add: rejects a missing parent or empty title/text', () => {
     expect(applyPatchAction(mindmap, patchAction({ action: 'add', path: '/nope', title: 'X', text: 't' }))).toBe(false);
-    expect(applyPatchAction(mindmap, patchAction({ action: 'add', path: '/parent', title: '', text: 't' }))).toBe(false);
-    expect(applyPatchAction(mindmap, patchAction({ action: 'add', path: '/parent', title: 'X', text: '' }))).toBe(false);
+    expect(applyPatchAction(mindmap, patchAction({ action: 'add', path: '/parent', title: '', text: 't' }))).toBe(
+      false
+    );
+    expect(applyPatchAction(mindmap, patchAction({ action: 'add', path: '/parent', title: 'X', text: '' }))).toBe(
+      false
+    );
   });
 
   it('add: sanitizes optional links, keeping only well-formed ones', () => {
-    applyPatchAction(mindmap, patchAction({
-      action: 'add',
-      path: '/parent',
-      title: 'Linked',
-      text: 't',
-      // Deliberately malformed entries: sanitizeLinks must drop the two bad
-      // ones. They are cast because the Link union correctly refuses them.
-      links: [
-        { target_type: 'term', term_name: 'letter-box', comment: 'ok' },
-        { target_type: 'url', comment: 'missing url' },
-        { target_type: 'bogus', comment: 'bad type' },
-      ] as unknown as Link[],
-    }));
+    applyPatchAction(
+      mindmap,
+      patchAction({
+        action: 'add',
+        path: '/parent',
+        title: 'Linked',
+        text: 't',
+        // Deliberately malformed entries: sanitizeLinks must drop the two bad
+        // ones. They are cast because the Link union correctly refuses them.
+        links: [
+          { target_type: 'term', term_name: 'letter-box', comment: 'ok' },
+          { target_type: 'url', comment: 'missing url' },
+          { target_type: 'bogus', comment: 'bad type' }
+        ] as unknown as Link[]
+      })
+    );
     expect(get_node(mindmap, '/parent/linked')?.links).toEqual([
-      { target_type: 'term', term_name: 'letter-box', comment: 'ok' },
+      { target_type: 'term', term_name: 'letter-box', comment: 'ok' }
     ]);
   });
 
@@ -249,18 +253,19 @@ describe('applyPatchAction (real implementation)', () => {
   });
 
   it('returns false for an unknown action', () => {
-    expect(applyPatchAction(mindmap, { ...patchAction({ action: 'add', path: '/parent' }), action: 'nope' } as unknown as MindmapPatchAction)).toBe(false);
+    expect(
+      applyPatchAction(mindmap, {
+        ...patchAction({ action: 'add', path: '/parent' }),
+        action: 'nope'
+      } as unknown as MindmapPatchAction)
+    ).toBe(false);
   });
 });
 
 describe('traversal helpers used by the cascade are the real ones', () => {
   it('get_descendants flattens DFS and get_ancestors walks root→parent', () => {
     const mm = createTestMindmap();
-    expect(get_descendants(mm.root).map((n) => n.id)).toEqual([
-      '/parent', '/parent/child', '/parent/child/grandchild',
-    ]);
-    expect(get_ancestors(mm, '/parent/child/grandchild').map((n) => n.title)).toEqual([
-      'Root', 'Parent', 'Child',
-    ]);
+    expect(get_descendants(mm.root).map((n) => n.id)).toEqual(['/parent', '/parent/child', '/parent/child/grandchild']);
+    expect(get_ancestors(mm, '/parent/child/grandchild').map((n) => n.title)).toEqual(['Root', 'Parent', 'Child']);
   });
 });

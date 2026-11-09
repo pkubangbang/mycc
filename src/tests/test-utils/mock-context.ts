@@ -1,12 +1,23 @@
 /**
  * mock-context.ts - Comprehensive AgentContext mocking utilities
- * 
+ *
  * This file provides standardized mock factories for AgentContext and its modules.
  * Use these utilities to create consistent, type-safe mocks across all test files.
  */
 
-import { vi } from 'vitest';
-import type { AgentContext, CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, TeamModule, WikiModule, PeerModule } from '../../types.js';
+import { vi } from 'vite-plus/test';
+import type {
+  AgentContext,
+  CoreModule,
+  TodoModule,
+  MailModule,
+  SkillModule,
+  IssueModule,
+  BgModule,
+  TeamModule,
+  WikiModule,
+  PeerModule
+} from '../../types.js';
 
 // ============================================================================
 // Mock Factories
@@ -44,8 +55,8 @@ export function createMockCore(overrides: Partial<CoreModule> = {}): CoreModule 
     getConfusionIndex: vi.fn(() => 0),
     increaseConfusionIndex: vi.fn(),
     resetConfusionIndex: vi.fn(),
-    escAware: (vi.fn() as unknown) as CoreModule['escAware'],
-    ...overrides,
+    escAware: vi.fn() as unknown as CoreModule['escAware'],
+    ...overrides
   };
 }
 
@@ -63,7 +74,7 @@ export function createMockTodo(overrides: Partial<TodoModule> = {}): TodoModule 
     pinTodo: vi.fn(() => null),
     findByPreviousHash: vi.fn(() => null),
     getPreventStopTodos: vi.fn(() => []),
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -77,7 +88,7 @@ export function createMockMail(overrides: Partial<MailModule> = {}): MailModule 
     collectMails: vi.fn(() => []),
     listMails: vi.fn(() => []),
     clearUnread: vi.fn(),
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -94,7 +105,7 @@ export function createMockSkill(overrides: Partial<SkillModule> = {}): SkillModu
     replaceCondition: vi.fn(async () => ({ success: true })),
     buildSkillIndexEntry: vi.fn(() => null),
     buildAllSkillEntries: vi.fn(() => []),
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -116,7 +127,7 @@ export function createMockIssue(overrides: Partial<IssueModule> = {}): IssueModu
     publishIssue: vi.fn(async () => true),
     releaseIssuesOwnedBy: vi.fn().mockResolvedValue([]),
     clearAll: vi.fn(),
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -132,7 +143,7 @@ export function createMockBg(overrides: Partial<BgModule> = {}): BgModule {
     killAllRunning: vi.fn(async () => {}),
     getTask: vi.fn(() => undefined),
     waitForTasks: vi.fn(async () => ({ reason: 'completed' as const })),
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -151,7 +162,7 @@ export function createMockTeam(overrides: Partial<TeamModule> = {}): TeamModule 
     mailTo: vi.fn(),
     broadcast: vi.fn(),
     handlePendingQuestions: vi.fn(async () => {}),
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -173,7 +184,7 @@ export function createMockWiki(overrides: Partial<WikiModule> = {}): WikiModule 
     getDomain: vi.fn(async () => undefined),
     registerDomain: vi.fn(async () => {}),
     indexSkills: vi.fn(async () => {}),
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -203,8 +214,8 @@ export function createMockPeer(overrides: Partial<PeerModule> = {}): PeerModule 
     getLatestHeartbeat: vi.fn(() => null),
     getPid: vi.fn(() => null),
     setOnChannelJoin: vi.fn(),
-  setOnTombstone: vi.fn(),
-    ...overrides,
+    setOnTombstone: vi.fn(),
+    ...overrides
   };
 }
 
@@ -230,18 +241,18 @@ export interface MockContextOptions {
 
 /**
  * Create a complete mock AgentContext with sensible defaults.
- * 
+ *
  * @param options - Override specific module functions or provide custom workdir
  * @returns A fully typed AgentContext mock
- * 
+ *
  * @example
  * // Basic usage
  * const ctx = createMockContext();
- * 
+ *
  * @example
  * // With custom workdir
  * const ctx = createMockContext({ workdir: '/tmp/test-dir' });
- * 
+ *
  * @example
  * // With custom core behavior
  * const ctx = createMockContext({
@@ -252,11 +263,11 @@ export interface MockContextOptions {
  */
 export function createMockContext(options: MockContextOptions = {}): AgentContext {
   const workdir = options.workdir ?? process.cwd();
-  
+
   return {
-    core: createMockCore({ 
+    core: createMockCore({
       getWorkDir: () => workdir,
-      ...options.core 
+      ...options.core
     }),
     todo: createMockTodo(options.todo),
     mail: createMockMail(options.mail),
@@ -265,7 +276,7 @@ export function createMockContext(options: MockContextOptions = {}): AgentContex
     bg: createMockBg(options.bg),
     team: createMockTeam(options.team),
     wiki: createMockWiki(options.wiki),
-    peer: createMockPeer(options.peer),
+    peer: createMockPeer(options.peer)
   };
 }
 
@@ -283,6 +294,6 @@ export function createMinimalMockContext(workdir?: string): AgentContext {
     bg: {} as BgModule,
     team: {} as TeamModule,
     wiki: {} as WikiModule,
-    peer: createMockPeer(),
+    peer: createMockPeer()
   };
 }

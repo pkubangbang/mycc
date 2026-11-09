@@ -7,7 +7,7 @@
  * ambiguous `!granted` branch and surfaced `User responded: ""`.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { planOffTool } from '../../tools/plan_off.js';
 
 import type { AgentContext } from '../../types.js';
@@ -114,7 +114,11 @@ describe('planOffTool', () => {
   });
 
   describe('tool metadata', () => {
-    it('should have correct name', () => { expect(planOffTool.name).toBe('plan_off'); });
-    it('should have main-only scope', () => { expect(planOffTool.scope).toEqual(['main']); });
+    it('should have correct name', () => {
+      expect(planOffTool.name).toBe('plan_off');
+    });
+    it('should have main-only scope', () => {
+      expect(planOffTool.scope).toEqual(['main']);
+    });
   });
 });

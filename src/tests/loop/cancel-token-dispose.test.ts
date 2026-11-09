@@ -8,7 +8,7 @@
  * still fires cancellation after disposal-free creation.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 
 describe('process cancel token disposal', () => {
   async function load() {

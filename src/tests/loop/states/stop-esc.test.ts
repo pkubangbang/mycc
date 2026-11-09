@@ -19,7 +19,7 @@
  * sibling stop-team-event-poll.test.ts (the awaitTeammates primitive that
  * replaced the one-shot awaitTeam call), which now delegates to awaitTeammates.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
 
@@ -29,10 +29,12 @@ vi.mock('../../../loop/agent-io.js', () => {
   return {
     agentIO: {
       isNeglectedMode: vi.fn(() => neglected),
-      setNeglectedMode: vi.fn((v: boolean) => { neglected = v; }),
+      setNeglectedMode: vi.fn((v: boolean) => {
+        neglected = v;
+      }),
       log: vi.fn(),
-      flushOutput: vi.fn(),
-    },
+      flushOutput: vi.fn()
+    }
   };
 });
 
@@ -44,9 +46,9 @@ vi.mock('../../../loop/state-machine.js', () => ({
     HOOK: 'hook',
     TOOL: 'tool',
     STOP: 'stop',
-    AWAIT: 'await',
+    AWAIT: 'await'
   },
-  presentResult: vi.fn(),
+  presentResult: vi.fn()
 }));
 
 // esc-wrap-up: mock startWrapUp so we can assert it's called on the
@@ -55,17 +57,17 @@ vi.mock('../../../loop/esc-wrap-up.js', () => ({
   startWrapUp: vi.fn(),
   evaluateWrapUp: vi.fn(),
   clearWrapUp: vi.fn(),
-  setWrapUpReporter: vi.fn(),
+  setWrapUpReporter: vi.fn()
 }));
 
 // loader: mock getToolsForScope (STOP calls it for the wrap-up tools list)
 vi.mock('../../../context/shared/loader.js', () => ({
-  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) },
+  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) }
 }));
 
 // chat-helpers: mock stopSpinner (STOP calls it on the mid-execution ESC path)
 vi.mock('../../../engine/chat-helpers.js', () => ({
-  stopSpinner: vi.fn(),
+  stopSpinner: vi.fn()
 }));
 
 vi.mock('../../../loop/triologue.js', () => {
@@ -83,7 +85,7 @@ vi.mock('../../../loop/triologue.js', () => {
 });
 
 vi.mock('../../../loop/exit-auto.js', () => ({
-  exitAutoMode: vi.fn(() => true),
+  exitAutoMode: vi.fn(() => true)
 }));
 
 // --- Imports after mocks -----------------------------------------------------
@@ -133,9 +135,9 @@ describe('handleStop — centralized neglection wrap-up', () => {
       team: {
         listTeammates: vi.fn(() => [
           { name: 'dev1', status: 'working' },
-          { name: 'dev2', status: 'idle' },
-        ]) as never,
-      },
+          { name: 'dev2', status: 'idle' }
+        ]) as never
+      }
     });
     const env = createMockMachineEnv({ triologue, ctxOptions: { team: ctx.team } });
     env.ctx = ctx;
@@ -151,7 +153,6 @@ describe('handleStop — centralized neglection wrap-up', () => {
     const logMsg = vi.mocked(agentIO.log).mock.calls[0][0] as string;
     expect(logMsg).toContain('teammates still working');
   });
-
 
   // ── Path 2: Direct ESC→STOP (new startWrapUp path) ──
 
@@ -178,8 +179,4 @@ describe('handleStop — centralized neglection wrap-up', () => {
     // presentResult NOT called (no text-only response to display)
     expect(presentResult).not.toHaveBeenCalled();
   });
-
-
-
-
 });

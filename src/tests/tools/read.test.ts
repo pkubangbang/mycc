@@ -2,7 +2,7 @@
  * read.test.ts - Tests for the read tool
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import { readTool } from '../../tools/read.js';
@@ -213,7 +213,7 @@ describe('readTool', () => {
       timestamp: 1700000000000,
       prefix: 'I was about to say one thing.',
       candidates: ['go forward option', 'go backward option', 'synthesize option'],
-      continuation: 'But actually, let me reconsider the assumptions.',
+      continuation: 'But actually, let me reconsider the assumptions.'
     };
     const testFile = path.join(tempDir, 'crossroad-1700000000000.json');
     fs.writeFileSync(testFile, JSON.stringify(record, null, 2));

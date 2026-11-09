@@ -16,7 +16,7 @@
  * failure mode the unit tests can miss, because each layer passes its own
  * isolated test) makes this suite fail.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -48,11 +48,11 @@ describe('PR #26 invariant: real submissions → one bubble each; no note render
         writer.append({
           role,
           content,
-          ...extra,
+          ...extra
         } as unknown as Parameters<typeof writer.append>[0]);
       },
       tokenThreshold: 50000,
-      resultThreshold: 100000,
+      resultThreshold: 100000
     });
 
     // The real ServeHub, wired to the Triologue via the provider seam — the
@@ -111,7 +111,9 @@ describe('PR #26 invariant: real submissions → one bubble each; no note render
   it('a marker-less injected user piece never renders (anti-smuggling)', () => {
     // A raw 'new' user record with NO user_origin marker (as an injected
     // [HINT] would appear if it leaked into the journal as a plain append).
-    writer.append({ role: 'user', content: '[HINT] leaked note', kind: 'new' } as unknown as Parameters<typeof writer.append>[0]);
+    writer.append({ role: 'user', content: '[HINT] leaked note', kind: 'new' } as unknown as Parameters<
+      typeof writer.append
+    >[0]);
     // And a legitimate submission for contrast.
     triologue.submitUser('legitimate', 'prompt');
     const userBubbles = readHistory(transcriptPath, []).filter((e) => e.type === 'user');

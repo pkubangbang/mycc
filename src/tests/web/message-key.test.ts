@@ -13,7 +13,7 @@
  *      v-for keys as an identity invariant, not something to tolerate
  *      collisions on.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { messageKey } from '../../web/src/message-key.js';
 import type { ChatMessage } from '../../web/src/types.js';
 
@@ -76,9 +76,7 @@ describe('messageKey — fallback (no id, strict uniqueness)', () => {
   });
 
   it('produces all-distinct fallback keys across a list with repeated stamps/labels', () => {
-    const list: ChatMessage[] = Array.from({ length: 5 }, () =>
-      mk({ timestamp: 999, label: 'brief' }),
-    );
+    const list: ChatMessage[] = Array.from({ length: 5 }, () => mk({ timestamp: 999, label: 'brief' }));
     const keys = list.map((m, i) => messageKey(m, i));
     expect(new Set(keys).size).toBe(keys.length);
   });
@@ -91,7 +89,7 @@ describe('messageKey — mixed list (id + fallback)', () => {
       mk({ id: 100, timestamp: 1, label: 'a' }),
       mk({ timestamp: 2, label: 'b' }),
       mk({ timestamp: 2, label: 'b' }), // same ts+label as above → index breaks tie
-      mk({ id: 101, timestamp: 2, label: 'b' }), // same ts+label but distinct id
+      mk({ id: 101, timestamp: 2, label: 'b' }) // same ts+label but distinct id
     ];
     const keys = list.map((m, i) => messageKey(m, i));
     expect(new Set(keys).size).toBe(keys.length);
@@ -166,7 +164,7 @@ describe('messageKey — loadMore anchor key stable across a window shift (#26/#
       mk({ id: 1, timestamp: 10, label: 'assistant' }), // anchor (index 0)
       mk({ id: 2, timestamp: 20, label: 'user' }),
       mk({ timestamp: 30, label: 'brief' }), // id-less, below the anchor
-      mk({ timestamp: 40, label: 'result' }), // id-less, below the anchor
+      mk({ timestamp: 40, label: 'result' }) // id-less, below the anchor
     ];
     const anchor = window[0];
     const captured = messageKey(anchor, 0);

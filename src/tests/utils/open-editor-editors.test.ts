@@ -2,11 +2,11 @@
  * open-editor-editors.test.ts - Editor recognition tests
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 
 // Mock child_process.spawn
 vi.mock('child_process', () => ({
-  spawn: vi.fn(),
+  spawn: vi.fn()
 }));
 
 // Store original env
@@ -22,7 +22,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'vscode',
       binary: 'code',
-      isTerminalEditor: false,
+      isTerminalEditor: false
     });
   });
 
@@ -31,7 +31,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'vscode',
       binary: 'code',
-      isTerminalEditor: false,
+      isTerminalEditor: false
     });
   });
 
@@ -40,7 +40,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'vscode-insiders',
       binary: 'code-insiders',
-      isTerminalEditor: false,
+      isTerminalEditor: false
     });
   });
 
@@ -49,7 +49,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'vscodium',
       binary: 'codium',
-      isTerminalEditor: false,
+      isTerminalEditor: false
     });
   });
 
@@ -58,7 +58,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'vim',
       binary: 'vim',
-      isTerminalEditor: true,
+      isTerminalEditor: true
     });
   });
 
@@ -67,7 +67,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'neovim',
       binary: 'nvim',
-      isTerminalEditor: true,
+      isTerminalEditor: true
     });
   });
 
@@ -76,7 +76,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'neovim',
       binary: 'nvim',
-      isTerminalEditor: true,
+      isTerminalEditor: true
     });
   });
 
@@ -85,7 +85,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'nano',
       binary: 'nano',
-      isTerminalEditor: true,
+      isTerminalEditor: true
     });
   });
 
@@ -94,7 +94,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'sublime',
       binary: 'subl',
-      isTerminalEditor: false,
+      isTerminalEditor: false
     });
   });
 
@@ -103,7 +103,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'atom',
       binary: 'atom',
-      isTerminalEditor: false,
+      isTerminalEditor: false
     });
   });
 
@@ -112,7 +112,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'zed',
       binary: 'zed',
-      isTerminalEditor: false,
+      isTerminalEditor: false
     });
   });
 
@@ -121,7 +121,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'webstorm',
       binary: 'webstorm',
-      isTerminalEditor: false,
+      isTerminalEditor: false
     });
   });
 
@@ -130,7 +130,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'intellij',
       binary: 'idea',
-      isTerminalEditor: false,
+      isTerminalEditor: false
     });
   });
 
@@ -139,7 +139,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'intellij',
       binary: 'idea',
-      isTerminalEditor: false,
+      isTerminalEditor: false
     });
   });
 
@@ -148,7 +148,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'textmate',
       binary: 'mate',
-      isTerminalEditor: false,
+      isTerminalEditor: false
     });
   });
 
@@ -157,7 +157,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'emacs',
       binary: 'emacs',
-      isTerminalEditor: true,
+      isTerminalEditor: true
     });
   });
 
@@ -166,7 +166,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'xdg-open',
       binary: 'xdg-open',
-      isTerminalEditor: false,
+      isTerminalEditor: false
     });
   });
 
@@ -175,7 +175,7 @@ describe('getEditor', () => {
     expect(editor).toEqual({
       id: 'mycustomeditor',
       binary: 'MyCustomEditor',
-      isTerminalEditor: false,
+      isTerminalEditor: false
     });
   });
 

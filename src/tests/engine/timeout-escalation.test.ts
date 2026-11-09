@@ -27,7 +27,7 @@
  *     could never resume.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 
 // --- Mocks (must be set up BEFORE importing modules that use them) ----------
 
@@ -39,8 +39,8 @@ vi.mock('../../loop/agent-io.js', () => ({
     verbose: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
-    error: vi.fn(),
-  },
+    error: vi.fn()
+  }
 }));
 
 // Mock the ollama client constructor's dependency surface. ollama.ts imports
@@ -51,13 +51,13 @@ vi.mock('../../config.js', () => ({
   getOllamaApiKey: vi.fn(() => ''),
   getOllamaModel: vi.fn(() => 'test-model'),
   getVisionModel: vi.fn(() => 'test-vision'),
-  isVisionEnabled: vi.fn(() => false),
+  isVisionEnabled: vi.fn(() => false)
 }));
 
 // Mock the health-check probeModel import (not used by retryChat, but the
 // module-level import in ollama.ts must resolve).
 vi.mock('../../engine/health-check.js', () => ({
-  probeModel: vi.fn(),
+  probeModel: vi.fn()
 }));
 
 // Mock the owned Ollama HTTP transport so retryChat reaches the collectStream
@@ -66,25 +66,30 @@ vi.mock('../../engine/health-check.js', () => ({
 vi.mock('../../engine/ollama-http.js', () => {
   function makeFakeStream() {
     return {
-      abort() { /* no-op for tests */ },
+      abort() {
+        /* no-op for tests */
+      },
       async *[Symbol.asyncIterator]() {
         yield { message: { content: '' }, done: true, done_reason: 'stop' };
-      },
+      }
     };
   }
   class OllamaHttpClient {
     constructor(_opts: unknown) {}
-    async chat(_req: unknown) { return makeFakeStream(); }
-    async list() { return { models: [] }; }
-    async show(_model: string) { return { model_info: {}, details: {} }; }
+    async chat(_req: unknown) {
+      return makeFakeStream();
+    }
+    async list() {
+      return { models: [] };
+    }
+    async show(_model: string) {
+      return { model_info: {}, details: {} };
+    }
   }
   return { OllamaHttpClient };
 });
 
-import {
-  escalateFirstTokenTimeout,
-  DEFAULT_RETRY_CONFIG,
-} from '../../engine/chat-helpers.js';
+import { escalateFirstTokenTimeout, DEFAULT_RETRY_CONFIG } from '../../engine/chat-helpers.js';
 
 // Collect the per-attempt config values that ollama.ts's retryChat passes
 // into collectStream, by mocking collectStream to record the config it
@@ -121,16 +126,17 @@ async function loadOllamaRetryChat(
     firstTokenTimeoutMs?: number;
     tokenLivenessTimeoutMs?: number;
     livenessMsForChunk?: (chunk: unknown) => number | undefined;
-  }) => Promise<unknown[]>,
+  }) => Promise<unknown[]>
 ): Promise<{
-  retryChat: typeof import('../../engine/ollama.js')['retryChat'];
-  StreamTimeoutError: typeof import('../../engine/chat-helpers.js')['StreamTimeoutError'];
+  retryChat: (typeof import('../../engine/ollama.js'))['retryChat'];
+  StreamTimeoutError: (typeof import('../../engine/chat-helpers.js'))['StreamTimeoutError'];
 }> {
-  let exposedStreamTimeoutError: typeof import('../../engine/chat-helpers.js')['StreamTimeoutError'] | undefined;
+  let exposedStreamTimeoutError: (typeof import('../../engine/chat-helpers.js'))['StreamTimeoutError'] | undefined;
 
   vi.doMock('../../engine/chat-helpers.js', async (importOriginal) => {
-    const actual = await importOriginal() as Record<string, unknown>;
-    exposedStreamTimeoutError = actual.StreamTimeoutError as typeof import('../../engine/chat-helpers.js')['StreamTimeoutError'];
+    const actual = (await importOriginal()) as Record<string, unknown>;
+    exposedStreamTimeoutError =
+      actual.StreamTimeoutError as (typeof import('../../engine/chat-helpers.js'))['StreamTimeoutError'];
     return {
       ...actual,
       // Override collectStream to record the per-attempt timeouts and delegate
@@ -143,22 +149,24 @@ async function loadOllamaRetryChat(
       // thinking-only chunks). We capture the classifier so the tests can
       // invoke it with a synthetic thinking-only chunk and read out the
       // thinking window, exactly as collectStream does at runtime.
-      collectStream: vi.fn(async (
-        _stream: unknown,
-        _abort: unknown,
-        config: {
-          firstTokenTimeoutMs?: number;
-          tokenLivenessTimeoutMs?: number;
-          livenessMsForChunk?: (chunk: unknown) => number | undefined;
-        },
-      ) => {
-        collectStreamCalls.push({
-          firstTokenTimeoutMs: config.firstTokenTimeoutMs,
-          tokenLivenessTimeoutMs: config.tokenLivenessTimeoutMs,
-          livenessMsForChunk: config.livenessMsForChunk,
-        });
-        return collectStreamImpl(config);
-      }),
+      collectStream: vi.fn(
+        async (
+          _stream: unknown,
+          _abort: unknown,
+          config: {
+            firstTokenTimeoutMs?: number;
+            tokenLivenessTimeoutMs?: number;
+            livenessMsForChunk?: (chunk: unknown) => number | undefined;
+          }
+        ) => {
+          collectStreamCalls.push({
+            firstTokenTimeoutMs: config.firstTokenTimeoutMs,
+            tokenLivenessTimeoutMs: config.tokenLivenessTimeoutMs,
+            livenessMsForChunk: config.livenessMsForChunk
+          });
+          return collectStreamImpl(config);
+        }
+      )
     };
   });
 
@@ -168,7 +176,11 @@ async function loadOllamaRetryChat(
   // exact class object ollama.ts's instanceof check uses.
   if (!exposedStreamTimeoutError) {
     const helpers = await import('../../engine/chat-helpers.js');
-    exposedStreamTimeoutError = (helpers as unknown as { StreamTimeoutError: typeof import('../../engine/chat-helpers.js')['StreamTimeoutError'] }).StreamTimeoutError;
+    exposedStreamTimeoutError = (
+      helpers as unknown as {
+        StreamTimeoutError: (typeof import('../../engine/chat-helpers.js'))['StreamTimeoutError'];
+      }
+    ).StreamTimeoutError;
   }
   return { retryChat: mod.retryChat, StreamTimeoutError: exposedStreamTimeoutError };
 }
@@ -180,7 +192,9 @@ async function loadOllamaRetryChat(
  * field shape ollama.ts's classifier checks. Returns undefined if no
  * classifier was captured for that call (should not happen for retryChat).
  */
-function thinkingWindowFromCall(call: { livenessMsForChunk?: (chunk: unknown) => number | undefined }): number | undefined {
+function thinkingWindowFromCall(call: {
+  livenessMsForChunk?: (chunk: unknown) => number | undefined;
+}): number | undefined {
   return call.livenessMsForChunk?.({ message: { thinking: 'reasoning', content: '' } });
 }
 
@@ -188,13 +202,15 @@ function thinkingWindowFromCall(call: { livenessMsForChunk?: (chunk: unknown) =>
  * Read the RESPONSE liveness window from a captured classifier, by invoking
  * it with a synthetic response-only chunk (message.content set, no thinking).
  */
-function responseWindowFromCall(call: { livenessMsForChunk?: (chunk: unknown) => number | undefined }): number | undefined {
+function responseWindowFromCall(call: {
+  livenessMsForChunk?: (chunk: unknown) => number | undefined;
+}): number | undefined {
   return call.livenessMsForChunk?.({ message: { content: 'response' } });
 }
 
 describe('escalateFirstTokenTimeout()', () => {
   const BASE = DEFAULT_RETRY_CONFIG.firstTokenTimeoutMs!; // 20000
-  const CAP = DEFAULT_RETRY_CONFIG.responseTimeoutMs!;    // 120000
+  const CAP = DEFAULT_RETRY_CONFIG.responseTimeoutMs!; // 120000
 
   it('should return the base timeout on attempt 1 regardless of previousWasTimeout', () => {
     expect(escalateFirstTokenTimeout(BASE, 1, CAP, false)).toBe(BASE);
@@ -205,8 +221,8 @@ describe('escalateFirstTokenTimeout()', () => {
   it('should double the timeout per attempt when previousWasTimeout=true (uncapped)', () => {
     // Use a large cap so the doubling is not clamped — verifies the multiplier.
     const bigCap = 1_000_000;
-    expect(escalateFirstTokenTimeout(BASE, 2, bigCap, true)).toBe(BASE * 2);   // 40s
-    expect(escalateFirstTokenTimeout(BASE, 3, bigCap, true)).toBe(BASE * 4);  // 80s
+    expect(escalateFirstTokenTimeout(BASE, 2, bigCap, true)).toBe(BASE * 2); // 40s
+    expect(escalateFirstTokenTimeout(BASE, 3, bigCap, true)).toBe(BASE * 4); // 80s
     expect(escalateFirstTokenTimeout(BASE, 4, bigCap, true)).toBe(BASE * 8); // 160s
   });
 
@@ -247,7 +263,7 @@ describe('ollama.ts retryChat — escalating first-token timeout across attempts
       if (idx <= 2) {
         throw new MockedSTE(
           `Request timed out after ${config.firstTokenTimeoutMs}ms (waiting for first token)`,
-          'first-token',
+          'first-token'
         );
       }
       return [{ message: { content: 'ok' }, done: true, done_reason: 'stop' }];
@@ -260,7 +276,7 @@ describe('ollama.ts retryChat — escalating first-token timeout across attempts
     const response = await retryChat(
       { model: 'test-model', messages: [] },
       // Force a tiny backoff so sleep resolves immediately.
-      { baseDelayMs: 0, maxDelayMs: 0, noSpinner: true },
+      { baseDelayMs: 0, maxDelayMs: 0, noSpinner: true }
     );
 
     // 3 collectStream calls: attempt 1 (20s), 2 (40s), 3 (80s).
@@ -282,10 +298,7 @@ describe('ollama.ts retryChat — escalating first-token timeout across attempts
     // After maxRetries+1 attempts (4) all fail with the same transient error,
     // retryChat throws it out. Real timers (see rationale above) finish fast.
     await expect(
-      retryChat(
-        { model: 'test-model', messages: [] },
-        { baseDelayMs: 0, maxDelayMs: 0, noSpinner: true },
-      ),
+      retryChat({ model: 'test-model', messages: [] }, { baseDelayMs: 0, maxDelayMs: 0, noSpinner: true })
     ).rejects.toThrow(/ECONNRESET/);
 
     // 4 collectStream calls, all at the base 20s — no escalation.
@@ -307,17 +320,14 @@ describe('ollama.ts retryChat — escalating first-token timeout across attempts
       // First two attempts: liveness timeout (reason 'liveness'). Third: succeed.
       const idx = collectStreamCalls.length;
       if (idx <= 2) {
-        throw new MockedSTE(
-          `Stream stalled: no token received for ${config.tokenLivenessTimeoutMs}ms`,
-          'liveness',
-        );
+        throw new MockedSTE(`Stream stalled: no token received for ${config.tokenLivenessTimeoutMs}ms`, 'liveness');
       }
       return [{ message: { content: 'ok' }, done: true, done_reason: 'stop' }];
     });
 
     const response = await retryChat(
       { model: 'test-model', messages: [] },
-      { baseDelayMs: 0, maxDelayMs: 0, noSpinner: true },
+      { baseDelayMs: 0, maxDelayMs: 0, noSpinner: true }
     );
 
     // 3 collectStream calls across attempts 1, 2, 3.
@@ -344,9 +354,7 @@ describe('ollama.ts retryChat — escalating first-token timeout across attempts
     // window on every attempt (the phase-aware fix is meaningful only if
     // this holds — otherwise thinking chunks get no extra tolerance).
     for (const call of collectStreamCalls) {
-      expect(thinkingWindowFromCall(call)).toBeGreaterThan(
-        call.tokenLivenessTimeoutMs!,
-      );
+      expect(thinkingWindowFromCall(call)).toBeGreaterThan(call.tokenLivenessTimeoutMs!);
     }
 
     expect(response.message?.content).toBe('ok');
@@ -362,10 +370,7 @@ describe('ollama.ts retryChat — escalating first-token timeout across attempts
     });
 
     await expect(
-      retryChat(
-        { model: 'test-model', messages: [] },
-        { baseDelayMs: 0, maxDelayMs: 0, noSpinner: true },
-      ),
+      retryChat({ model: 'test-model', messages: [] }, { baseDelayMs: 0, maxDelayMs: 0, noSpinner: true })
     ).rejects.toThrow(/ECONNRESET/);
 
     expect(collectStreamCalls).toHaveLength(4);
@@ -385,17 +390,11 @@ describe('ollama.ts retryChat — escalating first-token timeout across attempts
     // far longer than the configured response budget).
     const { retryChat, StreamTimeoutError: MockedSTE } = await loadOllamaRetryChat(async (_config) => {
       // All 4 attempts fail with a liveness timeout.
-      throw new MockedSTE(
-        'Stream stalled: no token received',
-        'liveness',
-      );
+      throw new MockedSTE('Stream stalled: no token received', 'liveness');
     });
 
     await expect(
-      retryChat(
-        { model: 'test-model', messages: [] },
-        { baseDelayMs: 0, maxDelayMs: 0, noSpinner: true },
-      ),
+      retryChat({ model: 'test-model', messages: [] }, { baseDelayMs: 0, maxDelayMs: 0, noSpinner: true })
     ).rejects.toThrow(/stalled/);
 
     // 4 attempts: response 10→20→40→80 (under cap); thinking 30→60→120→120 (capped).

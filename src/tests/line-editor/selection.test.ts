@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { LineEditor } from '../../utils/line-editor.js';
 
 import { key, charKey, createMockStdout } from '../test-utils/index.js';
@@ -30,11 +30,13 @@ describe('LineEditor - Selection', () => {
     delete process.env.COLUMNS;
   });
 
-  function createEditor(options: {
-    prompt?: string;
-    history?: string[];
-    columns?: number;
-  } = {}): LineEditor {
+  function createEditor(
+    options: {
+      prompt?: string;
+      history?: string[];
+      columns?: number;
+    } = {}
+  ): LineEditor {
     if (options.columns) {
       process.env.COLUMNS = String(options.columns);
     }
@@ -42,7 +44,7 @@ describe('LineEditor - Selection', () => {
       prompt: options.prompt ?? '> ',
       stdout: mockStdout,
       onDone: onDone as (value: string) => void,
-      history: options.history,
+      history: options.history
     });
     writeCalls = [];
     vi.mocked(mockStdout.write).mockClear();
@@ -155,7 +157,6 @@ describe('LineEditor - Selection', () => {
       const output = lastRender();
       expect(output).not.toContain('\x1b[7m');
     });
-
   });
 
   // ==========================================
@@ -174,7 +175,6 @@ describe('LineEditor - Selection', () => {
       expect(onDone).toHaveBeenCalledWith('ab');
     });
 
-
     it('should replace selection when typing a char', () => {
       editor = createEditor();
       editor.handleKey(charKey('a'));
@@ -185,8 +185,6 @@ describe('LineEditor - Selection', () => {
       editor.handleKey(key('return'));
       expect(onDone).toHaveBeenCalledWith('abX');
     });
-
-
 
     it('should do normal backspace when no selection', () => {
       editor = createEditor();
@@ -232,7 +230,6 @@ describe('LineEditor - Selection', () => {
       editor.handleKey(key('return'));
       expect(onDone).toHaveBeenCalledWith('X');
     });
-
   });
 
   // ==========================================
@@ -256,6 +253,5 @@ describe('LineEditor - Selection', () => {
       editor.handleKey(key('return'));
       expect(onDone).toHaveBeenCalledWith('aXb');
     });
-
   });
 });

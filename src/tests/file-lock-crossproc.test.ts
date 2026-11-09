@@ -15,7 +15,7 @@
  * tsx ESM loader the compose bin uses.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -82,11 +82,11 @@ describe('withFileLock: real cross-process mutual exclusion', () => {
       const children = [];
       for (let i = 0; i < N; i++) {
         children.push(
-          spawnSync(
-            process.execPath,
-            ['--import', 'tsx', scriptFile, lockTarget, logFile],
-            { cwd: REPO_ROOT, encoding: 'utf-8', timeout: 30_000 },
-          ),
+          spawnSync(process.execPath, ['--import', 'tsx', scriptFile, lockTarget, logFile], {
+            cwd: REPO_ROOT,
+            encoding: 'utf-8',
+            timeout: 30_000
+          })
         );
       }
       for (const c of children) {
@@ -104,7 +104,7 @@ describe('withFileLock: real cross-process mutual exclusion', () => {
         // No overlap: the previous interval must have ended before this one began.
         expect(
           intervals[i].enter >= intervals[i - 1].exit,
-          `overlap detected between ${JSON.stringify(intervals[i - 1])} and ${JSON.stringify(intervals[i])}`,
+          `overlap detected between ${JSON.stringify(intervals[i - 1])} and ${JSON.stringify(intervals[i])}`
         ).toBe(true);
       }
     } finally {

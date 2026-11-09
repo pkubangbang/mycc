@@ -17,7 +17,7 @@
  * Uses a real Pinia instance so the store's reactive projections are exercised
  * exactly as in the browser.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { createPinia, setActivePinia } from 'pinia';
 import { useChatStore } from '../../web/src/stores/chat-store.js';
 

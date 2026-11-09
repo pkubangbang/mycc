@@ -27,7 +27,7 @@
  *   5. Drift guards: the verdict is derived from stdout.isTTY ONLY; no tool
  *      imports config.isPlainOutput directly.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vite-plus/test';
 import { mutedSlowSuite } from './utils/slow-suite.js';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -36,7 +36,7 @@ import { execFileSync } from 'child_process';
 // agentIO is imported by chat-helpers at module load; stub it so the spinner
 // tests do not touch the real I/O singleton.
 vi.mock('../loop/agent-io.js', () => ({
-  agentIO: { verbose: vi.fn(), brief: vi.fn() },
+  agentIO: { verbose: vi.fn(), brief: vi.fn() }
 }));
 
 import { isPlainOutput } from '../config.js';
@@ -128,8 +128,14 @@ describe('startSpinner() stream + suppression', () => {
     delete process.env.MYCC_DEBUG_ANSI;
     const out: string[] = [];
     const err: string[] = [];
-    vi.spyOn(process.stdout, 'write').mockImplementation((c: unknown) => { out.push(String(c)); return true; });
-    vi.spyOn(process.stderr, 'write').mockImplementation((c: unknown) => { err.push(String(c)); return true; });
+    vi.spyOn(process.stdout, 'write').mockImplementation((c: unknown) => {
+      out.push(String(c));
+      return true;
+    });
+    vi.spyOn(process.stderr, 'write').mockImplementation((c: unknown) => {
+      err.push(String(c));
+      return true;
+    });
 
     startSpinner();
     stopSpinner();
@@ -145,8 +151,14 @@ describe('startSpinner() stream + suppression', () => {
     process.env.MYCC_PLAIN = '1';
     const out: string[] = [];
     const err: string[] = [];
-    vi.spyOn(process.stdout, 'write').mockImplementation((c: unknown) => { out.push(String(c)); return true; });
-    vi.spyOn(process.stderr, 'write').mockImplementation((c: unknown) => { err.push(String(c)); return true; });
+    vi.spyOn(process.stdout, 'write').mockImplementation((c: unknown) => {
+      out.push(String(c));
+      return true;
+    });
+    vi.spyOn(process.stderr, 'write').mockImplementation((c: unknown) => {
+      err.push(String(c));
+      return true;
+    });
 
     startSpinner();
 
@@ -162,8 +174,14 @@ describe('decoration writers are clean in plain mode (integration)', () => {
   function capture(fn: () => void): { out: string; err: string } {
     const out: string[] = [];
     const err: string[] = [];
-    const so = vi.spyOn(process.stdout, 'write').mockImplementation((c: unknown) => { out.push(String(c)); return true; });
-    const se = vi.spyOn(process.stderr, 'write').mockImplementation((c: unknown) => { err.push(String(c)); return true; });
+    const so = vi.spyOn(process.stdout, 'write').mockImplementation((c: unknown) => {
+      out.push(String(c));
+      return true;
+    });
+    const se = vi.spyOn(process.stderr, 'write').mockImplementation((c: unknown) => {
+      err.push(String(c));
+      return true;
+    });
     try {
       fn();
     } finally {
@@ -182,7 +200,10 @@ describe('decoration writers are clean in plain mode (integration)', () => {
 
   it('beginProgressDisplay/endProgressDisplay emit nothing in plain mode (no reserve, no stray blanks)', () => {
     process.env.MYCC_PLAIN = '1';
-    const { out, err } = capture(() => { beginProgressDisplay(); endProgressDisplay(); });
+    const { out, err } = capture(() => {
+      beginProgressDisplay();
+      endProgressDisplay();
+    });
     expect(out).toBe('');
     expect(err).toBe('');
   });
@@ -190,7 +211,10 @@ describe('decoration writers are clean in plain mode (integration)', () => {
   it('beginProgressDisplay/endProgressDisplay emit the reserve + erase when decorated', () => {
     delete process.env.MYCC_PLAIN;
     delete process.env.MYCC_DEBUG_ANSI;
-    const { out } = capture(() => { beginProgressDisplay(); endProgressDisplay(); });
+    const { out } = capture(() => {
+      beginProgressDisplay();
+      endProgressDisplay();
+    });
     expect(out).toContain('\n\n\n\n');
     expect(out).toContain('\x1b[4A\x1b[J');
   });
@@ -254,7 +278,7 @@ describe.skipIf(mutedSlowSuite(import.meta.url))('--help honours the plain-outpu
       cwd: repoRoot,
       encoding: 'utf-8',
       env: { ...process.env, FORCE_COLOR: '1' },
-      timeout: 20000,
+      timeout: 20000
     });
 
     // Sanity: help actually printed.
@@ -365,7 +389,10 @@ describe('drift guards (plain-output contract)', () => {
     // The Lead never owns a TTY — an isTTY gate there is dead code. The
     // spinner's suppression must be isPlainOutput().
     const src = read('../engine/chat-helpers.ts');
-    const spinnerBlock = src.slice(src.indexOf('export function startSpinner'), src.indexOf('export function stopSpinner'));
+    const spinnerBlock = src.slice(
+      src.indexOf('export function startSpinner'),
+      src.indexOf('export function stopSpinner')
+    );
     expect(spinnerBlock).toContain('isPlainOutput()');
     expect(spinnerBlock).not.toMatch(/process\.stdout\.isTTY/);
   });

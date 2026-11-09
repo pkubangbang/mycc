@@ -24,7 +24,7 @@
  * ~/.mycc-store is untouched.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -48,7 +48,7 @@ async function loadIdentity() {
     return {
       ...actual,
       getPeerName: () => hook.name,
-      getLaunchArgs: () => '(none)',
+      getLaunchArgs: () => '(none)'
     };
   });
   return import('../peer/identity.js');
@@ -80,15 +80,12 @@ function seedLiveTwin(sid: string, name: string, workDir: string, pid: number): 
     mailbox: path.join(workDir, '.mycc', 'sessions', sid, 'unread-lead.jsonl'),
     startedAt: Date.now(),
     args: '(none)',
-    name,
+    name
   };
   fs.writeFileSync(identityFile, JSON.stringify(map, null, 2));
   const hbDir = path.join(discovery, 'heartbeat');
   fs.mkdirSync(hbDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(hbDir, `${sid}.json`),
-    JSON.stringify({ heartbeats: [Date.now()], briefs: [], pid }),
-  );
+  fs.writeFileSync(path.join(hbDir, `${sid}.json`), JSON.stringify({ heartbeats: [Date.now()], briefs: [], pid }));
 }
 
 beforeEach(() => {
@@ -168,21 +165,28 @@ describe('IdentityManager: name uniqueness replaces the pinned-sid lease', () =>
     // live, so it must NOT block the restart (assertNameNotLive branch: no
     // fresh beat → not live).
     const identityFile = path.join(discovery, 'identity.json');
-    fs.writeFileSync(identityFile, JSON.stringify({
-      [TWIN_SID]: {
-        sessionId: TWIN_SID,
-        workDir: process.cwd(),
-        mailbox: path.join(process.cwd(), '.mycc', 'sessions', TWIN_SID, 'unread-lead.jsonl'),
-        startedAt: Date.now(),
-        args: '(none)',
-        name: NAME,
-      },
-    }, null, 2));
+    fs.writeFileSync(
+      identityFile,
+      JSON.stringify(
+        {
+          [TWIN_SID]: {
+            sessionId: TWIN_SID,
+            workDir: process.cwd(),
+            mailbox: path.join(process.cwd(), '.mycc', 'sessions', TWIN_SID, 'unread-lead.jsonl'),
+            startedAt: Date.now(),
+            args: '(none)',
+            name: NAME
+          }
+        },
+        null,
+        2
+      )
+    );
     const hbDir = path.join(discovery, 'heartbeat');
     fs.mkdirSync(hbDir, { recursive: true });
     fs.writeFileSync(
       path.join(hbDir, `${TWIN_SID}.json`),
-      JSON.stringify({ heartbeats: [], briefs: [], pid: process.pid }), // live pid, never beat
+      JSON.stringify({ heartbeats: [], briefs: [], pid: process.pid }) // live pid, never beat
     );
     expect(() => new id.IdentityManager(SELF_SID, process.cwd(), '/tmp/mbox')).not.toThrow();
   });

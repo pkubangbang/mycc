@@ -15,7 +15,7 @@
  * so the test asserts the WATCHER's decisions without importing real tool
  * modules (that path is covered elsewhere).
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -48,8 +48,12 @@ function probeLoader(): { loader: Loader; seen: string[] } {
     tools: Map<string, { layer: string }>;
     skills: Map<string, { layer: string; skill: { sourceFile: string } }>;
   };
-  anyLoader.reloadTool = async (f: string) => { seen.push(`tool:${path.basename(f)}`); };
-  anyLoader.reloadSkill = (f: string) => { seen.push(`skill:${path.basename(f)}`); };
+  anyLoader.reloadTool = async (f: string) => {
+    seen.push(`tool:${path.basename(f)}`);
+  };
+  anyLoader.reloadSkill = (f: string) => {
+    seen.push(`skill:${path.basename(f)}`);
+  };
   return { loader, seen };
 }
 

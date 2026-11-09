@@ -25,7 +25,7 @@
  * lands there too. Nothing touches the real ~/.mycc-store or the real
  * project's .mycc/sessions.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -44,17 +44,12 @@ vi.mock('os', async (importOriginal) => {
     ...actual,
     // Redirect getUserSessionsDir() (~/.mycc-store/sessions) into the temp
     // home so the test never touches the real user session store.
-    homedir: () => tmp.home,
+    homedir: () => tmp.home
   };
 });
 
 // Import AFTER the mock is registered.
-import {
-  findSessionPaths,
-  loadSessionById,
-  SessionNotFoundError,
-  AmbiguousSessionError,
-} from '../../session/index.js';
+import { findSessionPaths, loadSessionById, SessionNotFoundError, AmbiguousSessionError } from '../../session/index.js';
 
 /** Write a valid session directory + session-{id}.json under a sessions root. */
 function writeSession(sessionsRoot: string, id: string): string {
@@ -68,7 +63,7 @@ function writeSession(sessionsRoot: string, id: string): string {
     lead_triologue: path.join(dir, 'triologue-lead.jsonl'),
     child_triologues: [],
     teammates: [],
-    first_query: 'test query',
+    first_query: 'test query'
   };
   const file = path.join(dir, `session-${id}.json`);
   fs.writeFileSync(file, JSON.stringify(session), 'utf-8');
@@ -95,8 +90,16 @@ afterEach(() => {
   process.chdir(originalCwd);
   vi.restoreAllMocks();
   const rmOpts = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 } as const;
-  try { fs.rmSync(tmp.home, rmOpts); } catch { /* best-effort */ }
-  try { fs.rmSync(tmp.project, rmOpts); } catch { /* best-effort */ }
+  try {
+    fs.rmSync(tmp.home, rmOpts);
+  } catch {
+    /* best-effort */
+  }
+  try {
+    fs.rmSync(tmp.project, rmOpts);
+  } catch {
+    /* best-effort */
+  }
 });
 
 describe('findSessionPaths / loadSessionById resolution', () => {

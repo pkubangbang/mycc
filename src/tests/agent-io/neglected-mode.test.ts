@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 
 // Mock LineEditor before importing agent-io
 vi.mock('../../utils/line-editor.js', () => {
@@ -7,8 +7,8 @@ vi.mock('../../utils/line-editor.js', () => {
       handleKey: vi.fn(),
       resize: vi.fn(),
       getHistory: vi.fn().mockReturnValue([]),
-      close: vi.fn(),
-    })),
+      close: vi.fn()
+    }))
   };
 });
 
@@ -20,8 +20,7 @@ describe('agent-io', () => {
     // Reset singleton state before each test
     (agentIO as unknown as { neglectedModeFlag: boolean }).neglectedModeFlag = false;
     (agentIO as unknown as { activeLineEditor: unknown }).activeLineEditor = null;
-    (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> }).outputBuffer =
-      [];
+    (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> }).outputBuffer = [];
     (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> }).onNeglectedCallbacks = new Set();
   });
 
@@ -92,8 +91,7 @@ describe('agent-io', () => {
         agentIO.onNeglected(callback);
 
         // Trigger the callbacks manually through the internal state
-        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> })
-          .onNeglectedCallbacks;
+        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> }).onNeglectedCallbacks;
         expect(callbacks.has(callback)).toBe(true);
       });
 
@@ -106,8 +104,7 @@ describe('agent-io', () => {
         agentIO.onNeglected(callback2);
         agentIO.onNeglected(callback3);
 
-        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> })
-          .onNeglectedCallbacks;
+        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> }).onNeglectedCallbacks;
         expect(callbacks.size).toBe(3);
       });
 
@@ -119,8 +116,7 @@ describe('agent-io', () => {
         agentIO.onNeglected(callback2);
 
         // Trigger callbacks
-        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> })
-          .onNeglectedCallbacks;
+        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> }).onNeglectedCallbacks;
         callbacks.forEach((cb) => cb());
 
         expect(callback1).toHaveBeenCalledTimes(1);
@@ -131,8 +127,7 @@ describe('agent-io', () => {
         const callback = vi.fn();
         const unsubscribe = agentIO.onNeglected(callback);
 
-        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> })
-          .onNeglectedCallbacks;
+        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> }).onNeglectedCallbacks;
         expect(callbacks.has(callback)).toBe(true);
 
         unsubscribe();
@@ -148,8 +143,7 @@ describe('agent-io', () => {
         unsubscribe2();
 
         // Trigger callbacks
-        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> })
-          .onNeglectedCallbacks;
+        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> }).onNeglectedCallbacks;
         callbacks.forEach((cb) => cb());
 
         expect(callback1).toHaveBeenCalledTimes(1);
@@ -172,7 +166,7 @@ describe('agent-io', () => {
       // Set active line editor
       (agentIO as unknown as { activeLineEditor: unknown }).activeLineEditor = {
         handleKey: vi.fn(),
-        close: vi.fn(),
+        close: vi.fn()
       };
 
       expect(agentIO.isInteractionMode()).toBe(true);
@@ -182,7 +176,7 @@ describe('agent-io', () => {
       agentIO.setNeglectedMode(true);
       (agentIO as unknown as { activeLineEditor: unknown }).activeLineEditor = {
         handleKey: vi.fn(),
-        close: vi.fn(),
+        close: vi.fn()
       };
 
       expect(agentIO.isInteractionMode()).toBe(true);
@@ -192,7 +186,7 @@ describe('agent-io', () => {
       agentIO.setNeglectedMode(true);
       (agentIO as unknown as { activeLineEditor: unknown }).activeLineEditor = {
         handleKey: vi.fn(),
-        close: vi.fn(),
+        close: vi.fn()
       };
 
       // Clear both

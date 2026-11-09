@@ -2,7 +2,7 @@
  * format-issue.test.ts - Tests for shared issue formatting utilities
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { formatIssueList, formatIssueDetail } from '../../context/shared/format-issue.js';
 import type { Issue } from '../../types.js';
 
@@ -21,8 +21,8 @@ describe('formatIssueList', () => {
         blockedBy: [],
         blocks: [],
         comments: [],
-        createdAt: new Date('2024-01-01'),
-      },
+        createdAt: new Date('2024-01-01')
+      }
     ];
 
     const result = formatIssueList(issues);
@@ -42,8 +42,8 @@ describe('formatIssueList', () => {
         blockedBy: [],
         blocks: [],
         comments: [],
-        createdAt: new Date(),
-      },
+        createdAt: new Date()
+      }
     ];
 
     const result = formatIssueList(issues);
@@ -61,8 +61,8 @@ describe('formatIssueList', () => {
         blockedBy: [1, 2],
         blocks: [],
         comments: [],
-        createdAt: new Date(),
-      },
+        createdAt: new Date()
+      }
     ];
 
     const result = formatIssueList(issues);
@@ -79,7 +79,7 @@ describe('formatIssueList', () => {
         blockedBy: [],
         blocks: [],
         comments: [],
-        createdAt: new Date(),
+        createdAt: new Date()
       },
       {
         id: 2,
@@ -89,8 +89,8 @@ describe('formatIssueList', () => {
         blockedBy: [],
         blocks: [],
         comments: [],
-        createdAt: new Date(),
-      },
+        createdAt: new Date()
+      }
     ];
 
     const result = formatIssueList(issues);
@@ -114,8 +114,8 @@ describe('formatIssueList', () => {
           blockedBy: [],
           blocks: [],
           comments: [],
-          createdAt: new Date(),
-        },
+          createdAt: new Date()
+        }
       ];
 
       const result = formatIssueList(issues);
@@ -133,8 +133,8 @@ describe('formatIssueList', () => {
         blockedBy: [],
         blocks: [],
         comments: [],
-        createdAt: new Date(),
-      },
+        createdAt: new Date()
+      }
     ];
 
     const result = formatIssueList(issues);
@@ -152,8 +152,8 @@ describe('formatIssueList', () => {
         blockedBy: [1, 2],
         blocks: [],
         comments: [],
-        createdAt: new Date(),
-      },
+        createdAt: new Date()
+      }
     ];
 
     const result = formatIssueList(issues);
@@ -172,7 +172,7 @@ describe('formatIssueDetail', () => {
       blockedBy: [],
       blocks: [],
       comments: [],
-      createdAt: new Date(),
+      createdAt: new Date()
     };
 
     const result = formatIssueDetail(issue);
@@ -190,7 +190,7 @@ describe('formatIssueDetail', () => {
       blockedBy: [],
       blocks: [],
       comments: [],
-      createdAt: new Date(),
+      createdAt: new Date()
     };
 
     const result = formatIssueDetail(issue);
@@ -206,7 +206,7 @@ describe('formatIssueDetail', () => {
       blockedBy: [],
       blocks: [],
       comments: [],
-      createdAt: new Date(),
+      createdAt: new Date()
     };
 
     const result = formatIssueDetail(issue);
@@ -223,7 +223,7 @@ describe('formatIssueDetail', () => {
       blockedBy: [2, 3, 4],
       blocks: [],
       comments: [],
-      createdAt: new Date(),
+      createdAt: new Date()
     };
 
     const result = formatIssueDetail(issue);
@@ -239,7 +239,7 @@ describe('formatIssueDetail', () => {
       blockedBy: [],
       blocks: [5, 6],
       comments: [],
-      createdAt: new Date(),
+      createdAt: new Date()
     };
 
     const result = formatIssueDetail(issue);
@@ -257,9 +257,9 @@ describe('formatIssueDetail', () => {
       blocks: [],
       comments: [
         { poster: 'system', content: 'Created', timestamp: new Date() },
-        { poster: 'agent-2', content: 'Looking at this', timestamp: new Date() },
+        { poster: 'agent-2', content: 'Looking at this', timestamp: new Date() }
       ],
-      createdAt: new Date(),
+      createdAt: new Date()
     };
 
     const result = formatIssueDetail(issue);
@@ -278,7 +278,7 @@ describe('formatIssueDetail', () => {
       blockedBy: [],
       blocks: [],
       comments: [{ poster: 'agent-1', content: 'My comment', timestamp: new Date() }],
-      createdAt: new Date(),
+      createdAt: new Date()
     };
 
     const result = formatIssueDetail(issue);
@@ -295,7 +295,7 @@ describe('formatIssueDetail', () => {
       blockedBy: [],
       blocks: [],
       comments: [{ poster: 'agent-2', content: 'Comment', timestamp: new Date() }],
-      createdAt: new Date(),
+      createdAt: new Date()
     };
 
     const result = formatIssueDetail(issue);
@@ -311,7 +311,7 @@ describe('formatIssueDetail', () => {
       blockedBy: [],
       blocks: [],
       comments: [{ poster: 'system', content: 'Auto-generated', timestamp: new Date() }],
-      createdAt: new Date(),
+      createdAt: new Date()
     };
 
     const result = formatIssueDetail(issue);
@@ -331,7 +331,7 @@ describe('formatIssueDetail', () => {
         blockedBy: [],
         blocks: [],
         comments: [],
-        createdAt: new Date(),
+        createdAt: new Date()
       };
 
       const result = formatIssueDetail(issue);
@@ -348,7 +348,7 @@ describe('formatIssueDetail', () => {
       blockedBy: [],
       blocks: [],
       comments: [],
-      createdAt: new Date(),
+      createdAt: new Date()
     };
 
     const result = formatIssueDetail(issue);
@@ -364,7 +364,7 @@ describe('formatIssueDetail', () => {
       blockedBy: [],
       blocks: [],
       comments: [],
-      createdAt: new Date(),
+      createdAt: new Date()
     };
 
     const result = formatIssueDetail(issue);

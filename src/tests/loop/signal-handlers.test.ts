@@ -1,28 +1,28 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import type { AgentContext } from '../../types.js';
 
 const mocks = vi.hoisted(() => ({
   events: [] as string[],
-  stopHub: vi.fn<() => Promise<void>>(),
+  stopHub: vi.fn<() => Promise<void>>()
 }));
 
 vi.mock('chalk', () => ({
   default: {
     red: (value: string) => value,
     gray: (value: string) => value,
-    yellow: (value: string) => value,
-  },
+    yellow: (value: string) => value
+  }
 }));
 
 vi.mock('../../loop/agent-io.js', () => ({
   agentIO: {
     verbose: vi.fn(),
-    getLlmAbortController: vi.fn(() => null),
-  },
+    getLlmAbortController: vi.fn(() => null)
+  }
 }));
 
 vi.mock('../../serve/serve-registry.js', () => ({
-  tryGetServeHub: () => ({ stop: mocks.stopHub }),
+  tryGetServeHub: () => ({ stop: mocks.stopHub })
 }));
 
 import { registerSignalHandlers } from '../../loop/signal-handlers.js';
@@ -39,9 +39,7 @@ let baselineListeners: Map<string, Function[]>;
 beforeEach(() => {
   mocks.events.length = 0;
   vi.clearAllMocks();
-  baselineListeners = new Map(
-    registeredEvents.map((name) => [name, process.listeners(name as NodeJS.Signals)]),
-  );
+  baselineListeners = new Map(registeredEvents.map((name) => [name, process.listeners(name as NodeJS.Signals)]));
 });
 
 afterEach(() => {
@@ -70,8 +68,16 @@ describe('gracefulTeardown identity lifetime', () => {
     });
     const ctx = {
       team: { dismissTeam: () => mocks.events.push('team-dismissed') },
-      bg: { killAllRunning: async () => { mocks.events.push('bg-killed'); } },
-      peer: { stop: () => { mocks.events.push('peer-stopped'); } },
+      bg: {
+        killAllRunning: async () => {
+          mocks.events.push('bg-killed');
+        }
+      },
+      peer: {
+        stop: () => {
+          mocks.events.push('peer-stopped');
+        }
+      }
     } as unknown as AgentContext;
     vi.spyOn(process, 'exit').mockImplementation((() => {
       mocks.events.push('process-exit');

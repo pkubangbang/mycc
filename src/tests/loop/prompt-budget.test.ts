@@ -23,7 +23,7 @@
  * — the prompts are environment-independent by construction.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 import { estimateTextTokens } from '../../utils/token.js';
 import { buildPlanModePrompt, buildNormalModePrompt } from '../../loop/prompts/lead.js';
@@ -41,7 +41,7 @@ const BASELINES = {
   // at all. Pinned to the measured size so the guard keeps catching drift.
   soloNormal: 7304,
   teamNormal: 8463,
-  teammate: 6586,
+  teammate: 6586
 } as const;
 
 const TOLERANCE = 0.15; // ±15%

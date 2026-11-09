@@ -12,3 +12,4 @@ sigma/
 # .mycc/skills/ is a project-level prototype sandbox for skills. It is NOT
 # tracked by git — skills here are local experiments. Approved skills are
 # migrated to the built-in skills/ directory (see tool-and-skill-development).
+.vitest/

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { parseKeys } from '../../utils/key-parser';
 
 /**
@@ -98,10 +98,7 @@ describe('key-parser', () => {
 
       it('should parse multiple escape sequences', () => {
         // Up arrow followed by down arrow
-        const result = parseKeys(hexBuf(
-          0x1b, 0x5b, 0x41,
-          0x1b, 0x5b, 0x42
-        ));
+        const result = parseKeys(hexBuf(0x1b, 0x5b, 0x41, 0x1b, 0x5b, 0x42));
         expect(result).toHaveLength(2);
         expect(result[0].name).toBe('up');
         expect(result[1].name).toBe('down');

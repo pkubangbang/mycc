@@ -5,7 +5,7 @@
  * rejection occurs (the sentinel resolves instead of rejecting).
  */
 
-import { describe, test, afterEach } from 'vitest';
+import { describe, test, afterEach } from 'vite-plus/test';
 import { expect } from 'chai';
 import { EventEmitter } from 'node:events';
 import {
@@ -14,7 +14,7 @@ import {
   StreamAbortedError,
   StreamTimeoutError,
   DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS,
-  DEFAULT_THINKING_LIVENESS_TIMEOUT_MS,
+  DEFAULT_THINKING_LIVENESS_TIMEOUT_MS
 } from '../../engine/chat-helpers.js';
 
 /**
@@ -34,7 +34,7 @@ interface PhaseChunk {
  */
 async function* makeDelayedIterable<T>(
   items: T[],
-  opts: { rejectAfterMs?: number; error?: Error } = {},
+  opts: { rejectAfterMs?: number; error?: Error } = {}
 ): AsyncIterable<T> {
   const { rejectAfterMs, error } = opts;
   const start = Date.now();
@@ -91,7 +91,7 @@ describe('collectStream — abort race condition', () => {
     }
 
     const resultPromise = collectStream(abortableStream(), () => {}, {
-      signal: controller.signal,
+      signal: controller.signal
     });
 
     // Let the stream start, then abort
@@ -109,8 +109,10 @@ describe('collectStream — abort race condition', () => {
     // Give the event loop time to flush
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(unhandledRejectionCount).to.equal(0,
-      'Expected 0 unhandled rejections when abort wins collectStream Promise.race');
+    expect(unhandledRejectionCount).to.equal(
+      0,
+      'Expected 0 unhandled rejections when abort wins collectStream Promise.race'
+    );
   });
 
   test('should NOT produce unhandled rejection when stream rejects asynchronously after abort', async () => {
@@ -119,13 +121,13 @@ describe('collectStream — abort race condition', () => {
     const controller = new AbortController();
 
     // Stream that delivers a few chunks then rejects asynchronously
-    const stream = makeDelayedIterable(
-      ['a', 'b', 'c'],
-      { rejectAfterMs: 40, error: new Error('Simulated I/O error after abort') },
-    );
+    const stream = makeDelayedIterable(['a', 'b', 'c'], {
+      rejectAfterMs: 40,
+      error: new Error('Simulated I/O error after abort')
+    });
 
     const resultPromise = collectStream(stream, () => {}, {
-      signal: controller.signal,
+      signal: controller.signal
     });
 
     // Abort before the stream rejects naturally — sentinel should win
@@ -142,8 +144,10 @@ describe('collectStream — abort race condition', () => {
     // Give the event loop time for the async stream rejection to fire
     await new Promise((r) => setTimeout(r, 100));
 
-    expect(unhandledRejectionCount).to.equal(0,
-      'Expected 0 unhandled rejections when stream rejects after abort wins race');
+    expect(unhandledRejectionCount).to.equal(
+      0,
+      'Expected 0 unhandled rejections when stream rejects after abort wins race'
+    );
   });
 
   test('should still propagate stream errors when no abort occurs', async () => {
@@ -152,13 +156,10 @@ describe('collectStream — abort race condition', () => {
     const controller = new AbortController();
     const streamError = new Error('Natural stream failure');
 
-    const stream = makeDelayedIterable(
-      ['a', 'b'],
-      { rejectAfterMs: 20, error: streamError },
-    );
+    const stream = makeDelayedIterable(['a', 'b'], { rejectAfterMs: 20, error: streamError });
 
     const resultPromise = collectStream(stream, () => {}, {
-      signal: controller.signal,
+      signal: controller.signal
     });
 
     try {
@@ -180,7 +181,7 @@ describe('collectStream — abort race condition', () => {
     }
 
     const result = await collectStream(simpleIterable(), () => {}, {
-      signal: controller.signal,
+      signal: controller.signal
     });
 
     expect(result).to.deep.equal(['hello', 'world']);
@@ -218,7 +219,7 @@ describe('collectStream — abort race condition', () => {
 
     const resultPromise = collectStream(hangingStream(), abortFn, {
       signal: controller.signal,
-      firstTokenTimeoutMs: 20, // very short so the timeout fires quickly
+      firstTokenTimeoutMs: 20 // very short so the timeout fires quickly
     });
 
     try {
@@ -265,7 +266,7 @@ describe('collectStream — abort race condition', () => {
     const resultPromise = collectStream(oneThenHangStream(), abortFn, {
       signal: controller.signal,
       firstTokenTimeoutMs: 10000, // large so first-token timeout does not fire
-      tokenLivenessTimeoutMs: 20, // short so liveness timeout fires quickly
+      tokenLivenessTimeoutMs: 20 // short so liveness timeout fires quickly
     });
 
     try {
@@ -299,7 +300,7 @@ describe('collectStream — abort race condition', () => {
    */
   function makeStreamWithGap(
     firstPhase: PhaseChunk['phase'],
-    gapMs: number,
+    gapMs: number
   ): { stream: AsyncIterable<PhaseChunk>; cancelFn: () => void } {
     let cancelFn: () => void = () => {};
     async function* gen(): AsyncIterable<PhaseChunk> {
@@ -325,11 +326,7 @@ describe('collectStream — abort race condition', () => {
    * content gets the tight window; a chunk carrying only thinking gets the
    * wide window; neither preserves the current window.
    */
-  function phaseClassifier(
-    chunk: PhaseChunk,
-    responseMs: number,
-    thinkingMs: number,
-  ): number | undefined {
+  function phaseClassifier(chunk: PhaseChunk, responseMs: number, thinkingMs: number): number | undefined {
     if (chunk.phase === 'response' || chunk.phase === 'both') return responseMs;
     if (chunk.phase === 'thinking') return thinkingMs;
     return undefined;
@@ -349,8 +346,7 @@ describe('collectStream — abort race condition', () => {
       signal: controller.signal,
       firstTokenTimeoutMs: 10000, // large; first token arrives immediately anyway
       tokenLivenessTimeoutMs: 30, // base/response window (tight)
-      livenessMsForChunk: (c: PhaseChunk) =>
-        phaseClassifier(c, 30, 200), // thinking → 200ms wide window
+      livenessMsForChunk: (c: PhaseChunk) => phaseClassifier(c, 30, 200) // thinking → 200ms wide window
     });
 
     // Stream completed: both chunks collected, no liveness trip.
@@ -377,8 +373,7 @@ describe('collectStream — abort race condition', () => {
       signal: controller.signal,
       firstTokenTimeoutMs: 10000, // large; first token arrives immediately
       tokenLivenessTimeoutMs: 30, // base/response window (tight)
-      livenessMsForChunk: (c: PhaseChunk) =>
-        phaseClassifier(c, 30, 200), // response → 30ms tight window
+      livenessMsForChunk: (c: PhaseChunk) => phaseClassifier(c, 30, 200) // response → 30ms tight window
     });
 
     try {
@@ -399,9 +394,7 @@ describe('collectStream — abort race condition', () => {
     // response window, or the phase-aware fix is a no-op. If someone
     // accidentally equalizes them, the thinking-phase pause protection
     // disappears and the original bug returns.
-    expect(DEFAULT_THINKING_LIVENESS_TIMEOUT_MS).to.be.greaterThan(
-      DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS,
-    );
+    expect(DEFAULT_THINKING_LIVENESS_TIMEOUT_MS).to.be.greaterThan(DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS);
   });
 
   // ─── Abort-listener cleanup (regression for un-removed listeners) ──────
@@ -434,11 +427,13 @@ describe('collectStream — abort race condition', () => {
     }
 
     await collectStream(simpleStream(), () => {}, {
-      signal: controller.signal,
+      signal: controller.signal
     });
 
-    expect(abortListenerCount(controller.signal)).to.equal(baseline,
-      'abort listeners leaked after normal collectStream completion');
+    expect(abortListenerCount(controller.signal)).to.equal(
+      baseline,
+      'abort listeners leaked after normal collectStream completion'
+    );
   });
 
   test('collectStream removes all abort listeners on first-token timeout', async () => {
@@ -454,7 +449,7 @@ describe('collectStream — abort race condition', () => {
 
     const resultPromise = collectStream(hangingStream(), () => cancelFn?.(), {
       signal: controller.signal,
-      firstTokenTimeoutMs: 20,
+      firstTokenTimeoutMs: 20
     });
 
     try {
@@ -464,8 +459,10 @@ describe('collectStream — abort race condition', () => {
       expect(err).to.be.instanceOf(StreamTimeoutError);
     }
 
-    expect(abortListenerCount(controller.signal)).to.equal(baseline,
-      'abort listeners leaked after first-token timeout');
+    expect(abortListenerCount(controller.signal)).to.equal(
+      baseline,
+      'abort listeners leaked after first-token timeout'
+    );
   });
 
   test('sleep removes its abort listener on normal resolve', async () => {
@@ -474,8 +471,10 @@ describe('collectStream — abort race condition', () => {
 
     await sleep(10, controller.signal);
 
-    expect(abortListenerCount(controller.signal)).to.equal(baseline,
-      'abort listener leaked after sleep normal resolve');
+    expect(abortListenerCount(controller.signal)).to.equal(
+      baseline,
+      'abort listener leaked after sleep normal resolve'
+    );
   });
 
   test('sleep removes its abort listener even on the abort path (no double-removal error)', async () => {
@@ -496,8 +495,7 @@ describe('collectStream — abort race condition', () => {
     // { once: true } auto-removes on abort; the explicit removeEventListener
     // in the resolve path is not reached (the timeout was cleared). Either
     // way the listener count must be back to baseline.
-    expect(abortListenerCount(controller.signal)).to.equal(baseline,
-      'abort listener leaked after sleep abort');
+    expect(abortListenerCount(controller.signal)).to.equal(baseline, 'abort listener leaked after sleep abort');
   });
 
   test('repeated collectStream calls on the same signal do not accumulate listeners', async () => {
@@ -514,11 +512,13 @@ describe('collectStream — abort race condition', () => {
 
     for (let i = 0; i < 10; i++) {
       await collectStream(simpleStream(), () => {}, {
-        signal: controller.signal,
+        signal: controller.signal
       });
     }
 
-    expect(abortListenerCount(controller.signal)).to.equal(baseline,
-      'listeners accumulated across repeated collectStream calls on the same signal');
+    expect(abortListenerCount(controller.signal)).to.equal(
+      baseline,
+      'listeners accumulated across repeated collectStream calls on the same signal'
+    );
   });
 });

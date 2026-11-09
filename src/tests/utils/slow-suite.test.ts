@@ -7,7 +7,7 @@
  * main-loop directory must THROW at collection time rather than silently
  * shrinking the default run.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { pathToFileURL } from 'url';
 import * as path from 'path';
 import { mutedSlowSuite, assertMuteAllowed } from './slow-suite.js';
@@ -21,7 +21,7 @@ describe('mutedSlowSuite — main-loop suites are refused', () => {
     ['agent-io', 'src/tests/agent-io/agent-exec.test.ts'],
     ['state-machine', 'src/tests/state-machine/state-machine.test.ts'],
     ['hook', 'src/tests/hook/hook-executor.test.ts'],
-    ['engine', 'src/tests/engine/compact.test.ts'],
+    ['engine', 'src/tests/engine/compact.test.ts']
   ])('refuses a %s suite', (_label, file) => {
     expect(() => assertMuteAllowed(u(file))).toThrow(/refusing to mute/);
     expect(() => mutedSlowSuite(u(file))).toThrow(/main loop/);
@@ -61,7 +61,7 @@ describe('mutedSlowSuite — main-loop suites are refused', () => {
       'src/tests/utils/grep-search.test.ts',
       'src/tests/file-lock.test.ts',
       'src/tests/mycc-stop.test.ts',
-      'src/tests/plain-output.test.ts',
+      'src/tests/plain-output.test.ts'
     ]) {
       expect(() => assertMuteAllowed(u(f)), f).not.toThrow();
     }

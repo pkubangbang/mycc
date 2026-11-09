@@ -1,7 +1,7 @@
 /**
  * Tests for state-machine.ts - Agent state machine types and runner
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { AgentStateMachine, AgentState, presentResult } from '../../loop/state-machine.js';
 import { setResultCallback } from '../../utils/letter-box.js';
 import type { TurnVars, ChatData, StateHandler } from '../../loop/state-machine.js';
@@ -47,7 +47,7 @@ describe('AgentStateMachine', () => {
       hasActiveWrapUp: vi.fn(() => false),
       getLastBrief: vi.fn(() => null),
       rewindToLastBrief: vi.fn(() => null),
-      getWiki: vi.fn(() => undefined),
+      getWiki: vi.fn(() => undefined)
     } as unknown as Triologue;
 
     const ctx = {
@@ -58,25 +58,25 @@ describe('AgentStateMachine', () => {
         getMode: vi.fn(() => 'normal'),
         getAuto: vi.fn(() => false),
         setAuto: vi.fn(),
-    getAutoCommitBranches: vi.fn(() => [] as string[]),
-    addAutoCommitBranches: vi.fn(() => []),
-    removeAutoCommitBranches: vi.fn(() => []),
-    clearAutoCommitBranches: vi.fn(() => []),
-    effectiveAutoCommitBranches: vi.fn(() => [] as string[]),
+        getAutoCommitBranches: vi.fn(() => [] as string[]),
+        addAutoCommitBranches: vi.fn(() => []),
+        removeAutoCommitBranches: vi.fn(() => []),
+        clearAutoCommitBranches: vi.fn(() => []),
+        effectiveAutoCommitBranches: vi.fn(() => [] as string[]),
         brief: vi.fn(),
         verbose: vi.fn(),
-        escAware: vi.fn((fn: any) => fn(new AbortController())),
+        escAware: vi.fn((fn: any) => fn(new AbortController()))
       },
       todo: {
         hasOpenTodo: vi.fn(() => false),
-        printTodoList: vi.fn(() => ''),
+        printTodoList: vi.fn(() => '')
       },
       mail: { collectMails: vi.fn(() => []), clearUnread: vi.fn() },
       skill: {
         listSkills: vi.fn(() => []),
-        getSkill: vi.fn(),
+        getSkill: vi.fn()
       },
-      team: { handlePendingQuestions: vi.fn() },
+      team: { handlePendingQuestions: vi.fn() }
     } as unknown as AgentContext;
 
     const conditions = {
@@ -91,7 +91,7 @@ describe('AgentStateMachine', () => {
       needsCompilation: vi.fn(() => false),
       markInjected: vi.fn(),
       hasInjected: vi.fn(() => false),
-      clearInjected: vi.fn(),
+      clearInjected: vi.fn()
     } as unknown as ConditionRegistry;
 
     const sequence = {
@@ -113,16 +113,16 @@ describe('AgentStateMachine', () => {
       markPromptBoundary: vi.fn(),
       incrementTotalTurns: vi.fn(),
       compactReset: vi.fn(),
-      fullClear: vi.fn(),
+      fullClear: vi.fn()
     } as unknown as Sequence;
 
     const hookExecutor = {
-      processToolCalls: vi.fn(),
+      processToolCalls: vi.fn()
     } as unknown as HookExecutor;
 
     const inputProvider = {
       getInput: vi.fn(),
-      setMode: vi.fn(),
+      setMode: vi.fn()
     } as unknown as InputProvider;
 
     const requestEmbeddingTracker = {
@@ -130,7 +130,7 @@ describe('AgentStateMachine', () => {
       getMaxSimilarity: vi.fn(() => 0),
       similarityToDelta: vi.fn(() => 0),
       getDuplicationReport: vi.fn(() => ''),
-      clear: vi.fn(),
+      clear: vi.fn()
     } as unknown as RequestEmbeddingTracker;
 
     return { triologue, ctx, conditions, sequence, hookExecutor, inputProvider, requestEmbeddingTracker };
@@ -146,13 +146,20 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
-      [AgentState.AWAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn()
     };
 
     const machine = new AgentStateMachine(
-      deps.triologue, deps.ctx, 'main' as ToolScope,
-      deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
+      deps.triologue,
+      deps.ctx,
+      'main' as ToolScope,
+      deps.conditions,
+      deps.sequence,
+      deps.hookExecutor,
+      deps.inputProvider,
+      '/tmp/session.json',
+      handlers,
+      deps.requestEmbeddingTracker
     );
 
     expect(machine).toBeInstanceOf(AgentStateMachine);
@@ -174,13 +181,20 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(async () => AgentState.TOOL),
       [AgentState.TOOL]: vi.fn(async () => AgentState.STOP),
       [AgentState.STOP]: vi.fn(async () => AgentState.PROMPT),
-      [AgentState.AWAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn()
     };
 
     const machine = new AgentStateMachine(
-      deps.triologue, deps.ctx, 'main' as ToolScope,
-      deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
+      deps.triologue,
+      deps.ctx,
+      'main' as ToolScope,
+      deps.conditions,
+      deps.sequence,
+      deps.hookExecutor,
+      deps.inputProvider,
+      '/tmp/session.json',
+      handlers,
+      deps.requestEmbeddingTracker
     );
 
     await machine.run();
@@ -204,13 +218,20 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
-      [AgentState.AWAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn()
     };
 
     const machine = new AgentStateMachine(
-      deps.triologue, deps.ctx, 'main' as ToolScope,
-      deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
+      deps.triologue,
+      deps.ctx,
+      'main' as ToolScope,
+      deps.conditions,
+      deps.sequence,
+      deps.hookExecutor,
+      deps.inputProvider,
+      '/tmp/session.json',
+      handlers,
+      deps.requestEmbeddingTracker
     );
 
     await machine.run();
@@ -235,13 +256,20 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(async () => AgentState.TOOL),
       [AgentState.TOOL]: vi.fn(async () => AgentState.STOP),
       [AgentState.STOP]: vi.fn(async () => AgentState.PROMPT),
-      [AgentState.AWAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn()
     };
 
     const machine = new AgentStateMachine(
-      deps.triologue, deps.ctx, 'main' as ToolScope,
-      deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
+      deps.triologue,
+      deps.ctx,
+      'main' as ToolScope,
+      deps.conditions,
+      deps.sequence,
+      deps.hookExecutor,
+      deps.inputProvider,
+      '/tmp/session.json',
+      handlers,
+      deps.requestEmbeddingTracker
     );
 
     await machine.run();
@@ -283,13 +311,20 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
-      [AgentState.AWAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn()
     };
 
     const machine = new AgentStateMachine(
-      deps.triologue, deps.ctx, 'main' as ToolScope,
-      deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
+      deps.triologue,
+      deps.ctx,
+      'main' as ToolScope,
+      deps.conditions,
+      deps.sequence,
+      deps.hookExecutor,
+      deps.inputProvider,
+      '/tmp/session.json',
+      handlers,
+      deps.requestEmbeddingTracker
     );
 
     await machine.run();
@@ -316,13 +351,20 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
-      [AgentState.AWAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn()
     };
 
     const machine = new AgentStateMachine(
-      deps.triologue, deps.ctx, 'main' as ToolScope,
-      deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
+      deps.triologue,
+      deps.ctx,
+      'main' as ToolScope,
+      deps.conditions,
+      deps.sequence,
+      deps.hookExecutor,
+      deps.inputProvider,
+      '/tmp/session.json',
+      handlers,
+      deps.requestEmbeddingTracker
     );
 
     await machine.run();
@@ -397,7 +439,7 @@ describe('AgentStateMachine', () => {
       }),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(async () => AgentState.PROMPT),
-      [AgentState.AWAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn()
     };
 
     // Make PROMPT exit on its second entry (after STOP → PROMPT).
@@ -408,9 +450,16 @@ describe('AgentStateMachine', () => {
     });
 
     const machine = new AgentStateMachine(
-      deps.triologue, deps.ctx, 'main' as ToolScope,
-      deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
+      deps.triologue,
+      deps.ctx,
+      'main' as ToolScope,
+      deps.conditions,
+      deps.sequence,
+      deps.hookExecutor,
+      deps.inputProvider,
+      '/tmp/session.json',
+      handlers,
+      deps.requestEmbeddingTracker
     );
 
     await machine.run();
@@ -447,13 +496,20 @@ describe('AgentStateMachine', () => {
       }),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(async () => AgentState.PROMPT),
-      [AgentState.AWAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn()
     };
 
     const machine = new AgentStateMachine(
-      deps.triologue, deps.ctx, 'main' as ToolScope,
-      deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
+      deps.triologue,
+      deps.ctx,
+      'main' as ToolScope,
+      deps.conditions,
+      deps.sequence,
+      deps.hookExecutor,
+      deps.inputProvider,
+      '/tmp/session.json',
+      handlers,
+      deps.requestEmbeddingTracker
     );
 
     await machine.run();
@@ -467,20 +523,29 @@ describe('AgentStateMachine', () => {
     const testError = new Error('Handler error');
 
     const handlers: Record<AgentState, StateHandler> = {
-      [AgentState.PROMPT]: vi.fn(async () => { throw testError; }),
+      [AgentState.PROMPT]: vi.fn(async () => {
+        throw testError;
+      }),
       [AgentState.SLASH]: vi.fn(),
       [AgentState.COLLECT]: vi.fn(),
       [AgentState.LLM]: vi.fn(),
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
-      [AgentState.AWAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn()
     };
 
     const machine = new AgentStateMachine(
-      deps.triologue, deps.ctx, 'main' as ToolScope,
-      deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
+      deps.triologue,
+      deps.ctx,
+      'main' as ToolScope,
+      deps.conditions,
+      deps.sequence,
+      deps.hookExecutor,
+      deps.inputProvider,
+      '/tmp/session.json',
+      handlers,
+      deps.requestEmbeddingTracker
     );
 
     await expect(machine.run()).rejects.toThrow('Handler error');
@@ -526,13 +591,20 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
-      [AgentState.AWAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn()
     };
 
     const machine = new AgentStateMachine(
-      deps.triologue, deps.ctx, 'main' as ToolScope,
-      deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
+      deps.triologue,
+      deps.ctx,
+      'main' as ToolScope,
+      deps.conditions,
+      deps.sequence,
+      deps.hookExecutor,
+      deps.inputProvider,
+      '/tmp/session.json',
+      handlers,
+      deps.requestEmbeddingTracker
     );
 
     await machine.run();
@@ -548,7 +620,9 @@ describe('presentResult', () => {
 
   beforeEach(() => {
     displayed = null;
-    setResultCallback((content: string) => { displayed = content; });
+    setResultCallback((content: string) => {
+      displayed = content;
+    });
   });
 
   afterEach(() => {
@@ -557,7 +631,7 @@ describe('presentResult', () => {
 
   it('should not throw when triologue has no messages', () => {
     const triologue = {
-      getMessagesRaw: vi.fn(() => []),
+      getMessagesRaw: vi.fn(() => [])
     } as unknown as Triologue;
 
     expect(() => presentResult(triologue)).not.toThrow();
@@ -567,7 +641,7 @@ describe('presentResult', () => {
 
   it('should not throw when last message has no content', () => {
     const triologue = {
-      getMessagesRaw: vi.fn(() => [{ role: 'assistant', content: '' }]),
+      getMessagesRaw: vi.fn(() => [{ role: 'assistant', content: '' }])
     } as unknown as Triologue;
 
     expect(() => presentResult(triologue)).not.toThrow();
@@ -577,7 +651,7 @@ describe('presentResult', () => {
 
   it('should display the last message content via the result callback', () => {
     const triologue = {
-      getMessagesRaw: vi.fn(() => [{ role: 'assistant', content: 'Hello' }]),
+      getMessagesRaw: vi.fn(() => [{ role: 'assistant', content: 'Hello' }])
     } as unknown as Triologue;
 
     expect(() => presentResult(triologue)).not.toThrow();
@@ -589,8 +663,8 @@ describe('presentResult', () => {
     const triologue = {
       getMessagesRaw: vi.fn(() => [
         { role: 'assistant', content: 'thinking' },
-        { role: 'tool', tool_name: 'bash', content: 'tool output', tool_call_id: 'c1' },
-      ]),
+        { role: 'tool', tool_name: 'bash', content: 'tool output', tool_call_id: 'c1' }
+      ])
     } as unknown as Triologue;
 
     expect(() => presentResult(triologue)).not.toThrow();
@@ -600,10 +674,12 @@ describe('presentResult', () => {
 
   it('should strip internal DSML markup before display', () => {
     const triologue = {
-      getMessagesRaw: vi.fn(() => [{
-        role: 'assistant',
-        content: 'before <\uff5c\uff5cDSML\uff5c\uff5ctag>hidden</\uff5c\uff5cDSML\uff5c\uff5ctag> after',
-      }]),
+      getMessagesRaw: vi.fn(() => [
+        {
+          role: 'assistant',
+          content: 'before <\uff5c\uff5cDSML\uff5c\uff5ctag>hidden</\uff5c\uff5cDSML\uff5c\uff5ctag> after'
+        }
+      ])
     } as unknown as Triologue;
 
     expect(() => presentResult(triologue)).not.toThrow();

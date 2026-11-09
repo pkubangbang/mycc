@@ -2,7 +2,7 @@
  * issue-create.test.ts - Tests for the issue_create tool
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { issueCreateTool } from '../../tools/issue_create.js';
 import type { AgentContext, IssueModule, CoreModule } from '../../types.js';
 import { runTool, testSignal } from './test-utils.js';
@@ -21,7 +21,7 @@ function createMockIssueModule(): IssueModule {
     removeBlockage: vi.fn().mockResolvedValue(undefined),
     publishIssue: vi.fn().mockResolvedValue(true),
     releaseIssuesOwnedBy: vi.fn().mockResolvedValue([]),
-    clearAll: vi.fn(),
+    clearAll: vi.fn()
   };
 }
 
@@ -55,7 +55,7 @@ function createMockContext(issueModule: IssueModule): AgentContext {
     getConfusionIndex: vi.fn(() => 0),
     increaseConfusionIndex: vi.fn(),
     resetConfusionIndex: vi.fn(),
-    escAware: (vi.fn() as unknown) as CoreModule['escAware'],
+    escAware: vi.fn() as unknown as CoreModule['escAware']
   };
 
   return {
@@ -67,7 +67,7 @@ function createMockContext(issueModule: IssueModule): AgentContext {
     bg: {} as never,
     team: {} as never,
     wiki: {} as never,
-    peer: {} as never,
+    peer: {} as never
   };
 }
 
@@ -88,33 +88,35 @@ describe('issueCreateTool', () => {
   // ========== Happy Path Tests ==========
 
   it('should create an issue with title and content', async () => {
-    const result = await runTool(issueCreateTool, ctx, {
-      title: 'Test Issue',
-      content: 'This is a test issue description',
-    }, testSignal);
-
-    expect(mockIssue.createIssue).toHaveBeenCalledWith(
-      'Test Issue',
-      'This is a test issue description',
-      []
+    const result = await runTool(
+      issueCreateTool,
+      ctx,
+      {
+        title: 'Test Issue',
+        content: 'This is a test issue description'
+      },
+      testSignal
     );
+
+    expect(mockIssue.createIssue).toHaveBeenCalledWith('Test Issue', 'This is a test issue description', []);
     expect(result).toContain('No issues.');
     expect(result).toContain('Issue #1 is in DRAFT status');
     expect(ctx.core.brief).toHaveBeenCalledWith('info', 'issue_create', 'Created issue #1: Test Issue');
   });
 
   it('should create an issue with blockedBy dependencies', async () => {
-    const result = await runTool(issueCreateTool, ctx, {
-      title: 'Blocked Issue',
-      content: 'This depends on other issues',
-      blockedBy: [1, 2, 3],
-    }, testSignal);
-
-    expect(mockIssue.createIssue).toHaveBeenCalledWith(
-      'Blocked Issue',
-      'This depends on other issues',
-      [1, 2, 3]
+    const result = await runTool(
+      issueCreateTool,
+      ctx,
+      {
+        title: 'Blocked Issue',
+        content: 'This depends on other issues',
+        blockedBy: [1, 2, 3]
+      },
+      testSignal
     );
+
+    expect(mockIssue.createIssue).toHaveBeenCalledWith('Blocked Issue', 'This depends on other issues', [1, 2, 3]);
     expect(result).toContain('No issues.');
   });
 
@@ -122,10 +124,15 @@ describe('issueCreateTool', () => {
     mockIssue.createIssue = vi.fn().mockResolvedValue(42);
     mockIssue.printIssues = vi.fn().mockResolvedValue('Issue #42: Test');
 
-    const result = await runTool(issueCreateTool, ctx, {
-      title: 'Another Issue',
-      content: 'Description',
-    }, testSignal);
+    const result = await runTool(
+      issueCreateTool,
+      ctx,
+      {
+        title: 'Another Issue',
+        content: 'Description'
+      },
+      testSignal
+    );
 
     expect(result).toContain('Issue #42: Test');
     expect(result).toContain('Issue #42 is in DRAFT status');
@@ -134,9 +141,14 @@ describe('issueCreateTool', () => {
   // ========== Error Case Tests ==========
 
   it('should reject missing title', async () => {
-    const result = await runTool(issueCreateTool, ctx, {
-      content: 'Description without title',
-    }, testSignal);
+    const result = await runTool(
+      issueCreateTool,
+      ctx,
+      {
+        content: 'Description without title'
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: title parameter is required and must be a string');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_create', 'Missing or invalid title parameter');
@@ -144,10 +156,15 @@ describe('issueCreateTool', () => {
   });
 
   it('should reject empty title', async () => {
-    const result = await runTool(issueCreateTool, ctx, {
-      title: '',
-      content: 'Description',
-    }, testSignal);
+    const result = await runTool(
+      issueCreateTool,
+      ctx,
+      {
+        title: '',
+        content: 'Description'
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: title parameter is required and must be a string');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_create', 'Missing or invalid title parameter');
@@ -155,10 +172,15 @@ describe('issueCreateTool', () => {
   });
 
   it('should reject non-string title', async () => {
-    const result = await runTool(issueCreateTool, ctx, {
-      title: 123,
-      content: 'Description',
-    }, testSignal);
+    const result = await runTool(
+      issueCreateTool,
+      ctx,
+      {
+        title: 123,
+        content: 'Description'
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: title parameter is required and must be a string');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_create', 'Missing or invalid title parameter');
@@ -166,9 +188,14 @@ describe('issueCreateTool', () => {
   });
 
   it('should reject missing content', async () => {
-    const result = await runTool(issueCreateTool, ctx, {
-      title: 'Test Issue',
-    }, testSignal);
+    const result = await runTool(
+      issueCreateTool,
+      ctx,
+      {
+        title: 'Test Issue'
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: content parameter is required and must be a string');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_create', 'Missing or invalid content parameter');
@@ -176,10 +203,15 @@ describe('issueCreateTool', () => {
   });
 
   it('should reject empty content', async () => {
-    const result = await runTool(issueCreateTool, ctx, {
-      title: 'Test Issue',
-      content: '',
-    }, testSignal);
+    const result = await runTool(
+      issueCreateTool,
+      ctx,
+      {
+        title: 'Test Issue',
+        content: ''
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: content parameter is required and must be a string');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_create', 'Missing or invalid content parameter');
@@ -187,10 +219,15 @@ describe('issueCreateTool', () => {
   });
 
   it('should reject non-string content', async () => {
-    const result = await runTool(issueCreateTool, ctx, {
-      title: 'Test Issue',
-      content: { text: 'nested' },
-    }, testSignal);
+    const result = await runTool(
+      issueCreateTool,
+      ctx,
+      {
+        title: 'Test Issue',
+        content: { text: 'nested' }
+      },
+      testSignal
+    );
 
     expect(result).toBe('Error: content parameter is required and must be a string');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_create', 'Missing or invalid content parameter');
@@ -198,32 +235,34 @@ describe('issueCreateTool', () => {
   });
 
   it('should handle empty blockedBy array', async () => {
-    const result = await runTool(issueCreateTool, ctx, {
-      title: 'Test Issue',
-      content: 'Description',
-      blockedBy: [],
-    }, testSignal);
-
-    expect(mockIssue.createIssue).toHaveBeenCalledWith(
-      'Test Issue',
-      'Description',
-      []
+    const result = await runTool(
+      issueCreateTool,
+      ctx,
+      {
+        title: 'Test Issue',
+        content: 'Description',
+        blockedBy: []
+      },
+      testSignal
     );
+
+    expect(mockIssue.createIssue).toHaveBeenCalledWith('Test Issue', 'Description', []);
     expect(result).toContain('No issues.');
   });
 
   it('should handle undefined blockedBy as empty array', async () => {
-    const result = await runTool(issueCreateTool, ctx, {
-      title: 'Test Issue',
-      content: 'Description',
-      blockedBy: undefined,
-    }, testSignal);
-
-    expect(mockIssue.createIssue).toHaveBeenCalledWith(
-      'Test Issue',
-      'Description',
-      []
+    const result = await runTool(
+      issueCreateTool,
+      ctx,
+      {
+        title: 'Test Issue',
+        content: 'Description',
+        blockedBy: undefined
+      },
+      testSignal
     );
+
+    expect(mockIssue.createIssue).toHaveBeenCalledWith('Test Issue', 'Description', []);
     expect(result).toContain('No issues.');
   });
 

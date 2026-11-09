@@ -15,13 +15,13 @@
  *   - a value is never dropped, even when a label is missing or repeated;
  *   - the sentinel classifier recognizes "none/no/two-way" answers only.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import {
   parsePlanScope,
   isSentinelAnswer,
   PLAN_SCOPE_HINTS,
   PLAN_SCOPE_LABELS,
-  PLAN_SCOPE_LOG_LABEL,
+  PLAN_SCOPE_LOG_LABEL
 } from '../../web/src/plan-scope';
 
 /** The exact shape src/loop/plan-scope.ts formatPlanScopeForDisplay() emits. */
@@ -30,16 +30,14 @@ const TERMINAL_BLOCK = [
   'SUBLATE     Serves the ask. One invariant: "no silent writes" — thesis vs antithesis.',
   'WRONG PRB   no — the user asked to optimize the display, and this does that.',
   'REVERSIBLE  two-way — delete PlanScopeCard.vue and the MessageItem branch.',
-  'TUNNEL      none — no rule stands in the way here.',
+  'TUNNEL      none — no rule stands in the way here.'
 ].join('\n');
 
 describe('parsePlanScope', () => {
   it('parses the terminal block into four ordered checks', () => {
     const p = parsePlanScope(TERMINAL_BLOCK);
     expect(p.prose).toBeNull();
-    expect(p.checks.map((c) => c.label)).toEqual([
-      'SUBLATE', 'WRONG PRB', 'REVERSIBLE', 'TUNNEL',
-    ]);
+    expect(p.checks.map((c) => c.label)).toEqual(['SUBLATE', 'WRONG PRB', 'REVERSIBLE', 'TUNNEL']);
     expect(p.checks[0].value).toContain('no silent writes');
     expect(p.checks[1].value.startsWith('no — the user asked')).toBe(true);
     expect(p.checks[2].value.startsWith('two-way — ')).toBe(true);
@@ -47,21 +45,22 @@ describe('parsePlanScope', () => {
   });
 
   it('parses a run-on paragraph with every label inline', () => {
-    const runOn = 'TUNNEL: none — no rule blocks this. SUBLATE: none — no collision. '
-      + 'WRONG PRB: no — the ask is display. REVERSIBLE: two-way — revert the commit.';
+    const runOn =
+      'TUNNEL: none — no rule blocks this. SUBLATE: none — no collision. ' +
+      'WRONG PRB: no — the ask is display. REVERSIBLE: two-way — revert the commit.';
     const p = parsePlanScope(runOn);
-    expect(p.checks.map((c) => c.label)).toEqual([
-      'TUNNEL', 'SUBLATE', 'WRONG PRB', 'REVERSIBLE',
-    ]);
+    expect(p.checks.map((c) => c.label)).toEqual(['TUNNEL', 'SUBLATE', 'WRONG PRB', 'REVERSIBLE']);
     expect(p.checks[3].value).toBe('two-way — revert the commit.');
   });
 
   it('keeps a lead-in before the first label separate from the answers', () => {
-    const p = parsePlanScope([
-      '── plan-scope ──────────────────────────────────',
-      'Serves the ask.',
-      'TUNNEL      break the DTO — saves 3 files.',
-    ].join('\n'));
+    const p = parsePlanScope(
+      [
+        '── plan-scope ──────────────────────────────────',
+        'Serves the ask.',
+        'TUNNEL      break the DTO — saves 3 files.'
+      ].join('\n')
+    );
     expect(p.leadIn).toBe('Serves the ask.');
     expect(p.checks).toHaveLength(1);
     expect(p.checks[0].value).toBe('break the DTO — saves 3 files.');

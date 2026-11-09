@@ -7,7 +7,7 @@
  * strip_in_memory_flags) left this suite green.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -18,7 +18,7 @@ import {
   serialize_mindmap,
   save_mindmap,
   get_default_mindmap_path,
-  mindmap_exists,
+  mindmap_exists
 } from '../../mindmap/load.js';
 import { parse_mindmap_json } from '../../mindmap/validate.js';
 import { compute_hash } from '../../mindmap/validate.js';
@@ -39,9 +39,9 @@ function validJson(overrides: Partial<MindmapJSON> = {}): MindmapJSON {
       summary: 'Root summary',
       level: 0,
       children: [],
-      links: [],
+      links: []
     },
-    ...overrides,
+    ...overrides
   } as MindmapJSON;
 }
 
@@ -70,11 +70,11 @@ describe('load_mindmap_from_json (real implementation)', () => {
             summary: 'Grandchild summary',
             level: 2,
             children: [],
-            links: [],
-          },
+            links: []
+          }
         ],
-        links: [],
-      },
+        links: []
+      }
     ];
 
     const result = load_mindmap_from_json(json);
@@ -85,9 +85,7 @@ describe('load_mindmap_from_json (real implementation)', () => {
 
   it('keeps links intact', () => {
     const json = validJson();
-    json.root.links = [
-      { target_type: 'url', url: 'https://example.com', comment: 'External link' },
-    ];
+    json.root.links = [{ target_type: 'url', url: 'https://example.com', comment: 'External link' }];
 
     const result = load_mindmap_from_json(json);
     expect(result.root.links).toHaveLength(1);
@@ -124,9 +122,7 @@ describe('load_mindmap_from_json (real implementation)', () => {
 
   it('sets in-memory flags on every node (is_mycc=true, is_patch=false)', () => {
     const json = validJson();
-    json.root.children = [
-      { id: '/a', text: 'a', title: 'A', summary: '', level: 1, children: [], links: [] },
-    ];
+    json.root.children = [{ id: '/a', text: 'a', title: 'A', summary: '', level: 1, children: [], links: [] }];
     const mm = load_mindmap_from_json(json);
     expect(mm.root.is_mycc).toBe(true);
     expect(mm.root.is_patch).toBe(false);
@@ -149,9 +145,7 @@ describe('serialize_mindmap / save_mindmap strip in-memory flags', () => {
     // If stripping regressed, these flags would be written into the live
     // .mycc/mindmap.json — the hazard the old local-copy suite could not see.
     const json = validJson();
-    json.root.children = [
-      { id: '/a', text: 'a', title: 'A', summary: '', level: 1, children: [], links: [] },
-    ];
+    json.root.children = [{ id: '/a', text: 'a', title: 'A', summary: '', level: 1, children: [], links: [] }];
     const out = serialize_mindmap(load_mindmap_from_json(json));
     expect(out).not.toContain('is_mycc');
     expect(out).not.toContain('is_patch');

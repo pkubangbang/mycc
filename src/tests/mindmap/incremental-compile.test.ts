@@ -2,7 +2,7 @@
  * Tests for incremental_compile hash persistence
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -14,17 +14,15 @@ import { parse_markdown, build_node, collect_nodes_bottom_up } from '../../mindm
 import type { MindmapJSON, Node } from '../../mindmap/types.js';
 
 vi.mock('../../mindmap/explorer-agent.js', () => ({
-  summarizeWithExplorer: vi.fn(
-    async (nodeTitle: string, nodeText: string, ancestorContext: string) => {
-      const randSuffix = crypto.randomBytes(4).toString('hex');
-      return {
-        summary: `[A] ${nodeTitle} [N] ${nodeText.slice(0, 40)} [C] ${ancestorContext.slice(0, 30)} [E] ${randSuffix}`,
-        markedFiles: [],
-        markedUrls: [],
-        markedTerms: [],
-      };
-    }
-  ),
+  summarizeWithExplorer: vi.fn(async (nodeTitle: string, nodeText: string, ancestorContext: string) => {
+    const randSuffix = crypto.randomBytes(4).toString('hex');
+    return {
+      summary: `[A] ${nodeTitle} [N] ${nodeText.slice(0, 40)} [C] ${ancestorContext.slice(0, 30)} [E] ${randSuffix}`,
+      markedFiles: [],
+      markedUrls: [],
+      markedTerms: []
+    };
+  })
 }));
 
 function makeMinimalMindmap(mdContent: string, oldHash: string): MindmapJSON {
@@ -41,7 +39,7 @@ function makeMinimalMindmap(mdContent: string, oldHash: string): MindmapJSON {
     summary: 'root summary',
     level: 0,
     children: sections.map((s) => build_node(s, '/', 1)),
-    links: [],
+    links: []
   };
 
   for (const node of collect_nodes_bottom_up(root)) {
@@ -54,7 +52,7 @@ function makeMinimalMindmap(mdContent: string, oldHash: string): MindmapJSON {
     hash: oldHash,
     compiled_at: new Date(0).toISOString(),
     updated_at: new Date(0).toISOString(),
-    root,
+    root
   };
 }
 

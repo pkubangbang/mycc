@@ -3,11 +3,8 @@
  * Only tests the exported public API
  */
 
-import { describe, it, expect } from 'vitest';
-import {
-  getSkillAbsolutePath,
-  resolveToSkillPath,
-} from '../utils/skill-path-resolver.js';
+import { describe, it, expect } from 'vite-plus/test';
+import { getSkillAbsolutePath, resolveToSkillPath } from '../utils/skill-path-resolver.js';
 import path from 'path';
 import os from 'os';
 

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { runExec } from '../../loop/agent-exec.js';
 
 /**
@@ -25,16 +25,13 @@ describe('runExec timeout — partial output preservation', () => {
     const script =
       "process.stdout.write('partial-stdout');" +
       "process.stderr.write('partial-stderr');" +
-      "setTimeout(()=>{}, 30000);";
+      'setTimeout(()=>{}, 30000);';
     // Quote for the shell: double quotes around the -e arg. The script uses
     // single quotes internally, so double-quote wrapping is safe under both
     // pwsh and bash.
     const command = `node -e "${script}"`;
 
-    const result = await runExec(
-      { cwd: process.cwd(), command, timeout: 3 },
-      () => {},
-    );
+    const result = await runExec({ cwd: process.cwd(), command, timeout: 3 }, () => {});
 
     // The fix: timeout must surface partial output, not discard it.
     expect(result.timedOut).toBe(true);
@@ -47,10 +44,7 @@ describe('runExec timeout — partial output preservation', () => {
   it('reports timedOut=true and exitCode=137 on timeout', async () => {
     // A command that produces no output and just blocks.
     const command = `node -e "setTimeout(()=>{}, 30000)"`;
-    const result = await runExec(
-      { cwd: process.cwd(), command, timeout: 3 },
-      () => {},
-    );
+    const result = await runExec({ cwd: process.cwd(), command, timeout: 3 }, () => {});
 
     expect(result.timedOut).toBe(true);
     expect(result.exitCode).toBe(137);
@@ -63,13 +57,12 @@ describe('runExec timeout — partial output preservation', () => {
     // stdout/stderr. The success path must drop it.
     let registered = 0;
     let released = 0;
-    await runExec(
-      { cwd: process.cwd(), command: `node -e ""`, timeout: 30 },
-      () => {
-        registered += 1;
-        return () => { released += 1; };
-      },
-    );
+    await runExec({ cwd: process.cwd(), command: `node -e ""`, timeout: 30 }, () => {
+      registered += 1;
+      return () => {
+        released += 1;
+      };
+    });
     expect(registered).toBe(1);
     expect(released).toBe(1);
   });

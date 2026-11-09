@@ -31,7 +31,7 @@
  * The frontend side (buffer → pendingSteeringReview at prompt) is covered by
  * the chaos-monkey harness and message-dispatch.test.ts.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
 
@@ -41,10 +41,12 @@ vi.mock('../../../loop/agent-io.js', () => {
   return {
     agentIO: {
       isNeglectedMode: vi.fn(() => neglected),
-      setNeglectedMode: vi.fn((v: boolean) => { neglected = v; }),
+      setNeglectedMode: vi.fn((v: boolean) => {
+        neglected = v;
+      }),
       log: vi.fn(),
-      flushOutput: vi.fn(),
-    },
+      flushOutput: vi.fn()
+    }
   };
 });
 
@@ -56,31 +58,31 @@ vi.mock('../../../loop/state-machine.js', () => ({
     HOOK: 'hook',
     TOOL: 'tool',
     STOP: 'stop',
-    AWAIT: 'await',
+    AWAIT: 'await'
   },
-  presentResult: vi.fn(),
+  presentResult: vi.fn()
 }));
 
 vi.mock('../../../loop/esc-wrap-up.js', () => ({
   startWrapUp: vi.fn(),
   evaluateWrapUp: vi.fn(),
   clearWrapUp: vi.fn(),
-  setWrapUpReporter: vi.fn(),
+  setWrapUpReporter: vi.fn()
 }));
 
 vi.mock('../../../context/shared/loader.js', () => ({
-  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) },
+  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) }
 }));
 
 vi.mock('../../../engine/chat-helpers.js', () => ({
-  stopSpinner: vi.fn(),
+  stopSpinner: vi.fn()
 }));
 
 // serve-registry: getServeHub stays mocked (stop.ts's normal-mode branch may
 // reach it via ctx.team.awaitTeammates wiring), but the steering guarantees
 // here are asserted on the REAL manager — the hub mocking is incidental.
 vi.mock('../../../serve/serve-registry.js', () => ({
-  getServeHub: vi.fn(),
+  getServeHub: vi.fn()
 }));
 
 vi.mock('../../../loop/triologue.js', () => {
@@ -98,7 +100,7 @@ vi.mock('../../../loop/triologue.js', () => {
 });
 
 vi.mock('../../../loop/exit-auto.js', () => ({
-  exitAutoMode: vi.fn(() => true),
+  exitAutoMode: vi.fn(() => true)
 }));
 
 // --- Imports after mocks -----------------------------------------------------

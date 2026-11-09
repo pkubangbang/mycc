@@ -7,12 +7,12 @@
  * (spawn(binary, args, options)) is used since shell:true is not needed there.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { spawn } from 'child_process';
 
 // Mock child_process.spawn
 vi.mock('child_process', () => ({
-  spawn: vi.fn(),
+  spawn: vi.fn()
 }));
 
 // Store original env
@@ -41,7 +41,7 @@ function mockGuiProcess() {
  *   [binary, ...args.map(a => a.includes(' ') ? `"${a}"` : a)].join(' )
  */
 function winCmd(binary: string, ...args: string[]): string {
-  return [binary, ...args.map(a => a.includes(' ') ? `"${a}"` : a)].join(' ');
+  return [binary, ...args.map((a) => (a.includes(' ') ? `"${a}"` : a))].join(' ');
 }
 
 // These tests assert the Windows-specific spawn shape — spawn(cmdString, [],
@@ -236,11 +236,7 @@ describePlatform('openEditor - GUI editors', () => {
       await openEditor([], { editor: 'vscode' });
 
       // Empty args: command is just the binary name
-      expect(mockSpawn).toHaveBeenCalledWith(
-        'code',
-        [],
-        expect.objectContaining({ detached: true, shell: true })
-      );
+      expect(mockSpawn).toHaveBeenCalledWith('code', [], expect.objectContaining({ detached: true, shell: true }));
     });
   });
 });
@@ -344,8 +340,6 @@ describePlatform('openEditor - default editor', () => {
     delete process.env.EDITOR;
     delete process.env.VISUAL;
 
-    await expect(openEditor(['file.ts'])).rejects.toThrow(
-      '$EDITOR environment variable is not set'
-    );
+    await expect(openEditor(['file.ts'])).rejects.toThrow('$EDITOR environment variable is not set');
   });
 });

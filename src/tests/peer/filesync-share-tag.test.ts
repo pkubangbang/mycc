@@ -10,11 +10,18 @@
  * detail: membership comes only from a challenge/response answer that only a
  * holder of the share id can produce, for a challenge WE issued, exactly once.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import {
-  shareTag, shareTags, shareProof, recordPeerShares, partnersForShare,
-  overlappingShares, clearPeerShares, challengePeerShares, confirmShareChallenges,
-  setWireHooks,
+  shareTag,
+  shareTags,
+  shareProof,
+  recordPeerShares,
+  partnersForShare,
+  overlappingShares,
+  clearPeerShares,
+  challengePeerShares,
+  confirmShareChallenges,
+  setWireHooks
 } from '../../peer/wire-registry.js';
 
 const SHARE = 'secret-capability-1';
@@ -35,11 +42,13 @@ beforeEach(() => {
     getServingEndpoint: () => null,
     recordRemotePeerTodo: () => {},
     appendLocalMail: () => {},
-    verbose: () => {},
+    verbose: () => {}
   });
   recordPeerShares(PEER, shareTags([SHARE, OTHER]));
 });
-afterEach(() => { clearPeerShares(PEER); });
+afterEach(() => {
+  clearPeerShares(PEER);
+});
 
 describe('share membership: nonce vs proof', () => {
   it('the announced nonce is not the share id and does not contain it', () => {

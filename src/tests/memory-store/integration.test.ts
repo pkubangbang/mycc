@@ -4,7 +4,7 @@
  * Tests complex scenarios combining multiple operations
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import {
   createIssue,
   getIssue,
@@ -17,7 +17,7 @@ import {
   listTeammates,
   updateTeammateStatus,
   removeTeammate,
-  clearAll,
+  clearAll
 } from '../../context/memory-store.js';
 import type { IssueStatus, TeammateStatus } from '../../types.js';
 
@@ -57,7 +57,6 @@ describe('memory-store integration tests', () => {
       expect(getIssue(1)).toBeUndefined();
       expect(getTeammate('worker')).toBeUndefined();
     });
-
   });
 
   // ============================================================================
@@ -82,9 +81,6 @@ describe('memory-store integration tests', () => {
       expect(issue?.owner).toBe('agent-1');
       expect(issue?.comments).toHaveLength(4); // 1 system + 3 added
     });
-
-
-
   });
 
   // ============================================================================
@@ -119,7 +115,6 @@ describe('memory-store integration tests', () => {
       expect(getTeammate('worker')).toBeUndefined();
     });
 
-
     it('should preserve createdAt on status updates', () => {
       createTeammate('worker', 'developer', 'Write code');
       const originalCreatedAt = getTeammate('worker')?.createdAt;
@@ -128,7 +123,6 @@ describe('memory-store integration tests', () => {
 
       expect(getTeammate('worker')?.createdAt).toEqual(originalCreatedAt);
     });
-
   });
 
   // ============================================================================
@@ -136,9 +130,6 @@ describe('memory-store integration tests', () => {
   // ============================================================================
 
   describe('Data Consistency', () => {
-
-
-
     it('should preserve issue relationships after updates', () => {
       const issue1 = createIssue('Issue 1', 'Content', []);
       const issue2 = createIssue('Issue 2', 'Content', [issue1]);
@@ -151,7 +142,6 @@ describe('memory-store integration tests', () => {
       expect(getIssue(issue1)?.blocks).toContain(issue2);
       expect(getIssue(issue2)?.blockedBy).toContain(issue1);
     });
-
   });
 
   // ============================================================================
@@ -166,13 +156,6 @@ describe('memory-store integration tests', () => {
       expect(issue?.title).toBe('日本語タイトル');
       expect(issue?.content).toBe('内容 🎉 emoji');
     });
-
-
-
-
-
-
-
   });
 
   // ============================================================================

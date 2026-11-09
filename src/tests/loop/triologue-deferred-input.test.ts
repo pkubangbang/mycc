@@ -8,7 +8,7 @@
  * in triologue-sequence-conformance.test.ts.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { Triologue } from '../../loop/triologue.js';
 import type { Message, ToolCall } from '../../types.js';
 
@@ -26,7 +26,7 @@ function captureAll(): { captured: Captured[]; triologue: Triologue } {
       captured.push({ msg: msg as Captured['msg'], seen: getTriologue() });
     },
     tokenThreshold: 50000,
-    resultThreshold: 100000, // oversized-result dump path needs a big threshold
+    resultThreshold: 100000 // oversized-result dump path needs a big threshold
   });
   return { captured, triologue };
 }
@@ -50,8 +50,7 @@ describe('Triologue deferred-input guard (tool_calls outstanding)', () => {
     ({ captured, triologue } = captureAll());
   });
 
-  const pending = (id: string, name = 'bash') =>
-    ({ id, function: { name, arguments: {} } }) as unknown as ToolCall;
+  const pending = (id: string, name = 'bash') => ({ id, function: { name, arguments: {} } }) as unknown as ToolCall;
 
   /**
    * The provider's full tool-call pairing rules (measured live against DeepSeek
@@ -71,7 +70,7 @@ describe('Triologue deferred-input guard (tool_calls outstanding)', () => {
     const pending = new Set<string>();
     for (const m of msgs) {
       if (m.role === 'tool') {
-        const id = ((m as Message & { tool_call_id?: string }).tool_call_id ?? '');
+        const id = (m as Message & { tool_call_id?: string }).tool_call_id ?? '';
         if (!pending.has(id)) return true; // (2) orphan / duplicate / foreign id
         pending.delete(id);
         continue;
@@ -104,7 +103,7 @@ describe('Triologue deferred-input guard (tool_calls outstanding)', () => {
     const roles = triologue.getMessagesRaw().map((m) => m.role);
     expect(roles).toEqual(['assistant', 'tool', 'user']);
     expect(illegalSequence(triologue.getMessages() as Message[])).toBe(false);
-    expect((triologue.getMessagesRaw()[2].content as string)).toBe('[URGENT] act');
+    expect(triologue.getMessagesRaw()[2].content as string).toBe('[URGENT] act');
   });
 
   it('multi-call: no flush until the SECOND result lands (else p2 is orphaned)', () => {
@@ -207,7 +206,7 @@ describe('Triologue deferred-input guard (tool_calls outstanding)', () => {
     // The recovery answered p1 (tool), then the deferred note replayed ONCE
     // (user), then the new assistant message. No orphan, no lingering buffer.
     expect(raw.map((m) => m.role)).toEqual(['assistant', 'tool', 'user', 'assistant']);
-    expect((raw[2].content as string)).toBe('[URGENT] deferred steer');
+    expect(raw[2].content as string).toBe('[URGENT] deferred steer');
     // And the whole sequence is a legal wire shape (no open block, no
     // interposition).
     expect(illegalSequence(triologue.getMessages() as Message[])).toBe(false);
@@ -272,7 +271,7 @@ describe('Triologue deferred-input guard (tool_calls outstanding)', () => {
     // run the wrap-up turn; the facade must close the block first, so the tail
     // is a legal tool → user([WRAP_UP]) → assistant.
     triologue.agent('calling', [pending('p1')]);
-    triologue.beginWrapUp();      // must flush pending before the WRAP_UP user
+    triologue.beginWrapUp(); // must flush pending before the WRAP_UP user
     triologue.finishWrapUp('done');
     const roles = triologue.getMessagesRaw().map((m) => m.role);
     // assistant(TC) → tool(flushed) → user([WRAP_UP]) → assistant

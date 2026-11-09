@@ -12,7 +12,7 @@
  * so the MailBox can locate its files.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -24,7 +24,9 @@ const sessionDir = () => path.join(tempDir, 'sessions', 'test-session');
 vi.mock('../../config.js', () => ({
   getSessionDir: (sid: string) => path.join(tempDir, 'sessions', sid),
   getSessionContext: () => 'test-session',
-  setSessionContext: (_sid: string) => { /* no-op for tests */ },
+  setSessionContext: (_sid: string) => {
+    /* no-op for tests */
+  },
   ensureDirs: () => {
     const dir = sessionDir();
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -33,16 +35,14 @@ vi.mock('../../config.js', () => ({
   getDiscoveryDir: () => path.join(tempDir, 'discovery'),
   getIdentityFile: () => path.join(tempDir, 'discovery', 'identity.json'),
   getHeartbeatDir: () => path.join(tempDir, 'discovery', 'heartbeat'),
-  getHeartbeatFile: (sid: string) =>
-    path.join(tempDir, 'discovery', 'heartbeat', `${sid}.json`),
+  getHeartbeatFile: (sid: string) => path.join(tempDir, 'discovery', 'heartbeat', `${sid}.json`),
   getChannelsDir: () => path.join(tempDir, 'discovery', 'channels'),
-  getChannelFile: (sid: string, cid: string) =>
-    path.join(tempDir, 'discovery', 'channels', `${sid}-${cid}.json`),
+  getChannelFile: (sid: string, cid: string) => path.join(tempDir, 'discovery', 'channels', `${sid}-${cid}.json`),
   // identity.ts publishes this into identity.json on register(); the mock must
   // provide it or register() throws "No getLaunchArgs export on the mock".
   getLaunchArgs: () => '(none)',
   // identity.ts reads this at construction (--name); the mock must export it.
-  getPeerName: () => null,
+  getPeerName: () => null
 }));
 
 import { MailBox } from '../../context/shared/mail.js';
@@ -109,9 +109,7 @@ describe('collectMails() rename-then-read contract (Fix #2)', () => {
     // Fire several appends concurrently while collectMails runs.
     const appenders: Promise<void>[] = [];
     for (let i = 0; i < 10; i++) {
-      appenders.push(
-        Promise.resolve().then(() => box.appendMail('race', `r${i}`, `c${i}`))
-      );
+      appenders.push(Promise.resolve().then(() => box.appendMail('race', `r${i}`, `c${i}`)));
     }
     const collected = box.collectMails();
     await Promise.all(appenders);
@@ -138,13 +136,13 @@ describe('concurrent register() race (Fix #3)', () => {
     }
 
     // Fire all registers concurrently — the read-merge-write must not clobber.
-    await Promise.all(ids.map(id => Promise.resolve(id.register())));
+    await Promise.all(ids.map((id) => Promise.resolve(id.register())));
 
     // Read identity.json with a fresh instance and assert all 5 entries.
     const checker = new IdentityManager(sid(99), '/work/x', path.join(tempDir, 'mb-x.jsonl'));
     const entries = checker.listIdentities();
     expect(entries).toHaveLength(5);
-    const sessionIds = entries.map(e => e.sessionId).sort();
+    const sessionIds = entries.map((e) => e.sessionId).sort();
     for (let i = 1; i <= 5; i++) {
       expect(sessionIds).toContain(sid(i));
     }
@@ -156,7 +154,7 @@ describe('concurrent register() race (Fix #3)', () => {
       ids.push(new IdentityManager(sid(i), `/work/${i}`, path.join(tempDir, `mb-${i}.jsonl`)));
     }
 
-    await Promise.all(ids.map(id => Promise.resolve(id.register())));
+    await Promise.all(ids.map((id) => Promise.resolve(id.register())));
 
     const checker = new IdentityManager(sid(99), '/work/x', path.join(tempDir, 'mb-x.jsonl'));
     const entries = checker.listIdentities();

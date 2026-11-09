@@ -17,7 +17,7 @@
  *     withFileLock THROW FileLockTimeoutError instead of running fn unheld.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import { mutedSlowSuite } from '../tests/utils/slow-suite.js';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -59,7 +59,7 @@ describe.skipIf(mutedSlowSuite(import.meta.url))('withFileLock', () => {
     expect(() =>
       withFileLock(target, () => {
         throw new Error('boom');
-      }),
+      })
     ).toThrow('boom');
     expect(fs.existsSync(lockDir)).toBe(false);
   });
@@ -118,8 +118,8 @@ describe.skipIf(mutedSlowSuite(import.meta.url))('withFileLock', () => {
         () => {
           ran = true;
         },
-        { strict: true },
-      ),
+        { strict: true }
+      )
     ).toThrow(FileLockTimeoutError);
     expect(ran, 'fn must NOT run when a strict lock cannot be acquired').toBe(false);
   });
@@ -136,7 +136,13 @@ describe.skipIf(mutedSlowSuite(import.meta.url))('withFileLock', () => {
     // Strict mode: a live holder that never releases must make the acquirer
     // TIME OUT (not steal).
     expect(() =>
-      withFileLock(target, () => { /* should never run */ }, { strict: true }),
+      withFileLock(
+        target,
+        () => {
+          /* should never run */
+        },
+        { strict: true }
+      )
     ).toThrow(FileLockTimeoutError);
     // The live holder's lock dir is intact — not stolen.
     expect(fs.existsSync(lockDir)).toBe(true);

@@ -16,16 +16,14 @@
  *
  * The grandchild cases are Windows-only (the pwsh wrapper is Windows-specific).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { spawn, execSync } from 'node:child_process';
 import { armExitDrain, DEFAULT_EXIT_DRAIN_GRACE_MS } from '../../utils/exit-drain.js';
 
 /** Spawn a direct child that exits immediately while a grandchild holds stdio. */
 function spawnPipeHolder(grandchildSeconds: number) {
   const cmd = `Start-Process pwsh -ArgumentList "-NoProfile","-Command","Start-Sleep ${grandchildSeconds}" -NoNewWindow; Write-Output parent-done`;
-  return spawn('pwsh', [
-    '-NoProfile', '-NonInteractive', '-Command', cmd,
-  ], { windowsHide: true });
+  return spawn('pwsh', ['-NoProfile', '-NonInteractive', '-Command', cmd], { windowsHide: true });
 }
 
 /** Best-effort kill of the grandchild sleeper by command line. */
@@ -33,9 +31,11 @@ function killGrandchild(grandchildSeconds: number): void {
   try {
     execSync(
       `Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe'" | Where-Object { $_.CommandLine -like '*Start-Sleep ${grandchildSeconds}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
-      { shell: 'pwsh', stdio: 'ignore' },
+      { shell: 'pwsh', stdio: 'ignore' }
     );
-  } catch { /* best-effort */ }
+  } catch {
+    /* best-effort */
+  }
 }
 
 describe('armExitDrain — bounds completion on process exit, not stdio EOF', () => {

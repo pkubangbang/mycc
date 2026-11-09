@@ -24,17 +24,12 @@
  * including a pin of the OLD lossy filter's behaviour, so a reintroduction of
  * a `startsWith('-')` pre-filter at the dispatch site fails here.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { collectReloadLeadArgs } from '../../slashes/reload.js';
 import { buildReloadArgs, parseArgString } from '../../utils/arg-canonical.js';
 
 /** Run the full dispatch → respawn transformation the way the real code does. */
-function respawnArgv(
-  argv: string[],
-  serveActive = false,
-  servePort = 0,
-  serveHost: string | null = null,
-): string[] {
+function respawnArgv(argv: string[], serveActive = false, servePort = 0, serveHost: string | null = null): string[] {
   const leadArgs = collectReloadLeadArgs(argv);
   return buildReloadArgs(leadArgs, serveActive, servePort, serveHost);
 }
@@ -53,9 +48,7 @@ describe('reload dispatch: collectReloadLeadArgs forwards value tokens (P1 #2)',
 
   it('is an identity slice(2) — it does NOT drop non-flag tokens', () => {
     const argv = ['node', 'mycc', '--auto', 'stray-positional', '--token-threshold', '80000'];
-    expect(collectReloadLeadArgs(argv)).toEqual([
-      '--auto', 'stray-positional', '--token-threshold', '80000',
-    ]);
+    expect(collectReloadLeadArgs(argv)).toEqual(['--auto', 'stray-positional', '--token-threshold', '80000']);
   });
 });
 
@@ -77,11 +70,20 @@ describe('reload dispatch: end-to-end respawn argv preserves flag values (P1 #2)
   it('mixed flags + values all survive, with serve state merged in', () => {
     const out = respawnArgv(
       ['node', 'mycc', '--auto', '--max-upload-mb', '20', '--autofly', '5', '--ollama-model', 'glm-5:cloud'],
-      true, 3193, null,
+      true,
+      3193,
+      null
     );
     expect(out).toEqual([
-      '--auto', '--max-upload-mb', '20', '--autofly', '5', '--ollama-model', 'glm-5:cloud',
-      '--serve', '3193',
+      '--auto',
+      '--max-upload-mb',
+      '20',
+      '--autofly',
+      '5',
+      '--ollama-model',
+      'glm-5:cloud',
+      '--serve',
+      '3193'
     ]);
     const parsed = parseArgString(out.join(' '));
     expect(parsed['max-upload-mb']).toBe('20');
@@ -105,8 +107,7 @@ describe('reload dispatch: the OLD lossy filter is pinned as broken (regression)
   // The exact pre-fix dispatch transform. If someone reintroduces this, the
   // value-loss is demonstrated here — the test documents WHY the identity
   // forward is required.
-  const oldFilter = (argv: string[]): string[] =>
-    argv.slice(2).filter((a) => a.startsWith('-'));
+  const oldFilter = (argv: string[]): string[] => argv.slice(2).filter((a) => a.startsWith('-'));
 
   it('the old filter dropped the 20 in --max-upload-mb 20', () => {
     const argv = ['node', 'mycc', '--max-upload-mb', '20'];

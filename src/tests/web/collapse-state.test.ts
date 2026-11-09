@@ -11,7 +11,7 @@
  *   35/0/true +10 appends → 25/0/true
  *   25/0/true +enough appends → 10/0/true
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import {
   initialCollapseState,
   loadMore,
@@ -23,7 +23,7 @@ import {
   applyObservation,
   windowSize,
   INITIAL_VISIBLE,
-  MAX_VISIBLE,
+  MAX_VISIBLE
 } from '../../web/src/collapse-state.js';
 import type { CollapseState } from '../../web/src/collapse-state.js';
 
@@ -140,8 +140,6 @@ describe('onShrink', () => {
   });
 });
 
-
-
 describe('classifyChange', () => {
   // classifyChange is the PURE decision the ChatLog watcher makes each time
   // it observes a new (verboseLogs, filteredLength) pair. These tests pin
@@ -178,17 +176,18 @@ describe('classifyChange', () => {
     expect(classifyChange(false, false, 30, 10)).toBe('shrink');
   });
 
-
   it('the #15 regression chain: filter (unchanged length) then a real append', () => {
     // Toggle verbose with NO log-only messages present (length unchanged).
     let prevV: boolean | undefined = false;
     let prevL: number | undefined = 10;
     // First observation is the initial run → none, advance tracked values.
     expect(classifyChange(prevV, false, prevL, 10)).toBe('none');
-    prevV = false; prevL = 10;
+    prevV = false;
+    prevL = 10;
     // Verbose ON, length still 10 (no log-only messages) → filter (NOT none).
     expect(classifyChange(prevV, true, prevL, 10)).toBe('filter');
-    prevV = true; prevL = 10;
+    prevV = true;
+    prevL = 10;
     // A REAL message now arrives (verbose unchanged, length 10→11) → append.
     // Under the old flag design this would have been swallowed; here it is
     // correctly classified as append.
@@ -255,22 +254,14 @@ describe('applyObservation — the whole watcher body (round-8 integration)', ()
     // 10/0/true + 1 arrival (delta must be 1, not 0): at the floor the
     // capacity can't trim, so x stays 10, but the re-scroll signal MUST fire
     // so the new tail message is scrolled into view (the floor-swap case).
-    const { state: after, shouldScrollToTail } = applyObservation(
-      obs(true, 10),
-      obs(true, 11),
-      st(10, 0, true),
-    );
+    const { state: after, shouldScrollToTail } = applyObservation(obs(true, 10), obs(true, 11), st(10, 0, true));
     expect(after).toEqual(st(10, 0, true));
     expect(shouldScrollToTail).toBe(true);
   });
 
   it('#19 — append while scrolled up buffers into t (delta non-zero)', () => {
     // 30/0/false + 5 arrivals: buffers into t → 30/5/false, NO re-scroll.
-    const { state: after, shouldScrollToTail } = applyObservation(
-      obs(true, 30),
-      obs(true, 35),
-      st(30, 0, false),
-    );
+    const { state: after, shouldScrollToTail } = applyObservation(obs(true, 30), obs(true, 35), st(30, 0, false));
     expect(after).toEqual(st(30, 5, false));
     expect(shouldScrollToTail).toBe(false);
   });
@@ -282,11 +273,7 @@ describe('applyObservation — the whole watcher body (round-8 integration)', ()
     // the first change), so the append runs.
     const prev = obs(true, 10); // the setup-time observation Vue captures
     const next = obs(true, 12); // first real change: 2 arrivals
-    const { state: after, shouldScrollToTail } = applyObservation(
-      prev,
-      next,
-      st(35, 0, true),
-    );
+    const { state: after, shouldScrollToTail } = applyObservation(prev, next, st(35, 0, true));
     // delta=2 → 35 trims by 2 → 33/0/true, with re-scroll.
     expect(after).toEqual(st(33, 0, true));
     expect(shouldScrollToTail).toBe(true);
@@ -298,11 +285,7 @@ describe('applyObservation — the whole watcher body (round-8 integration)', ()
     // (In ChatLog the watcher always has a real prev via Vue, but the guard
     // keeps applyObservation total.)
     const state = st(35, 5, false);
-    const { state: after, shouldScrollToTail } = applyObservation(
-      undefined,
-      obs(true, 10),
-      state,
-    );
+    const { state: after, shouldScrollToTail } = applyObservation(undefined, obs(true, 10), state);
     expect(after).toBe(state); // same reference, untouched
     expect(shouldScrollToTail).toBe(false);
   });
@@ -314,7 +297,7 @@ describe('applyObservation — the whole watcher body (round-8 integration)', ()
     const { state: after, shouldScrollToTail } = applyObservation(
       obs(false, 10),
       obs(true, 10), // verbose ON, length unchanged → filter
-      st(30, 5, true), // tracking the tail
+      st(30, 5, true) // tracking the tail
     );
     expect(after).toEqual(st(INITIAL_VISIBLE, 0, true)); // onFilterChange reset
     expect(shouldScrollToTail).toBe(true); // was tracking → re-scroll
@@ -328,7 +311,7 @@ describe('applyObservation — the whole watcher body (round-8 integration)', ()
     const { state: after, shouldScrollToTail } = applyObservation(
       obs(false, 30),
       obs(true, 30), // verbose ON, length unchanged → filter
-      st(30, 5, false), // NOT tracking (reading older history)
+      st(30, 5, false) // NOT tracking (reading older history)
     );
     expect(after).toEqual(st(INITIAL_VISIBLE, 0, true)); // still resets the window
     expect(shouldScrollToTail).toBe(false); // but no scroll-to-tail
@@ -338,7 +321,7 @@ describe('applyObservation — the whole watcher body (round-8 integration)', ()
     const { state: after, shouldScrollToTail } = applyObservation(
       obs(true, 100),
       obs(true, 20), // length shrank, verbose unchanged → shrink
-      st(30, 5, false),
+      st(30, 5, false)
     );
     expect(after).toEqual(initialCollapseState());
     expect(shouldScrollToTail).toBe(false);
@@ -349,7 +332,7 @@ describe('applyObservation — the whole watcher body (round-8 integration)', ()
     const { state: after, shouldScrollToTail } = applyObservation(
       obs(true, 30),
       obs(true, 30), // unchanged → none
-      state,
+      state
     );
     expect(after).toBe(state);
     expect(shouldScrollToTail).toBe(false);
@@ -363,7 +346,7 @@ describe('applyObservation — the whole watcher body (round-8 integration)', ()
     const { state: after, shouldScrollToTail } = applyObservation(
       obs(false, 10),
       obs(true, 50), // verbose ON grew the list, but verbose changed → filter
-      st(35, 0, true),
+      st(35, 0, true)
     );
     expect(after).toEqual(st(INITIAL_VISIBLE, 0, true)); // filter reset, NOT append trim
     expect(shouldScrollToTail).toBe(true);
@@ -381,26 +364,18 @@ describe('applyObservation — the whole watcher body (round-8 integration)', ()
       obs(false, 1000),
       obs(false, 1000), // identical observation by cardinality/verbose…
       st(50, 20, false), // …but the list was authoritatively replaced
-      true, // historyReplaced
+      true // historyReplaced
     );
     expect(after).toEqual(initialCollapseState()); // reset
     expect(shouldScrollToTail).toBe(true); // re-scroll to the new tail
   });
 
-
-
   it('#22 — historyReplaced=false + length grew → normal append (revision does not interfere)', () => {
     // The default (historyReplaced=false) path is unchanged: a normal tail
     // arrival with no revision bump is still an append, not a reset. This
     // guards against the revision signal accidentally suppressing appends.
-    const { state: after, shouldScrollToTail } = applyObservation(
-      obs(true, 10),
-      obs(true, 11),
-      st(35, 0, true),
-      false,
-    );
+    const { state: after, shouldScrollToTail } = applyObservation(obs(true, 10), obs(true, 11), st(35, 0, true), false);
     expect(after).toEqual(st(34, 0, true)); // append trim, NOT reset
     expect(shouldScrollToTail).toBe(true);
   });
-
 });

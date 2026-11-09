@@ -7,7 +7,7 @@
  * Uses a mock CoreModule (no real process spawn).
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import { BackgroundTasks } from '../context/shared/bg.js';
 import type { BgTask, BgTaskStatus } from '../types.js';
 import { createMockCore } from './test-utils/mock-context.js';
@@ -27,19 +27,13 @@ function makeBg() {
  * Inject a task into the internal tasks map for testing.
  * Uses getTask() (public) to retrieve the mutable task after seeding.
  */
-function seedTask(
-  bg: BackgroundTasks,
-  pid: number,
-  status: BgTaskStatus,
-  output = '',
-  command = `cmd-${pid}`,
-): BgTask {
+function seedTask(bg: BackgroundTasks, pid: number, status: BgTaskStatus, output = '', command = `cmd-${pid}`): BgTask {
   const task: BgTask = {
     pid,
     command,
     startTime: new Date(),
     status,
-    output: output || undefined,
+    output: output || undefined
   };
   // Access the internal map to seed; cast to the minimal shape needed.
   (bg as unknown as { tasks: Map<number, BgTask> }).tasks.set(pid, task);
@@ -264,7 +258,7 @@ describe('BackgroundTasks completion detection — exit vs close (grandchild hol
 
     const { bg } = makeBg();
     const pid = await bg.runCommand(
-      'Start-Process pwsh -ArgumentList "-NoProfile","-Command","Start-Sleep 6" -NoNewWindow; Write-Output done',
+      'Start-Process pwsh -ArgumentList "-NoProfile","-Command","Start-Sleep 6" -NoNewWindow; Write-Output done'
     );
 
     // Poll for up to ~4s for the status to leave 'running'.
@@ -289,10 +283,12 @@ describe('BackgroundTasks completion detection — exit vs close (grandchild hol
     try {
       const { execSync } = await import('child_process');
       execSync(
-        'Get-CimInstance Win32_Process -Filter "Name = \'pwsh.exe\'" | Where-Object { $_.CommandLine -like \'*Start-Sleep 6*\' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }',
-        { shell: 'pwsh', stdio: 'ignore' },
+        "Get-CimInstance Win32_Process -Filter \"Name = 'pwsh.exe'\" | Where-Object { $_.CommandLine -like '*Start-Sleep 6*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+        { shell: 'pwsh', stdio: 'ignore' }
       );
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
     await bg.killTask(pid);
   });
 });
@@ -318,10 +314,7 @@ describe('BackgroundTasks — output finalization (exit vs close contract)', () 
     // `exit 0` (Windows: an innocuous no-op that exits 0). Cross-platform
     // command: `echo` works on both pwsh and sh.
     const pid = await bg.runCommand('echo hello');
-    const settled = await pollUntil(
-      () => bg.getTask(pid)?.outputFinalized === true,
-      5000,
-    );
+    const settled = await pollUntil(() => bg.getTask(pid)?.outputFinalized === true, 5000);
     expect(settled).toBe(true);
     const task = bg.getTask(pid);
     expect(task!.status).toBe('completed');
@@ -332,10 +325,7 @@ describe('BackgroundTasks — output finalization (exit vs close contract)', () 
     const { bg } = makeBg();
     // A command that exits non-zero on both shells.
     const pid = await bg.runCommand(process.platform === 'win32' ? 'exit 3' : 'exit 3');
-    const settled = await pollUntil(
-      () => bg.getTask(pid)?.outputFinalized === true,
-      5000,
-    );
+    const settled = await pollUntil(() => bg.getTask(pid)?.outputFinalized === true, 5000);
     expect(settled).toBe(true);
     expect(bg.getTask(pid)!.status).toBe('failed');
   });
@@ -390,10 +380,12 @@ describe('BackgroundTasks — bounded post-exit drain (EXIT_DRAIN_GRACE_MS)', ()
     try {
       const { execSync } = await import('child_process');
       execSync(
-        'Get-CimInstance Win32_Process -Filter "Name = \'pwsh.exe\'" | Where-Object { $_.CommandLine -like \'*Start-Sleep 20*\' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }',
-        { shell: 'pwsh', stdio: 'ignore' },
+        "Get-CimInstance Win32_Process -Filter \"Name = 'pwsh.exe'\" | Where-Object { $_.CommandLine -like '*Start-Sleep 20*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+        { shell: 'pwsh', stdio: 'ignore' }
       );
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 
   it('finalizes output via the drain timer when a grandchild holds the pipes past the grace', async () => {
@@ -403,16 +395,13 @@ describe('BackgroundTasks — bounded post-exit drain (EXIT_DRAIN_GRACE_MS)', ()
     // Direct child exits immediately; the grandchild (Start-Sleep 20) inherits
     // and holds both pipes, so 'close' cannot fire for ~20s.
     const pid = await bg.runCommand(
-      'Start-Process pwsh -ArgumentList "-NoProfile","-Command","Start-Sleep 20" -NoNewWindow; Write-Output parent-done',
+      'Start-Process pwsh -ArgumentList "-NoProfile","-Command","Start-Sleep 20" -NoNewWindow; Write-Output parent-done'
     );
 
     try {
       // 1) The drain timer must finalize the output well before the grandchild
       //    exits (grace is 1s; allow generous slack for a loaded machine).
-      const finalized = await drainPoll(
-        () => bg.getTask(pid)?.outputFinalized === true,
-        5000,
-      );
+      const finalized = await drainPoll(() => bg.getTask(pid)?.outputFinalized === true, 5000);
       expect(finalized).toBe(true);
 
       const task = bg.getTask(pid)!;

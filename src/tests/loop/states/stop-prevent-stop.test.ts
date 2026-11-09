@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 /**
  * STOP-guard gate tests: `checkPreventStop()` and its escalation in STOP.
@@ -11,11 +11,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const forkChatMock = vi.fn();
 vi.mock('../../../engine/chat-provider.js', () => ({
-  forkChat: (...args: unknown[]) => forkChatMock(...args),
+  forkChat: (...args: unknown[]) => forkChatMock(...args)
 }));
 
 vi.mock('../../../context/shared/loader.js', () => ({
-  loader: { getToolsForScope: vi.fn(() => []) },
+  loader: { getToolsForScope: vi.fn(() => []) }
 }));
 
 // The guard fork now owns a caller-side spinner pair. Unmocked, the real
@@ -25,7 +25,7 @@ const startSpinnerMock = vi.fn();
 const stopSpinnerMock = vi.fn();
 vi.mock('../../../engine/chat-helpers.js', () => ({
   startSpinner: (...args: unknown[]) => startSpinnerMock(...args),
-  stopSpinner: (...args: unknown[]) => stopSpinnerMock(...args),
+  stopSpinner: (...args: unknown[]) => stopSpinnerMock(...args)
 }));
 
 import { checkPreventStop } from '../../../loop/states/stop-prevent-stop.js';
@@ -42,18 +42,16 @@ function makeEnv(todo: Todo): MachineEnv {
       core: {
         escAware: async (op: (ac: AbortController) => Promise<string>) => op(new AbortController()),
         verbose: vi.fn(),
-        brief: vi.fn(),
-      },
-    },
+        brief: vi.fn()
+      }
+    }
   } as unknown as MachineEnv;
 }
 
 /** Reply with a single verdict for `todo`, echoing its real hash. */
 function reply(todo: Todo, id: number, held: boolean, reason?: string): void {
   const item = todo.getItems().find((i) => i.id === id)!;
-  forkChatMock.mockResolvedValueOnce(
-    JSON.stringify([{ id, hash: item.hash, held, ...(reason ? { reason } : {}) }]),
-  );
+  forkChatMock.mockResolvedValueOnce(JSON.stringify([{ id, hash: item.hash, held, ...(reason ? { reason } : {}) }]));
 }
 
 describe('checkPreventStop', () => {
@@ -106,10 +104,12 @@ describe('checkPreventStop', () => {
     const b = todo.createTodo('B');
     todo.pinTodo(a.id, a.hash, true, 'ga');
     todo.pinTodo(b.id, b.hash, true, 'gb');
-    forkChatMock.mockResolvedValueOnce(JSON.stringify([
-      { id: a.id, hash: todo.getItems()[0].hash, held: false },
-      { id: b.id, hash: todo.getItems()[1].hash, held: false },
-    ]));
+    forkChatMock.mockResolvedValueOnce(
+      JSON.stringify([
+        { id: a.id, hash: todo.getItems()[0].hash, held: false },
+        { id: b.id, hash: todo.getItems()[1].hash, held: false }
+      ])
+    );
 
     await checkPreventStop(env);
 
@@ -121,10 +121,12 @@ describe('checkPreventStop', () => {
     const b = todo.createTodo('B');
     todo.pinTodo(a.id, a.hash, true, 'ga');
     todo.pinTodo(b.id, b.hash, true, 'gb');
-    forkChatMock.mockResolvedValueOnce(JSON.stringify([
-      { id: b.id, hash: todo.getItems()[1].hash, held: true, reason: 'b' },
-      { id: a.id, hash: todo.getItems()[0].hash, held: true, reason: 'a' },
-    ]));
+    forkChatMock.mockResolvedValueOnce(
+      JSON.stringify([
+        { id: b.id, hash: todo.getItems()[1].hash, held: true, reason: 'b' },
+        { id: a.id, hash: todo.getItems()[0].hash, held: true, reason: 'a' }
+      ])
+    );
 
     const r = await checkPreventStop(env);
     expect(r.guard?.id).toBe(a.id);
@@ -134,9 +136,9 @@ describe('checkPreventStop', () => {
   it('discards a verdict whose HASH does not match (hallucination)', async () => {
     const a = todo.createTodo('A');
     todo.pinTodo(a.id, a.hash, true, 'ga');
-    forkChatMock.mockResolvedValueOnce(JSON.stringify([
-      { id: a.id, hash: 'deadbeef', held: true, reason: 'fabricated' },
-    ]));
+    forkChatMock.mockResolvedValueOnce(
+      JSON.stringify([{ id: a.id, hash: 'deadbeef', held: true, reason: 'fabricated' }])
+    );
 
     expect((await checkPreventStop(env)).held).toBe(false);
   });
@@ -152,10 +154,12 @@ describe('checkPreventStop', () => {
   it('skips malformed entries but honours a valid sibling', async () => {
     const a = todo.createTodo('A');
     todo.pinTodo(a.id, a.hash, true, 'ga');
-    forkChatMock.mockResolvedValueOnce(JSON.stringify([
-      { id: 'nope', hash: 'x', held: true },
-      { id: a.id, hash: todo.getItems()[0].hash, held: true },
-    ]));
+    forkChatMock.mockResolvedValueOnce(
+      JSON.stringify([
+        { id: 'nope', hash: 'x', held: true },
+        { id: a.id, hash: todo.getItems()[0].hash, held: true }
+      ])
+    );
 
     expect((await checkPreventStop(env)).held).toBe(true);
   });
@@ -181,14 +185,14 @@ describe('checkPreventStop', () => {
     todo.pinTodo(a.id, a.hash, true, 'ga');
     // Simulate the escAware clean-up branch: the operation never resolves to
     // text, the wrapper returns ''.
-    (env.ctx.core as unknown as { escAware: unknown }).escAware =
-      async (_op: unknown, onCleanUp: () => string) => onCleanUp();
+    (env.ctx.core as unknown as { escAware: unknown }).escAware = async (_op: unknown, onCleanUp: () => string) =>
+      onCleanUp();
     forkChatMock.mockResolvedValueOnce('[]');
 
     expect((await checkPreventStop(env)).held).toBe(false);
   });
 
-  it('never mutates the todo (releasing a guard is the agent\'s job)', async () => {
+  it("never mutates the todo (releasing a guard is the agent's job)", async () => {
     const a = todo.createTodo('A');
     todo.pinTodo(a.id, a.hash, true, 'ga');
     const before = JSON.stringify(todo.getItems());
@@ -271,7 +275,7 @@ describe('checkPreventStop — STALL PREVENTION (ending classification)', () => 
     id: number,
     held: boolean,
     ending?: 'complete' | 'blocked' | 'question',
-    reason?: string,
+    reason?: string
   ): void {
     const item = t.getItems().find((i) => i.id === id)!;
     forkChatMock.mockResolvedValueOnce(
@@ -281,9 +285,9 @@ describe('checkPreventStop — STALL PREVENTION (ending classification)', () => 
           hash: item.hash,
           held,
           ...(ending ? { ending } : {}),
-          ...(reason ? { reason } : {}),
-        },
-      ]),
+          ...(reason ? { reason } : {})
+        }
+      ])
     );
   }
 
@@ -350,8 +354,8 @@ describe('checkPreventStop — STALL PREVENTION (ending classification)', () => 
     forkChatMock.mockResolvedValueOnce(
       JSON.stringify([
         { id: a.id, hash: items[0].hash, held: true, ending: 'blocked' },
-        { id: b.id, hash: items[1].hash, held: true, ending: 'complete' },
-      ]),
+        { id: b.id, hash: items[1].hash, held: true, ending: 'complete' }
+      ])
     );
 
     const r = await checkPreventStop(env);
@@ -385,9 +389,7 @@ describe('checkPreventStop — STALL PREVENTION (ending classification)', () => 
     const a = todo.createTodo('Migrate the schema');
     todo.pinTodo(a.id, a.hash, true, 'schema is migrated');
     const item = todo.getItems()[0];
-    forkChatMock.mockResolvedValueOnce(
-      JSON.stringify([{ id: a.id, hash: item.hash, held: false, ending: 'maybe' }]),
-    );
+    forkChatMock.mockResolvedValueOnce(JSON.stringify([{ id: a.id, hash: item.hash, held: false, ending: 'maybe' }]));
 
     const r = await checkPreventStop(env);
     expect(r.held).toBe(false);

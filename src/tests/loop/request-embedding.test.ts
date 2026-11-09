@@ -1,24 +1,24 @@
 /**
  * Tests for request-embedding.ts — RequestEmbeddingTracker
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 // Use vi.hoisted() so the mock function is available when the hoisted
 // vi.mock() factory runs.
 const { mockGetEmbedding } = vi.hoisted(() => ({
-  mockGetEmbedding: vi.fn(),
+  mockGetEmbedding: vi.fn()
 }));
 
 // Mock agentIO before importing the module under test
 vi.mock('../../loop/agent-io.js', () => ({
   agentIO: {
-    verbose: vi.fn(),
-  },
+    verbose: vi.fn()
+  }
 }));
 
 // Mock getEmbedding — each test controls the return value via mockGetEmbedding
 vi.mock('../../engine/rag-provider.js', () => ({
-  getEmbedding: mockGetEmbedding,
+  getEmbedding: mockGetEmbedding
 }));
 
 import { RequestEmbeddingTracker } from '../../loop/request-embedding.js';
@@ -36,7 +36,7 @@ function fakeEmbedding(seed: number, dimension = 768): number[] {
   }
   // Normalize to unit length for clean cosine similarity results
   const norm = Math.sqrt(vec.reduce((sum, v) => sum + v * v, 0));
-  return vec.map(v => v / norm);
+  return vec.map((v) => v / norm);
 }
 
 describe('RequestEmbeddingTracker', () => {
@@ -92,7 +92,7 @@ describe('RequestEmbeddingTracker', () => {
         a: 'hello',
         b: null,
         c: undefined,
-        d: 'world',
+        d: 'world'
       });
 
       const textArg = mockGetEmbedding.mock.calls[0][0] as string;
@@ -238,7 +238,7 @@ describe('RequestEmbeddingTracker', () => {
     });
 
     it('should return 1 for similarity between 0.7 and 0.85 (inclusive lower)', () => {
-      expect(tracker.similarityToDelta(0.70)).toBe(1);
+      expect(tracker.similarityToDelta(0.7)).toBe(1);
       expect(tracker.similarityToDelta(0.75)).toBe(1);
       expect(tracker.similarityToDelta(0.85)).toBe(1);
     });

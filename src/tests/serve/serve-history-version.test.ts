@@ -15,7 +15,7 @@
  *    state flip that lives in the body but not in the durable files).
  *  - A missing file yields a stable "null" token (no needless invalidation).
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';

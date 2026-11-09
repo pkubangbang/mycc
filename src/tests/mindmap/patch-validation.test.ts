@@ -6,16 +6,11 @@
  * exercise the actual production code paths.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import {
-  validatePatchAction,
-  appendPatch,
-  writePatches,
-  readAllPatches,
-} from '../../mindmap/patch-jsonl.js';
+import { validatePatchAction, appendPatch, writePatches, readAllPatches } from '../../mindmap/patch-jsonl.js';
 import { get_node, get_ancestors } from '../../mindmap/get-node.js';
 import { applyPatchAction } from '../../mindmap/patch.js';
 import { safeNodeId } from '../../utils/sanitize.js';
@@ -26,26 +21,52 @@ import type { Mindmap, Node, MindmapPatchAction, Link } from '../../mindmap/type
 /** A mindmap whose child titles contain spaces, so safeNodeId(title) ≠ title. */
 function makeMindmap(): Mindmap {
   const codeCleanup: Node = {
-    id: '/mycc.md/code-cleanup', title: 'Code Cleanup', text: 'cleanup rules',
-    summary: '', level: 2, children: [], links: [], is_mycc: true,
+    id: '/mycc.md/code-cleanup',
+    title: 'Code Cleanup',
+    text: 'cleanup rules',
+    summary: '',
+    level: 2,
+    children: [],
+    links: [],
+    is_mycc: true
   };
   const mycc: Node = {
-    id: '/mycc.md', title: 'mycc.md', text: 'project doc',
-    summary: '', level: 1, children: [codeCleanup], links: [], is_mycc: true,
+    id: '/mycc.md',
+    title: 'mycc.md',
+    text: 'project doc',
+    summary: '',
+    level: 1,
+    children: [codeCleanup],
+    links: [],
+    is_mycc: true
   };
   const root: Node = {
-    id: '/', title: 'Root', text: 'root', summary: '',
-    level: 0, children: [mycc], links: [],
+    id: '/',
+    title: 'Root',
+    text: 'root',
+    summary: '',
+    level: 0,
+    children: [mycc],
+    links: []
   };
   return {
-    dir: '/tmp', source_file: 'MYCC.md', hash: 'h1',
-    compiled_at: '', updated_at: '', root,
+    dir: '/tmp',
+    source_file: 'MYCC.md',
+    hash: 'h1',
+    compiled_at: '',
+    updated_at: '',
+    root
   };
 }
 
 const baseAdd = (): MindmapPatchAction => ({
-  action: 'add', path: '/mycc.md', title: 'New Node', text: 'some text',
-  timestamp: '', reason: 'test', mindmap_hash: 'h1',
+  action: 'add',
+  path: '/mycc.md',
+  title: 'New Node',
+  text: 'some text',
+  timestamp: '',
+  reason: 'test',
+  mindmap_hash: 'h1'
 });
 
 // ── Fix A: validatePatchAction orphan prevention ──────────────────────────
@@ -143,7 +164,9 @@ describe('appendPatch + readAllPatches (Fix A — write/read gates)', () => {
 
 describe('get_node (Fix B — normalized-id matching)', () => {
   let mindmap: Mindmap;
-  beforeEach(() => { mindmap = makeMindmap(); });
+  beforeEach(() => {
+    mindmap = makeMindmap();
+  });
 
   it('resolves a child whose title has spaces via its sanitized id segment', () => {
     // title "Code Cleanup" → safeNodeId → "code-cleanup"
@@ -168,9 +191,13 @@ describe('get_node (Fix B — normalized-id matching)', () => {
     expect(parent).not.toBeNull();
 
     const add: MindmapPatchAction = {
-      action: 'add', path: '/mycc.md/code-cleanup',
-      title: '中文顿号 Multi-line Edit', text: 'rule body',
-      timestamp: '', reason: 't', mindmap_hash: 'h1',
+      action: 'add',
+      path: '/mycc.md/code-cleanup',
+      title: '中文顿号 Multi-line Edit',
+      text: 'rule body',
+      timestamp: '',
+      reason: 't',
+      mindmap_hash: 'h1'
     };
     expect(applyPatchAction(mindmap, add)).toBe(true);
 
@@ -181,9 +208,13 @@ describe('get_node (Fix B — normalized-id matching)', () => {
 
   it('get_ancestors resolves a normalized-id path whose titles contain spaces', () => {
     const add: MindmapPatchAction = {
-      action: 'add', path: '/mycc.md/code-cleanup',
-      title: 'Deep Rule', text: 'x',
-      timestamp: '', reason: 't', mindmap_hash: 'h1',
+      action: 'add',
+      path: '/mycc.md/code-cleanup',
+      title: 'Deep Rule',
+      text: 'x',
+      timestamp: '',
+      reason: 't',
+      mindmap_hash: 'h1'
     };
     applyPatchAction(mindmap, add);
     const childId = '/mycc.md/code-cleanup/deep-rule';
@@ -196,7 +227,9 @@ describe('get_node (Fix B — normalized-id matching)', () => {
 
 describe('applyPatchAction delete (normalized-id matching)', () => {
   let mindmap: Mindmap;
-  beforeEach(() => { mindmap = makeMindmap(); });
+  beforeEach(() => {
+    mindmap = makeMindmap();
+  });
 
   it('deletes a spaced-title child by its normalized id segment', () => {
     // Regression: the delete branch used c.title.toLowerCase() ===
@@ -210,8 +243,11 @@ describe('applyPatchAction delete (normalized-id matching)', () => {
     // delete succeeds.
     expect(get_node(mindmap, '/mycc.md/code-cleanup')).not.toBeNull();
     const del: MindmapPatchAction = {
-      action: 'delete', path: '/mycc.md/code-cleanup',
-      timestamp: '', reason: 't', mindmap_hash: 'h1',
+      action: 'delete',
+      path: '/mycc.md/code-cleanup',
+      timestamp: '',
+      reason: 't',
+      mindmap_hash: 'h1'
     };
     expect(applyPatchAction(mindmap, del)).toBe(true);
     expect(get_node(mindmap, '/mycc.md/code-cleanup')).toBeNull();
@@ -222,8 +258,11 @@ describe('applyPatchAction delete (normalized-id matching)', () => {
     // must be a no-op (the node still exists under its real id).
     expect(get_node(mindmap, '/mycc.md/code-cleanup')).not.toBeNull();
     const del: MindmapPatchAction = {
-      action: 'delete', path: '/mycc.md/Code Cleanup',
-      timestamp: '', reason: 't', mindmap_hash: 'h1',
+      action: 'delete',
+      path: '/mycc.md/Code Cleanup',
+      timestamp: '',
+      reason: 't',
+      mindmap_hash: 'h1'
     };
     expect(applyPatchAction(mindmap, del)).toBe(false);
     expect(get_node(mindmap, '/mycc.md/code-cleanup')).not.toBeNull();
@@ -232,17 +271,24 @@ describe('applyPatchAction delete (normalized-id matching)', () => {
   it('deletes a CJK-title child by its normalized id segment', () => {
     // Add a CJK-titled node, then delete it by its sanitized id.
     const add: MindmapPatchAction = {
-      action: 'add', path: '/mycc.md',
-      title: '主题节点', text: 'cjk body',
-      timestamp: '', reason: 't', mindmap_hash: 'h1',
+      action: 'add',
+      path: '/mycc.md',
+      title: '主题节点',
+      text: 'cjk body',
+      timestamp: '',
+      reason: 't',
+      mindmap_hash: 'h1'
     };
     expect(applyPatchAction(mindmap, add)).toBe(true);
     const cjkId = '/mycc.md/主题节点'; // safeNodeId preserves CJK letters
     expect(get_node(mindmap, cjkId)).not.toBeNull();
 
     const del: MindmapPatchAction = {
-      action: 'delete', path: cjkId,
-      timestamp: '', reason: 't', mindmap_hash: 'h1',
+      action: 'delete',
+      path: cjkId,
+      timestamp: '',
+      reason: 't',
+      mindmap_hash: 'h1'
     };
     expect(applyPatchAction(mindmap, del)).toBe(true);
     expect(get_node(mindmap, cjkId)).toBeNull();
@@ -258,52 +304,69 @@ describe('applyPatchAction add is idempotent (replay-safe dedup)', () => {
   // self-amplifying on the next rebuildPatches. The fix adds an existence
   // guard: if a child with the same id already exists, the add is a no-op.
   let mindmap: Mindmap;
-  beforeEach(() => { mindmap = makeMindmap(); });
+  beforeEach(() => {
+    mindmap = makeMindmap();
+  });
 
   it('returns true and does NOT duplicate when the same add is applied twice', () => {
     const add: MindmapPatchAction = {
-      action: 'add', path: '/mycc.md', title: 'Dup Node', text: 'x',
-      timestamp: '', reason: 't', mindmap_hash: 'h1',
+      action: 'add',
+      path: '/mycc.md',
+      title: 'Dup Node',
+      text: 'x',
+      timestamp: '',
+      reason: 't',
+      mindmap_hash: 'h1'
     };
     expect(applyPatchAction(mindmap, add)).toBe(true);
     expect(applyPatchAction(mindmap, add)).toBe(true); // idempotent no-op
 
     const parent = get_node(mindmap, '/mycc.md')!;
-    const matches = parent.children.filter(c => c.id === '/mycc.md/dup-node');
+    const matches = parent.children.filter((c) => c.id === '/mycc.md/dup-node');
     expect(matches).toHaveLength(1); // exactly one, not two
   });
 
   it('does NOT duplicate when replaying many identical add lines (simulates loadMindmapWithPatches)', () => {
     const add: MindmapPatchAction = {
-      action: 'add', path: '/mycc.md', title: 'Replay Node', text: 'x',
-      timestamp: '', reason: 't', mindmap_hash: 'h1',
+      action: 'add',
+      path: '/mycc.md',
+      title: 'Replay Node',
+      text: 'x',
+      timestamp: '',
+      reason: 't',
+      mindmap_hash: 'h1'
     };
     // Simulate 5 duplicate JSONL lines being replayed.
     for (let i = 0; i < 5; i++) {
       expect(applyPatchAction(mindmap, add)).toBe(true);
     }
     const parent = get_node(mindmap, '/mycc.md')!;
-    const matches = parent.children.filter(c => c.id === '/mycc.md/replay-node');
+    const matches = parent.children.filter((c) => c.id === '/mycc.md/replay-node');
     expect(matches).toHaveLength(1);
   });
 });
 
 describe('applyPatchAction add replays action.links (term hoist)', () => {
   let mindmap: Mindmap;
-  beforeEach(() => { mindmap = makeMindmap(); });
+  beforeEach(() => {
+    mindmap = makeMindmap();
+  });
 
   it('attaches action.links onto the new node (term links hoist to root Key Terms)', () => {
     // Add a terminology-style node directly under /mycc.md (present in the
     // fixture) so applyPatchAction can resolve the parent.
     const add: MindmapPatchAction = {
-      action: 'add', path: '/mycc.md',
+      action: 'add',
+      path: '/mycc.md',
       title: 'backlog / livelog / TP constraint',
       text: 'backlog = the append-only triologue JSONL file; livelog = the in-memory Triologue messages array.',
-      timestamp: '', reason: 'terminology', mindmap_hash: 'h1',
+      timestamp: '',
+      reason: 'terminology',
+      mindmap_hash: 'h1',
       links: [
         { target_type: 'term', term_name: 'backlog', comment: 'append-only triologue JSONL on disk' },
-        { target_type: 'term', term_name: 'livelog', comment: 'in-memory Triologue messages array' },
-      ],
+        { target_type: 'term', term_name: 'livelog', comment: 'in-memory Triologue messages array' }
+      ]
     };
     expect(applyPatchAction(mindmap, add)).toBe(true);
 
@@ -318,8 +381,13 @@ describe('applyPatchAction add replays action.links (term hoist)', () => {
 
   it('omits action.links entirely when not provided (backward compatible)', () => {
     const add: MindmapPatchAction = {
-      action: 'add', path: '/mycc.md', title: 'Plain Node', text: 'no links',
-      timestamp: '', reason: 't', mindmap_hash: 'h1',
+      action: 'add',
+      path: '/mycc.md',
+      title: 'Plain Node',
+      text: 'no links',
+      timestamp: '',
+      reason: 't',
+      mindmap_hash: 'h1'
     };
     expect(applyPatchAction(mindmap, add)).toBe(true);
     const node = get_node(mindmap, '/mycc.md/plain-node');
@@ -329,15 +397,20 @@ describe('applyPatchAction add replays action.links (term hoist)', () => {
 
   it('drops malformed link entries (bad target_type / missing target field) defensively', () => {
     const add: MindmapPatchAction = {
-      action: 'add', path: '/mycc.md', title: 'Bad Links', text: 'x',
-      timestamp: '', reason: 't', mindmap_hash: 'h1',
+      action: 'add',
+      path: '/mycc.md',
+      title: 'Bad Links',
+      text: 'x',
+      timestamp: '',
+      reason: 't',
+      mindmap_hash: 'h1',
       links: [
         { target_type: 'term', term_name: 'good-term', comment: 'ok' },
         { target_type: 'term', term_name: '', comment: 'empty term dropped' },
         { target_type: 'bogus' as Link['target_type'], comment: 'bad type dropped' },
         { target_type: 'file', comment: 'no file_path dropped' },
-        null as unknown as Link,
-      ],
+        null as unknown as Link
+      ]
     };
     expect(applyPatchAction(mindmap, add)).toBe(true);
     const node = get_node(mindmap, '/mycc.md/bad-links');

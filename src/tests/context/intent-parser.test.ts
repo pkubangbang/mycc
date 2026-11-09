@@ -13,13 +13,13 @@
  * - Rigid single-pass malformed PARAM detection (exhaustive violation matrix)
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import {
   parseIntent,
   validateIntent,
   detectMalformedParam,
   VALID_VERBS,
-  VALID_OBJECTS,
+  VALID_OBJECTS
 } from '../../context/grant/intent-parser.js';
 
 describe('parseIntent', () => {

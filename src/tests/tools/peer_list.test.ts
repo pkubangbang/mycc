@@ -10,7 +10,7 @@
  * isFresh; the cutoff is an additional hard filter on top of that.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 import { peersTool } from '../../tools/peer_list.js';
 
 import type { AgentContext, IdentityEntry } from '../../types.js';
@@ -32,7 +32,7 @@ function mkIdentity(sid: string): IdentityEntry {
     sessionId: sid,
     workDir: `/work/${sid.slice(0, 4)}`,
     mailbox: `/mb/${sid}/unread-lead.jsonl`,
-    startedAt: NOW - 10 * HOUR,
+    startedAt: NOW - 10 * HOUR
   };
 }
 

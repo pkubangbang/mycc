@@ -14,7 +14,7 @@
  * guard requirement with a focused test.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -35,10 +35,7 @@ vi.mock('../../config.js', () => {
     if (!id || typeof id !== 'string') {
       throw new Error(`Invalid ${label}: must be a non-empty string`);
     }
-    if (
-      id.includes('/') || id.includes('\\') || id.includes('..') ||
-      [...id].some((c) => c.codePointAt(0)! < 0x20)
-    ) {
+    if (id.includes('/') || id.includes('\\') || id.includes('..') || [...id].some((c) => c.codePointAt(0)! < 0x20)) {
       throw new Error(`Invalid ${label}: contains path separators, "..", or control characters: ${JSON.stringify(id)}`);
     }
     return id;
@@ -58,7 +55,7 @@ vi.mock('../../config.js', () => {
     // provide it or register() throws "No getLaunchArgs export on the mock".
     getLaunchArgs: () => '(none)',
     // identity.ts reads this at construction (--name); the mock must export it.
-    getPeerName: () => null,
+    getPeerName: () => null
   };
 });
 
@@ -124,8 +121,14 @@ describe('path traversal guard (Fix #5)', () => {
     const cid = 'normal-chan-001';
     const mailbox = makeMailboxPath(SID_A);
     writeChannelRaw(SID_A, cid, {
-      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
-      title: 't', firstQuery: null, joined: false, firstQuerySent: false, createdAt: 1,
+      channelId: cid,
+      ownerSessionId: SID_A,
+      peerSessionId: SID_B,
+      title: 't',
+      firstQuery: null,
+      joined: false,
+      firstQuerySent: false,
+      createdAt: 1
     });
     const idA = new IdentityManager(SID_A, '/work/a', mailbox);
     const ch = new ChannelManager(SID_A, idA, mailbox);
@@ -168,8 +171,14 @@ describe('onChannelJoin setAuto guard (Fix #6)', () => {
     const cid = 'chan-guard-001';
     const mailbox = makeMailboxPath(SID_A);
     writeChannelRaw(SID_A, cid, {
-      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
-      title: 't', firstQuery: null, joined: false, firstQuerySent: false, createdAt: 1,
+      channelId: cid,
+      ownerSessionId: SID_A,
+      peerSessionId: SID_B,
+      title: 't',
+      firstQuery: null,
+      joined: false,
+      firstQuerySent: false,
+      createdAt: 1
     });
     const idA = new IdentityManager(SID_A, '/work/a', mailbox);
     const ch = new ChannelManager(SID_A, idA, mailbox);
@@ -190,8 +199,14 @@ describe('onChannelJoin setAuto guard (Fix #6)', () => {
 
     // Re-create channel file for a second join (joined flag resets).
     writeChannelRaw(SID_A, cid, {
-      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
-      title: 't', firstQuery: null, joined: false, firstQuerySent: false, createdAt: 1,
+      channelId: cid,
+      ownerSessionId: SID_A,
+      peerSessionId: SID_B,
+      title: 't',
+      firstQuery: null,
+      joined: false,
+      firstQuerySent: false,
+      createdAt: 1
     });
 
     // Case 2: blocked → setAuto called.
@@ -199,5 +214,4 @@ describe('onChannelJoin setAuto guard (Fix #6)', () => {
     ch.joinChannel(cid);
     expect(setAutoCalled).toBe(true);
   });
-
 });

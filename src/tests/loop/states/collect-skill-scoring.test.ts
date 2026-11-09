@@ -24,7 +24,7 @@
  * The integration tests in collect-keyword-integration.test.ts cover the real
  * handleCollect() path.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 import type { Skill, SearchResult } from '../../../types.js';
 import { scoreSkills } from '../../../loop/skill-matcher.js';
 import { loader } from '../../../context/shared/loader.js';
@@ -44,7 +44,7 @@ function wikiRow(title: string, similarity: number): SearchResult {
   return {
     document: { domain: 'skills', title, content: '', references: [] },
     similarity,
-    hash: 'h',
+    hash: 'h'
   };
 }
 
@@ -60,10 +60,10 @@ function setLocalScopes(scopeByName: Record<string, string>): void {
         domain: 'skills',
         title: `${scope}:${name}`,
         content: '',
-        references: [],
+        references: []
       },
-      contentHash: 'h',
-    })),
+      contentHash: 'h'
+    }))
   );
 }
 
@@ -80,7 +80,7 @@ function one(
   skill: Skill,
   keywords: string[],
   semanticResults: SearchResult[] = [],
-  scope = 'proj',
+  scope = 'proj'
 ): { points: number; boost: number; score: number } | null {
   setLocalScopes({ [skill.name]: scope });
   const ranked = scoreSkills({ skills: [skill], keywords, semanticResults, threshold: THRESHOLD });
@@ -106,19 +106,19 @@ function one(
  * those keywords is added so the query's full ordering is preserved as real
  * evidence positions. Omit it only when the target is the sole/first match.
  */
-function points(
-  skillKeywords: string[],
-  keywords: string[],
-  name = 's',
-  padSkillKeywords: string[] = [],
-): number {
+function points(skillKeywords: string[], keywords: string[], name = 's', padSkillKeywords: string[] = []): number {
   const target = mkSkill(name, skillKeywords);
   const skills = padSkillKeywords.length ? [target, mkSkill(`${name}-pad`, padSkillKeywords)] : [target];
   const scopes: Record<string, string> = { [name]: 'proj' };
   if (padSkillKeywords.length) scopes[`${name}-pad`] = 'proj';
   setLocalScopes(scopes);
-  const ranked = scoreSkills({ skills, keywords, semanticResults: [wikiRow(`proj:${name}`, 1.0)], threshold: THRESHOLD });
-  const r = ranked.find(x => x.skill.name === name);
+  const ranked = scoreSkills({
+    skills,
+    keywords,
+    semanticResults: [wikiRow(`proj:${name}`, 1.0)],
+    threshold: THRESHOLD
+  });
+  const r = ranked.find((x) => x.skill.name === name);
   return r ? r.points : 0;
 }
 
@@ -167,7 +167,7 @@ describe('scoreSkills — positional weights [10, 7, 5, 3, 2]', () => {
       skills: [mkSkill('s', ['x', 'y', 'z'])],
       keywords: ['restart', 'mycc', 'instance'],
       semanticResults: [wikiRow('proj:s', 1.0)],
-      threshold: THRESHOLD,
+      threshold: THRESHOLD
     });
     expect(ranked).toHaveLength(0);
   });
@@ -220,9 +220,9 @@ describe('scoreSkills — score = points × boost, strict > 10 gate', () => {
       skills: [mkSkill('tgt', ['a', 'd']), mkSkill('pad', ['b', 'c', 'e'])],
       keywords: ['a', 'b', 'c', 'd', 'e'],
       semanticResults: [],
-      threshold: THRESHOLD,
+      threshold: THRESHOLD
     });
-    const r = ranked.find(x => x.skill.name === 'tgt')!;
+    const r = ranked.find((x) => x.skill.name === 'tgt')!;
     expect(r.points).toBe(13);
     expect(r.score).toBeGreaterThan(10);
   });
@@ -246,8 +246,8 @@ describe('scoreSkills — score = points × boost, strict > 10 gate', () => {
         skills: [mkSkill('tgt', ['e']), mkSkill('pad', ['a', 'b', 'c', 'd'])],
         keywords: ['a', 'b', 'c', 'd', 'e'],
         semanticResults: [wikiRow('proj:tgt', 1.0)],
-        threshold: THRESHOLD,
-      }).find(x => x.skill.name === 'tgt'),
+        threshold: THRESHOLD
+      }).find((x) => x.skill.name === 'tgt')
     ).toBeUndefined();
   });
 
@@ -261,8 +261,8 @@ describe('scoreSkills — score = points × boost, strict > 10 gate', () => {
         skills: [mkSkill('tgt', ['b']), mkSkill('pad', ['a', 'c', 'd', 'e'])],
         keywords: ['a', 'b', 'c', 'd', 'e'],
         semanticResults: [wikiRow('proj:tgt', 0.9)],
-        threshold: THRESHOLD,
-      }).find(x => x.skill.name === 'tgt'),
+        threshold: THRESHOLD
+      }).find((x) => x.skill.name === 'tgt')
     ).toBeUndefined();
   });
 
@@ -283,7 +283,7 @@ describe('scoreSkills — score = points × boost, strict > 10 gate', () => {
 });
 
 describe('scoreSkills — P1 scope collision (similarity matched by qualified title)', () => {
-  it('another PROJECT scope\'s row does NOT boost the local same-named skill', () => {
+  it("another PROJECT scope's row does NOT boost the local same-named skill", () => {
     // Local skill is project 'projA'; the wiki returns a row for project
     // 'projB' with the SAME bare name and a high similarity. The old
     // bare-name keying would have applied projB's 0.9; the scope-aware keying
@@ -293,7 +293,7 @@ describe('scoreSkills — P1 scope collision (similarity matched by qualified ti
       skills: [mkSkill('code-review', ['restart', 'mycc'])],
       keywords: ['restart', 'mycc'],
       semanticResults: [wikiRow('projB:code-review', 0.9)],
-      threshold: THRESHOLD,
+      threshold: THRESHOLD
     });
     expect(ranked).toHaveLength(1);
     expect(ranked[0].boost).toBe(1);
@@ -301,7 +301,7 @@ describe('scoreSkills — P1 scope collision (similarity matched by qualified ti
     expect(ranked[0].similarity).toBeUndefined();
   });
 
-  it('a [user] scope\'s row does NOT boost a local project\'s same-named skill', () => {
+  it("a [user] scope's row does NOT boost a local project's same-named skill", () => {
     // [user] and [built-in] are CONSTANT scope strings on every machine, so
     // this collision hits EVERY project — the widest form of the bug.
     setLocalScopes({ 'code-review': 'mycc' });
@@ -309,13 +309,13 @@ describe('scoreSkills — P1 scope collision (similarity matched by qualified ti
       skills: [mkSkill('code-review', ['restart', 'mycc'])],
       keywords: ['restart', 'mycc'],
       semanticResults: [wikiRow('[user]:code-review', 0.92)],
-      threshold: THRESHOLD,
+      threshold: THRESHOLD
     });
     expect(ranked[0].boost).toBe(1);
     expect(ranked[0].score).toBe(17);
   });
 
-  it('positive control: the MATCHING scope\'s row DOES boost', () => {
+  it("positive control: the MATCHING scope's row DOES boost", () => {
     // Same setup, but the wiki row\'s scope matches the local skill\'s. This
     // confirms the fix does not over-restrict: 17 × ... with sim 0.9
     // (boost 1.4) = 23.8.
@@ -324,7 +324,7 @@ describe('scoreSkills — P1 scope collision (similarity matched by qualified ti
       skills: [mkSkill('code-review', ['restart', 'mycc'])],
       keywords: ['restart', 'mycc'],
       semanticResults: [wikiRow('mycc:code-review', 0.9)],
-      threshold: THRESHOLD,
+      threshold: THRESHOLD
     });
     expect(ranked[0].boost).toBeCloseTo(1.4, 10);
     expect(ranked[0].score).toBeCloseTo(23.8, 10);
@@ -363,10 +363,10 @@ describe('scoreSkills — P1 OOV: unmatchable concepts do not distort positions'
     const b = scoreBoth(['pg_dump', 'backup', 'postgres']);
 
     // backup = evidence[0] → 10 in both; postgres = evidence[1] → 7 in both.
-    const aBackup = a.find(x => x.skill.name === 'backup')!;
-    const aPg = a.find(x => x.skill.name === 'postgres')!;
-    const bBackup = b.find(x => x.skill.name === 'backup')!;
-    const bPg = b.find(x => x.skill.name === 'postgres')!;
+    const aBackup = a.find((x) => x.skill.name === 'backup')!;
+    const aPg = a.find((x) => x.skill.name === 'postgres')!;
+    const bBackup = b.find((x) => x.skill.name === 'backup')!;
+    const bPg = b.find((x) => x.skill.name === 'postgres')!;
     expect(aBackup.points).toBe(bBackup.points); // 10 === 10
     expect(aPg.points).toBe(bPg.points); // 7 === 7
     expect(aBackup.points).toBe(10);
@@ -385,7 +385,7 @@ describe('scoreSkills — P1 OOV: unmatchable concepts do not distort positions'
       skills: [mkSkill('backup', ['backup'])],
       keywords: ['pg_dump', 'backup', 'postgres'],
       semanticResults: [wikiRow('proj:backup', 0.9)],
-      threshold: THRESHOLD,
+      threshold: THRESHOLD
     });
     expect(ranked).toHaveLength(1);
     expect(ranked[0].points).toBe(10);
@@ -401,7 +401,7 @@ describe('scoreSkills — P1 OOV: unmatchable concepts do not distort positions'
       skills: [mkSkill('s', ['backup'])],
       keywords: ['pg_dump', 'wal_archive'],
       semanticResults: [wikiRow('proj:s', 1.0)],
-      threshold: THRESHOLD,
+      threshold: THRESHOLD
     });
     expect(ranked).toHaveLength(0);
   });
@@ -433,12 +433,7 @@ describe('scoreSkills — ordering + top-3 truncation', () => {
     // Four skills all owning the 1st keyword (10 pts); give three of them
     // matching-scope similarities so they clear the floor, and rely on the
     // slice to cap at 3.
-    const skills = [
-      mkSkill('s0', ['a']),
-      mkSkill('s1', ['a']),
-      mkSkill('s2', ['a']),
-      mkSkill('s3', ['a']),
-    ];
+    const skills = [mkSkill('s0', ['a']), mkSkill('s1', ['a']), mkSkill('s2', ['a']), mkSkill('s3', ['a'])];
     setLocalScopes({ s0: 'p', s1: 'p', s2: 'p', s3: 'p' });
     const ranked = scoreSkills({
       skills,
@@ -447,12 +442,12 @@ describe('scoreSkills — ordering + top-3 truncation', () => {
         wikiRow('p:s0', 0.9), // 1.4 → 14.0
         wikiRow('p:s1', 0.7), // 1.2 → 12.0
         wikiRow('p:s2', 0.6), // 1.1 → 11.0
-        wikiRow('p:s3', 0.55), // 1.05 → 10.5
+        wikiRow('p:s3', 0.55) // 1.05 → 10.5
       ],
-      threshold: THRESHOLD,
+      threshold: THRESHOLD
     });
     expect(ranked).toHaveLength(3);
-    expect(ranked.map(r => r.skill.name)).toEqual(['s0', 's1', 's2']);
+    expect(ranked.map((r) => r.skill.name)).toEqual(['s0', 's1', 's2']);
     expect(ranked[0].score).toBeGreaterThan(ranked[1].score);
     expect(ranked[1].score).toBeGreaterThan(ranked[2].score);
   });

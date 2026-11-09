@@ -29,28 +29,28 @@
  * IMPORTANT: vi.mock() paths resolve relative to the TEST FILE location
  * (src/tests/loop/states/), so all paths need ../../../ (3 levels up to src/).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 // --- Mocks (must be set up BEFORE importing modules that use them) ----------
 
 // Mock the chat-provider. retryChat is controlled per-test via mockResolvedValue.
 vi.mock('../../../engine/chat-provider.js', () => ({
   retryChat: vi.fn(),
-  MODEL: 'test-model',
+  MODEL: 'test-model'
 }));
 
 // agentIO: not in neglected mode (normal LLM call path).
 vi.mock('../../../loop/agent-io.js', () => ({
   agentIO: {
     isNeglectedMode: vi.fn(() => false),
-    setNeglectedMode: vi.fn(),
-  },
+    setNeglectedMode: vi.fn()
+  }
 }));
 
 vi.mock('../../../loop/esc-wrap-up.js', () => ({
   startWrapUp: vi.fn(),
   evaluateWrapUp: vi.fn(),
-  clearWrapUp: vi.fn(),
+  clearWrapUp: vi.fn()
 }));
 
 // handleCrossroad returns null (no crossroad fires) so the empty-output path
@@ -61,14 +61,14 @@ vi.mock('../../../engine/chat-helpers.js', () => ({ stopSpinner: vi.fn() }));
 vi.mock('../../../loop/prompts/lead.js', () => ({
   buildPlanModePrompt: vi.fn(() => 'plan-prompt'),
   buildNormalModePrompt: vi.fn(() => 'normal-prompt'),
-  isInPlanMode: vi.fn(() => false),
+  isInPlanMode: vi.fn(() => false)
 }));
 
 // Provide a non-empty tools array so the crossroad branch is entered (and then
 // skipped because handleCrossroad returns null). The empty-output handler runs
 // AFTER the crossroad block regardless.
 vi.mock('../../../context/shared/loader.js', () => ({
-  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) },
+  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) }
 }));
 
 // Triologue stub: getLastRole() is configurable per-test (defaults to 'tool',
@@ -89,7 +89,7 @@ vi.mock('../../../loop/triologue.js', () => {
 
 // autoState stub: recordLlmSuccess must exist (called on the success path).
 vi.mock('../../../loop/auto-state.js', () => ({
-  autoState: { recordLlmSuccess: vi.fn() },
+  autoState: { recordLlmSuccess: vi.fn() }
 }));
 
 // --- Imports after mocks -----------------------------------------------------
@@ -99,12 +99,7 @@ import { stopSpinner } from '../../../engine/chat-helpers.js';
 import { retryChat } from '../../../engine/chat-provider.js';
 import { Triologue } from '../../../loop/triologue.js';
 import { autoState } from '../../../loop/auto-state.js';
-import {
-  createTurnVars,
-  createChatData,
-  createMockMachineEnv,
-  createMockChatResponse,
-} from '../esc-test-helpers.js';
+import { createTurnVars, createChatData, createMockMachineEnv, createMockChatResponse } from '../esc-test-helpers.js';
 
 /**
  * Build an empty-content, no-tool-calls ChatResponse — the exact shape that
@@ -134,9 +129,7 @@ describe('handleLlm — empty output when lastRole === "tool" (img_describe regr
 
   it('injects a synthetic brief() on empty output even when lastRole is "tool"', async () => {
     // First call empty → inject brief → continue. Second call non-empty → HOOK.
-    vi.mocked(retryChat)
-      .mockResolvedValueOnce(emptyResponse())
-      .mockResolvedValueOnce(nonEmptyResponse());
+    vi.mocked(retryChat).mockResolvedValueOnce(emptyResponse()).mockResolvedValueOnce(nonEmptyResponse());
 
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
@@ -151,7 +144,11 @@ describe('handleLlm — empty output when lastRole === "tool" (img_describe regr
     // THE REGRESSION: agent() and tool() MUST be called despite lastRole==='tool'.
     expect(triologue.agent).toHaveBeenCalledTimes(1);
     expect(triologue.tool).toHaveBeenCalledTimes(1);
-    expect(triologue.tool).toHaveBeenCalledWith('brief', expect.stringMatching(/^\[[A-Za-z0-9_-]+\] OK$/), expect.any(String));
+    expect(triologue.tool).toHaveBeenCalledWith(
+      'brief',
+      expect.stringMatching(/^\[[A-Za-z0-9_-]+\] OK$/),
+      expect.any(String)
+    );
   });
 
   it('does NOT infinite-loop: bails to PROMPT after MAX_EMPTY_RETRIES consecutive empties', async () => {
@@ -181,9 +178,7 @@ describe('handleLlm — empty output when lastRole === "tool" (img_describe regr
   it('still injects brief() when lastRole is NOT "tool" (non-regression of original path)', async () => {
     // Confirm the original (non-tool) path still injects exactly one brief.
     (triologue.getLastRole as ReturnType<typeof vi.fn>).mockReturnValue('assistant');
-    vi.mocked(retryChat)
-      .mockResolvedValueOnce(emptyResponse())
-      .mockResolvedValueOnce(nonEmptyResponse());
+    vi.mocked(retryChat).mockResolvedValueOnce(emptyResponse()).mockResolvedValueOnce(nonEmptyResponse());
 
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
@@ -193,7 +188,11 @@ describe('handleLlm — empty output when lastRole === "tool" (img_describe regr
 
     expect(result).toBe(AgentState.HOOK);
     expect(triologue.agent).toHaveBeenCalledTimes(1);
-    expect(triologue.tool).toHaveBeenCalledWith('brief', expect.stringMatching(/^\[[A-Za-z0-9_-]+\] OK$/), expect.any(String));
+    expect(triologue.tool).toHaveBeenCalledWith(
+      'brief',
+      expect.stringMatching(/^\[[A-Za-z0-9_-]+\] OK$/),
+      expect.any(String)
+    );
   });
 
   it('does not record an LLM success while spinning on empty output', async () => {
@@ -224,4 +223,3 @@ describe('handleLlm — empty output when lastRole === "tool" (img_describe regr
     expect(result).toBe(AgentState.PROMPT);
   });
 });
-

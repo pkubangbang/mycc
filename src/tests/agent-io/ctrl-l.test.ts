@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import type { KeyInfo } from '../../utils/key-parser.js';
 
 // Mock LineEditor before importing agent-io
@@ -8,12 +8,12 @@ const mockLineEditor = {
   getHistory: vi.fn().mockReturnValue([]),
   close: vi.fn(),
   clearScreen: vi.fn(),
-  setWhisper: vi.fn(),
+  setWhisper: vi.fn()
 };
 
 vi.mock('../../utils/line-editor.js', () => {
   return {
-    LineEditor: vi.fn().mockImplementation(() => mockLineEditor),
+    LineEditor: vi.fn().mockImplementation(() => mockLineEditor)
   };
 });
 
@@ -29,7 +29,7 @@ function ctrlLKey(): KeyInfo {
     ctrl: true,
     meta: false,
     shift: false,
-    sequence: '',
+    sequence: ''
   };
 }
 
@@ -42,7 +42,7 @@ function regularKey(name: string): KeyInfo {
     ctrl: false,
     meta: false,
     shift: false,
-    sequence: '',
+    sequence: ''
   };
 }
 
@@ -94,10 +94,7 @@ describe('agent-io - Ctrl+L handling', () => {
     it('should show whisper line on first Ctrl+L', () => {
       (agentIO as unknown as { activeLineEditor: unknown }).activeLineEditor = mockLineEditor;
       agentIO.handleKeyEvent(ctrlLKey());
-      expect(mockLineEditor.setWhisper).toHaveBeenCalledWith(
-        'Press Ctrl+L again to clear history',
-        expect.any(Number)
-      );
+      expect(mockLineEditor.setWhisper).toHaveBeenCalledWith('Press Ctrl+L again to clear history', expect.any(Number));
     });
 
     it('should set lastCtrlLTime on first Ctrl+L', () => {
@@ -129,10 +126,7 @@ describe('agent-io - Ctrl+L handling', () => {
 
       // First press
       agentIO.handleKeyEvent(ctrlLKey());
-      expect(mockLineEditor.setWhisper).toHaveBeenCalledWith(
-        'Press Ctrl+L again to clear history',
-        expect.any(Number)
-      );
+      expect(mockLineEditor.setWhisper).toHaveBeenCalledWith('Press Ctrl+L again to clear history', expect.any(Number));
 
       // Clear mock before second press
       mockLineEditor.setWhisper.mockClear();
@@ -209,7 +203,9 @@ describe('agent-io - Ctrl+L handling', () => {
     it('should set callback', () => {
       const callback = vi.fn();
       agentIO.setDoubleCtrlLCallback(callback);
-      expect((agentIO as unknown as { onDoubleCtrlLCallback: (() => void) | null }).onDoubleCtrlLCallback).toBe(callback);
+      expect((agentIO as unknown as { onDoubleCtrlLCallback: (() => void) | null }).onDoubleCtrlLCallback).toBe(
+        callback
+      );
     });
 
     it('should allow clearing callback', () => {
@@ -239,14 +235,18 @@ describe('agent-io - Ctrl+L handling', () => {
       agentIO.handleKeyEvent(ctrlLKey());
 
       // whisperTimeout should be set
-      expect((agentIO as unknown as { whisperTimeout: ReturnType<typeof setTimeout> | null }).whisperTimeout).not.toBeNull();
+      expect(
+        (agentIO as unknown as { whisperTimeout: ReturnType<typeof setTimeout> | null }).whisperTimeout
+      ).not.toBeNull();
 
       // Double press to trigger clearCtrlLState
       agentIO.setDoubleCtrlLCallback(() => {});
       advanceMockTime(100);
       agentIO.handleKeyEvent(ctrlLKey());
 
-      expect((agentIO as unknown as { whisperTimeout: ReturnType<typeof setTimeout> | null }).whisperTimeout).toBeNull();
+      expect(
+        (agentIO as unknown as { whisperTimeout: ReturnType<typeof setTimeout> | null }).whisperTimeout
+      ).toBeNull();
     });
 
     it('should call setWhisper(null) on active line editor', () => {

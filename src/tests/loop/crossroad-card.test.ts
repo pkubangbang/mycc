@@ -1,10 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import {
   plainPreview,
   buildCrossroadCard,
   formatCrossroadCard,
   toCrossroadCardWire,
-  CROSSROAD_PREVIEW_MAX,
+  CROSSROAD_PREVIEW_MAX
 } from '../../loop/crossroad-card.js';
 
 /**
@@ -58,7 +58,7 @@ describe('buildCrossroadCard', () => {
       candidates: ['alpha', 'beta', 'gamma'],
       selectedIndex: 1,
       resolvedOutcome: 'beta',
-      directionNames: ['go forward', 'go backward', 'synthesize at a high level'],
+      directionNames: ['go forward', 'go backward', 'synthesize at a high level']
     });
 
     expect(card.drafted).toBe(3);
@@ -71,7 +71,7 @@ describe('buildCrossroadCard', () => {
     const card = buildCrossroadCard({
       candidates: ['alpha', 'beta'],
       selectedIndex: 0,
-      directionNames: ['go forward'],
+      directionNames: ['go forward']
     });
     expect(card.candidates[0].direction).toBe('go forward');
     // Never invents a label: the missing one falls back to `option N`.
@@ -89,7 +89,7 @@ describe('buildCrossroadCard', () => {
     const card = buildCrossroadCard({
       candidates: ['line1\nline2'],
       selectedIndex: 0,
-      resolvedOutcome: '**done**',
+      resolvedOutcome: '**done**'
     });
     expect(card.candidates[0].preview).toBe('line1 line2');
     expect(card.outcome).toBe('done');
@@ -102,7 +102,7 @@ describe('formatCrossroadCard (terminal fallback / history body)', () => {
       candidates: ['go forward text', 'go backward text'],
       selectedIndex: 1,
       resolvedOutcome: 'the backward one',
-      directionNames: ['go forward', 'go backward'],
+      directionNames: ['go forward', 'go backward']
     });
     const text = formatCrossroadCard(card);
 
@@ -123,7 +123,7 @@ describe('formatCrossroadCard (terminal fallback / history body)', () => {
       candidates: ['go forward text', 'go backward text'],
       selectedIndex: 0,
       resolvedOutcome: 'the forward one',
-      cutpoint: 'However, the real issue is in the API layer.',
+      cutpoint: 'However, the real issue is in the API layer.'
     });
     const text = formatCrossroadCard(card);
 
@@ -145,7 +145,7 @@ describe('toCrossroadCardWire', () => {
       candidates: ['a', 'b'],
       selectedIndex: 0,
       resolvedOutcome: 'a',
-      directionNames: ['go forward', 'go backward'],
+      directionNames: ['go forward', 'go backward']
     });
     const wire = toCrossroadCardWire(card);
 
@@ -154,7 +154,7 @@ describe('toCrossroadCardWire', () => {
     expect(wire.chosenIndex).toBe(1);
     expect(wire.candidates).toEqual([
       { index: 1, direction: 'go forward', preview: 'a', selected: true },
-      { index: 2, direction: 'go backward', preview: 'b', selected: false },
+      { index: 2, direction: 'go backward', preview: 'b', selected: false }
     ]);
     expect(wire.outcome).toBe('a');
     // Survives the wire as-is.

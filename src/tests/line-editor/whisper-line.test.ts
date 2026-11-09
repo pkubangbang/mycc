@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import stringWidth from 'string-width';
 import stripAnsi from 'strip-ansi';
 import { LineEditor } from '../../utils/line-editor.js';
@@ -38,11 +38,13 @@ describe('LineEditor - Whisper Line', () => {
   /**
    * Create a LineEditor with standard options
    */
-  function createEditor(options: {
-    prompt?: string;
-    history?: string[];
-    columns?: number;
-  } = {}): LineEditor {
+  function createEditor(
+    options: {
+      prompt?: string;
+      history?: string[];
+      columns?: number;
+    } = {}
+  ): LineEditor {
     if (options.columns) {
       process.env.COLUMNS = String(options.columns);
     }
@@ -50,7 +52,7 @@ describe('LineEditor - Whisper Line', () => {
       prompt: options.prompt ?? '> ',
       stdout: mockStdout,
       onDone: onDone as (value: string) => void,
-      history: options.history,
+      history: options.history
     });
     // Clear initial render calls
     writeCalls = [];
@@ -66,7 +68,7 @@ describe('LineEditor - Whisper Line', () => {
    * Get all write calls concatenated
    */
   function getAllWrites(): string {
-    return writeCalls.map(c => typeof c === 'string' ? c : '').join('');
+    return writeCalls.map((c) => (typeof c === 'string' ? c : '')).join('');
   }
 
   /**
@@ -214,7 +216,7 @@ describe('LineEditor - Whisper Line', () => {
 
       // Should send clear screen escape codes (scrollback-preserving)
       const output = getAllWrites();
-      expect(output).toContain('\x1b[H\x1b[J');  // Home + clear below
+      expect(output).toContain('\x1b[H\x1b[J'); // Home + clear below
     });
 
     it('should reset screenStartRow (whisper always present adds 1)', () => {
@@ -250,7 +252,8 @@ describe('LineEditor - Whisper Line', () => {
   describe('whisper line rendering', () => {
     it('should handle long whisper text', () => {
       editor = createEditor({ columns: 80 });
-      const longText = 'This is a very long whisper message that exceeds the terminal width and should still display correctly without crashing';
+      const longText =
+        'This is a very long whisper message that exceeds the terminal width and should still display correctly without crashing';
 
       // Should not throw
       expect(() => editor.setWhisper(longText)).not.toThrow();

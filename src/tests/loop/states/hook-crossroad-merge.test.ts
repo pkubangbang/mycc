@@ -19,26 +19,28 @@
  * factory's copy and every `setNeglectedMode(true)` would be invisible to the
  * code under test — which is exactly the bug this file is here to prevent.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 const state = vi.hoisted(() => ({ neglected: false }));
 
 vi.mock('../../../loop/agent-io.js', () => ({
   agentIO: {
     isNeglectedMode: vi.fn(() => state.neglected),
-    setNeglectedMode: vi.fn((v: boolean) => { state.neglected = v; }),
+    setNeglectedMode: vi.fn((v: boolean) => {
+      state.neglected = v;
+    }),
     log: vi.fn(),
     verbose: vi.fn(),
-    brief: vi.fn(),
-  },
+    brief: vi.fn()
+  }
 }));
 
 vi.mock('../../../context/shared/loader.js', () => ({
-  loader: { getToolsForScope: vi.fn(() => []) },
+  loader: { getToolsForScope: vi.fn(() => []) }
 }));
 
 vi.mock('../../../hook/hook-preprocessor.js', () => ({
-  augmentToolCalls: vi.fn((calls: unknown[]) => calls),
+  augmentToolCalls: vi.fn((calls: unknown[]) => calls)
 }));
 
 vi.mock('../../../loop/triologue.js', () => {
@@ -58,12 +60,7 @@ import { handleHook } from '../../../loop/states/hook.js';
 import { agentIO } from '../../../loop/agent-io.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { Triologue } from '../../../loop/triologue.js';
-import {
-  createTurnVars,
-  createChatData,
-  createMockMachineEnv,
-  createMockHookResult,
-} from '../esc-test-helpers.js';
+import { createTurnVars, createChatData, createMockMachineEnv, createMockHookResult } from '../esc-test-helpers.js';
 
 /** A chat in the exact state llm.ts leaves when a crossroad resolved. */
 function resolvedChat() {
@@ -87,7 +84,9 @@ describe('handleHook — crossroad merge guards', () => {
     // counter semantics; re-attach through the mock API anyway so each test
     // starts from a live turn no matter what the previous one did.
     vi.mocked(agentIO.isNeglectedMode).mockImplementation(() => state.neglected);
-    vi.mocked(agentIO.setNeglectedMode).mockImplementation((v: boolean) => { state.neglected = v; });
+    vi.mocked(agentIO.setNeglectedMode).mockImplementation((v: boolean) => {
+      state.neglected = v;
+    });
     state.neglected = false;
     triologue = new Triologue();
   });

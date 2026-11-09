@@ -14,12 +14,17 @@
  *
  * Framework-free: the manager has no imports, so this suite needs no mocks.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import { SteeringManager, type SteeringSnapshot } from '../../loop/steering-manager.js';
 
 function recorder() {
   const seen: SteeringSnapshot[] = [];
-  return { seen, listener: (s: SteeringSnapshot) => { seen.push(s); } };
+  return {
+    seen,
+    listener: (s: SteeringSnapshot) => {
+      seen.push(s);
+    }
+  };
 }
 
 describe('SteeringManager — revisioned snapshot emission', () => {
@@ -82,7 +87,9 @@ describe('SteeringManager — revisioned snapshot emission', () => {
   it('a throwing observer is isolated — the mutation still completes and others run', () => {
     const m = new SteeringManager();
     const good = recorder();
-    m.onChange(() => { throw new Error('boom'); });
+    m.onChange(() => {
+      throw new Error('boom');
+    });
     m.onChange(good.listener);
     expect(() => m.addNote('still added')).not.toThrow();
     expect(m.peekTexts()).toEqual(['still added']);

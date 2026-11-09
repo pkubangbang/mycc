@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import { buildSummaryPrompt, type CompactDeps } from '../../loop/triologue/compact.js';
 
 function makeDeps(lastUserQuery: string): CompactDeps {
@@ -7,7 +7,7 @@ function makeDeps(lastUserQuery: string): CompactDeps {
     getFullMessages: () => [],
     lastUserQuery: () => lastUserQuery,
     onCompact: vi.fn(),
-    domains: [],
+    domains: []
   };
 }
 
@@ -17,7 +17,7 @@ describe('buildSummaryPrompt', () => {
       'CONVERSATION BODY',
       makeDeps('Preserve the exact API contract'),
       [{ domain_name: 'project', description: 'project-specific knowledge' }],
-      'TP parity',
+      'TP parity'
     );
 
     expect(prompt).toContain('### 1) What Was Accomplished');
@@ -34,7 +34,7 @@ describe('buildSummaryPrompt', () => {
 
     expect(prompt).not.toContain('### Knowledge Persistence');
     expect(prompt).not.toContain('**Focus Area:**');
-    expect(prompt).not.toContain('**User\'s Last Instruction:**');
+    expect(prompt).not.toContain("**User's Last Instruction:**");
     expect(prompt.endsWith('BODY')).toBe(true);
   });
 });

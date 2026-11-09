@@ -10,7 +10,7 @@
  * `agentIO` is mocked (it starts a line editor); `autoState` is the real
  * singleton so the flag transition is observed, not stubbed.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 const logSpy = vi.fn();
 
@@ -19,8 +19,8 @@ vi.mock('../../loop/agent-io.js', () => ({
     setNeglectedMode: vi.fn(),
     flushOutput: vi.fn(),
     verbose: vi.fn(),
-    log: (msg: string) => logSpy(msg),
-  },
+    log: (msg: string) => logSpy(msg)
+  }
 }));
 
 import { exitAutoMode } from '../../loop/exit-auto.js';
@@ -31,8 +31,15 @@ import { agentIO } from '../../loop/agent-io.js';
 function captureConsole(): { lines: string[]; restore: () => void } {
   const lines: string[] = [];
   const original = console.log;
-  console.log = (msg?: unknown) => { lines.push(String(msg ?? '')); };
-  return { lines, restore: () => { console.log = original; } };
+  console.log = (msg?: unknown) => {
+    lines.push(String(msg ?? ''));
+  };
+  return {
+    lines,
+    restore: () => {
+      console.log = original;
+    }
+  };
 }
 
 describe('exitAutoMode — the single leave-auto owner', () => {
@@ -55,7 +62,7 @@ describe('exitAutoMode — the single leave-auto owner', () => {
     expect(autoState.getAuto()).toBe(false);
     expect(agentIO.setNeglectedMode).toHaveBeenCalledWith(false);
     expect(agentIO.flushOutput).toHaveBeenCalledTimes(1);
-    const announce = cap.lines.filter(l => l.includes('auto mode is off'));
+    const announce = cap.lines.filter((l) => l.includes('auto mode is off'));
     expect(announce).toHaveLength(1);
   });
 
@@ -68,7 +75,7 @@ describe('exitAutoMode — the single leave-auto owner', () => {
       cap.restore();
     }
 
-    expect(cap.lines.filter(l => l.includes('auto mode is off'))).toHaveLength(0);
+    expect(cap.lines.filter((l) => l.includes('auto mode is off'))).toHaveLength(0);
     // Still clears/starts the prompt cleanly — an ESC outside auto mode is
     // also "give me control back".
     expect(agentIO.setNeglectedMode).toHaveBeenCalledWith(false);
@@ -84,9 +91,6 @@ describe('exitAutoMode — the single leave-auto owner', () => {
       cap.restore();
     }
 
-    expect(agentIO.verbose).toHaveBeenCalledWith(
-      'auto',
-      expect.stringContaining('via await'),
-    );
+    expect(agentIO.verbose).toHaveBeenCalledWith('auto', expect.stringContaining('via await'));
   });
 });

@@ -22,7 +22,7 @@
  * helper covered transitively through it (it gates the 3+ errorish +
  * longest-common-prefix logic).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { parsePreventStopResult } from '../../../loop/states/stop-prevent-stop.js';
 import { detectRepeatedActions } from '../../../loop/hint-round.js';
 import type { SequenceEvent } from '../../../hook/sequence.js';
@@ -36,9 +36,7 @@ describe('parsePreventStopResult', () => {
   it('should parse a clean JSON array', () => {
     const raw = '[{"id":2,"hash":"abc12345","held":true,"reason":"tests still failing"}]';
     const result = parsePreventStopResult(raw);
-    expect(result).toEqual([
-      { id: 2, hash: 'abc12345', held: true, reason: 'tests still failing' },
-    ]);
+    expect(result).toEqual([{ id: 2, hash: 'abc12345', held: true, reason: 'tests still failing' }]);
   });
 
   it('should parse multiple entries', () => {
@@ -46,7 +44,7 @@ describe('parsePreventStopResult', () => {
     const result = parsePreventStopResult(raw);
     expect(result).toEqual([
       { id: 1, hash: 'h1', held: false },
-      { id: 2, hash: 'h2', held: true, reason: 'not done' },
+      { id: 2, hash: 'h2', held: true, reason: 'not done' }
     ]);
   });
 
@@ -74,9 +72,7 @@ describe('parsePreventStopResult', () => {
 
   it('should tolerate whitespace around the JSON array', () => {
     const raw = '   \n  [{"id":5,"hash":"h","held":false,"reason":"skip"}]  \n  ';
-    expect(parsePreventStopResult(raw)).toEqual([
-      { id: 5, hash: 'h', held: false, reason: 'skip' },
-    ]);
+    expect(parsePreventStopResult(raw)).toEqual([{ id: 5, hash: 'h', held: false, reason: 'skip' }]);
   });
 });
 describe('detectRepeatedActions', () => {
@@ -84,7 +80,7 @@ describe('detectRepeatedActions', () => {
     const events = [
       ev('edit_file', 'Error: old_text not found in file'),
       ev('edit_file', 'Error: old_text not found in file (line 42)'),
-      ev('edit_file', 'Error: old_text not found in file (line 99)'),
+      ev('edit_file', 'Error: old_text not found in file (line 99)')
     ];
     const result = detectRepeatedActions(events);
     expect(result).toContain('edit_file');
@@ -93,18 +89,12 @@ describe('detectRepeatedActions', () => {
   });
 
   it('returns null when only 2 same-tool calls repeat (below the 3+ threshold)', () => {
-    const events = [
-      ev('edit_file', 'Error: old_text not found'),
-      ev('edit_file', 'Error: old_text not found'),
-    ];
+    const events = [ev('edit_file', 'Error: old_text not found'), ev('edit_file', 'Error: old_text not found')];
     expect(detectRepeatedActions(events)).toBeNull();
   });
 
   it('returns null when there are fewer than 3 events total', () => {
-    const events = [
-      ev('edit_file', 'Error: x'),
-      ev('edit_file', 'Error: x'),
-    ];
+    const events = [ev('edit_file', 'Error: x'), ev('edit_file', 'Error: x')];
     expect(detectRepeatedActions(events)).toBeNull();
   });
 
@@ -113,7 +103,7 @@ describe('detectRepeatedActions', () => {
     const events = [
       ev('read_file', 'File contents here, line 1...'),
       ev('read_file', 'File contents here, line 1...'),
-      ev('read_file', 'File contents here, line 1...'),
+      ev('read_file', 'File contents here, line 1...')
     ];
     expect(detectRepeatedActions(events)).toBeNull();
   });
@@ -124,7 +114,7 @@ describe('detectRepeatedActions', () => {
       ev('edit_file', 'Error: not found'),
       ev('bash', 'Error: command failed'),
       ev('edit_file', 'Error: not found'),
-      ev('bash', 'Error: command failed'),
+      ev('bash', 'Error: command failed')
     ];
     expect(detectRepeatedActions(events)).toBeNull();
   });
@@ -144,7 +134,7 @@ describe('detectRepeatedActions', () => {
       ev('read_file', 'ok 5'),
       ev('read_file', 'ok 6'),
       ev('edit_file', 'done'),
-      ev('edit_file', 'done'),
+      ev('edit_file', 'done')
     ];
     expect(detectRepeatedActions(events)).toBeNull();
   });
@@ -157,7 +147,7 @@ describe('detectRepeatedActions', () => {
       ev('bash', 'Error: command not found'),
       ev('bash', 'Error: command not found'),
       ev('bash', 'Error: command not found'),
-      ev('bash', 'Error: command not found'),
+      ev('bash', 'Error: command not found')
     ];
     const result = detectRepeatedActions(events);
     // bash group (4) is larger than edit_file group (3)
@@ -169,7 +159,7 @@ describe('detectRepeatedActions', () => {
     const events = [
       ev('grep', 'No such pattern found in any file'),
       ev('grep', 'No such pattern found in any file'),
-      ev('grep', 'No such pattern found in any file'),
+      ev('grep', 'No such pattern found in any file')
     ];
     const result = detectRepeatedActions(events);
     expect(result).toContain('grep');

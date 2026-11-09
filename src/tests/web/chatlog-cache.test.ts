@@ -15,7 +15,7 @@
  * void on any error) is asserted separately against the node (no-IDB)
  * environment: they must resolve, not reject.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import {
   buildCacheKey,
   validateCacheRecord,
@@ -24,7 +24,7 @@ import {
   readCachedChatlog,
   writeCachedChatlog,
   clearCachedChatlog,
-  CACHE_VERSION,
+  CACHE_VERSION
 } from '../../web/src/chatlog-cache.js';
 import type { ChatlogCacheRecord } from '../../web/src/chatlog-cache.js';
 import type { ChatMessage } from '../../web/src/types.js';
@@ -62,7 +62,7 @@ describe('validateCacheRecord', () => {
       version: CACHE_VERSION,
       savedAt: 100,
       messages: [msg('hi')],
-      teammateMessages: [],
+      teammateMessages: []
     };
     expect(validateCacheRecord(rec, sid)).toBe(rec);
   });
@@ -73,7 +73,7 @@ describe('validateCacheRecord', () => {
       version: CACHE_VERSION,
       savedAt: 100,
       messages: [msg('hi')],
-      teammateMessages: [],
+      teammateMessages: []
     };
     expect(validateCacheRecord(rec, sid)).toBeNull();
   });
@@ -84,7 +84,7 @@ describe('validateCacheRecord', () => {
       version: CACHE_VERSION + 999, // a future/old schema
       savedAt: 100,
       messages: [msg('hi')],
-      teammateMessages: [],
+      teammateMessages: []
     };
     expect(validateCacheRecord(rec, sid)).toBeNull();
   });
@@ -95,7 +95,7 @@ describe('validateCacheRecord', () => {
       version: 7,
       savedAt: 100,
       messages: [],
-      teammateMessages: [],
+      teammateMessages: []
     };
     expect(validateCacheRecord(rec, sid, 7)).toBe(rec);
     expect(validateCacheRecord(rec, sid, 8)).toBeNull();
@@ -187,7 +187,11 @@ type FakeStore = Map<string, unknown>;
 
 function makeFakeIndexedDb(store: FakeStore) {
   const request = <T>(compute: () => T) => {
-    const req = { onsuccess: null as null | (() => void), onerror: null as null | (() => void), result: undefined as T };
+    const req = {
+      onsuccess: null as null | (() => void),
+      onerror: null as null | (() => void),
+      result: undefined as T
+    };
     queueMicrotask(() => {
       req.result = compute();
       req.onsuccess?.();
@@ -199,8 +203,12 @@ function makeFakeIndexedDb(store: FakeStore) {
     keyPath: 'sessionId',
     get: (key: string) => request(() => store.get(key)),
     getAllKeys: () => request(() => [...store.keys()]),
-    put: (rec: { sessionId: string }) => request(() => { store.set(rec.sessionId, rec); return rec.sessionId; }),
-    delete: (key: string) => request(() => void store.delete(key)),
+    put: (rec: { sessionId: string }) =>
+      request(() => {
+        store.set(rec.sessionId, rec);
+        return rec.sessionId;
+      }),
+    delete: (key: string) => request(() => void store.delete(key))
   };
 
   const db = {
@@ -209,9 +217,9 @@ function makeFakeIndexedDb(store: FakeStore) {
       objectStore: () => objectStore,
       oncomplete: null,
       onerror: null,
-      onabort: null,
+      onabort: null
     }),
-    close: () => undefined,
+    close: () => undefined
   };
 
   const factory = {
@@ -221,14 +229,14 @@ function makeFakeIndexedDb(store: FakeStore) {
         onerror: null as null | (() => void),
         onblocked: null as null | (() => void),
         onupgradeneeded: null as null | (() => void),
-        result: undefined as unknown,
+        result: undefined as unknown
       };
       queueMicrotask(() => {
         req.result = db;
         req.onsuccess?.();
       });
       return req;
-    },
+    }
   };
   return factory;
 }
@@ -261,7 +269,7 @@ describe('I/O wrappers — round-trip through an injected fake IndexedDB', () =>
     // writeCachedChatlog the store would grow one record per session.
     const store: FakeStore = new Map([
       ['old-a', { sessionId: 'old-a', version: CACHE_VERSION, savedAt: 1, messages: [], teammateMessages: [] }],
-      ['old-b', { sessionId: 'old-b', version: CACHE_VERSION, savedAt: 1, messages: [], teammateMessages: [] }],
+      ['old-b', { sessionId: 'old-b', version: CACHE_VERSION, savedAt: 1, messages: [], teammateMessages: [] }]
     ]);
     vi.stubGlobal('indexedDB', makeFakeIndexedDb(store));
     try {

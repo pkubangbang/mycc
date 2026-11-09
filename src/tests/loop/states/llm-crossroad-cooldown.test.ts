@@ -23,13 +23,13 @@
  *   then pivoted away from, worth intercepting. ALL tool calls are discarded
  *   and the LLM regenerates them after the continuation.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 // --- Mocks (same pattern as llm-esc-crossroad.test.ts) -----------------------
 
 vi.mock('../../../engine/chat-provider.js', () => ({
   retryChat: vi.fn(),
-  MODEL: 'test-model',
+  MODEL: 'test-model'
 }));
 
 vi.mock('../../../loop/agent-io.js', () => {
@@ -37,19 +37,22 @@ vi.mock('../../../loop/agent-io.js', () => {
   return {
     agentIO: {
       isNeglectedMode: vi.fn(() => neglected),
-      setNeglectedMode: vi.fn((v: boolean) => { neglected = v; }),
-    },
+      setNeglectedMode: vi.fn((v: boolean) => {
+        neglected = v;
+      })
+    }
   };
 });
 
 vi.mock('../../../loop/esc-wrap-up.js', () => ({
   startWrapUp: vi.fn(),
   evaluateWrapUp: vi.fn(),
-  clearWrapUp: vi.fn(),
+  clearWrapUp: vi.fn()
 }));
 
 vi.mock('../../../loop/crossroad.js', () => ({
-  handleCrossroad: vi.fn(), initCrossroad: vi.fn(),
+  handleCrossroad: vi.fn(),
+  initCrossroad: vi.fn()
 }));
 
 vi.mock('../../../engine/chat-helpers.js', () => ({ stopSpinner: vi.fn() }));
@@ -57,11 +60,11 @@ vi.mock('../../../engine/chat-helpers.js', () => ({ stopSpinner: vi.fn() }));
 vi.mock('../../../loop/prompts/lead.js', () => ({
   buildPlanModePrompt: vi.fn(() => 'plan-prompt'),
   buildNormalModePrompt: vi.fn(() => 'normal-prompt'),
-  isInPlanMode: vi.fn(() => false),
+  isInPlanMode: vi.fn(() => false)
 }));
 
 vi.mock('../../../context/shared/loader.js', () => ({
-  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) },
+  loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) }
 }));
 
 vi.mock('../../../loop/triologue.js', () => {
@@ -91,13 +94,13 @@ import {
   createChatData,
   createMockMachineEnv,
   createMockChatResponse,
-  createMockToolCall,
+  createMockToolCall
 } from '../esc-test-helpers.js';
 
 // Helper: escAware that always runs the operation (no ESC)
 function runOperationEscAware() {
   return vi.fn(async (operation: (ac: AbortController) => Promise<unknown>) =>
-    operation(new AbortController()),
+    operation(new AbortController())
   ) as never;
 }
 
@@ -137,8 +140,8 @@ describe('handleLlm — crossroad cooldown gate', () => {
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({
         content: 'Let me check the files. However, maybe not.',
-        toolCalls,
-      }) as never,
+        toolCalls
+      }) as never
     );
 
     const result = await handleLlm(env, turn, chat);
@@ -181,8 +184,8 @@ describe('handleLlm — crossroad cooldown gate', () => {
       vi.mocked(retryChat).mockResolvedValueOnce(
         createMockChatResponse({
           content: 'Check auth. However, maybe config.',
-          toolCalls: [createMockToolCall('bash', { command: 'cat auth' })],
-        }) as never,
+          toolCalls: [createMockToolCall('bash', { command: 'cat auth' })]
+        }) as never
       );
       vi.mocked(handleCrossroad).mockResolvedValueOnce({
         truncated: 'Check auth.',
@@ -192,7 +195,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
         cutEnd: 20,
         continuation: 'Let me focus on config.',
         candidates: ['Let me focus on config.'],
-        selectedIndex: 0,
+        selectedIndex: 0
       } as never);
 
       const result = await handleLlm(env, turn, chat);
@@ -213,8 +216,8 @@ describe('handleLlm — crossroad cooldown gate', () => {
       vi.mocked(retryChat).mockResolvedValueOnce(
         createMockChatResponse({
           content: 'Let me check config. However, maybe auth.',
-          toolCalls: [createMockToolCall('bash', { command: 'cat config' })],
-        }) as never,
+          toolCalls: [createMockToolCall('bash', { command: 'cat config' })]
+        }) as never
       );
 
       const result = await handleLlm(env, turn, chat);
@@ -239,8 +242,8 @@ describe('handleLlm — crossroad cooldown gate', () => {
       vi.mocked(retryChat).mockResolvedValueOnce(
         createMockChatResponse({
           content: 'Check auth. However, maybe config.',
-          toolCalls: [createMockToolCall('bash', { command: 'ls' })],
-        }) as never,
+          toolCalls: [createMockToolCall('bash', { command: 'ls' })]
+        }) as never
       );
       vi.mocked(handleCrossroad).mockResolvedValueOnce({
         truncated: 'Check auth.',
@@ -250,7 +253,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
         cutEnd: 20,
         continuation: 'Focus on config now.',
         candidates: ['Focus on config now.'],
-        selectedIndex: 0,
+        selectedIndex: 0
       } as never);
 
       const result = await handleLlm(env, turn, chat);
@@ -276,8 +279,8 @@ describe('handleLlm — crossroad cooldown gate', () => {
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({
         content: 'text with turning word',
-        toolCalls: [createMockToolCall('bash', {})],
-      }) as never,
+        toolCalls: [createMockToolCall('bash', {})]
+      }) as never
     );
     vi.mocked(handleCrossroad).mockResolvedValueOnce({
       truncated: 'text',
@@ -287,7 +290,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
       cutEnd: 9,
       continuation: 'resolved',
       candidates: ['resolved'],
-      selectedIndex: 0,
+      selectedIndex: 0
     } as never);
 
     await handleLlm(env, turn, chat);
@@ -315,16 +318,16 @@ describe('handleLlm — crossroad cooldown gate', () => {
     env.crossroadOccurred = true; // stale cooldown armed by a previous pass
 
     vi.mocked(retryChat).mockResolvedValueOnce(
-      createMockChatResponse({ content: 'text-only response with turning words. However, still fine.' }) as never,
+      createMockChatResponse({ content: 'text-only response with turning words. However, still fine.' }) as never
     );
 
     const result = await handleLlm(env, turn, chat);
 
-    expect(retryChat).toHaveBeenCalledTimes(1);              // the round ran
-    expect(loader.getToolsForScope).toHaveReturnedWith([]);  // and it saw no tools
-    expect(handleCrossroad).not.toHaveBeenCalled();          // detection skipped
-    expect(env.crossroadOccurred).toBe(false);               // stale flag cleared
-    expect(result).not.toBe(AgentState.STOP);                // not an ESC early-return
+    expect(retryChat).toHaveBeenCalledTimes(1); // the round ran
+    expect(loader.getToolsForScope).toHaveReturnedWith([]); // and it saw no tools
+    expect(handleCrossroad).not.toHaveBeenCalled(); // detection skipped
+    expect(env.crossroadOccurred).toBe(false); // stale flag cleared
+    expect(result).not.toBe(AgentState.STOP); // not an ESC early-return
   });
 
   // ---------------------------------------------------------------------------
@@ -347,8 +350,8 @@ describe('handleLlm — crossroad cooldown gate', () => {
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({
         content: 'I need to verify the auth flow. However, the issue might be in the DB layer.',
-        toolCalls,
-      }) as never,
+        toolCalls
+      }) as never
     );
 
     const result = await handleLlm(env, turn, chat);
@@ -386,8 +389,8 @@ describe('handleLlm — crossroad cooldown gate', () => {
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({
         content: 'Let me list the files. However, maybe I should check the logs instead.',
-        toolCalls,
-      }) as never,
+        toolCalls
+      }) as never
     );
     vi.mocked(handleCrossroad).mockResolvedValueOnce({
       truncated: 'Let me list the files.',
@@ -397,7 +400,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
       cutEnd: 28,
       continuation: 'Let me check the logs instead.',
       candidates: ['Let me check the logs instead.'],
-      selectedIndex: 0,
+      selectedIndex: 0
     } as never);
 
     const result = await handleLlm(env, turn, chat);
@@ -434,13 +437,13 @@ describe('handleLlm — crossroad cooldown gate', () => {
     // brief + bash: the bash call makes this NOT brief-only, so crossroad fires.
     const toolCalls = [
       createMockToolCall('brief', { message: 'Investigating', confidence: 6 }),
-      createMockToolCall('bash', { command: 'pwd' }),
+      createMockToolCall('bash', { command: 'pwd' })
     ];
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({
         content: 'I will check the directory. Wait, perhaps the config is the real issue.',
-        toolCalls,
-      }) as never,
+        toolCalls
+      }) as never
     );
     vi.mocked(handleCrossroad).mockResolvedValueOnce({
       truncated: 'I will check the directory.',
@@ -450,7 +453,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
       cutEnd: 31,
       continuation: 'Let me focus on the config.',
       candidates: ['Let me focus on the config.'],
-      selectedIndex: 0,
+      selectedIndex: 0
     } as never);
 
     const result = await handleLlm(env, turn, chat);

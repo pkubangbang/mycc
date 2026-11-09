@@ -30,7 +30,7 @@
  * redirects into the mock BEFORE the SUT import resolves.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -46,7 +46,7 @@ vi.mock('crypto', async (importOriginal) => {
   const actual = await importOriginal<typeof import('crypto')>();
   return {
     ...actual,
-    randomUUID: vi.fn(() => uuidQueue.shift() ?? 'fallback-never-used-uuid'),
+    randomUUID: vi.fn(() => uuidQueue.shift() ?? 'fallback-never-used-uuid')
   };
 });
 
@@ -88,7 +88,7 @@ const SESSION_FILE_FIELDS = [
   'lead_triologue',
   'child_triologues',
   'teammates',
-  'first_query',
+  'first_query'
 ] as const;
 
 /** Materialize a PRE-EXISTING session dir + file for `id` with a canary. */
@@ -104,7 +104,7 @@ function seedExistingSession(sess: SessionMod, id: string): void {
     lead_triologue: '/canonical/owner/transcript.jsonl',
     child_triologues: ['/canonical/owner/child.jsonl'],
     teammates: ['canary-teammate'],
-    first_query: 'canary query that must survive a collision',
+    first_query: 'canary query that must survive a collision'
   };
   // Bare write is FINE here: this seeds the collision partner, it does not
   // exercise the SUT.
@@ -117,7 +117,13 @@ describe('createSessionFile: caller-supplied id over an existing session (never 
     const sess = await loadSession();
     seedExistingSession(sess, 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
 
-    const filePath = path.join(projectTmp, '.mycc', 'sessions', 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', 'session-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.json');
+    const filePath = path.join(
+      projectTmp,
+      '.mycc',
+      'sessions',
+      'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      'session-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.json'
+    );
     const before = fs.readFileSync(filePath, 'utf-8');
 
     // The caller explicitly names an id whose session file already exists:
