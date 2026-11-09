@@ -11,7 +11,12 @@
     "outDir": "dist",
     "declaration": true,
     "resolveJsonModule": true,
-    "types": ["node", "vitest/globals"]
+    // `node` only. `vitest/globals` is intentionally NOT listed: vitest is a
+    // devDependency, and naming it here breaks the compiler in a production-
+    // only install (`pnpm install --prod`), which is the supported way to run
+    // mycc without dev tooling. The entry was also vestigial — every test file
+    // imports its globals explicitly from 'vite-plus/test'.
+    "types": ["node"]
   },
   "include": ["src/**/*"],
   // src/web/** is a separate Vue project whose .vue SFCs no command type-checks

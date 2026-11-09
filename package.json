@@ -27,7 +27,7 @@
     "test": "vp test run",
     "test:tty": "cross-env MYCC_TTY_TESTS=1 vp test run src/tests/plain-output.test.ts",
     "test:slow": "cross-env RUN_SLOW=1 vp test run",
-    "prepare": "vp config"
+    "prepare": "vp config || echo \"[prepare] vp unavailable (production install) - skipping dev tooling setup\""
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.27.2",
