@@ -31,7 +31,9 @@ export const LOOP_EVENT_TYPES = [
   'esc_interrupt',
   'brief_message',
   'serve_state',
-  'crossroad_skipped'
+  'crossroad_skipped',
+  'crossroad_fired',
+  'crossroad_merged'
 ] as const;
 
 export type LoopEventType = (typeof LOOP_EVENT_TYPES)[number];
@@ -121,6 +123,29 @@ export interface ServeStatePayload {
   running: boolean;
 }
 
+/**
+ * A crossroad resolution was NOT applied, and why. Every reason is a distinct
+ * fact the field needs to see: "the detector never flagged anything" is silent,
+ * but "it did and we chose not to use it" must not be.
+ */
+export interface CrossroadSkippedPayload {
+  reason: 'cooldown' | 'esc' | 'compact' | 'generation_failed';
+}
+
+/** A crossroad resolution was applied: which unit was replaced and by which draft. */
+export interface CrossroadFiredPayload {
+  cutStart: number;
+  cutEnd: number;
+  drafted: number;
+  selectedIndex: number;
+}
+
+/** The resolved crossroad was merged into the conversation (the merge happened). */
+export interface CrossroadMergedPayload {
+  cutStart: number;
+  cutEnd: number;
+}
+
 export type LoopEventPayload =
   | StateTransitionPayload
   | LlmCallPayload
@@ -133,7 +158,10 @@ export type LoopEventPayload =
   | TriologueEventPayload
   | EscInterruptPayload
   | BriefMessagePayload
-  | ServeStatePayload;
+  | ServeStatePayload
+  | CrossroadSkippedPayload
+  | CrossroadFiredPayload
+  | CrossroadMergedPayload;
 
 // ============================================================================
 // Callback Type

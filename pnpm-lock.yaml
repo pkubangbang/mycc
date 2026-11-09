@@ -12,8 +12,8 @@ importers:
         specifier: ^0.27.2
         version: 0.27.2(apache-arrow@18.1.0)
       '@pkubangbang/crossroad-detector':
-        specifier: ^0.1.3
-        version: 0.1.3
+        specifier: 0.2.1
+        version: 0.2.1
       '@pkubangbang/filesync-manager':
         specifier: ^0.1.0
         version: 0.1.0
@@ -601,8 +601,8 @@ packages:
   '@oxc-project/types@0.156.0':
     resolution: {integrity: sha512-1Duyg48TdJNdyhEB8Xn1L36bT9Pv6GUtlKjHxOys8xkaF/rQq3XJE+bAurSK/AgIz5mGFsb77cn9Pb20+WCScw==}
 
-  '@pkubangbang/crossroad-detector@0.1.3':
-    resolution: {integrity: sha512-xa9ZJh255T2sSS7nboxfq+Vjox/QyHwOvP0ofWw9pL686eGaqxQc++U1JTKSuQod220f6H6bgv5rs6McDBEMUg==}
+  '@pkubangbang/crossroad-detector@0.2.1':
+    resolution: {integrity: sha512-uX4n3Tsw415UbXQlbTR/G+N9AQHLopxmbc+SQlXv7GwmX4+1GFzbLC9B3MowtzCKG9fPoyCvh8s9BHVsz+BPOQ==}
     engines: {node: '>=18'}
 
   '@pkubangbang/filesync-manager@0.1.0':
@@ -2498,7 +2498,7 @@ snapshots:
 
   '@oxc-project/types@0.156.0': {}
 
-  '@pkubangbang/crossroad-detector@0.1.3':
+  '@pkubangbang/crossroad-detector@0.2.1':
     dependencies:
       onnxruntime-node: 1.31.1
 

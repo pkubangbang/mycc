@@ -42,7 +42,7 @@ vi.mock('../../../loop/esc-wrap-up.js', () => ({
   clearWrapUp: vi.fn(),
 }));
 
-vi.mock('../../../loop/crossroad.js', () => ({ handleCrossroad: vi.fn() }));
+vi.mock('../../../loop/crossroad.js', () => ({ handleCrossroad: vi.fn(), initCrossroad: vi.fn() }));
 vi.mock('../../../engine/chat-helpers.js', () => ({ stopSpinner: vi.fn() }));
 
 vi.mock('../../../loop/prompts/lead.js', () => ({

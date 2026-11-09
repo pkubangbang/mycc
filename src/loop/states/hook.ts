@@ -10,9 +10,13 @@
  * (validateBriefIsolation) was removed — batching no longer rejects the turn.
  *
  * CROSSROAD: When crossroadContinuation is set on chat, the continuation is
- * merged into finalAssistantContent before triologue.agent() is called, and a
- * REMINDER note is injected after. No mutation of triologue internals occurs.
- * The flow goes to COLLECT so the LLM can regenerate tool calls.
+ * merged into the final content before triologue.agent() is called, a synthetic
+ * brief tool call carries the "refine and decide the next step" nudge, and the
+ * reader is shown prefix → cutpoint → candidate card → outcome. No mutation of
+ * triologue internals occurs. The flow goes to COLLECT so the LLM can regenerate
+ * tool calls. Two paths may drop the resolution instead of merging it — ESC
+ * arriving after the hook await, and a compaction requested in the same pass —
+ * and both clear the crossroad state through `clearCrossroadState`.
  */
 
 import chalk from 'chalk';
@@ -25,11 +29,51 @@ import { agentIO } from '../agent-io.js';
 import { loader } from '../../context/shared/loader.js';
 import { loopEvents } from '../loop-events.js';
 import { stripInternalMarkup } from '../../utils/letter-box.js';
-import { buildCrossroadCard, formatCrossroadCard, toCrossroadCardWire } from '../crossroad-card.js';
+import { buildCrossroadCard, formatCrossroadCard, plainPreview, toCrossroadCardWire } from '../crossroad-card.js';
 import { briefToolCall, newBriefCallId } from '../triologue/brief.js';
 import { briefResultLine } from '../triologue/recap-note.js';
 import { buildPlanScopeNote, formatPlanScopeForDisplay, withPlanScopeNote } from '../plan-scope.js';
 import { startSpinner, stopSpinner } from '../../engine/chat-helpers.js';
+
+/** Upper bound for the displayed turning segment (long turns would dominate). */
+const CROSSROAD_CUTPOINT_MAX = 160;
+
+/**
+ * Forget a resolved crossroad WITHOUT merging it.
+ *
+ * One helper, because the merge branch used to clear these six fields inline
+ * while every early-exit path forgot them — and a field that outlives its pass
+ * is exactly how a cancelled or compacted resolution gets merged later against a
+ * different response.
+ */
+function clearCrossroadState(chat: ChatData): void {
+  chat.crossroadContinuation = undefined;
+  chat.crossroadFilePath = undefined;
+  chat.crossroadCandidates = undefined;
+  chat.crossroadSelectedIndex = undefined;
+  chat.crossroadCutpoint = undefined;
+  chat.crossroadOriginal = undefined;
+}
+
+/**
+ * Display the turning segment of a crossroad — the word that reversed the
+ * direction, on its own note between the prefix and the candidate card.
+ *
+ * WHY IT IS SHOWN AT ALL — the merged response is `prefix + ' ' + continuation`,
+ * so without this note the reader cannot tell WHERE the model turned: the
+ * discarded tail simply vanishes and the join looks like ordinary writing.
+ * Crossroad's whole purpose is to make that pivot visible.
+ *
+ * Flattened to one line (a cutpoint may carry the following newline) and
+ * markdown-inert, so a stray `**` or backtick in the turning sentence cannot
+ * restyle the rest of the transcript.
+ */
+function briefCrossroadCutpoint(ctx: MachineEnv['ctx'], cutpoint: string | undefined): void {
+  if (!cutpoint) return;
+  const segment = plainPreview(cutpoint, CROSSROAD_CUTPOINT_MAX);
+  if (!segment) return;
+  ctx.core.brief('info', 'crossroad', `🚦 **Crossroad — turned at:** \`${segment}\``);
+}
 
 /**
  * Display the assistant's text content mid-loop via brief, stripping internal
@@ -222,6 +266,27 @@ export async function handleHook(env: MachineEnv, turn: TurnVars, chat: ChatData
     //    losing the working-memory benefit. We set a flag and reset the stale
     //    stat counts now; the LLM stage consumes the flag.
     if (hookResult.compactRequested) {
+      // A CROSSROAD ALREADY PAID FOR MUST NOT VANISH SILENTLY. This return is
+      // reached on the very pass a resolved crossroad would have been merged:
+      // crossroad discarded the tool calls, so `processToolCalls([])` takes the
+      // stop-trigger path and can request a compact. Returning here would drop
+      // `crossroadContinuation` (and its record path) with the state rebuild, no
+      // note, no event — while the record file and the confusion charge have
+      // already happened. Report it, and clear the fields so a later HOOK pass
+      // cannot merge a continuation the reader was told nothing about.
+      if (chat.crossroadContinuation) {
+        ctx.core.verbose(
+          'crossroad',
+          `Crossroad resolved but dropped: compaction requested in the same HOOK pass (record: ${chat.crossroadFilePath ?? 'none'})`
+        );
+        loopEvents.emit('crossroad_skipped', { reason: 'compact' });
+        ctx.core.brief(
+          'info',
+          'crossroad',
+          'A direction refinement was resolved but not applied — context is being compacted first.'
+        );
+        clearCrossroadState(chat);
+      }
       ctx.core.brief('info', 'compact', 'Compacting context (deferred to LLM stage)...');
       chat.deferredCompact = true;
 
@@ -269,6 +334,19 @@ export async function handleHook(env: MachineEnv, turn: TurnVars, chat: ChatData
     //    Stop-trigger hooks that fired on the empty rawToolCalls are intentionally
     //    not carried forward — crossroad's purpose is to have the LLM regenerate
     //    tool calls after resolving its direction.
+    //
+    //    ESC GATE. This branch sits AFTER a real `await` (the hook executor
+    //    above), so the user can cancel while HOOK is doing its own processing.
+    //    A cancel already ended the turn; committing the merged assistant message
+    //    here would persist a resolved crossroad into a turn the user aborted. The
+    //    plan-scope branch guards its own brief the same way, so this branch was
+    //    the outlier. When ESC won the race, drop the resolution and let the
+    //    neglected-mode path end the turn.
+    if (chat.crossroadContinuation && agentIO.isNeglectedMode()) {
+      ctx.core.verbose('crossroad', 'ESC before merge — discarding the resolved crossroad for this turn');
+      loopEvents.emit('crossroad_skipped', { reason: 'esc' });
+      clearCrossroadState(chat);
+    }
     if (chat.crossroadContinuation) {
       // Join with a space: the continuation is the genuinely new content that
       // follows the prefix's last sentence (the anchor was stripped during
@@ -319,7 +397,7 @@ export async function handleHook(env: MachineEnv, turn: TurnVars, chat: ChatData
       // prefix + continuation to stdout; the display flag briefs stdout to the
       // terminal so the user sees the reconstructed response. Because the
       // display happens through a bash tool result (NOT chat.assistantContent),
-      // detectTurningWord — which only scans chat.assistantContent — never sees
+      // the detector — which only scans chat.assistantContent — never sees
       // the reconstructed text, so replaying a crossroad cannot re-trigger it.
       const briefResult = chat.crossroadFilePath
         ? `A direction refinement was applied to your response. The full decision record is saved at: ${chat.crossroadFilePath} (you may replay it with mycc-pretty-print --type=crossroad <path> only if the user asks to see the full response).`
@@ -331,13 +409,18 @@ export async function handleHook(env: MachineEnv, turn: TurnVars, chat: ChatData
       //      because streaming content is collected, not printed, and this
       //      branch returns before the normal assistant brief at the bottom of
       //      the handler).
-      //   2. best-of-three briefs — the candidate list (generation order, NOT
+      //   2. cutpoint — the turning segment itself (the word that reverses the
+      //      direction), shown on its own so the reader sees WHERE the response
+      //      turned. Previously it was invisible: the prefix and continuation
+      //      were joined with a bare space, so the join could not be located.
+      //   3. best-of-three briefs — the candidate list (generation order, NOT
       //      reordered), with the selected one marked.
-      //   3. outcome — the resolved continuation (the new direction).
+      //   4. outcome — the resolved continuation (the new direction).
       // The brief was previously emitted inside handleCrossroad's finally
-      // (LLM stage), which put part 2 BEFORE part 1; building it here restores
+      // (LLM stage), which put part 3 BEFORE part 1; building it here restores
       // the intended order.
       briefAssistantContent(ctx, chat.assistantContent);
+      briefCrossroadCutpoint(ctx, chat.crossroadCutpoint);
       if (chat.crossroadCandidates && chat.crossroadCandidates.length > 1) {
         // ONE structured event instead of two free-text notes: the card carries
         // the drafts, the winner and the resolved outcome, so the reader no
@@ -347,7 +430,9 @@ export async function handleHook(env: MachineEnv, turn: TurnVars, chat: ChatData
         const card = buildCrossroadCard({
           candidates: chat.crossroadCandidates,
           selectedIndex: chat.crossroadSelectedIndex ?? -1,
-          resolvedOutcome: chat.crossroadContinuation
+          resolvedOutcome: chat.crossroadContinuation,
+          // Reading order: the turn, then the drafts, then the outcome.
+          cutpoint: chat.crossroadCutpoint
         });
         ctx.core.brief('info', 'crossroad', formatCrossroadCard(card), undefined, {
           crossroad: toCrossroadCardWire(card)
@@ -362,10 +447,7 @@ export async function handleHook(env: MachineEnv, turn: TurnVars, chat: ChatData
       // Each deferred message carries its originating hook name for attribution.
       injectDeferredHookMessages(triologue, hookResult.deferredMessages, chat);
 
-      chat.crossroadContinuation = undefined;
-      chat.crossroadFilePath = undefined;
-      chat.crossroadCandidates = undefined;
-      chat.crossroadSelectedIndex = undefined;
+      clearCrossroadState(chat);
       return AgentState.COLLECT;
     }
 

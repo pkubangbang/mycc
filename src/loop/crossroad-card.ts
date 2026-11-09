@@ -57,6 +57,12 @@ export interface CrossroadCard {
    * the response), single-line preview. Empty when the caller has none.
    */
   outcome: string;
+  /**
+   * The turning segment that was replaced (the cutpoint), single-line preview.
+   * It completes the reading order — prefix → CUTPOINT → candidates → outcome —
+   * so the reader can see WHERE the response turned, not just that it did.
+   */
+  cutpoint: string;
 }
 
 /** Flattened, markdown-inert, truncated preview of arbitrary model text. */
@@ -96,8 +102,10 @@ export function buildCrossroadCard(args: {
   selectedIndex: number;
   resolvedOutcome?: string;
   directionNames?: readonly string[];
+  /** The turning segment that was replaced (shown as "Turned at"). */
+  cutpoint?: string;
 }): CrossroadCard {
-  const { candidates, selectedIndex, resolvedOutcome, directionNames } = args;
+  const { candidates, selectedIndex, resolvedOutcome, directionNames, cutpoint } = args;
   const chosenIndex = selectedIndex >= 0 && selectedIndex < candidates.length ? selectedIndex : -1;
 
   return {
@@ -109,7 +117,8 @@ export function buildCrossroadCard(args: {
       preview: plainPreview(text),
       selected: i === chosenIndex
     })),
-    outcome: resolvedOutcome ? plainPreview(resolvedOutcome, CROSSROAD_PREVIEW_MAX * 2) : ''
+    outcome: resolvedOutcome ? plainPreview(resolvedOutcome, CROSSROAD_PREVIEW_MAX * 2) : '',
+    cutpoint: cutpoint ? plainPreview(cutpoint, CROSSROAD_PREVIEW_MAX * 2) : ''
   };
 }
 
@@ -126,6 +135,9 @@ export function formatCrossroadCard(card: CrossroadCard): string {
   const lines: string[] = [];
   const chosen = card.chosenIndex > 0 ? ` — chose #${card.chosenIndex}` : '';
   lines.push(`**🚦 Crossroad** — drafted ${card.drafted} direction${card.drafted === 1 ? '' : 's'}${chosen}:`);
+  // WHERE it turned comes before WHAT was drafted: the reader locates the pivot
+  // first, then compares directions.
+  if (card.cutpoint) lines.push(`**Turned at:** ${card.cutpoint}`);
   for (const c of card.candidates) {
     const marker = c.selected ? '✅' : '⬜';
     const name = c.selected ? `**${c.direction}**` : c.direction;
@@ -153,6 +165,8 @@ export interface CrossroadCardWire {
   candidates: Array<{ index: number; direction: string; preview: string; selected: boolean }>;
   /** Resolved outcome preview ('' when absent). */
   outcome: string;
+  /** The turning segment that was replaced ('' when absent). */
+  cutpoint: string;
 }
 
 /** Convert a card to its wire payload. */
@@ -167,6 +181,7 @@ export function toCrossroadCardWire(card: CrossroadCard): CrossroadCardWire {
       preview: c.preview,
       selected: c.selected
     })),
-    outcome: card.outcome
+    outcome: card.outcome,
+    cutpoint: card.cutpoint
   };
 }

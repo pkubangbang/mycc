@@ -66,7 +66,7 @@ vi.mock('../../../loop/esc-wrap-up.js', () => ({
 
 // handleCrossroad is the unit under test's collaborator — mock it per-test
 vi.mock('../../../loop/crossroad.js', () => ({
-  handleCrossroad: vi.fn(),
+  handleCrossroad: vi.fn(), initCrossroad: vi.fn(),
 }));
 
 vi.mock('../../../engine/chat-helpers.js', () => ({ stopSpinner: vi.fn() }));
@@ -174,7 +174,13 @@ describe('handleLlm — ESC during crossroad processing', () => {
     // handleCrossroad returns a valid result
     vi.mocked(handleCrossroad).mockResolvedValueOnce({
       truncated: 'original',
+      cutpoint: 'However, ',
+      original: 'something else entirely.',
+      cutStart: 9,
+      cutEnd: 18,
       continuation: 'Let me continue differently.',
+      candidates: ['Let me continue differently.'],
+      selectedIndex: 0,
     } as never);
 
     const result = await handleLlm(env, turn, chat);
@@ -191,7 +197,7 @@ describe('handleLlm — ESC during crossroad processing', () => {
     expect(env.crossroadOccurred).toBe(true);
   });
 
-  it('should reset crossroadOccurred flag when handleCrossroad returns null (no turning word)', async () => {
+  it('arms the cooldown and charges confusion when detection produced no usable cut', async () => {
     const env = createMockMachineEnv({ triologue });
     env.ctx.core.escAware = vi.fn(async (operation: any) => {
       return await operation(new AbortController());
@@ -199,23 +205,23 @@ describe('handleLlm — ESC during crossroad processing', () => {
 
     const turn = createTurnVars();
     const chat = createChatData();
-    // Flag starts false (normal case) — verify it stays false when no crossroad fires.
-    // Note: pre-setting true would now trigger the cooldown gate (skip detection).
     env.crossroadOccurred = false;
 
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({ content: 'plain response' }) as never,
     );
-    // handleCrossroad returns null → no crossroad this pass
+    // The detector fired but nothing usable came out (cut refused, or every
+    // direction failed validation). That already cost up to seven forkChat calls.
     vi.mocked(handleCrossroad).mockResolvedValueOnce(null as never);
 
     const result = await handleLlm(env, turn, chat);
 
     expect(result).toBe(AgentState.HOOK);
-    // Flag must remain false because no crossroad occurred
-    expect(env.crossroadOccurred).toBe(false);
-    // content untouched, no continuation
+    // BEFORE: the flag was reset to false here, so the next pass paid the same
+    // forkChat bill again and the hint escape valve never advanced.
+    expect(env.crossroadOccurred).toBe(true);
+    expect(env.ctx.core.increaseConfusionIndex).toHaveBeenCalledWith(2);
+    // The reply itself is untouched — nothing was cut.
     expect(chat.assistantContent).toBe('plain response');
-    expect(chat.crossroadContinuation).toBeUndefined();
   });
 });

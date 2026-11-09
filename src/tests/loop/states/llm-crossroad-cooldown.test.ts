@@ -49,7 +49,7 @@ vi.mock('../../../loop/esc-wrap-up.js', () => ({
 }));
 
 vi.mock('../../../loop/crossroad.js', () => ({
-  handleCrossroad: vi.fn(),
+  handleCrossroad: vi.fn(), initCrossroad: vi.fn(),
 }));
 
 vi.mock('../../../engine/chat-helpers.js', () => ({ stopSpinner: vi.fn() }));
@@ -186,7 +186,13 @@ describe('handleLlm — crossroad cooldown gate', () => {
       );
       vi.mocked(handleCrossroad).mockResolvedValueOnce({
         truncated: 'Check auth.',
+        cutpoint: 'However, ',
+        original: 'let me focus on config.',
+        cutStart: 11,
+        cutEnd: 20,
         continuation: 'Let me focus on config.',
+        candidates: ['Let me focus on config.'],
+        selectedIndex: 0,
       } as never);
 
       const result = await handleLlm(env, turn, chat);
@@ -238,7 +244,13 @@ describe('handleLlm — crossroad cooldown gate', () => {
       );
       vi.mocked(handleCrossroad).mockResolvedValueOnce({
         truncated: 'Check auth.',
+        cutpoint: 'However, ',
+        original: 'focus on config now.',
+        cutStart: 11,
+        cutEnd: 20,
         continuation: 'Focus on config now.',
+        candidates: ['Focus on config now.'],
+        selectedIndex: 0,
       } as never);
 
       const result = await handleLlm(env, turn, chat);
@@ -269,7 +281,13 @@ describe('handleLlm — crossroad cooldown gate', () => {
     );
     vi.mocked(handleCrossroad).mockResolvedValueOnce({
       truncated: 'text',
+      cutpoint: 'But ',
+      original: 'resolved',
+      cutStart: 5,
+      cutEnd: 9,
       continuation: 'resolved',
+      candidates: ['resolved'],
+      selectedIndex: 0,
     } as never);
 
     await handleLlm(env, turn, chat);
@@ -373,7 +391,13 @@ describe('handleLlm — crossroad cooldown gate', () => {
     );
     vi.mocked(handleCrossroad).mockResolvedValueOnce({
       truncated: 'Let me list the files.',
+      cutpoint: 'Wait, ',
+      original: 'let me check the logs instead.',
+      cutStart: 22,
+      cutEnd: 28,
       continuation: 'Let me check the logs instead.',
+      candidates: ['Let me check the logs instead.'],
+      selectedIndex: 0,
     } as never);
 
     const result = await handleLlm(env, turn, chat);
@@ -420,7 +444,13 @@ describe('handleLlm — crossroad cooldown gate', () => {
     );
     vi.mocked(handleCrossroad).mockResolvedValueOnce({
       truncated: 'I will check the directory.',
+      cutpoint: 'But ',
+      original: 'let me focus on the config.',
+      cutStart: 27,
+      cutEnd: 31,
       continuation: 'Let me focus on the config.',
+      candidates: ['Let me focus on the config.'],
+      selectedIndex: 0,
     } as never);
 
     const result = await handleLlm(env, turn, chat);

@@ -1,6 +1,6 @@
 # Crossroad Cooldown Design Doc
 
-> **Status:** Implemented (2026-07-17). Cooldown gate in `src/loop/states/llm.ts`, turn-boundary resets in `src/loop/states/prompt.ts`, compact reset in `src/loop/states/hook.ts`. Test file: `src/tests/loop/states/llm-crossroad-cooldown.test.ts`.
+> **Status:** Implemented (2026-07-17); revised (2026-11-09) after the line-by-line review. The gate is in `src/loop/states/llm.ts`; the flag is cleared once, at the turn boundary in `src/loop/state-machine.ts` (every PROMPT/AWAIT entry passes through it — the three input-path resets in `prompt.ts` are bypassed by an AWAIT return); a compacted pass reports the dropped resolution and clears it in `src/loop/states/hook.ts`. Tests: `src/tests/loop/states/llm-crossroad-cooldown.test.ts`, `llm-esc-crossroad.test.ts` (failed generation), `hook-crossroad-merge.test.ts` (ESC / compact). A failed generation now arms the cooldown and charges `+2`, so the escape-valve arithmetic below holds for failures too.
 
 ## 1. Problem
 

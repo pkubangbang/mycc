@@ -28,13 +28,20 @@ import { buildPlanModePrompt, buildNormalModePrompt, isInPlanMode } from '../pro
 import { agentIO } from '../agent-io.js';
 import { autoState } from '../auto-state.js';
 import { loader } from '../../context/shared/loader.js';
-import { handleCrossroad } from '../crossroad.js';
+import { handleCrossroad, initCrossroad } from '../crossroad.js';
+import { segmentsOf as crossroadSegmentsOf } from '@pkubangbang/crossroad-detector';
 import { loopEvents } from '../loop-events.js';
 import { briefToolCall, newBriefCallId } from '../triologue/brief.js';
 import { briefResultLine } from '../triologue/recap-note.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getSessionContext, getSessionDir, isCrossroadDisabled } from '../../config.js';
+
+// The crossroad cut grid is the detector package's segmentation, wired HERE,
+// once, at module load: the host owns the dependency and the module owns the
+// policy. If the package import ever fails, the wiring call never happens and
+// crossroad refuses to cut — it never falls back to a segmentation of its own.
+initCrossroad(crossroadSegmentsOf);
 
 export async function handleLlm(env: MachineEnv, turn: TurnVars, chat: ChatData): Promise<HandlerResult> {
   const { triologue, ctx, scope, inputProvider } = env;
@@ -225,7 +232,7 @@ export async function handleLlm(env: MachineEnv, turn: TurnVars, chat: ChatData)
           if (crossroadResult) {
             ctx.core.verbose(
               'llm',
-              `Crossroad: truncated at "${crossroadResult.truncated.slice(0, 80)}..."`,
+              `Crossroad: cut at ${crossroadResult.cutStart}-${crossroadResult.cutEnd} on "${crossroadResult.cutpoint.trim()}"`,
               `Continuation: "${crossroadResult.continuation.slice(0, 80)}..."`
             );
             // Replace content with truncated prefix + continuation will be injected in hook.ts
@@ -238,21 +245,32 @@ export async function handleLlm(env: MachineEnv, turn: TurnVars, chat: ChatData)
             // in HOOK — the summary appeared above the content it summarized.
             chat.crossroadCandidates = crossroadResult.candidates;
             chat.crossroadSelectedIndex = crossroadResult.selectedIndex;
+            // The turning segment itself, so HOOK can show prefix → cutpoint →
+            // outcome instead of hiding the join behind a bare space.
+            chat.crossroadCutpoint = crossroadResult.cutpoint;
+            chat.crossroadOriginal = crossroadResult.original;
             // Discard original tool calls — LLM will regenerate them after
             // crossroad. (The brief-only case never reaches here: it was
             // exempted by the guard above.)
             chat.rawToolCalls = [];
 
             // Write a crossroad record file to the session directory so the
-            // full decision (prefix, all candidates, selected continuation) is
-            // persisted on disk. The file path is stored on chat.crossroadFilePath
-            // and injected into the brief tool result by hook.ts, enabling the
-            // replay mechanism: the LLM runs
+            // full decision (prefix, the turning segment, all candidates, the
+            // selected continuation) is persisted on disk. The file path is
+            // stored on chat.crossroadFilePath and injected into the brief tool
+            // result by hook.ts, enabling the replay mechanism: the LLM runs
             //   bash(command="mycc-pretty-print --type=crossroad <path>", display=true)
             // to merge prefix + continuation to stdout, which the display flag
             // briefs to the terminal. Because the display is a bash tool result
-            // (not chat.assistantContent), detectTurningWord never scans it, so
+            // (not chat.assistantContent), the detector never scans it, so
             // replaying a crossroad cannot re-trigger it.
+            //
+            // FIELD ORDER is the reading order of the three segments:
+            //   prefix → cutpoint → continuation (candidates follow as detail).
+            // `cutpoint` is the segment the detector identified as the turn —
+            // the turning word plus its trailing separator; `original` is what
+            // followed it and was replaced. prefix + cutpoint + original
+            // reassembles the untouched response, so the record is lossless.
             try {
               const sessionId = getSessionContext();
               const sessionDir = getSessionDir(sessionId);
@@ -262,8 +280,13 @@ export async function handleLlm(env: MachineEnv, turn: TurnVars, chat: ChatData)
                 sessionId,
                 timestamp,
                 prefix: crossroadResult.truncated,
+                cutpoint: crossroadResult.cutpoint,
+                cutStart: crossroadResult.cutStart,
+                cutEnd: crossroadResult.cutEnd,
+                continuation: crossroadResult.continuation,
+                original: crossroadResult.original,
                 candidates: crossroadResult.candidates,
-                continuation: crossroadResult.continuation
+                selectedIndex: crossroadResult.selectedIndex
               };
               fs.writeFileSync(crossroadFilePath, JSON.stringify(crossroadData, null, 2), 'utf-8');
               chat.crossroadFilePath = crossroadFilePath;
@@ -279,9 +302,26 @@ export async function handleLlm(env: MachineEnv, turn: TurnVars, chat: ChatData)
             // unconditional to keep the hint escape valve functional.
             ctx.core.increaseConfusionIndex(2);
             env.crossroadOccurred = true; // arm cooldown for next pass
+            loopEvents.emit('crossroad_fired', {
+              cutStart: crossroadResult.cutStart,
+              cutEnd: crossroadResult.cutEnd,
+              drafted: crossroadResult.candidates.length,
+              selectedIndex: crossroadResult.selectedIndex
+            });
           } else {
-            // No crossroad this pass — reset the flag
-            env.crossroadOccurred = false;
+            // DETECTION RAN AND PRODUCED NOTHING USABLE — which is NOT the same
+            // as 'no crossroad this pass'. Reaching here means the detector
+            // fired (a match was returned) but the cut was refused or every
+            // direction failed validation; each of those already costs up to
+            // seven forkChat calls. Resetting the flag would let the next pass
+            // repeat the whole bill, and the hint escape valve (+2 per fire)
+            // would never advance — the cooldown doc's '~7 passes to the hint'
+            // arithmetic assumes every detection is charged. Charge it, arm the
+            // cooldown, and say so: a refusal must not look like silence.
+            env.crossroadOccurred = true;
+            ctx.core.increaseConfusionIndex(2);
+            ctx.core.verbose('crossroad', 'detection produced no usable cut/continuation — cooldown armed');
+            loopEvents.emit('crossroad_skipped', { reason: 'generation_failed' });
           }
         }
       } else {
@@ -331,6 +371,11 @@ export async function handleLlm(env: MachineEnv, turn: TurnVars, chat: ChatData)
         chat.crossroadFilePath = undefined;
         chat.crossroadCandidates = undefined;
         chat.crossroadSelectedIndex = undefined;
+        // The same staleness argument covers the two display fields: a cutpoint
+        // or remainder left over from this pass would be shown against the NEXT
+        // response's merge.
+        chat.crossroadCutpoint = undefined;
+        chat.crossroadOriginal = undefined;
 
         if (emptyRetries > MAX_EMPTY_RETRIES) {
           // Context is likely unrecoverable on its own — give control back to

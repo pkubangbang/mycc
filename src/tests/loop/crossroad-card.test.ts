@@ -117,6 +117,26 @@ describe('formatCrossroadCard (terminal fallback / history body)', () => {
     const card = buildCrossroadCard({ candidates: ['only'], selectedIndex: 0 });
     expect(formatCrossroadCard(card)).not.toContain('Outcome:');
   });
+
+  it('shows WHERE the response turned, before the drafted directions', () => {
+    const card = buildCrossroadCard({
+      candidates: ['go forward text', 'go backward text'],
+      selectedIndex: 0,
+      resolvedOutcome: 'the forward one',
+      cutpoint: 'However, the real issue is in the API layer.',
+    });
+    const text = formatCrossroadCard(card);
+
+    // Reading order: turn → directions → outcome.
+    expect(text).toContain('**Turned at:** However, the real issue is in the API layer.');
+    expect(text.indexOf('Turned at:')).toBeLessThan(text.indexOf('1. '));
+    expect(text.indexOf('1. ')).toBeLessThan(text.indexOf('**Outcome:**'));
+  });
+
+  it('omits the turn line when no cutpoint is supplied', () => {
+    const card = buildCrossroadCard({ candidates: ['only'], selectedIndex: 0 });
+    expect(formatCrossroadCard(card)).not.toContain('Turned at:');
+  });
 });
 
 describe('toCrossroadCardWire', () => {

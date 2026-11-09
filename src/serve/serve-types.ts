@@ -45,6 +45,8 @@ export interface LogEntry {
     chosenIndex: number;
     candidates: Array<{ index: number; direction: string; preview: string; selected: boolean }>;
     outcome: string;
+    /** The turning segment that was replaced; '' when absent. */
+    cutpoint: string;
   };
 }
 

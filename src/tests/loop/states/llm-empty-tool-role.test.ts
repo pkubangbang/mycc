@@ -55,7 +55,7 @@ vi.mock('../../../loop/esc-wrap-up.js', () => ({
 
 // handleCrossroad returns null (no crossroad fires) so the empty-output path
 // is reached with chat.assistantContent === '' and rawToolCalls === [].
-vi.mock('../../../loop/crossroad.js', () => ({ handleCrossroad: vi.fn() }));
+vi.mock('../../../loop/crossroad.js', () => ({ handleCrossroad: vi.fn(), initCrossroad: vi.fn() }));
 vi.mock('../../../engine/chat-helpers.js', () => ({ stopSpinner: vi.fn() }));
 
 vi.mock('../../../loop/prompts/lead.js', () => ({
@@ -224,3 +224,4 @@ describe('handleLlm — empty output when lastRole === "tool" (img_describe regr
     expect(result).toBe(AgentState.PROMPT);
   });
 });
+

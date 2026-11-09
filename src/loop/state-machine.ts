@@ -141,6 +141,14 @@ export interface ChatData {
    *  3-part order). Not persisted; cleared alongside crossroadContinuation. */
   crossroadCandidates?: string[];
   crossroadSelectedIndex?: number;
+  /** If crossroad was triggered, the turning segment the detector identified
+   *  (turning word + its trailing separator). Rendered by hook.ts between the
+   *  prefix and the outcome so the join is visible instead of a bare space.
+   *  Cleared alongside crossroadContinuation. */
+  crossroadCutpoint?: string;
+  /** Original text that followed the cutpoint — the direction the selected
+   *  continuation replaced. Kept for display/replay only. */
+  crossroadOriginal?: string;
   /** If crossroad was triggered, the path to the crossroad record JSON file
    *  (written to the session dir by llm.ts, injected into the brief tool result
    *  by hook.ts so the LLM knows where the full decision record lives). */
@@ -297,6 +305,15 @@ export class AgentStateMachine {
         // boundary — the same lifecycle point where lastSkillY /
         // skillDiscoveryCooldown were previously re-initialized on TurnVars.
         skillSuggester.reset();
+        // The crossroad cooldown is a PER-TURN fact: it exists to give the LLM
+        // one clear pass after a resolution, inside the turn that resolved it.
+        // It is cleared HERE rather than at each PROMPT entry because PROMPT is
+        // not the only way into a turn — AWAIT is a turn boundary too, and the
+        // input paths in prompt.ts return AWAIT before their own resets, so a
+        // flag armed in turn N could arrive armed in turn N+1 (auto mode would
+        // then silently skip detection on its first pass). This block is the one
+        // place every PROMPT/AWAIT entry passes through.
+        this.env.crossroadOccurred = false;
         // deferredCompact belongs to the previous pass/turn. It survives
         // COLLECT resets only until its LLM consumer runs, never across turns.
         chat.deferredCompact = false;
