@@ -38,6 +38,10 @@ describe('roleToType', () => {
 
 describe('roleToLabel', () => {
   it('labels assistant role as "assistant"', () => {
+    // An assistant turn projects to type 'result' with NO label, and the
+    // client hides unlabeled non-user/prompt entries when 详细日志 is off —
+    // so an unlabeled assistant turn would erase the agent's prose from
+    // every /history reload. The live broadcast() path labels it too.
     expect(roleToLabel('assistant')).toBe('assistant');
   });
 
@@ -45,8 +49,16 @@ describe('roleToLabel', () => {
     expect(roleToLabel('user')).toBeUndefined();
   });
 
-  it('returns undefined for tool/system/unknown (no special label)', () => {
-    expect(roleToLabel('tool')).toBeUndefined();
+  it('labels tool role as "tool" so tool output survives the verbose-logs filter', () => {
+    // Regression: an unlabeled log entry is HIDDEN by isMessageVisible() in
+    // src/web/src/main.ts when "详细日志" is off. Tool output is the body of a
+    // tool card, not background noise, so it must carry a label or the whole
+    // session's tool results disappear on every history reload (observed: 173
+    // of 270 log entries arrived label-less and were filtered out).
+    expect(roleToLabel('tool')).toBe('tool');
+  });
+
+  it('returns undefined for system/unknown (no special label)', () => {
     expect(roleToLabel('system')).toBeUndefined();
     expect(roleToLabel('function')).toBeUndefined();
   });

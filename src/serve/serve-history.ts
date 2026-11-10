@@ -193,10 +193,17 @@ export function roleToLabel(role: string | undefined): string | undefined {
   switch (role) {
     case 'assistant':
       return 'assistant';
+    case 'tool':
+      // The `tool` label is load-bearing, not cosmetic: the WebUI's "详细日志"
+      // toggle hides UNLABELED log/warn/error entries (isMessageVisible in
+      // src/web/src/main.ts), so an unlabeled tool turn — roleToType() projects
+      // it to 'log' — vanishes from the chat on every /history reload even
+      // though the live broadcast() path shows it with its tool-name label.
+      return 'tool';
     case 'user':
       return undefined; // user bubbles already align right
     default:
-      return undefined; // tool/system logs: no special label
+      return undefined; // unlabelled system logs: hidden when verbose off
   }
 }
 
