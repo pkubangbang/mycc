@@ -429,35 +429,55 @@ const bandHeight = computed(() => {
   display: none;
 }
 
-/* Overlay strip: same cell as the textarea, anchored bottom-right. Being a
-   content-sized grid item (not a stretched absolutely positioned container)
-   is what keeps it from covering the last text line. */
 /* Overlay strip: absolutely positioned inside `.input-field`, anchored to its
    bottom-right corner. Being an OVERLAY (not a grid item in the textarea's
    cell) is what makes the clearance the declared offset itself. */
+/* The strip's margin from the field's bottom-right corner — TWO declared
+   offsets, valid for every viewport width (no breakpoint overrides them).
+   It is NOT `gutter + inset`: the textarea reserves its scrollbar column with
+   `scrollbar-gutter: stable`, and the column's width is UA-defined (12px with
+   WebKit scrollbars, 0 with overlay scrollbars), so an offset derived from it
+   would drift between platforms.
+
+   `--strip-inset-x` = the visual margin from the field's right border.
+   `--strip-inset-y` = the gap between the field's bottom edge and the strip's
+   bottom edge. `-x` must stay above the textarea's 1px border so the strip
+   never covers it; `-y` may sit ON the border line (the strip is opaque and
+   overlays padding, not text — text clearance is the textarea's own bottom
+   padding: `8px`, `48px` on narrow screens). */
 .composer-box__actions {
+  --strip-inset-x: 8px;
+  --strip-inset-y: 4px;
   position: absolute;
-  /* Right offset = the scrollbar's reserved column + an 8px visual inset.
-     The column width is UA-defined (measured 12px for a 6px `thin`/WebKit
-     thumb), so it is reserved with `scrollbar-gutter: stable`, NOT assumed:
-     the strip sits at `gutter + inset`, which is where its 20px comes from. */
-  right: 20px;
-  bottom: 8px;
+  right: var(--strip-inset-x);
+  bottom: var(--strip-inset-y);
+  /* 70% opaque field colour: the single fill source for the buttons. Declared
+     here because this element is the buttons' ancestor and does not itself
+     paint a background (`background: none` below), so the alpha shows what is
+     underneath — the textarea's text. */
+  --strip-fill: color-mix(in srgb, var(--bg-input-field) 70%, transparent);
   display: flex;
   align-items: center;
   gap: 4px;
   z-index: 2;
-  /* The strip floats OVER text; a click on a button must not be swallowed by
-     the textarea underneath, and the strip's background is the field's own. */
-  background: var(--bg-input-field);
+  /* The strip floats OVER text, so it must not paint an opaque backing: text
+     scrolling under the buttons stays legible. Clicks are still absorbed by
+     the strip's own box (they would otherwise fall through to the textarea),
+     and the visual separation comes from each button's translucent fill
+     (`.tool-btn`), not from a shared plate. */
+  background: none;
   border-radius: 4px;
 }
-/* Shared icon-button base for the three toolbar buttons. */
+/* Shared icon-button base for the three toolbar buttons.
+   The fill is 70% opaque over the field's own colour, so text scrolling under
+   the strip stays readable through the button while the icon keeps contrast.
+   One `--strip-fill` variable keeps the base and both hover states from
+   drifting apart. */
 .tool-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-input-field);
+  background: var(--strip-fill);
   color: var(--text-muted);
   border: none;
   border-radius: 4px;
@@ -476,11 +496,11 @@ const bandHeight = computed(() => {
 .attach-btn:hover:not(:disabled),
 .compact-btn:hover:not(:disabled) {
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-input-field));
+  background: color-mix(in srgb, var(--accent) 10%, var(--strip-fill));
 }
 .auto-btn:hover:not(:disabled) {
   color: #f59e0b;
-  background: color-mix(in srgb, #f59e0b 12%, var(--bg-input-field));
+  background: color-mix(in srgb, #f59e0b 12%, var(--strip-fill));
 }
 .auto-btn--on {
   color: #f59e0b;
@@ -490,14 +510,12 @@ const bandHeight = computed(() => {
    of the LAST line by reserving bottom padding only — text uses the full width
    instead of a 98px right gutter.
    48px = 28px button + 8px offset + 2px border (38px) + one full 14px/1.5 line
-   box (21px) rounded up — otherwise the last line sits inside the strip. */
+   box (21px) rounded up — otherwise the last line sits inside the strip.
+   The strip's own inset is NOT overridden here: its margin is fixed at every
+   width, so only the textarea's clearance (a text concern) is breakpointed. */
 @media (max-width: 600px) {
   .composer-box__textarea {
     padding: 8px 12px 48px;
-  }
-  .composer-box__actions {
-    right: 8px;
-    bottom: 8px;
   }
 }
 
