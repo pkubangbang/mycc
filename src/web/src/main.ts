@@ -402,12 +402,23 @@ async function fetchConfig(): Promise<boolean> {
   try {
     const res = await fetch('/config');
     if (!res.ok) return false;
-    const data = (await res.json()) as { maxUploadMb?: number; persistent?: boolean; sessionId?: string | null };
+    const data = (await res.json()) as {
+      maxUploadMb?: number;
+      persistent?: boolean;
+      verbose?: boolean;
+      sessionId?: string | null;
+    };
     if (Number.isFinite(data.maxUploadMb) && (data.maxUploadMb as number) > 0) {
       store.maxUploadMb = data.maxUploadMb as number;
     }
     if (typeof data.persistent === 'boolean') {
       store.persistent = data.persistent;
+    }
+    // Verbose mode of the serving process: CAPABILITY only. It decides whether
+    // the 详细日志 toggle is rendered; it never turns the toggle on — the user
+    // clicks it, and only then do unlabelled verbose rows become visible.
+    if (typeof data.verbose === 'boolean') {
+      store.verboseAvailable = data.verbose;
     }
     // Capture the wire session id — the IndexedDB cache key. null when no
     // wire session (caching is skipped). When it changes across a reconnect

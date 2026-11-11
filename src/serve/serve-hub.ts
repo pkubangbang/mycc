@@ -27,7 +27,7 @@ import chalk from 'chalk';
 import { agentIO } from '../loop/agent-io.js';
 import { PromptAbortError } from '../loop/agent-io.js';
 import { setResultCallback } from '../utils/letter-box.js';
-import { getMaxUploadMb, shouldDaemon, getApiProvider } from '../config.js';
+import { getMaxUploadMb, shouldDaemon, getApiProvider, isVerbose } from '../config.js';
 import { sendToParent } from '../utils/parent-ipc.js';
 import { getSteeringManager, joinSteeringNotes } from '../loop/steering-manager.js';
 import { setWebUiUp } from '../loop/loop-events.js';
@@ -578,6 +578,13 @@ export class ServeHub implements HubHandler, ServeHubLike {
             JSON.stringify({
               maxUploadMb: getMaxUploadMb(),
               persistent: shouldDaemon(),
+              // Verbose mode of THIS process (`-v` / MYCC_VERBOSE). The browser
+              // uses it for exactly one decision: whether the 详细日志 toggle is
+              // offered at all. Without `-v` the backend produces no unlabelled
+              // verbose rows, so the toggle would be a button that can never
+              // reveal anything. It is a CAPABILITY flag — it never turns the
+              // toggle on; `verboseLogs` stays false until the user clicks.
+              verbose: isVerbose(),
               sessionId: wireHooks?.getSessionId() ?? null,
               // Plan/normal mode (row obs-002): the browser must be able to see
               // that edits are refused because the lead is in plan mode.

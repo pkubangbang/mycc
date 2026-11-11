@@ -98,6 +98,7 @@ function onRestart(): void {
         </svg>
       </button>
       <button
+        v-if="state.verboseAvailable"
         class="verbose-btn"
         :class="{ on: state.verboseLogs }"
         :title="state.verboseLogs ? '正在显示全部日志，点击仅显示摘要' : '点击显示全部日志'"

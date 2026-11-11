@@ -81,6 +81,17 @@ export const useChatStore = defineStore('chat', () => {
   const connectionStatus = ref<ConnectionStatus>('disconnected');
   const showRetry = ref(false);
   const verboseLogs = ref(false);
+  /**
+   * Whether this serve process runs with `-v` (from /config `verbose`).
+   *
+   * Capability flag, NOT a mode switch: it only decides whether the 详细日志
+   * toggle is RENDERED. The toggle itself — and therefore everything it
+   * reveals — stays off (`verboseLogs` above) until the user clicks it; a
+   * verbose process therefore looks identical to a quiet one on first load.
+   * Defaults to false so a /config failure hides the button rather than
+   * offering one that cannot reveal anything.
+   */
+  const verboseAvailable = ref(false);
   /** Whether this serve instance is persistent (headless daemon). Defaults
    *  to false so a /config fetch failure degrades to the safe 退出 button. */
   const persistent = ref(false);
@@ -218,6 +229,9 @@ export const useChatStore = defineStore('chat', () => {
     connectionStatus,
     showRetry,
     verboseLogs,
+    /** Whether the 详细日志 toggle should be offered (serve process runs -v).
+     *  Capability only — never implies verboseLogs is on. */
+    verboseAvailable,
     connectionError,
     darkMode,
     debugMode,

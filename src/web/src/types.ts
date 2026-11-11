@@ -180,6 +180,11 @@ export interface ChatState {
    *  (user, result/assistant, brief, question, prompt). When on, all logs
    *  (verbose tool output, warnings, errors) are shown too. */
   verboseLogs: boolean;
+  /** Whether the serving process runs with `-v` (from /config `verbose`).
+   *  CAPABILITY only: gates whether the 详细日志 toggle is rendered at all.
+   *  It never turns `verboseLogs` on — the button is the sole entry point, and
+   *  without `-v` the backend emits no unlabelled rows for it to reveal. */
+  verboseAvailable: boolean;
   /** Whether this serve instance is persistent (headless daemon — no
    *  terminal fallback). When true, the StatusBar renders 重启 (restart-webui)
    *  instead of 退出 (exit); fetched from /config at app load. Defaults to
