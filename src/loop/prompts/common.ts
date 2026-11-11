@@ -3,11 +3,17 @@
  *
  * Section builders used by both the lead prompts (lead.ts) and the teammate
  * prompt (teammate.ts). Role-specific prompt assembly lives in those files;
- * this module holds the reusable prose sections (output behavior,
- * verification, launch args, pinned todos), the Agent Memory section variants
- * (lead/teammate) built on shared conceptual axes, and the
- * buildCommonSections assembly used by the normal-mode prompts. The
- * intent-language section lives in intent-lang.ts.
+ * this module holds the reusable prose sections (verification, launch args,
+ * pinned todos), the Agent Memory section variants (lead/teammate) built on
+ * shared conceptual axes, and the buildCommonSections assembly used by the
+ * normal-mode prompts. The intent-language section lives in intent-lang.ts.
+ *
+ * The output-behavior rules (how to phrase replies, high-quality
+ * explanations) deliberately do NOT live here: they are project-owned prose in
+ * the root AGENTS.md, which the project-context populator injects verbatim.
+ * Keeping them out of the system prompt lets a project tighten or replace the
+ * wording without a code change, and keeps the leading prompt-cache prefix
+ * byte-stable across releases.
  */
 
 import { getLaunchArgs } from '../../config.js';
@@ -16,30 +22,6 @@ import { buildIntentLanguageSection } from './intent-lang.js';
 // ============================================================================
 // Common Sections (shared across prompts)
 // ============================================================================
-
-export function buildOutputBehaviorSection(): string {
-  return [
-    '## Output Behavior',
-    '**CRITICAL**: you MUST follow these instructions when you respond.',
-    '- When you detect dilemma, use the brief tool to state it clearly with a low confidence (1~5).',
-    '- Avoid repeating the content that has been output by the brief tool.',
-    '- Do NOT explain, comment on, or narrate your response to hook/skill [REMINDER] or [Hook] notifications. ' +
-      'If a reminder tells you to do something, do it silently. ' +
-      'If it is informational, acknowledge it implicitly by continuing your task.',
-    '',
-    '### High-Quality Explanations',
-    '**Before output**, double check the resources you used to ensure they exist.',
-    'When explaining code changes, design choices, or analysis results:',
-    '',
-    '1. Start with the conclusion - State what changed or what you recommend in ONE line before any explanation.',
-    '2. Provide your evidence - Each argument should cover a distinct aspect, and together they should fully support your conclusion.',
-    '3. Outline the difference - Use "BEFORE / AFTER" to say it clearly.',
-    '4. Avoid filler narration - "Let me take a look...", "I can see that...", "What this does is..." → delete these. ' +
-      'Just say what the result is.',
-    '5. Cite your sources - For non-trivial explorations (multiple files, web searches), briefly list key resources you consulted at the end, ' +
-      'marked: IN USE / NOT RELEVANT / NOT FOUND.'
-  ].join('\n');
-}
 
 export function buildVerificationSection(): string {
   return [
@@ -130,6 +112,8 @@ export function buildProjectIgnoreSection(): string {
 // ============================================================================
 
 export function buildCommonSections(): string {
+  // NOTE: no output-behavior section here — those rules are project-owned prose
+  // in the root AGENTS.md (injected verbatim by the project-context populator).
   return [
     buildLaunchArgsSection(),
     '',
@@ -138,8 +122,7 @@ export function buildCommonSections(): string {
     buildVerificationSection(),
     '',
     buildIntentLanguageSection(),
-    '',
-    buildOutputBehaviorSection()
+    ''
   ].join('\n');
 }
 
@@ -183,31 +166,11 @@ export function buildLeadAgentMemorySection(): string {
     'You have structured capability modules beyond basic file I/O. They organize along a few conceptual axes:',
     ...commonAxes,
     'You also coordinate: spawn/await teammates, broadcast, and discover peer instances.',
-    'Communication is async (mail_to), status (brief), or topic-shift (mycc_title).',
-    '',
-    buildBriefSection()
+    'Communication is async (mail_to), status (brief), or topic-shift (mycc_title).'
   ].join('\n');
 }
 
 // ============================================================================
-// Briefs Section (lead-only — teammates must never see it)
-// ============================================================================
-
-/**
- * The brief contract, stated ONLY here and in the `brief` tool's description.
- *
- * Lead-only by construction: this builder is called from
- * buildLeadAgentMemorySection() only. The teammate prompt assembles
- * buildTeammateAgentMemorySection() + buildCommonSections(), neither of which
- * reaches it.
- */
-export function buildBriefSection(): string {
-  return [
-    '## Briefs',
-    'A `brief` is a checkpoint the user reads AND the durable record of where an exploration stands. Emit it as the SOLE tool call of its turn (conclusion first, then evidence), then keep working.'
-  ].join('\n');
-}
-
 /**
  * Teammate agent-memory section. Adds the child-only `question` tool (the
  * teammate's unique channel to the user) on top of the shared axes. The

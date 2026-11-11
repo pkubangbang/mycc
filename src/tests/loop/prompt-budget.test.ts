@@ -33,15 +33,16 @@ import { buildPlanModePrompt, buildNormalModePrompt } from '../../loop/prompts/l
 // ---------------------------------------------------------------------------
 
 const BASELINES = {
-  soloPlan: 7298,
-  teamPlan: 8312,
-  // Raised from 6346 when an earlier always-on Trigger bullet landed (drift
-  // trigger + `abandon=true` as the default). The new text measures 7304 and
-  // the ±15% cap for the old baseline was 7297.9 — i.e. the bullet did not fit
-  // at all. Pinned to the measured size so the guard keeps catching drift.
-  soloNormal: 7304,
-  teamNormal: 8463,
-  teammate: 6586
+  soloPlan: 6370,
+  teamPlan: 7385,
+  // Lowered from 7304 when the output-behavior rules moved OUT of the system
+  // prompt into the root AGENTS.md (injected verbatim as project context).
+  // The section was 100% identical in every variant, so all five baselines
+  // dropped; only soloNormal's old ±15% floor (6208) tripped. Pinned to the
+  // measured size so the guard keeps catching drift.
+  soloNormal: 6025,
+  teamNormal: 8142,
+  teammate: 6094
 } as const;
 
 const TOLERANCE = 0.15; // ±15%

@@ -1,3 +1,34 @@
+# AGENTS.md
+
+This file holds project-level invariants for the agent, injected **verbatim**
+into the project context on every (re)build (resolved case- and
+plural-insensitively — `AGENT.md` and `AGENTS.md` are the same document, so do
+not create a second file with a different spelling). Two parts live here:
+
+1. **Toolchain invariants** — how to build/test this repo (the Vite+ block above).
+2. **Agent behavior** — how the agent should behave when it *speaks*.
+
+Reference material that grows belongs in `MYCC.md` instead: it is compiled into
+the mindmap and retrieved on demand, so size is not the constraint there.
+
+## Output Behavior
+
+**CRITICAL**: you MUST follow these instructions when you respond.
+- When you detect dilemma, use the brief tool to state it clearly with a low confidence (1~5).
+- Avoid repeating the content that has been output by the brief tool.
+- Do NOT explain, comment on, or narrate your response to hook/skill [REMINDER] or [Hook] notifications. If a reminder tells you to do something, do it silently. If it is informational, acknowledge it implicitly by continuing your task.
+
+### High-Quality Explanations
+**Before output**, double check the resources you used to ensure they exist.
+When explaining code changes, design choices, or analysis results:
+
+1. Start with the conclusion - State what changed or what you recommend in ONE line before any explanation.
+2. Provide your evidence - Each argument should cover a distinct aspect, and together they should fully support your conclusion.
+3. Outline the difference - Use "BEFORE / AFTER" to say it clearly.
+4. Avoid filler narration - "Let me take a look...", "I can see that...", "What this does is..." → delete these. Just say what the result is.
+5. Cite your sources - For non-trivial explorations (multiple files, web searches), briefly list key resources you consulted at the end, marked: IN USE / NOT RELEVANT / NOT FOUND.
+
+
 <!--VITE PLUS START-->
 
 # Using Vite+, the Unified Toolchain for the Web

@@ -204,10 +204,97 @@ export interface ProjectDocOptions {
 const FIRST_HEADING = /^#{1,6}\s+(.+)$/m;
 
 /**
+ * The CANONICAL project-doc name. `AGENTS.md` is the convention every other
+ * agent tool uses, so it is the only accepted standard here.
+ */
+export const CANONICAL_PROJECT_DOC = 'AGENTS.md';
+
+/**
+ * Accepted DEPRECATED spelling. `AGENT.md` (singular) is read only when the
+ * canonical file is absent, and the caller is expected to warn: silently
+ * accepting both spellings means a project can end up with two rulebooks that
+ * drift apart, and the reader can never tell which one the agent actually saw.
+ */
+export const LEGACY_PROJECT_DOC = 'AGENT.md';
+
+/** True when `fileName` is a case/plural variant of the legacy spelling. */
+function isLegacyDocName(fileName: string): boolean {
+  return normalizeDocName(fileName) === normalizeDocName(LEGACY_PROJECT_DOC);
+}
+
+/**
+ * Canonical-first resolution: the STANDARD spelling wins over the legacy one.
+ */
+export function resolveProjectDoc(dir: string, fileName: string): { path: string; legacy: boolean } | null {
+  const exact = path.join(dir, fileName);
+  if (fs.existsSync(exact)) {
+    return { path: exact, legacy: isLegacyDocName(path.basename(exact)) };
+  }
+
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return null;
+  }
+  const wanted = normalizeDocName(fileName);
+  const match = entries.find(
+    (entry) => normalizeDocName(entry) === wanted && fs.statSync(path.join(dir, entry)).isFile()
+  );
+  return match ? { path: path.join(dir, match), legacy: isLegacyDocName(match) } : null;
+}
+
+/**
+ * Legacy-only resolution: used when the canonical file is absent and the
+ * project still ships the deprecated spelling. Kept separate so the fallback
+ * is visible at the call site rather than buried in a regex.
+ */
+function resolveLegacyProjectDoc(dir: string): string | null {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return null;
+  }
+  const canonical = normalizeDocName(CANONICAL_PROJECT_DOC);
+  const match = entries.find(
+    (entry) => normalizeDocName(entry) === normalizeDocName(LEGACY_PROJECT_DOC) && normalizeDocName(entry) !== canonical
+  );
+  // `.md` is the only accepted extension here: LEGACY_PROJECT_DOC carries it,
+  // the comparison above does not, so confirm the match is a markdown FILE.
+  if (!match || path.extname(match).toLowerCase() !== '.md') return null;
+  const full = path.join(dir, match);
+  return fs.statSync(full).isFile() ? full : null;
+}
+
+/**
+ * Lowercase for case-insensitive comparison — and NOTHING else.
+ *
+ * An earlier version also stripped a trailing plural `s` (AGENTS.md → agent.md)
+ * to "equate" the two spellings. That is exactly wrong once they mean different
+ * things: folding them makes `AGENTS.md` indistinguishable from the deprecated
+ * `AGENT.md`, so the canonical-first rule could never fire and the fallback
+ * warning could never be suppressed. Case folding is all a platform needs.
+ */
+function normalizeDocName(name: string): string {
+  return name.toLowerCase();
+}
+
+/**
  * Build a project-context deliverable from a markdown doc at the project root
  * (README.md, AGENTS.md, ...). The file is RE-READ on every call, so edits to
  * the doc surface after the next compact/clear rebuild — the same contract the
  * README populator has always had.
+ *
+ * `AGENTS.md` is the STANDARD spelling. `AGENT.md` (singular) is accepted only
+ * as a DEPRECATED fallback: it is read when no `AGENTS.md` exists, and a warn
+ * line tells the reader to rename it. Canonical-first means a project holding
+ * both files still has exactly one rulebook — the plural one — and the
+ * warning names the file that was ignored. Resolving the request
+ * case-insensitively keeps a case-sensitive Linux CI checkout working.
+ *
+ * The message label echoes the RESOLVED file name, so the injected context
+ * always says which physical file it came from.
  *
  * Returns an empty array (a zero-cost no-op) when the file is absent, empty,
  * or larger than `maxChars`. Oversize is logged rather than truncated: a
@@ -220,8 +307,28 @@ export function buildProjectDocMessages(options: ProjectDocOptions): Message[] {
   const { fileName, log } = options;
   const maxChars = options.maxChars ?? Math.floor(getTokenThreshold() * 4 * 0.1);
 
-  const filePath = path.join(process.cwd(), fileName);
-  if (!fs.existsSync(filePath)) return [];
+  const root = process.cwd();
+  const resolved = resolveProjectDoc(root, fileName);
+  let filePath = resolved?.path ?? null;
+  let usedLegacy = resolved?.legacy === true;
+
+  // STANDARD NAME ONLY: `AGENT.md` is a fallback, never a peer of AGENTS.md.
+  if (!filePath) {
+    filePath = resolveLegacyProjectDoc(root);
+    usedLegacy = filePath !== null;
+  }
+  if (!filePath) return [];
+  const resolvedName = path.basename(filePath);
+
+  // A silent fallback is how a project ends up maintained under the wrong name
+  // forever. Say it once per load, on the surface the user actually reads.
+  if (usedLegacy) {
+    log?.brief(
+      'warn',
+      'project-doc',
+      `${resolvedName} is a DEPRECATED name — rename it to ${CANONICAL_PROJECT_DOC}; the singular spelling is only read as a fallback`
+    );
+  }
 
   let content: string;
   try {
@@ -232,17 +339,17 @@ export function buildProjectDocMessages(options: ProjectDocOptions): Message[] {
   if (content.trim().length === 0) return [];
 
   if (content.length > maxChars) {
-    log?.brief('info', 'triologue', `${fileName} is too large to load, skipping`);
+    log?.brief('info', 'triologue', `${resolvedName} is too large to load, skipping`);
     return [];
   }
 
   const heading = FIRST_HEADING.exec(content)?.[1]?.trim();
   const ack = heading
-    ? `Understood. I have read the project context from ${fileName} ("${heading}").`
-    : `Understood. I have read the project context from ${fileName}.`;
+    ? `Understood. I have read the project context from ${resolvedName} ("${heading}").`
+    : `Understood. I have read the project context from ${resolvedName}.`;
 
   return [
-    { role: 'user', content: `[Project Context - ${fileName} from project root, FYI]\n\n${content}` },
+    { role: 'user', content: `[Project Context - ${resolvedName} from project root, FYI]\n\n${content}` },
     { role: 'assistant', content: ack }
   ];
 }

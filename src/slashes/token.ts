@@ -21,6 +21,24 @@
  *   uses triologue.getContextBudget(tools) to report the honest total and the
  *   per-part breakdown.
  *
+ * WHERE THE AGENT'S RULES ARE COUNTED — read this before "fixing" the split.
+ *   The output-behavior rules (`## Output Behavior`) and the `## Briefs`
+ *   contract are PROJECT CONTEXT, not system-prompt text: they live in the
+ *   root AGENTS.md and arrive through the project-context populator. So they
+ *   are counted under `project context` in the breakdown below, NOT under
+ *   `system prompt`, and the README/AGENTS.md bodies are counted there too.
+ *   The split is a property of where the prose is DELIVERED, which is why it
+ *   moved when the rules left the hard-coded prompt: the TOTAL the provider
+ *   sees is unchanged, only its label is. A reviewer who expects those rules
+ *   under `system prompt` will read a consistent report as a regression.
+ *
+ *   This command builds the SAME prompt llm.ts builds (same builder, same
+ *   workDir, same hasTeam, same plan/normal branch) and passes the same
+ *   `loader.getToolsForScope('main')` schema, so its total matches the real
+ *   call. If the prompt assembly or the tool scope changes, change it HERE in
+ *   the same commit — a report that quietly measures a different payload is
+ *   worse than no report.
+ *
  * Nothing is written back into the conversation, so running /token does not
  * itself consume context.
  */

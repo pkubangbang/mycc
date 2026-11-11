@@ -25,7 +25,9 @@ import {
   buildPlatformCalendarMessages,
   buildNodeModulesReminderMessages,
   buildWikiDomainsMessages,
-  buildCollaborationMessages
+  buildCollaborationMessages,
+  buildProjectDocMessages,
+  resolveProjectDoc
 } from '../../loop/prompt-populators.js';
 
 describe('buildPlatformCalendarMessages', () => {
@@ -145,6 +147,112 @@ describe('buildWikiDomainsMessages', () => {
     expect(user.content).toContain('- bare\n');
     expect(user.content).not.toContain('- bare:');
     expect(user.content).toContain('- described: has a description');
+  });
+});
+
+describe('buildProjectDocMessages', () => {
+  // Run a callback with cwd set to a scratch temp dir (restored afterwards).
+  function inTempDir<T>(fn: (dir: string) => T): T {
+    const originalCwd = process.cwd();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mycc-doc-populator-test-'));
+    process.chdir(tmpDir);
+    try {
+      return fn(tmpDir);
+    } finally {
+      process.chdir(originalCwd);
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }
+
+  it('returns an empty array when the doc is absent', () => {
+    inTempDir(() => {
+      expect(buildProjectDocMessages({ fileName: 'AGENTS.md' })).toEqual([]);
+    });
+  });
+
+  it('resolves AGENTS.md, the STANDARD spelling', () => {
+    inTempDir((dir) => {
+      fs.writeFileSync(path.join(dir, 'AGENTS.md'), '# Rulebook\n\n## Output Behavior\nbe brief\n');
+      const resolved = resolveProjectDoc(dir, 'AGENTS.md');
+      expect(resolved).toEqual({ path: path.join(dir, 'AGENTS.md'), legacy: false });
+    });
+  });
+
+  it('reads AGENT.md as a DEPRECATED FALLBACK with a warning', () => {
+    inTempDir((dir) => {
+      fs.writeFileSync(path.join(dir, 'AGENT.md'), '# Rulebook\n\n## Output Behavior\nbe brief\n');
+      const briefs: [string, string, string][] = [];
+      const [user] = buildProjectDocMessages({
+        fileName: 'AGENTS.md',
+        log: { brief: (level, tool, message) => briefs.push([level, tool, message]) }
+      });
+      // It still loads — a project on the old spelling is not broken…
+      expect(user.content).toContain('[Project Context - AGENT.md from project root, FYI]');
+      // …but it is never silent: the reader is told to rename it.
+      expect(briefs).toHaveLength(1);
+      expect(briefs[0][0]).toBe('warn');
+      expect(briefs[0][2]).toContain('DEPRECATED');
+      expect(briefs[0][2]).toContain('rename');
+      expect(briefs[0][2]).toContain('AGENTS.md');
+    });
+  });
+
+  it('prefers the STANDARD name when BOTH spellings exist, and ignores the legacy one', () => {
+    inTempDir((dir) => {
+      fs.writeFileSync(path.join(dir, 'AGENTS.md'), '# Canonical\ncanonical rules\n');
+      fs.writeFileSync(path.join(dir, 'AGENT.md'), '# Legacy\nlegacy rules\n');
+      const briefs: string[] = [];
+      const [user] = buildProjectDocMessages({
+        fileName: 'AGENTS.md',
+        log: { brief: (_l, _t, m) => briefs.push(m) }
+      });
+      expect(user.content).toContain('canonical rules');
+      expect(user.content).not.toContain('legacy rules');
+      // No warning: the standard file is present, so nothing deprecated was read.
+      expect(briefs).toEqual([]);
+    });
+  });
+
+  it('emits NO warning when the standard file is the only one', () => {
+    inTempDir((dir) => {
+      fs.writeFileSync(path.join(dir, 'AGENTS.md'), '# Rulebook\n');
+      const briefs: string[] = [];
+      buildProjectDocMessages({ fileName: 'AGENTS.md', log: { brief: (_l, _t, m) => briefs.push(m) } });
+      expect(briefs).toEqual([]);
+    });
+  });
+
+  it('resolves case-insensitively (agents.md request → the AGENTS.md file)', () => {
+    inTempDir((dir) => {
+      fs.writeFileSync(path.join(dir, 'AGENTS.md'), '# Rulebook\n');
+      const resolved = resolveProjectDoc(dir, 'agents.md');
+      expect(resolved).not.toBeNull();
+      // The resolved path must point at the ONE physical file, whichever case
+      // the caller used and whichever case the OS reports back (Windows is
+      // case-insensitive, Linux CI is not — compare case-insensitively).
+      expect(path.basename(resolved?.path as string).toLowerCase()).toBe('agents.md');
+      expect(fs.readFileSync(resolved?.path as string, 'utf-8')).toBe('# Rulebook\n');
+      expect(resolved?.legacy).toBe(false);
+    });
+  });
+
+  it('returns null when no spelling of the doc exists', () => {
+    inTempDir((dir) => {
+      expect(resolveProjectDoc(dir, 'AGENT.md')).toBeNull();
+      expect(resolveProjectDoc(dir, 'AGENTS.md')).toBeNull();
+      expect(buildProjectDocMessages({ fileName: 'AGENTS.md' })).toEqual([]);
+    });
+  });
+
+  it('labels the injected context with the RESOLVED file name, not the requested one', () => {
+    inTempDir((dir) => {
+      fs.writeFileSync(path.join(dir, 'AGENTS.md'), '# Rulebook\n\n## Output Behavior\nbe brief\n');
+      const [user, ack] = buildProjectDocMessages({ fileName: 'AGENTS.md' });
+      expect(user.content).toContain('[Project Context - AGENTS.md from project root, FYI]');
+      expect(user.content).toContain('## Output Behavior');
+      expect(ack.content).toContain('AGENTS.md');
+      expect(ack.content).toContain('Rulebook');
+    });
   });
 });
 

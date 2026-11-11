@@ -17,7 +17,6 @@ import {
   buildCommonSections,
   buildLaunchArgsSection,
   buildLeadAgentMemorySection,
-  buildOutputBehaviorSection,
   buildPinnedTodoSection,
   buildVerificationSection
 } from './common.js';
@@ -105,8 +104,6 @@ But your FINAL plan must be:
 ${buildLaunchArgsSection()}
 
 ${buildVerificationSection()}
-
-${buildOutputBehaviorSection()}
 
 ${buildIntentLanguageSection()}`;
 }

@@ -389,11 +389,11 @@ export async function main(): Promise<void> {
     });
   }
 
-  // (2) README.md / AGENTS.md — re-reads from disk on every rebuild so edits
-  //     surface after the next compact/clear. Skips when too large or absent.
-  //     Both go through the same populator, in that order.
+  // (2) README.md / AGENTS.md / AGENT.md — re-reads from disk on every rebuild
+  //     so edits surface after the next compact/clear. Skips when too large or
+  //     absent. All go through the same populator, in that order.
   //
-  //     Why these two files and not MYCC.md: MYCC.md and AGENTS.md look like
+  //     Why these files and not MYCC.md: MYCC.md and AGENTS.md look like
   //     they serve the same purpose, but they are loaded by completely
   //     different mechanisms with opposite size economics.
   //
@@ -408,7 +408,12 @@ export async function main(): Promise<void> {
   //                  turn. It must stay short and hold only always-true house
   //                  rules. Oversize is SKIPPED, never truncated (see
   //                  buildProjectDocMessages), because half a rulebook is
-  //                  worse than none.
+  //                  worse than none. It is the SINGLE agent rulebook: the
+  //                  toolchain invariants plus the output-behavior rules
+  //                  ("how to speak") that used to be a hard-coded
+  //                  system-prompt section. Project-owned so a project can
+  //                  retune the wording without editing src/, and so the
+  //                  leading prompt-cache prefix stays byte-stable.
   //
   //     Rule of thumb: reference material that grows → MYCC.md. A one-page
   //     set of invariants the agent must never violate → AGENTS.md.

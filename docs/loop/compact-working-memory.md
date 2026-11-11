@@ -142,7 +142,7 @@ The prompt deliberately does **not** ask for a broad summary — that is the sum
 
 The summary prompt keeps its existing three-section structure (Accomplishments / Current State / Key Decisions) plus the knowledge-persistence, focus-area, and user-instruction addenda.
 
-The summary prompt does **not** carry any tool guidance. "When/how to call `brief`" is taught in exactly one place — the lead system prompt's `## Briefs` section (`buildBriefSection()` in `src/loop/prompts/common.ts`).
+The summary prompt does **not** carry any tool guidance. "When/how to call `brief`" is taught in exactly one place — the `## Briefs` section of the root `AGENTS.md`, injected verbatim as project context (it used to be a hard-coded system-prompt section, `buildBriefSection()` in `src/loop/prompts/common.ts`).
 
 ### 3.7 Backward-compatible fallback
 
