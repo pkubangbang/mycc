@@ -130,6 +130,17 @@ export interface ServeHubLike {
   setAgentRunning(value: boolean): void;
   setAutoStateProvider(provider: (() => boolean) | null): void;
   setEnterAutoProvider(provider: (() => boolean) | null): void;
+  /**
+   * Install the auto-commit allow-list READ closure (the 魔法查询 editor's seed).
+   * There is no write side: the list is edited exclusively through the
+   * `/auto-commit` slash command, so the terminal and the WebUI share one
+   * writer and one broadcast (AutoState's change callback).
+   */
+  setAutoCommitBranchesProvider(provider: { get: () => string[] } | null): void;
+  /** The live allow-list (`null` = no provider), encoded (`branch` | `branch:autoAdd`). */
+  getAutoCommitBranches(): string[] | null;
+  /** Broadcast the allow-list to every client (after a change). */
+  broadcastAutoCommit(branches: string[]): void;
   getAutoState(): boolean;
   enterAuto(): boolean;
 

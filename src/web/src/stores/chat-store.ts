@@ -77,6 +77,36 @@ export const useChatStore = defineStore('chat', () => {
   // a replacement from a length delta it may not observe. See #22.
   const historyRevision = ref(0);
   const inputText = ref('');
+  /**
+   * The LIVE auto-commit allow-list, encoded (`branch` | `branch:autoAdd`),
+   * as pushed by the backend's `auto-commit` frame. Read-only mirror: the
+   * 魔法查询 editor renders it and every removal goes back out as a slash
+   * command, never as a direct store mutation. `null` = not known yet (or no
+   * backend provider), which the editor renders differently from an empty
+   * list, because empty means "no branch is authorized".
+   */
+  const autoCommitBranches = ref<string[] | null>(null);
+  /**
+   * The `auto-commit-get` id whose reply may still be applied, or null when no
+   * read is outstanding. Set on request, cleared by the matching reply.
+   *
+   * This is the fence that keeps `auto-commit`'s two roles apart: a broadcast
+   * (id null) reflects a write that already happened and always applies, while
+   * a reply applies only if it answers the read still pending. Without it an
+   * answer to a superseded read could repaint the editor with a pre-click copy
+   * and resurrect a branch the user just removed.
+   */
+  const autoCommitRequestId = ref<string | null>(null);
+  /**
+   * Whether an incoming `auto-commit` frame may update {@link autoCommitBranches}.
+   * Exposed so the socket handler owns the correlation decision in one place.
+   */
+  function shouldAdoptAutoCommitFrame(requestId: string | null): boolean {
+    if (requestId === null) return true; // broadcast: a write already landed
+    if (requestId !== autoCommitRequestId.value) return false; // stale reply
+    autoCommitRequestId.value = null; // this read is satisfied
+    return true;
+  }
   const pendingFiles = ref<FileInfo[]>([]);
   const connectionStatus = ref<ConnectionStatus>('disconnected');
   const showRetry = ref(false);
@@ -225,6 +255,9 @@ export const useChatStore = defineStore('chat', () => {
     teammateMessages,
     historyRevision,
     inputText,
+    autoCommitBranches,
+    autoCommitRequestId,
+    shouldAdoptAutoCommitFrame,
     pendingFiles,
     connectionStatus,
     showRetry,

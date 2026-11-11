@@ -243,3 +243,4 @@ describe('/auto-commit slash command', () => {
     expect(autoState.getAutoCommitBranches()).toEqual([`main:${AUTO_ADD_SUFFIX}`]);
   });
 });
+

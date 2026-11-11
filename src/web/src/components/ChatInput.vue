@@ -94,15 +94,17 @@ function onAutoClick(): void {
 
 // "魔法查询" (magic query) — the wand opens a dialog listing the available
 // magic queries (first: "/compact"). The wand never fires a command itself;
-// the dialog's `run` hands the chosen slash text back here, so
-// chatApi.sendInput (the normal slash-command pipeline) stays the only
-// execution path.
+// the dialog is a pure props view that composes slash text and hands it to
+// `chatApi.sendInput` (the normal slash-command pipeline), which stays the
+// only execution path.
 //
 // `canSlash` = "a slash command may be sent right now", which is exactly the
 // window in which the backend routes raw input into the SLASH state instead of
 // a query/steer turn: at PROMPT (isWaiting), not in auto mode, no pending card,
-// and connected. The wand button AND every dialog row are gated by this single
-// computed — availability is identical to the old 压缩上下文 button it replaced.
+// and connected. The wand button is gated by it, and the dialog re-checks the
+// same condition (`runnable`) before expanding and before EVERY write, because
+// the dialog can outlive a state change — the first removal itself ends the
+// window by flipping the phase to 'submitted'.
 const canSlash = computed(
   () =>
     !props.state.isAutoMode &&
@@ -129,6 +131,9 @@ function onMagicQueryClick(): void {
  *   • `/reload`  — restarts the lead process with fresh code on disk (the
  *     coordinator is reused, teammates restart, the conversation is cleared).
  *     Useful after editing mycc itself; the web UI reconnects automatically.
+ *   • `/auto-commit` — takes arguments, so the row EXPANDS into an editor
+ *     instead of firing once (see MagicQueryDialog.vue). Every button in that
+ *     editor sends a slash command (`on` / `off` / `off --all`).
  */
 const MAGIC_QUERIES: MagicQuery[] = [
   {
@@ -144,18 +149,17 @@ const MAGIC_QUERIES: MagicQuery[] = [
     query: '/reload',
     description:
       '重载程序：用磁盘上的最新代码重启 lead（复用 coordinator、清空对话）。改了 mycc 源码后用它生效；Web UI 会自动重连。'
+  },
+  {
+    query: '/auto-commit',
+    description: '自动提交白名单：展开后可“添加 / 移除 / 全部移除”分支；全部移除即禁止所有自动提交。',
+    // Takes arguments, so the row expands into an editor instead of sending.
+    editor: 'auto-commit'
   }
 ];
 
 function closeMagicQuery(): void {
   magicQueryOpen.value = false;
-}
-
-/** A magic query row was chosen: run it through the normal input path. */
-function onMagicQueryRun(query: string): void {
-  magicQueryOpen.value = false;
-  if (!canSlash.value) return;
-  chatApi.sendInput(query);
 }
 
 // ── Send gate + warning banner (single source of truth) ──
@@ -484,8 +488,10 @@ function fmtTime(at: number): string {
       :open="magicQueryOpen"
       :queries="MAGIC_QUERIES"
       :runnable="canSlash"
+      :auto-commit-branches="props.state.autoCommitBranches"
+      :load-auto-commit="chatApi.requestAutoCommitList"
+      :run-query="chatApi.sendInput"
       @close="closeMagicQuery"
-      @run="onMagicQueryRun"
     />
     <AttachmentManager
       :open="managerOpen"

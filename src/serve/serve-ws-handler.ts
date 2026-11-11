@@ -49,6 +49,13 @@ export interface HubHandler {
   getDisplayWriter(): unknown;
   /** Run the combined auto-mode entry; return true if it actually flipped on. */
   enterAuto(): boolean;
+  /**
+   * The LIVE auto-commit allow-list, encoded (`branch`
+   * | `branch:autoAdd`). Answers `auto-commit-get`. `null` when no provider is
+   * registered (a stub hub, or serve without the agent loop) — distinct from
+   * `[]`, which is a real deny-all.
+   */
+  getAutoCommitBranches(): string[] | null;
 }
 
 /**
@@ -172,6 +179,37 @@ export function handleWsMessage(hub: HubHandler, ws: WebSocket, data: string): v
       // drains the whole queue so PROMPT never re-synthesizes these notes.
       hub.resolveSteering(msg.sendIds ?? []);
       break;
+    case 'auto-commit-get':
+      // The 魔法查询 dialog reads the live allow-list before letting the user
+      // edit it. Answered only to the asking socket: it is a read the client
+      // requested, not a state broadcast. `null` means "no provider is
+      // installed" — deliberately distinct from `[]` (deny-all), because the
+      // dialog must not render "nothing is allow-listed" for a hub that simply
+      // has no agent loop behind it.
+      {
+        const branches = hub.getAutoCommitBranches();
+        // Echo the caller's request id so a client can tell its OWN reply
+        // from a broadcast, and from a reply to an earlier read — without it,
+        // a stale answer can repaint rows the user has already acted on.
+        // Coerced to a string: the client correlates with `!==` against its own
+        // string id, so a non-string echo would silently drop a valid reply.
+        const requestId = typeof msg.requestId === 'string' ? msg.requestId : null;
+        const payload = JSON.stringify({ type: 'auto-commit', branches, requestId });
+        try {
+          ws.send(payload);
+        } catch {
+          // The socket died between the read and the reply — nothing to do.
+        }
+      }
+      break;
+    // NOTE: there is deliberately NO 'auto-commit-set'. The allow-list is
+    // edited through the SLASH command (`/auto-commit on|off|off --all`),
+    // which is the same single write path the terminal uses, so there is
+    // exactly one writer and one broadcast (AutoState's change callback). A
+    // WS "replace the whole list" op was removed because nothing ever sent
+    // it, while ANY connected client could invoke it to wipe a launch-seeded
+    // `--allow-auto-commit` grant with an exact replace — an unused,
+    // unauthenticated destructive write is not a surface worth keeping.
     case 'auto':
       // One-way "enter auto mode" request from the webui lightning bolt
       // button. If already in auto mode, tell the client so it can surface

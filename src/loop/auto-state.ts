@@ -84,6 +84,11 @@ export interface AutoCommitEntry {
  * silently reinterpreted as a grant.
  */
 export function parseAutoCommitEntry(entry: string): AutoCommitEntry {
+  // Defensive: entries arrive from user input (slash arguments, the WS
+  // editor). A non-string would throw on `.trim()` below, and the WS path has
+  // no try/catch above it — so a bad element becomes a dropped no-op instead
+  // of a global uncaught exception.
+  if (typeof entry !== 'string') return { branch: '', autoAdd: false };
   const trimmed = entry.trim();
   const sep = trimmed.lastIndexOf(AUTO_ADD_SEPARATOR);
   if (sep > 0 && trimmed.slice(sep + 1).trim() === AUTO_ADD_SUFFIX) {
@@ -166,6 +171,18 @@ export class AutoState {
   onAutoChange: OnAutoChangeCallback | null = null;
 
   /**
+   * Fired after EVERY mutation of the allow-list (seed, add, remove, clear,
+   * replace) with the normalized entries now stored.
+   *
+   * One callback for all five writers is the point: the terminal slash, the
+   * launch seed and the webui editor all converge on the same mirror, so a
+   * browser can never hold a draft that predates a grant typed in the
+   * terminal. Best-effort — a plain terminal session has no hub, so the
+   * registration is a no-op there.
+   */
+  onAutoCommitBranchesChange: ((entries: string[]) => void) | null = null;
+
+  /**
    * Seed `autoCommitBranches` from the launch flag — once per process.
    *
    * Called by the lead's composition (agent-repl) with the value of
@@ -178,6 +195,15 @@ export class AutoState {
     if (this.autoCommitSeeded) return;
     this.autoCommitSeeded = true;
     this.autoCommitBranches = autoCommitSeedFromFlag(branches.join(','));
+    // Same no-op rule as every other mutator: seeding nothing onto an empty
+    // list is not a change. Otherwise a live-hub reseed pushes a spurious
+    // `auto-commit: []` that repaints every browser's rows for nothing.
+    if (this.autoCommitBranches.length > 0) this.notifyAutoCommitBranches();
+  }
+
+  /** Fan the current allow-list out to the single observer (if any). */
+  private notifyAutoCommitBranches(): void {
+    this.onAutoCommitBranchesChange?.([...this.autoCommitBranches]);
   }
 
   /** Whether the launch seed has been applied (diagnostics for /auto-commit). */
@@ -227,6 +253,7 @@ export class AutoState {
         changed.push({ branch: existing.branch, autoAdd: true });
       }
     }
+    if (changed.length > 0) this.notifyAutoCommitBranches();
     return changed;
   }
 
@@ -248,6 +275,7 @@ export class AutoState {
       this.autoCommitBranches = this.autoCommitBranches.filter((e) => parseAutoCommitEntry(e).branch !== branch);
       if (this.autoCommitBranches.length < before) removed.push(branch);
     }
+    if (removed.length > 0) this.notifyAutoCommitBranches();
     return removed;
   }
 
@@ -262,6 +290,7 @@ export class AutoState {
   clearAutoCommitBranches(): string[] {
     const cleared = [...this.autoCommitBranches];
     this.autoCommitBranches = [];
+    if (cleared.length > 0) this.notifyAutoCommitBranches();
     return cleared;
   }
 

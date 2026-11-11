@@ -18,7 +18,36 @@ export type MessageType =
   | 'file-flush'
   | 'auto'
   | 'mode'
-  | 'running';
+  | 'running'
+  /**
+   * The one frame that is NOT transcript state: the `auto-commit` reply/
+   * broadcast. It is listed here so the parse-site guard in main.ts narrows
+   * against a real union member; its payload lives on {@link AutoCommitFrame}.
+   */
+  | 'auto-commit';
+
+/**
+ * The `auto-commit` frame — the ONLY frame that is not transcript state.
+ *
+ * It is both the reply to a single `auto-commit-get` and the broadcast after a
+ * write, so it carries no `seq` and no `content`; it is consumed before
+ * `applyServerMessage` and mirrored into the store.
+ *
+ * `requestId` is the fence between the two roles: a reply echoes the id of the
+ * read it answers, a broadcast carries `null`. The client applies a reply only
+ * when the id matches the read still outstanding, so an answer to an older
+ * request can never repaint a panel the user has since edited.
+ *
+ * `branches: null` means the backend has no allow-list provider (unknown),
+ * which is deliberately different from `[]` (deny-all) — the editor must not
+ * render "nothing is allow-listed" when the truth is "nobody is home".
+ */
+export interface AutoCommitFrame {
+  type: 'auto-commit';
+  branches: string[] | null;
+  /** Echo of the `auto-commit-get` this answers; `null` on a broadcast. */
+  requestId: string | null;
+}
 
 export interface ChatMessage {
   type: MessageType;
@@ -180,6 +209,14 @@ export interface ChatState {
    *  (user, result/assistant, brief, question, prompt). When on, all logs
    *  (verbose tool output, warnings, errors) are shown too. */
   verboseLogs: boolean;
+  /**
+   * The LIVE auto-commit allow-list, encoded (`branch` | `branch:autoAdd`),
+   * mirrored from the backend's `auto-commit` frame. `null` until the first
+   * frame arrives, or when the backend has no provider — distinct from `[]`,
+   * which means every branch is denied. Read-only here: the editor composes
+   * slash commands, it never mutates this.
+   */
+  autoCommitBranches: string[] | null;
   /** Whether the serving process runs with `-v` (from /config `verbose`).
    *  CAPABILITY only: gates whether the 详细日志 toggle is rendered at all.
    *  It never turns `verboseLogs` on — the button is the sole entry point, and

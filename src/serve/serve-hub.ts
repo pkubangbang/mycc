@@ -173,6 +173,14 @@ export class ServeHub implements HubHandler, ServeHubLike {
   /** Fallback when no provider is installed (hub without an agent context). */
   private modeState: 'plan' | 'normal' = 'normal';
   private enterAutoProvider: (() => boolean) | null = null;
+  /**
+   * Auto-commit allow-list provider — a READ-ONLY closure over AutoState,
+   * installed by the agent loop through `onServeHubReady`. The hub never owns
+   * and never writes the list: it serves `auto-commit-get` replies from here,
+   * and every mutation arrives as a `/auto-commit` slash command executed by
+   * the agent loop, whose change callback broadcasts the new list out.
+   */
+  private autoCommitBranchesProvider: { get: () => string[] } | null = null;
 
   private running = false;
   // State-machine-driven processing flag (idle PROMPT/AWAIT → false; else true).
@@ -1104,6 +1112,42 @@ export class ServeHub implements HubHandler, ServeHubLike {
   }
   setEnterAutoProvider(provider: (() => boolean) | null): void {
     this.enterAutoProvider = provider;
+  }
+
+  /**
+   * READ provider for the auto-commit allow-list (魔法查询 editor).
+   *
+   * Same seam as the auto/mode providers above: the hub stays ignorant of
+   * AutoState, and the agent loop installs a closure over the singleton. There
+   * is no `replace` half — the list is written only through the `/auto-commit`
+   * slash command, so the terminal and the WebUI share one writer and one
+   * broadcast (AutoState's change callback). With no provider installed the
+   * getter answers `null` (unknown), never `[]` (which would read as deny-all).
+   */
+  setAutoCommitBranchesProvider(provider: { get: () => string[] } | null): void {
+    this.autoCommitBranchesProvider = provider;
+  }
+
+  /**
+   * `null` means "no provider installed" — NOT an empty allow-list. The two
+   * must stay distinguishable on the wire: `[]` is a real deny-all the user
+   * can act on, `null` is "this hub has no agent loop behind it".
+   */
+  getAutoCommitBranches(): string[] | null {
+    return this.autoCommitBranchesProvider ? this.autoCommitBranchesProvider.get() : null;
+  }
+
+  /**
+   * Broadcast the auto-commit allow-list (after a successful write).
+   *
+   * `requestId` is always present and always null: a broadcast reports a write
+   * that already happened. Sending the field explicitly keeps every
+   * `auto-commit` frame the same shape, so a client can test
+   * `requestId === null` rather than relying on it being undefined.
+   */
+  broadcastAutoCommit(branches: string[]): void {
+    const payload = JSON.stringify({ type: 'auto-commit', branches, requestId: null });
+    this.clients.forEachOpen((ws) => ws.send(payload));
   }
 
   // ===========================================================================

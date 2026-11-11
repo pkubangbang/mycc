@@ -11,13 +11,22 @@
  * Because the store lives here (not in any component), editing a component
  * while the Web UI is running is safe — the WebSocket stays connected and
  * the chat history is not lost.
+ *
+ * "NEVER hot-replaced" is a property of Vite's HMR, not something this file
+ * enforces: nothing under src/web calls `import.meta.hot.accept()`, so Vite
+ * has no way to hot-swap a module and always performs a FULL RELOAD when any
+ * file changes. That reload gives this module a fresh `window`, a fresh Pinia
+ * and a fresh socket, which is why editing during a session is safe — the chat
+ * history is re-fetched rather than duplicated. If an `accept()` handler is
+ * ever added below this entry, that guarantee is lost and the module-scope
+ * state (socket, store, render cursor) would need explicit hand-lining.
  */
 
 import { createApp } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import type { App as VueApp } from 'vue';
 import App from './App.vue';
-import type { ChatMessage, CardOption, FileInfo, SteeringNote } from './types';
+import type { ChatMessage, CardOption, FileInfo, SteeringNote, AutoCommitFrame } from './types';
 import { applyServerMessage } from './message-dispatch';
 import { registerDebugSeam } from './debug';
 import { ensureHighlighterReady } from './highlight';
@@ -34,7 +43,17 @@ import './style.css';
 // too late for this module-level call) or by setActivePinia(). Without the
 // activation, getActivePinia() throws "no active Pinia" at page load and the
 // whole Web UI fails to boot.
-const pinia = createPinia();
+//
+// HMR: this block is MODULE SCOPE, so it re-runs on a hot re-execution BEFORE
+// any guard inside the bootstrap below can run. Left unguarded that creates a
+// SECOND Pinia with a fresh EMPTY store, and the newly exported `chatApi`
+// binds to it while the mounted app keeps rendering the old store — input
+// written through the new instance would vanish. The store is therefore
+// cached on `window` and reused, so every re-execution sees the SAME pinia.
+type HmrSingleton = { pinia?: ReturnType<typeof createPinia> };
+const singleton = window as unknown as HmrSingleton;
+
+const pinia = singleton.pinia ?? (singleton.pinia = createPinia());
 setActivePinia(pinia);
 const store = useChatStore();
 
@@ -458,6 +477,13 @@ async function fetchConfig(): Promise<boolean> {
       store.messages.splice(0, store.messages.length);
       store.teammateMessages.splice(0, store.teammateMessages.length);
       store.resetSteering();
+      // The allow-list mirror is SESSION state: `/reload` reseeds from the
+      // original `--allow-auto-commit` flag and discards session edits, and a
+      // serve restart starts fresh. Keeping the previous process's list would
+      // render stale grants (and let the fence adopt that process's frames)
+      // until a read reply happened to land. Reset to "unknown", not "empty".
+      store.autoCommitBranches = null;
+      store.autoCommitRequestId = null;
       // Bump the history revision — clearing the arrays is an authoritative
       // replacement (to empty), so the collapse watcher must reset its
       // window just as it does on a /history 200. See #22.
@@ -534,6 +560,21 @@ function connectWebSocket(): void {
     // payload-less `steer-flush`, which only proved that SOME drain happened.
     // Steering is now a revisioned snapshot, so confirmation is structural —
     // the card's notes simply stop appearing in an adopted snapshot.
+    //
+    // The auto-commit frame is the ONE frame that is not transcript state: it
+    // carries no `seq` and no `content`, and is meaningful only to the live
+    // allow-list mirror. Mirror it into the store and stop, so it never
+    // reaches applyServerMessage's transition path.
+    if (msg.type === 'auto-commit') {
+      const frame = msg as unknown as AutoCommitFrame;
+      // FENCE (store-owned): a broadcast applies; a reply applies only if it
+      // answers the read still outstanding, so a stale answer cannot repaint
+      // the editor with a pre-click copy.
+      if (store.shouldAdoptAutoCommitFrame(frame.requestId ?? null)) {
+        store.autoCommitBranches = frame.branches ?? null;
+      }
+      return;
+    }
     applyServerMessage(store, msg, { nextId, chatApi });
     // Advance the display cursor from the LIVE stream too. A frame carrying a
     // journal seq is a row the user now sees; a state frame (prompt / steering
@@ -651,25 +692,38 @@ async function reconnect(): Promise<void> {
 // lock-screen wake) hydrates instantly. The write is fire-and-forget and
 // failure-tolerant; on mobile the pagehide/visibilitychange(hidden) paths
 // below are more reliable than beforeunload, so we persist on all three.
-window.addEventListener('beforeunload', () => {
-  persistChatlog();
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-});
+//
+// HMR RE-EXECUTION: this module runs again on every hot reload, so a bare
+// addEventListener here would stack a fresh set of handlers — each hot reload
+// doubling the number of persistChatlog() calls per event. The handlers are
+// therefore installed exactly once, keyed on the window.
+type BootFlags = {
+  __myccPageListenersInstalled?: boolean;
+};
+const bootFlags = window as unknown as BootFlags;
 
-// Mobile lock-screen / tab-switch: when the page becomes hidden, persist the
-// chatlog immediately. visibilitychange(hidden) is the signal iOS/Android
-// fire on lock-screen — beforeunload is unreliable there. pagehide covers
-// older browsers / the bfcache path. Both are cheap (the write is async and
-// failure-tolerant) and idempotent, so registering both is safe.
-window.addEventListener('pagehide', () => {
-  persistChatlog();
-});
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') persistChatlog();
-});
+if (!bootFlags.__myccPageListenersInstalled) {
+  bootFlags.__myccPageListenersInstalled = true;
+  window.addEventListener('beforeunload', () => {
+    persistChatlog();
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  });
+
+  // Mobile lock-screen / tab-switch: when the page becomes hidden, persist the
+  // chatlog immediately. visibilitychange(hidden) is the signal iOS/Android
+  // fire on lock-screen — beforeunload is unreliable there. pagehide covers
+  // older browsers / the bfcache path. Both are cheap (the write is async and
+  // failure-tolerant) and idempotent, so registering both is safe.
+  window.addEventListener('pagehide', () => {
+    persistChatlog();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') persistChatlog();
+  });
+}
 
 // Page load sequence: initialize the Shiki highlighter, fetch config, hydrate
 // the chatlog from the IndexedDB cache, mount the Vue app, fetch history, and
@@ -770,6 +824,10 @@ void (async () => {
 document.documentElement.classList.toggle('dark', store.darkMode);
 
 // Expose for components (send messages, exit, retry)
+
+/** Monotonic source for `auto-commit-get` correlation ids. */
+let autoCommitRequestSeq = 0;
+
 export const chatApi = {
   sendInput(text: string, files?: FileInfo[]): void {
     if (!text.trim() && (!files || files.length === 0)) return;
@@ -803,6 +861,24 @@ export const chatApi = {
     store.setPhase('submitted');
     store.showRetry = false;
     wsSend({ type: 'input', text: text || undefined, files: files && files.length > 0 ? files : undefined });
+  },
+  /**
+   * Ask the backend for the LIVE auto-commit allow-list. The reply
+   * (`{ type: 'auto-commit', branches }`) lands in `store.autoCommitBranches`,
+   * which the 魔法查询 editor renders — the dialog is a pure props view and
+   * never touches the socket.
+   */
+  requestAutoCommitList(): void {
+    // One read outstanding at a time: the new id supersedes any earlier one,
+    // so an answer to the superseded read is dropped by the store's fence.
+    autoCommitRequestSeq += 1;
+    const id = String(autoCommitRequestSeq);
+    // Only arm the fence if the read actually went out — otherwise the id
+    // would dangle and the eventual reply (or a later read's reply) would be
+    // dropped for no reason.
+    if (wsSend({ type: 'auto-commit-get', requestId: id })) {
+      store.autoCommitRequestId = id;
+    }
   },
   /**
    * Send a mid-task steering note while the LLM is running. The note is

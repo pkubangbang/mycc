@@ -176,4 +176,21 @@ export function wireServeCallbacks(ctx: AgentContext): void {
       return true;
     })
   );
+
+  // ── auto-commit allow-list: one mirror for every writer ──
+  // The 魔法查询 editor renders the list, the terminal `/auto-commit on|off`
+  // edits it, and the launch seed creates it. All three funnel through
+  // `onAutoCommitBranchesChange` so no browser can keep a draft that predates
+  // a grant typed elsewhere — without this, an exact-replace save silently
+  // revokes a terminal-typed grant. Same pull/push split as auto mode above.
+  autoState.onAutoCommitBranchesChange = (entries: string[]) => {
+    tryGetServeHub()?.broadcastAutoCommit(entries);
+  };
+  onServeHubReady((hub) =>
+    hub.setAutoCommitBranchesProvider({
+      // READ only: the notify callback above is the single write mirror, and
+      // the list is edited through the `/auto-commit` slash command.
+      get: () => autoState.getAutoCommitBranches()
+    })
+  );
 }

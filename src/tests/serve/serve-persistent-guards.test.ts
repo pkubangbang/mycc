@@ -67,8 +67,15 @@ function makeStubHub(): HubHandler & {
     broadcastExcept: vi.fn(),
     getAutoState: vi.fn(() => false),
     getDisplayWriter: vi.fn(() => undefined),
-    enterAuto: vi.fn(() => true)
+    enterAuto: vi.fn(() => true),
+    getAutoCommitBranches: vi.fn(() => [] as string[] | null)
   };
+}
+
+/** A ws stand-in that captures frames sent back to THIS socket. */
+function makeEchoWs(): { ws: never; sent: string[] } {
+  const sent: string[] = [];
+  return { ws: { send: (data: string) => sent.push(data) } as never, sent };
 }
 
 /** A minimal "ws" stand-in — handleWsMessage only uses it for broadcastExcept. */
@@ -140,6 +147,76 @@ describe('handleWsMessage restart-webui dispatch', () => {
   it('ignores an unknown message type without throwing', () => {
     expect(() => handleWsMessage(hub, fakeWs, JSON.stringify({ type: 'no-such-type' }))).not.toThrow();
     expect(hub.restartServe).not.toHaveBeenCalled();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 魔法查询 editor: auto-commit allow-list round-trip
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The allow-list protocol has four contracts, each with a silent-failure mode:
+//   • 'auto-commit-get' answers the ASKING socket only (it is a read, not a
+//     broadcast), with the encoded entries — or `null` when the hub has no
+//     provider, which must NOT be flattened into `[]` (that reads as deny-all);
+//   • an EMPTY submit is a real submission (deny-all), not a cancel;
+//   • a MALFORMED submit (missing / non-array `branches`) is dropped, never
+//     coerced to `[]` — otherwise a version-skewed client wipes a grant;
+//   • a write is a WRITE ONLY: it never engages auto mode, matching
+//     `/auto-commit on <branch>` in the terminal.
+describe('handleWsMessage auto-commit editor round-trip', () => {
+  it('auto-commit-get replies to the asking socket with the live list', () => {
+    const hub = makeStubHub();
+    hub.getAutoCommitBranches = vi.fn(() => ['main:autoAdd', 'dev']);
+    const { ws, sent } = makeEchoWs();
+    handleWsMessage(hub, ws, JSON.stringify({ type: 'auto-commit-get' }));
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(sent[0])).toEqual({ type: 'auto-commit', branches: ['main:autoAdd', 'dev'], requestId: null });
+  });
+
+  it('auto-commit-get echoes the caller request id so a stale reply is distinguishable', () => {
+    const hub = makeStubHub();
+    hub.getAutoCommitBranches = vi.fn(() => ['main']);
+    const { ws, sent } = makeEchoWs();
+    handleWsMessage(hub, ws, JSON.stringify({ type: 'auto-commit-get', requestId: '42' }));
+    expect(JSON.parse(sent[0])).toEqual({ type: 'auto-commit', branches: ['main'], requestId: '42' });
+  });
+
+  it('auto-commit-get sends `requestId: null` when the caller supplied none', () => {
+    const hub = makeStubHub();
+    const { ws, sent } = makeEchoWs();
+    handleWsMessage(hub, ws, JSON.stringify({ type: 'auto-commit-get' }));
+    expect(JSON.parse(sent[0]).requestId).toBeNull();
+  });
+
+  it('auto-commit-get passes `null` through when no provider is installed', () => {
+    const hub = makeStubHub();
+    hub.getAutoCommitBranches = vi.fn(() => null);
+    const { ws, sent } = makeEchoWs();
+    handleWsMessage(hub, ws, JSON.stringify({ type: 'auto-commit-get' }));
+    // `null` = unknown. It must survive to the wire so the editor can render
+    // "unknown" instead of a confident "no branch is authorized".
+    expect(JSON.parse(sent[0])).toEqual({ type: 'auto-commit', branches: null, requestId: null });
+  });
+
+  it('auto-commit-set is GONE: the list is no longer writable over the wire', () => {
+    // The allow-list is edited ONLY through the `/auto-commit` slash command.
+    // A WS "replace the whole list" op used to exist with no client producer,
+    // yet ANY connected client could send it and exact-replace (i.e. wipe) a
+    // launch-seeded `--allow-auto-commit` grant. It must stay removed: an
+    // unknown frame type falls through the switch and has no effect.
+    const hub = makeStubHub();
+    const { ws, sent } = makeEchoWs();
+    for (const payload of [
+      { type: 'auto-commit-set', branches: [] },
+      { type: 'auto-commit-set', branches: ['main'] },
+      { type: 'auto-commit-set' },
+      { type: 'auto-commit-set', branches: [1, null] }
+    ]) {
+      expect(() => handleWsMessage(hub, ws, JSON.stringify(payload))).not.toThrow();
+    }
+    // No reply and no auto-mode flip: the frame is inert.
+    expect(sent).toHaveLength(0);
+    expect(hub.enterAuto).not.toHaveBeenCalled();
   });
 });
 

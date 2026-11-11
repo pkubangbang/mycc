@@ -74,13 +74,28 @@ export interface FileUploadMeta {
 
 /** Incoming WebSocket message from a client (the parsed WsMessage shape). */
 export interface WsMessage {
-  type: 'input' | 'exit' | 'restart-webui' | 'interrupt' | 'card-response' | 'steer' | 'steer-resolve' | 'auto';
+  type:
+    | 'input'
+    | 'exit'
+    | 'restart-webui'
+    | 'interrupt'
+    | 'card-response'
+    | 'steer'
+    | 'steer-resolve'
+    | 'auto'
+    | 'auto-commit-get';
   text?: string;
   cardId?: string;
   value?: string;
   files?: FileUploadMeta[];
   /** Steering note ids the client wants to SEND (boomerang resolve). */
   sendIds?: number[];
+  /**
+   * Correlation id for an `auto-commit-get`. Echoed back on the reply so the
+   * client can tell its own answer from a newer broadcast or from the reply to
+   * an earlier read (a stale answer must not repaint an edited panel).
+   */
+  requestId?: string;
 }
 
 /** A file upload entry buffered in the queue (decoded from FileUploadMeta). */
