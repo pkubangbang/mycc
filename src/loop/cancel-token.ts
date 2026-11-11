@@ -36,7 +36,7 @@
  * The process-level cancellation source. One per process (there is no reason
  * to have more: a child process either lives or is being torn down).
  */
-import { listenerCount } from 'node:events';
+import { getEventListeners } from 'node:events';
 
 const token = new AbortController();
 
@@ -84,9 +84,12 @@ export function onProcessCancel(fn: () => void): () => void {
 
 /** Number of live listeners on the process token (diagnostics/tests only). */
 export function processCancelListenerCount(): number {
-  // An AbortSignal is an EventTarget; the events module's listenerCount works
-  // on it even though the signal does not expose the count itself.
-  return listenerCount(token.signal, 'abort');
+  // An AbortSignal is an EventTarget, and Node keeps `addEventListener`
+  // callbacks in a separate table that `events.listenerCount()` never
+  // inspects — that helper only counts EventEmitter (`signal.on`) listeners,
+  // and AbortSignal has no `.on`. `getEventListeners()` reads the
+  // EventTarget table directly, so it sees what `onProcessCancel` registers.
+  return getEventListeners(token.signal, 'abort').length;
 }
 
 /**
