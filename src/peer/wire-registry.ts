@@ -208,12 +208,6 @@ export function seenMailIdRegister(id: string): boolean {
   return true;
 }
 
-/** Test hook: clear the seen-id LRU. */
-export function resetSeenMailIds(): void {
-  seenMailIds.clear();
-  seenMailIdsOrder.length = 0;
-}
-
 // ── Epoch ──────────────────────────────────────────────────────────────────
 
 /** Bump (and return) the epoch for an endpoint. */
@@ -629,26 +623,6 @@ export function hasLiveWireForEndpoint(endpoint: string): boolean {
   return !!entry && liveSocketOf(entry) !== null;
 }
 
-/** Close every wire socket (dialed AND accepted) — the peer.stop() path.
- *  Sockets close abnormally (default 1005-ish/1006) so remote dialers
- *  redial; local entries are pruned by each socket's close handling. */
-export function closeAllWireSockets(): void {
-  for (const entry of pairs.values()) {
-    for (const s of Array.from(entry.sockets)) {
-      try {
-        s.socket.close();
-      } catch {
-        /* already closing */
-      }
-      try {
-        s.socket.terminate();
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-}
-
 /** Dedicated maxPayload for peer mail frames — decoupled from the webui
  *  upload limit (getMaxUploadMb, default 50MB). Peer mail is agent-to-agent
  *  text; 4MB per frame is generous while bounding the blast radius (plan §5,
@@ -660,14 +634,6 @@ export function closeAllWireSockets(): void {
  *  cap is what makes "oversize rejected at the wire, not a 1009 storm" real.
  */
 export const WIRE_MAX_PAYLOAD_BYTES = 4 * 1024 * 1024;
-
-/** Test hook: clear the registry between tests. */
-export function resetWireRegistry(): void {
-  pairs.clear();
-  sidIndex.clear();
-  socketsBySid.clear();
-  epochByEndpoint.clear();
-}
 
 // ── Shared wire frames (plan §5) ───────────────────────────────────────────
 //
@@ -922,13 +888,6 @@ export function partnersForShare(share: string): string[] {
     if (shares.has(share) && findSocketBySid(sid)) out.push(sid);
   }
   return out;
-}
-
-/** The share ids a peer PROVED it holds (empty until a challenge is answered).
- *  For `peer_list` display: ids we already hold, so naming them leaks
- *  nothing. */
-export function peerSharesOf(sid: string): string[] {
-  return [...(peerShareConfirmed.get(sid) ?? [])];
 }
 
 /** Our bound shares that a peer PROVED it holds — the display-worthy overlap.

@@ -900,13 +900,6 @@ export function stopWireClient(): void {
   }
 }
 
-/** Test hook: reset dialer state between tests. */
-export function resetWireClient(): void {
-  stopWireClient();
-  loops.clear();
-  pingIntervalMs = PING_INTERVAL_MS;
-}
-
 /**
  * Decode a ws message payload to text.
  *

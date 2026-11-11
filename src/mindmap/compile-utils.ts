@@ -574,31 +574,3 @@ export function formatToolArg(tool: string, args: Record<string, unknown>): stri
       return '';
   }
 }
-
-/**
- * Render progress bar and active operations
- */
-export function renderProgress(processed: number, total: number, activeOps: ActiveOp[]): string {
-  const percent = Math.round((processed / total) * 100);
-  const bar = '█'.repeat(Math.floor(percent / 5)) + '░'.repeat(20 - Math.floor(percent / 5));
-
-  const lines: string[] = [];
-  lines.push(`[mindmap] [${bar}] ${processed}/${total}`);
-
-  for (let i = 0; i < 3; i++) {
-    if (i < activeOps.length) {
-      const op = activeOps[i];
-      const heading = '#'.repeat(op.level);
-      const title = op.nodeTitle.slice(0, 22 - op.level).padEnd(22 - op.level);
-      const round = op.round.toString().padEnd(2);
-      const batch = op.roundTools > 1 ? ` (x${op.roundTools})` : '';
-      const argDisplay = formatToolArg(op.tool, op.args).slice(0, 30);
-      lines.push(`${heading} ${title} r${round}${batch}  ${op.tool}(${argDisplay})`);
-    } else {
-      lines.push('');
-    }
-  }
-
-  // Move cursor up 3 lines, then write all lines
-  return `\x1b[3A${lines.map((l) => `\x1b[2K${l}`).join('\n')}\n`;
-}

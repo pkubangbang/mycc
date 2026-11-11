@@ -373,29 +373,6 @@ export function resolveHeadlessFirstQuery(sessionFilePath: string, firstQuery: s
 }
 
 /**
- * Get session file path by ID
- *
- * @param id - Session ID (UUID)
- * @param preferUser - Prefer user session over project session
- * @returns Path to session file or null if not found
- */
-export function getSessionPathById(id: string, preferUser = true): string | null {
-  const userSessionPath = path.join(getUserSessionsDir(), id, `session-${id}.json`);
-  const projectSessionPath = path.join(getSessionsDir(), id, `session-${id}.json`);
-
-  if (preferUser && fs.existsSync(userSessionPath)) {
-    return userSessionPath;
-  }
-  if (fs.existsSync(projectSessionPath)) {
-    return projectSessionPath;
-  }
-  if (!preferUser && fs.existsSync(userSessionPath)) {
-    return userSessionPath;
-  }
-  return null;
-}
-
-/**
  * Load a session by ID
  *
  * @param id - Session ID (UUID or partial)
@@ -587,33 +564,6 @@ export function saveToUserDir(sessionPath: string): string {
   }
 
   return path.join(destDir, `session-${session.id}.json`);
-}
-
-/**
- * Validate a session (check all referenced files exist)
- *
- * @param session - Session object
- * @returns Validation result with list of missing files
- */
-export function validateSession(session: Session): { valid: boolean; missingFiles: string[] } {
-  const missingFiles: string[] = [];
-
-  // Check lead triologue
-  if (!fs.existsSync(session.lead_triologue)) {
-    missingFiles.push(session.lead_triologue);
-  }
-
-  // Check child triologues
-  for (const triologuePath of session.child_triologues) {
-    if (!fs.existsSync(triologuePath)) {
-      missingFiles.push(triologuePath);
-    }
-  }
-
-  return {
-    valid: missingFiles.length === 0,
-    missingFiles
-  };
 }
 
 /**
