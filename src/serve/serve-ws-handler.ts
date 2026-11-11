@@ -39,6 +39,14 @@ export interface HubHandler {
   broadcastExcept(sender: WebSocket, type: string, content: string, label?: string): void;
   /** Current auto-mode flag (from the registered provider). */
   getAutoState(): boolean;
+  /**
+   * The bound transcript writer, or null when none is registered yet.
+   *
+   * The 'input' echo gates on this: with a writer bound, the journaled user
+   * record is the durable copy and an extra echo would be a duplicate; with no
+   * writer the echo is the only acknowledgement other browsers ever get.
+   */
+  getDisplayWriter(): unknown;
   /** Run the combined auto-mode entry; return true if it actually flipped on. */
   enterAuto(): boolean;
 }
@@ -85,7 +93,23 @@ export function handleWsMessage(hub: HubHandler, ws: WebSocket, data: string): v
         // Multi-browser sync: echo the user bubble to all OTHER clients so a
         // query typed in one browser appears live in every other connected
         // browser. The sending client already has a local optimistic echo.
-        hub.broadcastExcept(ws, 'user', textToSend);
+        //
+        // GATED, not unconditional: `submitInput()` only resolves the blocked
+        // waitForInput() promise, and the matching journal record is written
+        // much later (prompt.ts, after wrap-up evaluation, the steering
+        // synthesis round-trip and the per-file upload drain) — seconds on a
+        // slow provider. Until that record lands, this echo is the ONLY
+        // acknowledgement other browsers have, so deleting it would trade a
+        // duplicate for a multi-second silence. With a display writer bound the
+        // journaled row is coming and the echo would be that duplicate.
+        //
+        // The echo is a transient OPTIMISTIC AFFORDANCE, not a data path: it
+        // carries no `seq`, so the next /history snapshot discards it by
+        // construction. Do not "fix" its disappearance after a reload by
+        // re-adding a second data path — the journaled row is the durable copy.
+        if (hub.getDisplayWriter() === null) {
+          hub.broadcastExcept(ws, 'user', textToSend);
+        }
       }
       if (hasFiles) {
         for (const f of msg.files!) {
@@ -126,10 +150,15 @@ export function handleWsMessage(hub: HubHandler, ws: WebSocket, data: string): v
       // or PROMPT (forkChat synthesis with fresh query).
       if (msg.text) {
         hub.pushSteer(msg.text);
-        // Multi-browser sync: echo the steering user bubble to all OTHER
-        // clients (in addition to the steer-echo buffer-bar broadcast inside
-        // pushSteer). The sending client already has a local optimistic echo.
-        hub.broadcastExcept(ws, 'user', msg.text);
+        // NO echo here: `pushSteer` journals SYNCHRONOUSLY (it calls
+        // journalUserSubmission → triologue → writer → display observer before
+        // returning), so the seq-carrying row reaches every other browser on
+        // this very tick. An additional broadcastExcept echo would be a second,
+        // seq-less copy of the same bubble in those browsers.
+        //
+        // Contrast the 'input' path above, where the journal write is delayed by
+        // an LLM turn and the echo is load-bearing. The two sites look alike and
+        // are NOT interchangeable; the unconditional pair was the defect.
       }
       if (msg.files && msg.files.length > 0) {
         for (const f of msg.files) {

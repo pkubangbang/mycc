@@ -246,17 +246,17 @@ describe('agent-io — WebUI mirror replay (row lead-044)', () => {
     expect(mirror).toHaveBeenCalledWith('log', ['emitted before serve started'], undefined);
   });
 
-  it('does NOT replay a brief() line — brief mirrors its own clean message', () => {
+  it('does NOT mirror a brief() line at all — the journal record is the only copy', () => {
     agentIO.setNeglectedMode(true);
     installMirror();
     agentIO.brief('warn', 'hook', 'a warning'); // body is 'suppressed'
     agentIO.setNeglectedMode(false);
-    mirror.mockClear();
     agentIO.flushOutput();
 
-    // Exactly one mirror of the brief happened (at emit time, with the tool
-    // label); the flush must add nothing, or the browser shows the message
-    // twice — once as garbled chalk.
+    // brief() no longer pushes to the WebUI mirror. The display note it
+    // journals is the single copy, and the live socket is fed from THAT record
+    // (see display-record-seam.test.ts) — mirroring here too is what shipped
+    // one line twice: once live, once replayed from /history.
     expect(mirror).not.toHaveBeenCalled();
     expect(consoleWarnSpy).toHaveBeenCalled();
   });

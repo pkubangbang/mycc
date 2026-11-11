@@ -52,6 +52,7 @@
  */
 
 import type { ChatMessage, SteeringNote, WebuiPhase } from './types';
+import { reconcileOptimisticUserRow } from './display-cursor';
 
 /**
  * The minimal store surface `applyServerMessage` consumes. This is satisfied
@@ -147,22 +148,32 @@ export function applyServerMessage(state: DispatchState, msg: ChatMessage, ctx: 
   if (msg.type === 'card') {
     // An interactive card is pending a response — transition to the `card`
     // phase (derived `isWaiting` + `hasPendingCard` both become true).
-    // Incoming card messages carry cardId/query/kind as top-level wire
-    // fields (the backend's flat CardMessage shape); assemble them into the
-    // `card` payload on the persisted message.
+    //
+    // TWO SHAPES arrive on this type, and BOTH must work:
+    //   - the flat `CardMessage` from broadcastCard()'s own send — identity at
+    //     the TOP level (cardId/query/kind), and
+    //   - the projected /history row (and any journal-projected frame) — the same
+    //     payload NESTED under `card`, because a projected row's top level is the
+    //     generic row shape.
+    // Reading only the flat form made a nested row render a widget with cardId ''
+    // whose answer was silently dropped (no resolver). One reader, both shapes.
     state.setPhase('card');
     state.showRetry = false;
-    const cardId = msg.cardId;
-    const query = msg.query ?? msg.content;
-    const kind = msg.kind ?? 'input';
+    const nested = msg.card;
+    const cardId = msg.cardId ?? nested?.cardId;
+    const query = msg.query ?? nested?.query ?? msg.content;
+    const kind = msg.kind ?? nested?.kind ?? 'input';
     const cardPayload = {
       cardId: cardId ?? '',
       query,
       kind,
-      options: msg.options,
-      initialContent: msg.initialContent,
-      placeholder: msg.placeholder
+      options: msg.options ?? nested?.options,
+      initialContent: msg.initialContent ?? nested?.initialContent,
+      placeholder: msg.placeholder ?? nested?.placeholder
     };
+    // A card with no identity can never be answered (the server has no resolver
+    // for ''), so it must not be rendered as if it could be.
+    if (!cardPayload.cardId) return;
     state.messages.push({ type: 'card', content: query, id: ctx.nextId(), card: cardPayload });
     return;
   }
@@ -273,6 +284,16 @@ export function applyServerMessage(state: DispatchState, msg: ChatMessage, ctx: 
   if (msg.label?.startsWith('@')) {
     state.teammateMessages.push(msg);
   } else {
-    state.messages.push(msg);
+    // THE SENDER'S OWN ECHO. A user row arriving with a `seq` is the journaled
+    // copy of a submission this page already showed optimistically (main.ts
+    // sendInput/sendSteer). The seq gate cannot dedupe them — the echo has no
+    // journal identity — so replace it in place instead of appending beside it.
+    // Found by a real-machine run: one prompt, two bubbles, on the sender only.
+    const reconciled = reconcileOptimisticUserRow(state.messages, msg);
+    if (reconciled) {
+      state.messages.splice(0, state.messages.length, ...reconciled);
+    } else {
+      state.messages.push(msg);
+    }
   }
 }

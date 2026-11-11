@@ -66,6 +66,7 @@ function makeStubHub(): HubHandler & {
     broadcast: vi.fn(),
     broadcastExcept: vi.fn(),
     getAutoState: vi.fn(() => false),
+    getDisplayWriter: vi.fn(() => undefined),
     enterAuto: vi.fn(() => true)
   };
 }

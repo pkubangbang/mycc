@@ -166,6 +166,20 @@ export class ClientRegistry {
   }
 
   /**
+   * Broadcast an already-projected chat row to every OPEN client.
+   *
+   * The live counterpart of a /history row: the payload is the LogEntry itself
+   * (type/content/label/detail/timestamp/seq), so the browser receives exactly
+   * the shape it hydrates from the history endpoint and can dedupe by `seq`
+   * instead of guessing from content. Never logged to the message log — the
+   * transcript record IS the store (see ServeHub.broadcastDisplayRecord).
+   */
+  broadcastRow(row: LogEntry): void {
+    const payload = JSON.stringify(row);
+    this.forEachOpen((ws) => this.sendTo(ws, payload));
+  }
+
+  /**
    * Broadcast a message to all connected clients EXCEPT the sender. Used for
    * user-query/steer echo so the sending client (which already has a local
    * optimistic bubble via sendInput/sendSteer in main.ts) doesn't get a

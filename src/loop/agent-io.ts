@@ -18,7 +18,8 @@ import { slashRegistry } from '../slashes/index.js';
 import { tryGetServeHub, onServeHubReady } from '../serve/serve-registry.js';
 import { autoState } from './auto-state.js';
 import type { CrossroadCardWire } from './crossroad-card.js';
-import { setResultCallback } from '../utils/letter-box.js';
+import type { DisplayNote } from './triologue/transcript.js';
+import { stripInternalMarkup, setResultCallback } from '../utils/letter-box.js';
 import { sendToParent } from '../utils/parent-ipc.js';
 import { runExec } from './agent-exec.js';
 import type { ExecOptions, ExecResult } from './agent-exec.js';
@@ -198,6 +199,17 @@ class AgentIO {
   // Output callback — mirrors console output to the web UI (WebSocket).
   // Set when serve mode is active, cleared on exit.
   private outputCallback: OutputCallback | null = null;
+
+  /**
+   * Display-note journal sink — the triologue transcript writer's `note()`.
+   *
+   * Wired once at boot by agent-repl (the owner of the writer), NOT by serve:
+   * a note must be recorded even when the WebUI never runs, so /history can
+   * replay the line the terminal printed. Typed structurally (the writer is not
+   * imported here) so agent-io keeps its position below both the loop and the
+   * serve layers.
+   */
+  private displayNoteSink: ((note: DisplayNote) => boolean) | null = null;
 
   // Flag set while brief() is executing. When true, log/warn/error suppress
   // their own outputCallback call so brief() can fire it once with the
@@ -451,6 +463,29 @@ class AgentIO {
   /**
    * Console replacement: log (buffers if in interaction mode)
    */
+  /**
+   * Journal a plain log/warn/error line as a DISPLAY NOTE.
+   *
+   * The callback mirror above is serve-lifetime only, and /history is a
+   * projection of the journal — so without this a raw console line reached the
+   * socket and vanished on the next refresh (P1-5: brief lines were durable,
+   * log/warn/error were not). Suppressed inside brief(): those inner calls are
+   * the chalk body of a line brief() journals itself, so recording them here
+   * would duplicate it as garbled ANSI (row lead-044) — the same reason the
+   * mirror is suppressed.
+   *
+   * `synthetic` is deliberately NOT set: it means machine ORIGIN (hook engine,
+   * debug bookkeeping) and the projection drops such rows from BOTH sinks. A raw
+   * console line is real output the terminal shows, so hiding it after a reload
+   * would be a parity break in the opposite direction.
+   *
+   * The `tool: 'console'` label is what makes these rows ALWAYS visible in the
+   * WebUI (isMessageVisible shows every labelled row regardless of 详细日志), which
+   * is intentional: the label is the visible marker that this is raw console
+   * output rather than an agent statement, and hiding it behind the toggle would
+   * make warn/error output silently missing. The toggle governs UNLABELLED rows.
+   */
+
   log(...args: unknown[]): void {
     // Classify the WebUI mirror state so flushOutput() replays ONLY the lines
     // serve never received. "Inside brief()" and "no callback yet" are
@@ -523,7 +558,7 @@ class AgentIO {
     tool: string,
     message: string,
     detail?: string,
-    opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire }
+    opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire; echoOf?: 'message' }
   ): void {
     const now = new Date();
     const timestamp = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
@@ -551,15 +586,47 @@ class AgentIO {
     }
     this.briefDepth = Math.max(0, this.briefDepth - 1);
 
-    // Mirror to web UI (serve mode) — send the clean message text once,
-    // carrying the tool label so the web UI can render the same
-    // [HH:MM:SS] [tool] header as the terminal. `synthetic` marks machine-
-    // originated briefs (hook engine, debug evaluator)
-    // so the WebUI can hide them from the chat log (terminal keeps them).
-    if (this.outputCallback) {
-      const method: 'log' | 'warn' | 'error' = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log';
-      this.outputCallback(method, [message], tool, detail, opts?.synthetic, opts?.crossroad);
+    // Journal a DISPLAY NOTE — the durable record BOTH surfaces replay.
+    //
+    // Placed HERE, after the nested log/warn/error call, because those inner
+    // calls are the chalk-formatted body of this same line: recording them
+    // separately would journal one printed line twice (the `mirror` tri-state
+    // exists for exactly that reason). One brief() call = one note record =
+    // one terminal line = one /history row.
+    //
+    // Not conditioned on serve: a terminal-only run must record it too, or the
+    // first page load after `/serve` starts would miss everything printed
+    // before it. Append failure is the sink's problem to report; the line is
+    // already on screen either way.
+    if (this.displayNoteSink) {
+      try {
+        this.displayNoteSink({
+          level,
+          tool,
+          text: stripInternalMarkup(message),
+          at: timestamp,
+          ...(detail ? { detail: stripInternalMarkup(detail) } : {}),
+          ...(opts?.synthetic ? { synthetic: true } : {}),
+          ...(opts?.crossroad ? { crossroad: opts.crossroad as unknown as Record<string, unknown> } : {}),
+          // A terminal ECHO of prose already journaled as its own message
+          // record: the row comes from that message, so the display projection
+          // drops this note (see DisplayNote.echoOf). Without it the WebUI drew
+          // the same assistant paragraph twice — once as the message row (with
+          // actions) and once as an unlabeled-action copy from the echo.
+          ...(opts?.echoOf ? { echoOf: opts.echoOf } : {})
+        });
+      } catch {
+        // A journal failure must never break the printed line.
+      }
     }
+
+    // NO second mirror to the WebUI happens here.
+    //
+    // The note record above is the ONLY copy of this line, and the live socket
+    // is fed from that same record (JsonlTranscriptWriter.setDisplayObserver →
+    // the hub's fan-out), so the browser is a projection of the journal rather
+    // than a parallel push. Mirroring here as well is exactly what shipped one
+    // line twice — once live, once replayed from /history.
   }
 
   /**
@@ -576,6 +643,11 @@ class AgentIO {
     const timestamp = new Date().toISOString();
     const prefix = chalk.gray(`[${timestamp}]`) + chalk.magenta(`[verbose][${tool}]`);
 
+    // Terminal-only by construction: log() no longer journals anything, so a
+    // `-v` line cannot drift into the durable chat log. (The guard that used to
+    // hold a suppression flag across these calls went away with console
+    // journaling itself — the cheaper invariant is that there is nothing to
+    // suppress.)
     if (data !== undefined) {
       this.log(`${prefix} ${message}`);
       this.log(chalk.gray(JSON.stringify(data, null, 2)));
@@ -638,6 +710,18 @@ class AgentIO {
    */
   setOutputCallback(cb: OutputCallback | null): void {
     this.outputCallback = cb;
+  }
+
+  /**
+   * Register the display-note journal sink (the transcript writer's `note()`).
+   *
+   * Called once at boot by agent-repl — NOT by serve. The note must be journaled
+   * whether or not a browser ever connects, which is why the owner of the writer
+   * wires it and the serve layer only later observes the resulting records.
+   * Pass null to detach (tests).
+   */
+  setDisplayNoteSink(sink: ((note: DisplayNote) => boolean) | null): void {
+    this.displayNoteSink = sink;
   }
 
   /**

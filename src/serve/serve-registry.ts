@@ -40,6 +40,21 @@
  * the full public API is free — and necessary, because ~30 call sites across
  * the loop/context layers use the hub's real methods.
  */
+
+// The ONE display-sink contract, imported from its owner (the transcript
+// writer). A type-only import adds no runtime edge — it is erased — but it
+// avoids a second, drifting spelling of the same shape (see the note on
+// DisplayObserverHost in transcript.ts).
+import type { DisplayObserverHost } from '../loop/triologue/transcript.js';
+import type { CardMessage } from './serve-types.js';
+
+/**
+ * Alias kept for the serve layer's own vocabulary: the transcript writer is the
+ * display sink the hub subscribes to. Same identity as DisplayObserverHost —
+ * one declaration, two names for two readers.
+ */
+export type DisplayRecordSource = DisplayObserverHost;
+
 export interface ServeHubLike {
   // ── lifecycle ──
   isRunning(): boolean;
@@ -57,6 +72,29 @@ export interface ServeHubLike {
 
   // ── durable transcript wiring ──
   setTranscriptPath(p: string | null): void;
+  /**
+   * Bind the loop's transcript writer: the LIVE socket renders chat rows from
+   * its display observer, so live frames and /history rows are two projections
+   * of the same record stream. The type comes from the writer's own module —
+   * never re-declared here (a local copy silently drifts out of structural
+   * assignability with the real writer).
+   */
+  setDisplayWriter(writer: DisplayRecordSource | null): void;
+  /** Live display fan-out: one journaled record → one chat row per client. */
+  broadcastDisplayRecord(record: never): void;
+  /**
+   * Bind the durable card journal: a pending card must survive a reload, or the
+   * agent blocks on a question the browser can no longer show.
+   *
+   * Typed with the CALLER's payload, not `never`: the hub is the card's CREATOR
+   * (broadcastCard builds a CardMessage), so the journal receives exactly what
+   * the socket receives. Declaring `never` made ServeHub structurally
+   * unassignable to ServeHubLike (TS2416/TS2322) — an alias that only type-checks
+   * because nothing calls it.
+   */
+  setCardJournal(journal: ((card: CardMessage) => void) | null): void;
+  /** The bound transcript writer (null until agent-repl registers it). */
+  getDisplayWriter(): DisplayRecordSource | null;
   setUserJournalProvider(cb: ((text: string, source: 'prompt' | 'steer') => void) | null): void;
   journalUserSubmission(text: string, source: 'prompt' | 'steer'): void;
 

@@ -17,6 +17,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { roleToType, roleToLabel, readHistory } from '../../serve/serve-history.js';
+import { collateMessages } from '../../loop/triologue/transcript.js';
+import type { LogEntry } from '../../serve/serve-types.js';
 
 describe('roleToType', () => {
   it('maps known roles to their LogEntry types', () => {
@@ -140,10 +142,13 @@ describe('readHistory (transcript journal projection)', () => {
     const history = readHistory(transcriptPath, []);
     const contents = history.map((e) => e.content);
     expect(contents).toContain('working');
-    expect(contents).toContain('out1');
+    // Tool records do NOT project a row: the terminal shows tool activity
+    // through brief() notes, never by echoing the raw result, and /history now
+    // renders the same stream. The record is skipped, not filtered late.
+    expect(contents).not.toContain('out1');
     expect(contents).not.toContain('[HINT] steering');
     expect(contents).not.toContain('[REMINDER] nudge');
-    expect(contents).toHaveLength(2);
+    expect(contents).toHaveLength(1);
     for (const e of history) expect(e.timestamp).toBeDefined();
   });
 
@@ -235,10 +240,10 @@ describe('readHistory (transcript journal projection)', () => {
     expect(history.map((e) => e.timestamp)).toEqual([0, 0, 0]);
   });
 
-  it('P1: a legacy prefix stays BEFORE newer messageLog entries when merged', () => {
-    // legacy A(0), B(0) + new transcript C(100) + live message M(50):
-    // must render as M, A, B, C (prefix at head), NOT A, B, C where the
-    // prefix was back-filled to 100 and jumped after M.
+  it('P1: a legacy prefix stays BEFORE newer transcript entries (file order)', () => {
+    // legacy A(0), B(0) + new transcript C(100): file order must survive —
+    // the stream position is the sort key, so an untimestamped prefix can
+    // never be re-ordered relative to a later record.
     fs.writeFileSync(
       transcriptPath,
       JSON.stringify({ role: 'assistant', content: 'A' }) +
@@ -249,28 +254,107 @@ describe('readHistory (transcript journal projection)', () => {
         '\n',
       'utf-8'
     );
-    const messageLog = [{ type: 'log' as const, content: 'M', timestamp: 50 }];
-    const history = readHistory(transcriptPath, messageLog);
-    expect(history.map((e) => e.content)).toEqual(['A', 'B', 'M', 'C']);
-    expect(history.map((e) => e.timestamp)).toEqual([0, 0, 50, 100]);
+    const history = readHistory(transcriptPath, []);
+    expect(history.map((e) => e.content)).toEqual(['A', 'B', 'C']);
   });
 
-  it('merges transcript entries + in-memory messageLog chronologically by timestamp', () => {
+  it('does NOT merge the in-memory messageLog: the transcript is the single source', () => {
+    // The duplicate-card bug: merging a projection of the same turns with the
+    // live mirror shipped one assistant reply as two identical cards. The
+    // projection now ignores messageLog whenever a transcript exists.
+    fs.writeFileSync(
+      transcriptPath,
+      JSON.stringify({ role: 'assistant', content: 'reply', kind: 'new', timestamp: 300 }) + '\n',
+      'utf-8'
+    );
+    const messageLog = [{ type: 'result' as const, content: 'reply', label: 'assistant', timestamp: 300 }];
+    const history = readHistory(transcriptPath, messageLog);
+    expect(history.map((e) => e.content)).toEqual(['reply']);
+  });
+
+  it('renders a display note as a labelled row (what the terminal printed)', () => {
+    // agentIO.brief() journals a role-less 'note' record; /history must replay
+    // it as the same labelled line, at the same position in the stream.
     fs.writeFileSync(
       transcriptPath,
       JSON.stringify({
-        role: 'tool',
-        tool_name: 'bash',
-        tool_call_id: 'x',
-        content: 'toolout',
-        kind: 'new',
-        timestamp: 300
-      }) + '\n',
+        kind: 'note',
+        note: { level: 'info', tool: 'bash', text: 'listed 3 files', at: '13:30:42', detail: 'RUN list' },
+        timestamp: 10,
+        seq: 1
+      }) +
+        '\n' +
+        JSON.stringify({ role: 'assistant', content: 'done', kind: 'new', timestamp: 20, seq: 2 }) +
+        '\n',
       'utf-8'
     );
-    const messageLog = [{ type: 'log' as const, content: 'memlog', timestamp: 200 }];
+    const history = readHistory(transcriptPath, []);
+    expect(history.map((e) => [e.type, e.label, e.content])).toEqual([
+      ['log', 'bash', 'listed 3 files'],
+      ['result', 'assistant', 'done']
+    ]);
+    expect(history[0].detail).toBe('RUN list');
+    expect(history.map((e) => e.seq)).toEqual([1, 2]);
+  });
+
+  it('a note never becomes a message for the LLM (collateMessages drops it)', () => {
+    const records = [
+      {
+        kind: 'note',
+        note: { level: 'warn', tool: 'tool', text: 'segment failed', at: '13:30:42' },
+        timestamp: 10,
+        seq: 1
+      },
+      { role: 'assistant', content: 'reply', kind: 'new', timestamp: 20, seq: 2 }
+    ];
+    const messages = collateMessages(records as never);
+    expect(messages.map((m: { content: string }) => m.content)).toEqual(['reply']);
+  });
+
+  it('falls back to the log while the transcript file is EMPTY (serve up before the first journal line)', () => {
+    // writeFreshSessionFiles creates the file at boot, BEFORE serve can start,
+    // so the path is already non-null when serve comes up. Keying the fallback
+    // on "is there a path" would project zero rows and drop every turn recorded
+    // before the first journal line — a bubble that renders 0 times.
+    fs.writeFileSync(transcriptPath, '');
+    const messageLog: LogEntry[] = [
+      { type: 'user' as const, content: 'typed early', timestamp: 10 },
+      { type: 'log' as const, content: 'a brief line', label: 'brief', timestamp: 11 }
+    ];
     const history = readHistory(transcriptPath, messageLog);
-    expect(history.map((e) => e.content)).toEqual(['memlog', 'toolout']);
+    expect(history.map((e) => e.content)).toEqual(['typed early', 'a brief line']);
+  });
+
+  it('does NOT fall back when the transcript is populated but PROJECTS to nothing', () => {
+    // The trap: tool records + a synthetic note + a boundary mark is a normal,
+    // populated transcript that happens to draw no row. "Projection is empty"
+    // would resurrect a stale serve-lifetime log over a real journal; the
+    // correct predicate is "the file has journaled nothing at all".
+    fs.writeFileSync(
+      transcriptPath,
+      [
+        JSON.stringify({ role: 'tool', tool_name: 'bash', tool_call_id: 't1', content: 'raw output', kind: 'new', timestamp: 20 }),
+        JSON.stringify({ kind: 'note', note: { level: 'info', tool: 'hook', text: 'machine noise', at: '00:00:00', synthetic: true }, timestamp: 21 }),
+        JSON.stringify({ kind: 'clear', timestamp: 22 })
+      ].join('\n') + '\n',
+      'utf-8'
+    );
+    const messageLog: LogEntry[] = [{ type: 'log' as const, content: 'stale serve-only line', timestamp: 10 }];
+    const history = readHistory(transcriptPath, messageLog);
+    expect(history).toEqual([]);
+  });
+
+  it('hands over to the transcript from the first journaled record onward', () => {
+    // One real record appears: the transcript now owns history outright and the
+    // serve-lifetime log is never consulted again.
+    fs.writeFileSync(
+      transcriptPath,
+      JSON.stringify({ role: 'assistant', content: 'first real line', kind: 'new', timestamp: 30 }) + '\n',
+      'utf-8'
+    );
+    const messageLog: LogEntry[] = [{ type: 'log' as const, content: 'stale serve-only line', timestamp: 10 }];
+    const history = readHistory(transcriptPath, messageLog);
+    expect(history.map((e) => e.content)).toEqual(['first real line']);
   });
 
   it('regression fixture (849a9dd2): 9 genuine queries all render as user bubbles', () => {

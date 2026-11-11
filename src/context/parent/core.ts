@@ -264,7 +264,7 @@ export class Core extends BaseCore implements CoreModule {
     tool: string,
     message: string,
     detail?: string,
-    opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire }
+    opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire; echoOf?: 'message' }
   ): void {
     agentIO.brief(level, tool, message, detail, opts);
   }

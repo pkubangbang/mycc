@@ -420,7 +420,7 @@ export interface CoreModule {
     tool: string,
     message: string,
     detail?: string,
-    opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire }
+    opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire; echoOf?: 'message' }
   ): void;
   /**
    * Get current confusion index (0-20 range)

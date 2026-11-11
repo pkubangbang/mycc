@@ -32,7 +32,7 @@ export class ChildCore extends BaseCore implements CoreModule {
     tool: string,
     message: string,
     detail?: string,
-    opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire }
+    opts?: { synthetic?: boolean; crossroad?: CrossroadCardWire; echoOf?: 'message' }
   ): void {
     if (level === 'error') {
       ipc.sendNotification('error', { error: message, detail, tool, synthetic: opts?.synthetic ?? false });

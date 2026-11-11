@@ -13,6 +13,7 @@ import { setResultCallback } from '../utils/letter-box.js';
 import { sendToParent } from '../utils/parent-ipc.js';
 import chalk from 'chalk';
 import type { CrossroadCardWire } from '../loop/crossroad-card.js';
+import type { DisplayObserverHost, TranscriptRecord } from '../loop/triologue/transcript.js';
 
 // ─── WebUI serve-state holder ──────────────────────────────────────────────
 //
@@ -43,6 +44,10 @@ type OutputMirroringHub = {
     synthetic?: boolean,
     crossroad?: CrossroadCardWire
   ): void;
+  /** Live display stream: one journaled transcript record → one chat row. */
+  broadcastDisplayRecord(record: TranscriptRecord): void;
+  /** The bound transcript writer (null until it is registered). */
+  getDisplayWriter(): DisplayObserverHost | null;
 };
 
 type ActivateHub = OutputMirroringHub & {
@@ -64,12 +69,33 @@ type ActivateHub = OutputMirroringHub & {
  * callback is labeled 'assistant' so the Web UI renders the [assistant] tag,
  * matching the terminal-style header the user requested.
  */
-export function wireOutputMirroring(hub: OutputMirroringHub): void {
+export function wireOutputMirroring(hub: OutputMirroringHub, writer?: DisplayObserverHost | null): void {
   agentIO.setOutputCallback((method, args, label, detail, synthetic, crossroad) => {
     const text = args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
     hub.broadcast(method, text, label, detail, synthetic, crossroad);
   });
-  setResultCallback((content) => hub.broadcast('result', content, 'assistant'));
+  // NO setResultCallback wiring: the assistant reply reaches the WebUI through
+  // the JOURNAL, not through this callback.
+  //
+  // presentResult/stop fire the result callback with the reply prose, and that
+  // same turn is journaled as a kind:'new' assistant record which the display
+  // observer projects into a 'result' row. Wiring both shipped the reply twice
+  // on the live socket while a reload showed it once — the original
+  // duplicate-card defect with the two states swapped.
+  //
+  // Detached explicitly (not just left unwired): restartServe re-runs this
+  // function, and a callback installed by an earlier version or an earlier
+  // cycle would otherwise survive and resurrect the second copy.
+  setResultCallback(null);
+  // Live display stream: the chat log itself comes from the transcript writer,
+  // record by record, so every bubble the browser shows is the SAME record
+  // /history projects after a refresh (assistant replies, user journal entries
+  // and brief notes alike). Detach first so a restart re-subscribes exactly
+  // once instead of stacking observers on the same writer.
+  if (writer) {
+    writer.setDisplayObserver(null);
+    writer.setDisplayObserver((record) => hub.broadcastDisplayRecord(record));
+  }
 }
 
 export async function activateServe(port: number, host?: string | null): Promise<void> {
@@ -105,7 +131,7 @@ export async function activateServe(port: number, host?: string | null): Promise
   }
 
   // Set up output + result mirroring to WebSocket (shared with restartServe).
-  wireOutputMirroring(hub);
+  wireOutputMirroring(hub, hub.getDisplayWriter());
 
   // Record the WebUI as up for every loop/context consumer. This is the
   // serve layer's START seam — the ONLY writer family of this flag (see the

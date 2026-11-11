@@ -27,6 +27,27 @@ export interface ChatMessage {
    *  history-loaded messages that predate the id scheme. */
   id?: number;
   timestamp?: number;
+  /**
+   * Monotonic journal sequence, shared by the LIVE socket frame and the
+   * /history row for the same record (see JsonlTranscriptWriter.seq).
+   *
+   * This is the cursor identity: the highest value rendered so far tells the
+   * client what it has definitely seen, and a re-fetch after the socket opens
+   * revalidates against it. Absent on records written before the field existed
+   * and on non-journal frames (prompt/steering/mode state), which carry no
+   * history position.
+   */
+  seq?: number;
+  /**
+   * A LOCAL echo of a submission the server has not journaled yet.
+   *
+   * It exists so the sender sees their line instantly — the journal write can sit
+   * behind a whole LLM turn. It is NOT a data path: the journaled row that comes
+   * back carries the real `seq`, and reconcileOptimisticUserRow() REPLACES this
+   * bubble with it. Without that replacement the same prompt rendered twice on
+   * the sender's screen (the seq gate cannot dedupe a row that has no identity).
+   */
+  optimistic?: boolean;
   /** tool/module tag (e.g. 'assistant', 'brief', 'question', 'bash').
    *  Shown as [HH:MM:SS] [label] header above the content, mirroring the
    *  terminal brief format. Absent for raw verbose logs. */

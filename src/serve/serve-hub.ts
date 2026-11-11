@@ -36,13 +36,21 @@ import type { LogEntry, FileUploadEntry, CardMessage } from './serve-types.js';
 export type { CardMessage } from './serve-types.js';
 import { stripAnsi, detectLanIpv4, detectAllLanIpv4 } from './serve-utils.js';
 import { ClientRegistry } from './serve-clients.js';
-import { readHistory, computeHistoryVersion, etagMatchesIfNoneMatch } from './serve-history.js';
+import {
+  computeHistoryVersion,
+  etagMatchesIfNoneMatch,
+  maxSeqOfRecords,
+  projectDisplayRecords,
+  readTranscriptRecords
+} from './serve-history.js';
 import { DisconnectTimer } from './serve-disconnect-timer.js';
 import { handleWsMessage, type HubHandler } from './serve-ws-handler.js';
 import { getPeerWireAcceptor } from './peer-wire.js';
 import { registerServeHubFactory, type ServeHubLike } from './serve-registry.js';
 import { getWireHooks } from '../peer/wire-registry.js';
 import { wireOutputMirroring } from './activate.js';
+import { projectDisplayRecord } from './serve-history.js';
+import type { DisplayObserverHost, TranscriptRecord } from '../loop/triologue/transcript.js';
 import pkg from '../../package.json';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -107,6 +115,21 @@ export class ServeHub implements HubHandler, ServeHubLike {
 
   // ── Durable history source ──
   private transcriptPath: string | null = null;
+  /**
+   * The loop's transcript writer — the ONE record stream. Bound by agent-repl
+   * and subscribed (through wireOutputMirroring) so live WS rows are
+   * projections of journaled records, never a parallel push from the printer.
+   */
+  private displayWriter: DisplayObserverHost | null = null;
+  /** Highest positive record timestamp forwarded live (see broadcastDisplayRecord). */
+  private lastDisplayTimestamp: number | undefined;
+  /**
+   * Durable card journal — the transcript writer's `note()`, bound by agent-repl.
+   *
+   * Bound separately from `displayWriter` because a card is not an observed
+   * record: it is CREATED by the hub, so the hub needs a way to write one.
+   */
+  private cardJournal: ((card: CardMessage) => void) | null = null;
   // Lead-side callback that journals a genuine user submission into the
   // transcript (registered by agent-repl; see setUserJournalProvider).
   private userJournalProvider: ((text: string, source: 'prompt' | 'steer') => void) | null = null;
@@ -177,6 +200,25 @@ export class ServeHub implements HubHandler, ServeHubLike {
   /** Set the durable triologue transcript path (read by /history). */
   setTranscriptPath(p: string | null): void {
     this.transcriptPath = p;
+  }
+
+  /** Bind the loop's transcript writer — the record stream the socket mirrors. */
+  setDisplayWriter(writer: DisplayObserverHost | null): void {
+    this.displayWriter = writer;
+  }
+
+  /** The bound transcript writer, for the mirroring wiring (may be null). */
+  getDisplayWriter(): DisplayObserverHost | null {
+    return this.displayWriter;
+  }
+
+  /**
+   * Bind the durable card journal (the transcript writer's note()). Registered
+   * by agent-repl next to setDisplayWriter, so a pending card survives a reload
+   * instead of leaving the agent blocked on an invisible question.
+   */
+  setCardJournal(journal: ((card: CardMessage) => void) | null): void {
+    this.cardJournal = journal;
   }
 
   /**
@@ -470,7 +512,24 @@ export class ServeHub implements HubHandler, ServeHubLike {
       // set, and length cannot see id churn.
       this.expressApp.get('/history', (req, res) => {
         const steering = getSteeringManager().snapshot();
-        const etag = computeHistoryVersion(this.transcriptPath, this.messageLog, steering.revision, this.agentRunning);
+        // ONE read of the transcript per GET, shared by the ETag and the body.
+        //
+        // Before this, a single /history request read and parsed the whole file
+        // FOUR times: countTranscriptRecords (here), lastSeqInFile (inside
+        // computeHistoryVersion), countTranscriptRecords AGAIN inside readHistory,
+        // and projectDisplay. Reading once here and threading the derived numbers
+        // through makes the ETag provably consistent with the body it accompanies
+        // (they cannot disagree about which source is live) and removes three of
+        // the four passes.
+        const records = this.transcriptPath ? readTranscriptRecords(this.transcriptPath) : [];
+        const etag = computeHistoryVersion(
+          this.transcriptPath,
+          steering.revision,
+          this.agentRunning,
+          this.messageLog,
+          records.length > 0,
+          maxSeqOfRecords(records)
+        );
         res.set('ETag', etag);
         res.set('Cache-Control', 'no-cache');
         // If-None-Match match → 304 Not Modified, empty body. The client's
@@ -487,7 +546,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
           res.status(304).end();
           return;
         }
-        const history = readHistory(this.transcriptPath, this.messageLog);
+        const history = records.length > 0 ? projectDisplayRecords(records) : this.messageLog;
         const payload = JSON.stringify({
           messages: history,
           // Revisioned snapshot (see steering-manager.ts header): the client
@@ -782,8 +841,47 @@ export class ServeHub implements HubHandler, ServeHubLike {
     if (this.messageLog.length > ServeHub.MAX_LOG_SIZE) {
       this.messageLog.shift();
     }
-    const payload = JSON.stringify(cleanCard);
-    this.clients.forEachOpen((ws) => ws.send(payload));
+    // JOURNAL the card as a note carrying its payload.
+    //
+    // The messageLog push above is a serve-lifetime copy that /history no longer
+    // reads, so without this a pending card had a live frame and NO replay: the
+    // page refreshed, the widget disappeared, and waitForCardResponse stayed
+    // blocked on a question the browser could no longer show. Journaling it
+    // gives the card the same durability as chat text — one record, one row,
+    // restored by projectDisplayRecord's card branch.
+    this.journalCard(cleanCard);
+    // SEND the flat payload — ONLY as the no-journal fallback.
+    //
+    // The card reaches the client by EXACTLY ONE of two channels, chosen here:
+    //   - journal bound  → journalCard() above writes the note, whose display
+    //                      observer fans out the projected row (nested `card`,
+    //                      carrying `seq`). That row is the one copy, and the
+    //                      client reads it through msg.card?.cardId — one reader,
+    //                      both shapes (message-dispatch.ts).
+    //   - journal absent → nothing is observed (a serve started before the writer,
+    //                      or a teammate worker), so this flat send is the only copy.
+    // Sending unconditionally produced two widgets per question (round-2 blocker);
+    // skipping BOTH produced none. The pair is pinned by
+    // card-journal-roundtrip.test.ts, which subscribes the observer exactly as
+    // wireOutputMirroring does in production.
+    if (!this.cardJournal) {
+      const payload = JSON.stringify(cleanCard);
+      this.clients.forEachOpen((ws) => ws.send(payload));
+    }
+  }
+
+  /**
+   * Journal a card as a durable display note. Wired by agent-repl (which owns
+   * the writer) via setCardJournal; a no-op when no writer is bound (teammate
+   * workers, tests), because the messageLog copy still serves that path.
+   */
+  private journalCard(card: CardMessage): void {
+    if (!this.cardJournal) return;
+    try {
+      this.cardJournal(card);
+    } catch {
+      // A journal failure must never stop the card from reaching the client.
+    }
   }
 
   /** Block until a matching card-response arrives or stop() aborts with null. */
@@ -1016,6 +1114,29 @@ export class ServeHub implements HubHandler, ServeHubLike {
     this.clients.broadcast(type, content, label, detail, synthetic, this.messageLog, crossroad);
   }
 
+  /**
+   * Live display fan-out: one journaled transcript record → one WS frame.
+   *
+   * Subscribed by {@link wireOutputMirroring} to the triologue writer's
+   * display observer, so the socket renders the SAME record /history projects
+   * from the file — not a second copy pushed by the printer. The row rule is
+   * `projectDisplayRecord`, shared with the history endpoint, so a live row and
+   * a replayed row can never disagree and a record can never arrive twice.
+   *
+   * Never appended to `messageLog`: the transcript IS the store, and the hub
+   * keeps no parallel copy of what it already journaled.
+   */
+  broadcastDisplayRecord(record: TranscriptRecord): void {
+    // Emission-order timestamp inheritance across the LIVE stream, matching
+    // projectDisplay's file-order walk.
+    const row = projectDisplayRecord(record, this.lastDisplayTimestamp);
+    if (typeof record.timestamp === 'number' && record.timestamp > 0) {
+      this.lastDisplayTimestamp = record.timestamp;
+    }
+    if (!row) return;
+    this.clients.broadcastRow(row);
+  }
+
   /** Broadcast to all clients EXCEPT the sender (multi-browser user-bubble sync). */
   broadcastExcept(sender: WebSocket, type: string, content: string, label?: string, detail?: string): void {
     this.clients.broadcastExcept(sender, type, content, label, detail);
@@ -1148,7 +1269,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
       // Re-wire output + result mirroring (stop() does not clear the callbacks,
       // but a fresh start means the hub is a clean slate — re-wire explicitly
       // so the Web UI keeps receiving live updates after the recycle).
-      wireOutputMirroring(this);
+      wireOutputMirroring(this, this.displayWriter);
       // A recycle ends with the WebUI reachable again on the same port, so the
       // serve-state flag must read "up" — stop() inside this method cleared it.
       setWebUiUp(true);

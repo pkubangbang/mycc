@@ -25,9 +25,13 @@
 import * as fs from 'fs';
 import { stripAnsi } from './serve-utils.js';
 import type { LogEntry } from './serve-types.js';
-import { readTranscript, collateEntries } from '../loop/triologue/transcript.js';
-
-const MAX_LOG_SIZE = 1000;
+import {
+  readTranscript,
+  lastSeqInFile,
+  isControlKind,
+  type DisplayNote,
+  type TranscriptRecord
+} from '../loop/triologue/transcript.js';
 
 /**
  * djb2 string hash (Daniel J. Bernstein). Returns an unsigned hex string
@@ -74,9 +78,11 @@ function djb2(str: string): string {
  */
 export function computeHistoryVersion(
   transcriptPath: string | null,
-  messageLog: LogEntry[],
   steeringRevision: number,
-  isRunning: boolean
+  isRunning: boolean,
+  messageLog?: readonly LogEntry[],
+  transcriptHasRecords?: boolean,
+  lastSeq?: number
 ): string {
   const parts: string[] = [];
   // Durable file fingerprint — mtimeMs + size. A missing file contributes
@@ -92,11 +98,43 @@ export function computeHistoryVersion(
       parts.push('null'); // file missing/unreadable → stable token
     }
   }
-  // In-memory messageLog tail: length + last timestamp (order-independent
-  // in the middle, but the tail timestamp catches appends). When the log is
-  // empty, emit a stable "0" so an empty log never varies.
-  const lastTs = messageLog.length > 0 ? (messageLog[messageLog.length - 1].timestamp ?? 0) : 0;
-  parts.push(`log:${messageLog.length}:${lastTs}`);
+  // The DISPLAY CURSOR: the highest journal `seq` the file holds.
+  //
+  // TWO WITNESSES, DISJOINT BLIND SPOTS — do not drop either:
+  //   - `stat` (above) is the DURABILITY witness: did the bytes actually land? A
+  //     torn trailing line is parse-SKIPPED, so `seq` below is unchanged while the
+  //     file grew; only mtimeMs/size can see that.
+  //   - `seq` is the IDENTITY witness: how many records exist? It states directly
+  //     what "was anything journaled while the socket was opening?" needs, which
+  //     the coarse stat pair only approximates.
+  // Together they are SUFFICIENT, not redundant. Dropping the stat after noticing
+  // `seq` exists reopens a window where a 304 pins a body missing its last line —
+  // and nothing later invalidates it, because that tail never parsed.
+  //
+  // This is what makes the client's post-open revalidation correct (see
+  // lastRenderedSeq in src/web/src/main.ts). A serve with no transcript yet
+  // contributes 0 (stable, so it cannot flap).
+  // The fallback below is a LATENT TRAP, not a convenience: it re-reads the file
+  // AFTER the caller already read it for the body, so an omitted `lastSeq` yields
+  // an ETag describing a different file state than the body it guards — the exact
+  // false-304 mechanism this single-pass refactor removed, preserved as a trap for
+  // the next caller. Every production caller passes `lastSeq`; this stays only so
+  // pre-existing 3-arg test fixtures keep compiling, and it warns so nobody
+  // reaches it unwittingly. Deleting `lastSeqInFile` is NOT the fix: agent-repl.ts
+  // uses it for the writer's startSeq resume path.
+  let resolvedSeq = 0;
+  if (transcriptPath) {
+    if (lastSeq === undefined) {
+      // eslint-disable-next-line no-console -- deliberate: a silent fallback is the bug
+      console.warn(
+        '[serve-history] computeHistoryVersion called without lastSeq — re-reading the transcript (ETag/body skew window). Pass the max seq from the caller\u2019s own read.'
+      );
+      resolvedSeq = lastSeqInFile(transcriptPath);
+    } else {
+      resolvedSeq = lastSeq;
+    }
+  }
+  parts.push(`seq:${resolvedSeq}`);
   // Transient fields that live in the body but NOT in the durable files.
   // The steering queue is folded in by REVISION, not by length: a drain that
   // removes one note while another arrives keeps the length identical but
@@ -104,6 +142,18 @@ export function computeHistoryVersion(
   // in src/loop/steering-manager.ts).
   parts.push(`steer:${steeringRevision}`);
   parts.push(`running:${isRunning ? 1 : 0}`);
+  // THE FALLBACK WINDOW: while the transcript holds no records, /history's BODY
+  // is the in-memory messageLog (see readHistory's predicate), and that log is
+  // appendable by broadcast()/broadcastCard() without touching any file. Without
+  // a folded-in term the ETag would be constant across such appends, and a
+  // client holding it would get a 304 for a body it has never seen — a frozen
+  // chat until something else changed. Gated on the SAME predicate readHistory
+  // uses (`transcriptHasRecords`, computed once per GET by the caller), so the
+  // tag and the body always agree about which source is live.
+  if (transcriptHasRecords === false) {
+    const last = messageLog && messageLog.length > 0 ? messageLog[messageLog.length - 1] : undefined;
+    parts.push(`log:${messageLog?.length ?? 0}:${last?.timestamp ?? 0}`);
+  }
   return `W/"h${djb2(parts.join('|'))}"`;
 }
 
@@ -218,78 +268,297 @@ export function roleToLabel(role: string | undefined): string | undefined {
  * Falls back to messageLog alone when no transcript is available (e.g. serve
  * started before session init).
  */
+/**
+ * Project ONE transcript record onto its WebUI chat row — the row rule shared
+ * by the history endpoint (`projectDisplay`, over the file) and the live
+ * WebSocket fan-out (over each record as it is journaled).
+ *
+ * Keeping the rule in one function is the point: a live row and a replayed row
+ * come from the same record through the same code, so a refresh cannot change
+ * what a message looks like, and it cannot appear twice.
+ *
+ * @param record - a transcript record (file-loaded or freshly journaled)
+ * @param knownTimestamp - highest positive timestamp seen so far in this
+ *        stream, for the emission-order inheritance of untimestamped legacy
+ *        lines (see projectDisplay). Not mutated here.
+ * @returns the chat row, or null when the record is not a chat row.
+ */
+export function projectDisplayRecord(record: TranscriptRecord, knownTimestamp?: number): LogEntry | null {
+  const seq = typeof record.seq === 'number' ? record.seq : undefined;
+  const stamp = (row: LogEntry): LogEntry => {
+    if (typeof record.timestamp === 'number' && record.timestamp > 0) {
+      row.timestamp = record.timestamp;
+    } else if (knownTimestamp !== undefined) {
+      row.timestamp = knownTimestamp;
+    } else {
+      row.timestamp = 0;
+    }
+    if (seq !== undefined) row.seq = seq;
+    return row;
+  };
+
+  const note = record.kind === 'note' ? (record.note as DisplayNote | undefined) : undefined;
+  if (note) {
+    // Synthetic notes are operational-only: both surfaces hide them, and the
+    // client cannot (a labelled row always shows), so drop it HERE.
+    if (note.synthetic) return null;
+    // TERMINAL ECHO of a journaled message: the same paragraph is already a
+    // message record (kind 'new') that projects to its own row, so drawing this
+    // note too put ONE assistant turn on screen TWICE — once as the message row
+    // (with its actions) and once as a copy without them. Reported live, and
+    // reproduced from a real transcript: seq 81 (message) and seq 82 (note) in
+    // triologue-lead-1794363794.jsonl carried identical text.
+    //
+    // Gated on the flag, not on content equality: the two records are normalised
+    // independently (DSML/ANSI stripping), so a text match is a heuristic that
+    // drifts, while the producer knows exactly what it is echoing.
+    if (note.echoOf === 'message') return null;
+    // A CARD is a note carrying a `card` payload: an interactive widget that
+    // must survive a reload exactly like chat text does. It is journaled as a
+    // note (one record, one row) rather than replayed from the serve-lifetime
+    // log, so a pending card cannot silently vanish and leave the agent blocked
+    // on a question the browser can no longer show.
+    const card = note.card;
+    if (card) {
+      // Rebuilt field-by-field, not spread: the file is untrusted input, so the
+      // row can carry ONLY the members of the card contract — a stray extra key
+      // in the journal must not reach the client's renderer.
+      const cardRow: LogEntry = {
+        type: 'card',
+        content: stripAnsi(note.text),
+        card: {
+          type: 'card',
+          cardId: card.cardId,
+          query: card.query,
+          kind: card.kind,
+          ...(card.options !== undefined ? { options: card.options } : {}),
+          ...(card.initialContent !== undefined ? { initialContent: card.initialContent } : {}),
+          ...(card.placeholder !== undefined ? { placeholder: card.placeholder } : {})
+        }
+      };
+      return stamp(cardRow);
+    }
+    // A note's body lives in `note.text` (never `content`) so the message
+    // projections cannot claim it; the row type mirrors brief()'s level.
+    const type = note.level === 'error' ? 'error' : note.level === 'warn' ? 'warn' : 'log';
+    const row: LogEntry = { type, content: stripAnsi(note.text), label: note.tool };
+    if (note.detail) row.detail = note.detail;
+    if (note.crossroad) row.crossroad = note.crossroad as LogEntry['crossroad'];
+    return stamp(row);
+  }
+  if (isControlKind(record.kind) || record.kind === 'merge') return null;
+  const role = typeof record.role === 'string' ? record.role : undefined;
+  if (role === undefined) return null; // injected/role-less record — not a bubble
+  if (role === 'user' && record.user_origin !== true) return null; // injected note
+  if (role === 'tool') return null; // tool activity is shown as brief notes, not raw results
+  if (typeof record.content !== 'string' || record.content === '') return null;
+  const row: LogEntry = { type: roleToType(role), content: stripAnsi(record.content) };
+  const label = roleToLabel(role);
+  if (label) row.label = label;
+  // Carry `synthetic` onto MESSAGE rows too, not just notes. The live socket and
+  // /history must hide the same rows: a machine-originated line hidden live but
+  // shown after a reload is exactly the parity break users report as "the
+  // refresh shows garbage the chat did not".
+  if (record.synthetic === true) row.synthetic = true;
+  return stamp(row);
+}
+
+/**
+ * Project a transcript file onto WebUI chat rows — the DISPLAY projection.
+ *
+ * This is the only place that decides what a record looks like on screen, and
+ * BOTH surfaces are meant to render from it. It is deliberately separate from
+ * `collateMessages()` (the LLM-context projection, which folds user fragments
+ * and skips role-less records): display identity is per RECORD, so folding
+ * would merge two rows the user saw as two.
+ *
+ * Row rules: see {@link projectDisplayRecord} (shared with the live socket).
+ *
+ * Order is FILE ORDER (position), which is also the writer's `seq` order — the
+ * stream itself is the sort key, so no timestamp merge can reorder (or
+ * duplicate) a record, and no cap can truncate one. Records written before
+ * `seq` existed keep file order too; an UNTIMESTAMPED legacy line inherits the
+ * last positive timestamp seen so far (emission order, pitfall 8547e85b) —
+ * this only matters for the timestamp LABEL, never for row order.
+ */
+export function projectDisplay(transcriptPath: string | null): LogEntry[] {
+  if (!transcriptPath) return [];
+  try {
+    return projectDisplayRecords(readTranscript(transcriptPath).records);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Project ALREADY-PARSED records onto rows — the same walk as {@link projectDisplay},
+ * so a caller that has read the file for another reason (the /history route's
+ * ETag) does not pay for a second full read and parse.
+ */
+export function projectDisplayRecords(records: readonly TranscriptRecord[]): LogEntry[] {
+  const rows: LogEntry[] = [];
+  // Emission-order timestamp normalisation (pitfall 8547e85b): an untimestamped
+  // legacy line inherits the last POSITIVE timestamp seen so far, so it can
+  // never claim "epoch 0". A leading untimestamped run stays at 0 — there is no
+  // earlier record to inherit from. This only affects the rendered time; row
+  // ORDER is file order and is never recomputed from timestamps.
+  let knownTimestamp: number | undefined;
+  for (const record of records) {
+    const row = projectDisplayRecord(record, knownTimestamp);
+    if (typeof record.timestamp === 'number' && record.timestamp > 0) {
+      knownTimestamp = record.timestamp;
+    }
+    if (row) rows.push(row);
+  }
+  return rows;
+}
+
+/** Highest `seq` in a parsed record set (0 when none carry one). */
+export function maxSeqOfRecords(records: readonly TranscriptRecord[]): number {
+  let max = 0;
+  for (const r of records) {
+    if (typeof r.seq === 'number' && Number.isFinite(r.seq) && r.seq > max) max = r.seq;
+  }
+  return max;
+}
+
+/** Parse the transcript once for a caller that needs count, max seq AND rows. */
+export function readTranscriptRecords(transcriptPath: string): TranscriptRecord[] {
+  try {
+    return readTranscript(transcriptPath).records;
+  } catch {
+    return []; // unreadable file → treat as not-yet-journaled
+  }
+}
+
+/**
+ * Reconstruct the full chat history for the /history endpoint.
+ *
+ * The transcript is the SINGLE source: every printed chat line is journaled
+ * there (user input as a user journal record, assistant replies as message
+ * pieces, brief/status lines as display notes), so this projects the file and
+ * nothing else. `messageLog` is no longer a history source — merging it with a
+ * projection of the same turns is what shipped one turn as two identical cards.
+ *
+ * THE FALLBACK CONDITION IS "the transcript contains NO RECORDS", NOT "the
+ * projection produced no rows", and not "there is no transcript path". All
+ * three look alike and only one is correct:
+ *
+ *   - "no path" is wrong: `writeFreshSessionFiles` creates the transcript file
+ *     at boot, before serve can ever start, so a serve coming up in that window
+ *     already holds a path to an EMPTY file. Keying on the path would project
+ *     zero rows and silently drop every turn recorded before the first journal
+ *     line — a bubble that appears zero times.
+ *   - "projection produced no rows" is ALSO wrong, and worse because the bug is
+ *     invisible until it matters: a transcript holding only tool records, notes
+ *     that are all synthetic, injected user notes or boundary marks is a normal,
+ *     populated transcript that happens to draw nothing. Treating it as empty
+ *     would resurrect a stale serve-lifetime log over a real journal.
+ *   - "no records" is the actual question: has this file ever journaled
+ *     anything? Once it has, it owns the history outright.
+ *
+ * Keying on emptiness keeps the two sources disjoint by CONSTRUCTION rather than
+ * by hope: the log is consulted only while the file is literally empty, and the
+ * instant it holds a record the log is out of the picture for good.
+ *
+ * KNOWN RESIDUAL DEFECT (recorded, not fixed here): a turn that only ever
+ * reached the serve-lifetime log is visible while the transcript is empty and
+ * VANISHES when the first record lands. That is a silent visibility REGRESSION —
+ * worse than a stable zero, because a refresh makes a message the user just saw
+ * disappear. Making such turns live exactly once end-to-end requires either
+ * transferring the log tail into the transcript at that boundary or a
+ * timestamp-keyed union-dedup in projectDisplay; both are separate designs that
+ * must be reviewed on their own. Reported to the peer as a KNOWN DEFECT, not as
+ * solved.
+ *
+ * WHY THE PREDICATE MUST NOT BE "there is no transcript path". The window is
+ * real, and it is reached on EVERY serve start, which is why the tempting
+ * shortcut silently loses turns:
+ *
+ *     initializeSession() → writeFreshSessionFiles()  creates
+ *       triologue-lead-<sec>.jsonl with an EXCLUSIVE 'wx' open, leaving a
+ *       PRESENT but ZERO-BYTE file;
+ *     activateServe()                               runs afterwards.
+ *
+ * So by the time serve can answer /history, `transcriptPath` is non-null and
+ * already points at an existing file. A predicate on existence (or on "no
+ * path") therefore reads an EMPTY transcript as authoritative and projects zero
+ * rows — every turn recorded before the first journal line is dropped from the
+ * body instead of falling back to the log. Only RECORD COUNT answers the real
+ * question ("has this file journaled anything yet?"), so it is the predicate
+ * for BOTH decisions: the body below and the `transcriptHasRecords` term in
+ * computeHistoryVersion.
+ *
+ * AND THE UPPER BOUND OF THE DOUBLE-ROW FLICKER — read this before claiming the
+ * window is harmless. Once the first record lands, the file owns the body and
+ * the fallback stops supplying rows, but the BROWSER may still be holding a
+ * fallback row it rendered moments earlier from a socket frame or an older
+ * snapshot. Fallback rows carry NO `seq` (they are messageLog entries), so the
+ * client's identity gate (isAlreadyRendered / mergeSnapshot in
+ * src/web/src/display-cursor.ts) has nothing to compare and cannot recognise
+ * the journaled row as the same line. Consequence: the SAME line can be visible
+ * TWICE for as long as it takes the next authoritative /history 200 to replace
+ * the store — i.e. until the socket's post-open revalidation or a page reload,
+ * bounded by that round-trip and by nothing else. The record-count keying only
+ * guarantees the duplicate "obviously goes away"; it does NOT prevent it from
+ * appearing. That is a FLICKER, not a fix, and the 4/4 agreement between the two
+ * projections does not extend past it.
+ *
+ * A real fix must give fallback rows an identity the journal can match (a
+ * synthetic seq namespace, or transferring the log tail into the transcript at
+ * the boundary). Both change the wire contract, so neither belongs here.
+ *
+ * RELATED ACCEPTANCE CONSTRAINT (e) — a LEGACY ETag must never answer 304. A
+ * client that cached a snapshot under a pre-`seq` fingerprint (the format before
+ * computeHistoryVersion folded `seq:` in, and before `log:` became conditional)
+ * can present that token in If-None-Match. The current formula folds different
+ * inputs, so the tags cannot collide and the route answers 200 with the FULL
+ * body; a 304 there would hand the client an empty response it cannot merge
+ * into the stale log, freezing the chat with no path forward except a reload.
+ * Changing the ETag input set is therefore a breaking change for old clients
+ * ONLY in the safe direction, and any future edit to those inputs must preserve
+ * that direction.
+ *
+ * @param transcriptPath - durable triologue JSONL path
+ * @param messageLog     - serve-lifetime log; consulted only while the
+ *                         transcript has journaled nothing at all
+ */
 export function readHistory(transcriptPath: string | null, messageLog: LogEntry[]): LogEntry[] {
   if (transcriptPath) {
+    // Record count, not row count: see the predicate note above — a populated
+    // transcript that projects to no rows must NOT fall back. Counted through
+    // countTranscriptRecords so a caller can ask the SAME question for its ETag.
+    let records: TranscriptRecord[] = [];
     try {
-      // Read the transcript through the shared collation core (the {A, AB}
-      // fix): the file is an append-only PIECE log, replayed by the serve
-      // projection into one entry per collated message. collateEntries() now
-      // yields the RIGHT-SIDE USER BUBBLES too — a genuine submission is
-      // journaled as a 'user'|'steer' record (or a marker-bearing 'new' user
-      // piece), which the projection keeps one-to-one, while injected notes
-      // ('merge' fragments, unmarked user pieces) are dropped. This is why
-      // history no longer depends on the serve-only user.jsonl side file:
-      // the transcript is written on every turn, terminal mode included.
-      // Legacy tolerance: pre-piece full-snapshot lines have no `kind`, so
-      // readTranscript treats each as a 'new' plain Message — their existing
-      // {A, AB} duplicates in old files are preserved on read (zero
-      // migration), identical to the previous raw-line parser's output.
-      const { records } = readTranscript(transcriptPath);
-      const entries: LogEntry[] = [];
-      for (const entry of collateEntries(records)) {
-        const msg = entry.message;
-        if (msg.content === undefined || msg.content === null || msg.content === '') continue;
-        const role = msg.role as string | undefined;
-        const type = roleToType(role);
-        const label = roleToLabel(role);
-        const logEntry: LogEntry = { type, content: stripAnsi(String(msg.content)) };
-        if (label) logEntry.label = label;
-        // collateEntries preserves the piece timestamp (written by
-        // JsonlTranscriptWriter at append time) — every genuine user
-        // submission therefore carries a real timestamp.
-        logEntry.timestamp = entry.timestamp;
-        entries.push(logEntry);
-      }
-
-      // Timestamp normalisation, in EMISSION ORDER: the sort below is
-      // chronological, so an entry with no usable timestamp (a legacy
-      // pre-piece line — timestamp 0) must not fall back to 0 and jump to the
-      // HEAD of the log (pitfall 8547e85b) *after* a timestamped record. We
-      // therefore walk the entries forward and let each untimestamped entry
-      // inherit the last positive timestamp seen SO FAR. A LEADING run of
-      // untimestamped entries (no positive timestamp precedes them) stays at
-      // 0 — there is no earlier record to inherit from, and back-filling them
-      // from a LATER record would wrongly move a legacy prefix into the middle
-      // of newer history once messageLog entries are merged (P1). A file whose
-      // records are ALL untimestamped keeps them in file order (all equal ⇒ a
-      // stable sort is a no-op).
-      let knownTimestamp: number | undefined;
-      for (const e of entries) {
-        if (typeof e.timestamp === 'number' && e.timestamp > 0) {
-          knownTimestamp = e.timestamp;
-        } else if (knownTimestamp !== undefined) {
-          e.timestamp = knownTimestamp;
-        }
-        // else: a leading untimestamped entry — leave its timestamp at 0 so
-        // it sorts to the head, preserving file order before the first
-        // timestamped record.
-      }
-
-      // Merge transcript entries + the in-memory messageLog, by timestamp.
-      // Entries keep a numeric timestamp throughout: journal/legacy records
-      // carry 0 (or the writer's clock), and the normalisation above assigns a
-      // positive value where one is available, so the filter is defensive only.
-      const combined = entries.concat(messageLog).filter((e) => typeof e.timestamp === 'number');
-      combined.sort((a, b) => (a.timestamp as number) - (b.timestamp as number));
-
-      // Cap at MAX_LOG_SIZE (keep the most recent entries)
-      if (combined.length > MAX_LOG_SIZE) {
-        return combined.slice(combined.length - MAX_LOG_SIZE);
-      }
-      return combined;
+      if (countTranscriptRecords(transcriptPath) > 0) records = readTranscript(transcriptPath).records;
     } catch {
-      // File missing or unreadable — fall through to messageLog
+      records = []; // unreadable file → treat as not-yet-journaled
+    }
+    if (records.length > 0) {
+      try {
+        return projectDisplay(transcriptPath);
+      } catch {
+        // Projection failed on a populated file — fall through rather than
+        // serving nothing at all.
+      }
     }
   }
   return messageLog;
+}
+
+/**
+ * How many records the transcript file holds (0 when absent/unreadable).
+ *
+ * The ONE predicate behind both questions /history asks: "does the transcript
+ * own the body?" (readHistory) and "may the body still be the in-memory log?"
+ * (computeHistoryVersion). Sharing it is what keeps an ETag and the body that
+ * carries it from disagreeing about which source is live.
+ */
+export function countTranscriptRecords(transcriptPath: string | null): number {
+  if (!transcriptPath) return 0;
+  try {
+    return readTranscript(transcriptPath).records.length;
+  } catch {
+    return 0;
+  }
 }

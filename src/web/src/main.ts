@@ -22,6 +22,7 @@ import { applyServerMessage } from './message-dispatch';
 import { registerDebugSeam } from './debug';
 import { ensureHighlighterReady } from './highlight';
 import { useChatStore } from './stores/chat-store';
+import { maxSeqOf, advanceCursor, mergeSnapshot, isAlreadyRendered } from './display-cursor';
 import { readCachedChatlog, writeCachedChatlog, buildCacheKey } from './chatlog-cache';
 import type { ChatlogCacheRecord } from './chatlog-cache';
 import './style.css';
@@ -109,6 +110,24 @@ let lastHistoryEtag: string | null = null;
 // snapshot replaces the store. Contract: 304 is valid only when the client
 // has made no local changes since the last authoritative snapshot.
 let historyDirty = false;
+/**
+ * The highest journal `seq` this page has RENDERED — the display cursor.
+ *
+ * Every chat row arrives with the `seq` the writer stamped, on BOTH paths: the
+ * /history snapshot and the live socket (see JsonlTranscriptWriter and
+ * ServeHub.broadcastDisplayRecord, which use the same projection). That gives
+ * the page one number that means "everything up to here is on screen".
+ *
+ * Why it exists: /history is fetched BEFORE the socket opens, so records
+ * journaled in that window are in neither. The server does not replay history
+ * over the socket, so the gap would be silent. The watermark closes it: after
+ * `onopen` the page re-validates /history, and because every row carries its
+ * `seq` a duplicate cannot be introduced by re-rendering the overlap.
+ *
+ * 0 means "nothing journaled has been seen yet" (a fresh page before the first
+ * snapshot). Records predating the field carry no seq and do not move it.
+ */
+let lastRenderedSeq = 0;
 
 // Serialize cache writes so they complete in CALL ORDER, not whichever
 // IndexedDB transaction happens to finish first. Without this, two
@@ -280,14 +299,37 @@ async function fetchHistory(): Promise<boolean> {
     for (const m of visible) {
       if (typeof m.id !== 'number') m.id = nextId();
     }
+    // Adopt the snapshot's display cursor and MERGE BY SEQ.
+    //
+    // A /history 200 is a snapshot fetched while the socket was already open, so
+    // frames appended during the round-trip are in the store but cannot be in
+    // the body that was read. Replacing the store wholesale would splice those
+    // frames away — the user's newest line would blink out and come back.
+    //
+    // Merge is sound (NOT "weaker authority") because the projection is a PURE
+    // function of each record and the record stream is append-only: a row, once
+    // projected, is projected by every later call, and `projectDisplayRecord`
+    // never cuts, caps or reorders earlier rows (`/clear` is a boundary mark the
+    // display projection SKIPS, so it does not splice either — see the note in
+    // serve-history.ts). Hence the snapshot's row set is a SUBset of the truth,
+    // and the live rows carrying a seq beyond the snapshot's maximum are exactly
+    // the difference. `src/tests/web/display-cursor.test.ts` pins that purity so
+    // a future cap/collapse rule cannot silently turn this merge into a
+    // resurrection bug.
+    const snapshotMax = maxSeqOf(visible);
+    // MONOTONIC advance, never a bare assignment: a frame we already rendered
+    // before this snapshot must still count as rendered afterwards.
+    lastRenderedSeq = advanceCursor(lastRenderedSeq, snapshotMax);
     // Split teammate messages from the main chat log by the @-prefix label
     // convention. Teammate messages (@name/tool) go to teammateMessages for
     // the accordion UI; everything else stays in messages. See the
     // "@-prefix teammate label convention" section in MYCC.md.
     const teammateMsgs = visible.filter((m) => m.label?.startsWith('@'));
     const mainMsgs = visible.filter((m) => !m.label?.startsWith('@'));
-    // Replace, not append — on reconnect we want a clean, authoritative snapshot.
-    store.messages.splice(0, store.messages.length, ...mainMsgs);
+    // Replace with the snapshot, then re-append the frames that outran it — in
+    // their original order, because they are the tail of the same append-only
+    // stream. See mergeSnapshot() for why this cannot resurrect a stale row.
+    store.messages.splice(0, store.messages.length, ...mergeSnapshot(mainMsgs, store.messages));
     store.teammateMessages.splice(0, store.teammateMessages.length, ...teammateMsgs);
     // Bump the history revision so the ChatLog collapse watcher resets its
     // x/t/trackingTail window — a 200 is an AUTHORITATIVE replacement, and
@@ -388,6 +430,15 @@ async function fetchConfig(): Promise<boolean> {
     if (newSid !== sessionId) {
       sessionId = newSid;
       lastHistoryEtag = null;
+      // RESET THE DISPLAY CURSOR TOO. `seq` restarts at 1 for every new session
+      // (a fresh transcript ⇒ lastSeqInFile() = 0 ⇒ the writer starts at 1), but
+      // advanceCursor is monotonic BY DESIGN and so never lowers the watermark.
+      // Keeping session A's value (say 500) makes every session-B frame fail
+      // isAlreadyRendered(500, seq) and be dropped before the store: the live
+      // stream stays dead until the new session journals 500 records, and no
+      // later 200 can repair it because the cursor cannot rewind. Only a page
+      // reload recovered — exactly the case the cursor exists to avoid.
+      lastRenderedSeq = 0;
       // Drop the previous session's chatlog immediately. Steering state is
       // reset too, and for a DIFFERENT reason: the queue revision is
       // per-process, so a new serve process numbers it from 1 again. A client
@@ -427,6 +478,24 @@ function connectWebSocket(): void {
 
   ws.onopen = () => {
     store.connectionStatus = 'connected';
+    // CLOSE THE SNAPSHOT→SOCKET GAP.
+    //
+    // /history was fetched BEFORE this socket opened, and the server does not
+    // replay the journal over the wire, so anything journaled in between (a
+    // reply, a brief line, a user echo) exists in neither the store nor the
+    // live stream — it would stay invisible until the next reload.
+    //
+    // Re-validating now closes it without inventing a replay protocol: a 304
+    // means nothing was journaled in the gap (the ETag folds the transcript's
+    // last seq, so any journaled record invalidates it); a 200 is the
+    // authoritative replacement of the whole visible log. Either answer leaves
+    // the store correct, and because every row carries its `seq` the overlap
+    // cannot be duplicated.
+    //
+    // Skipped while historyDirty: a pending optimistic bubble must not be
+    // validated away by a snapshot the server produced before it arrived —
+    // the next reconnect's unconditional fetch reconciles it instead.
+    if (!historyDirty) void fetchHistory();
   };
 
   ws.onmessage = (event) => {
@@ -435,6 +504,15 @@ function connectWebSocket(): void {
       msg = JSON.parse(event.data) as ChatMessage;
     } catch {
       return; // ignore malformed messages
+    }
+    // GATE ON THE CURSOR — this is what makes `lastRenderedSeq` load-bearing
+    // rather than bookkeeping. A frame whose seq is already at or below the
+    // watermark is a record the page has rendered (it came from the snapshot, or
+    // from a frame we already applied); applying it again is exactly the
+    // duplicate-card defect this work exists to remove. Drop it here, before the
+    // store is touched.
+    if (isAlreadyRendered(lastRenderedSeq, msg.seq)) {
+      return;
     }
     // Delegate the pure state-transition logic to the DOM-free dispatch module.
     // The store is the single mutation surface; applyServerMessage calls
@@ -446,6 +524,10 @@ function connectWebSocket(): void {
     // Steering is now a revisioned snapshot, so confirmation is structural —
     // the card's notes simply stop appearing in an adopted snapshot.
     applyServerMessage(store, msg, { nextId, chatApi });
+    // Advance the display cursor from the LIVE stream too. A frame carrying a
+    // journal seq is a row the user now sees; a state frame (prompt / steering
+    // / mode / running) carries none and leaves the watermark alone.
+    if (typeof msg.seq === 'number') lastRenderedSeq = advanceCursor(lastRenderedSeq, msg.seq);
   };
 
   ws.onclose = () => {
@@ -680,8 +762,23 @@ document.documentElement.classList.toggle('dark', store.darkMode);
 export const chatApi = {
   sendInput(text: string, files?: FileInfo[]): void {
     if (!text.trim() && (!files || files.length === 0)) return;
-    // Echo the user's input as a local message for immediate feedback
-    store.messages.push({ type: 'user', content: text || '(uploaded files)', timestamp: Date.now(), id: nextId() });
+    // Echo the user's input as a local message for immediate feedback.
+    //
+    // MARKED `optimistic`: the server journals this same submission and
+    // broadcasts the row back with a `seq` (serve-hub.journalUserSubmission →
+    // transcript → display observer). That row is the DURABLE copy, and the
+    // cursor gate cannot dedupe against this one because this one has no
+    // identity to compare — so without the mark the sender saw the same prompt
+    // TWICE (one bubble from here, one from the journal). See
+    // reconcileOptimisticUserRow(): the first journaled user row REPLACES the
+    // earliest optimistic one instead of joining it.
+    store.messages.push({
+      type: 'user',
+      content: text || '(uploaded files)',
+      timestamp: Date.now(),
+      id: nextId(),
+      optimistic: true
+    });
     // Local optimistic mutation — a subsequent /history 304 must NOT be
     // treated as authoritative (the server may never receive this message
     // if the WS send races with a disconnect). See historyDirty in fetchHistory.
@@ -709,7 +806,13 @@ export const chatApi = {
    */
   sendSteer(text: string, files?: FileInfo[]): void {
     if (!text.trim() && (!files || files.length === 0)) return;
-    store.messages.push({ type: 'user', content: text || '(uploaded files)', timestamp: Date.now(), id: nextId() });
+    store.messages.push({
+      type: 'user',
+      content: text || '(uploaded files)',
+      timestamp: Date.now(),
+      id: nextId(),
+      optimistic: true // see sendInput() — replaced by the journaled row
+    });
     // Local optimistic mutation — see historyDirty in fetchHistory.
     historyDirty = true;
     store.inputText = '';

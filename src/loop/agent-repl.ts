@@ -24,7 +24,7 @@ import {
   shouldSkipHealthCheck
 } from '../config.js';
 import { Triologue } from './triologue.js';
-import { JsonlTranscriptWriter, asAppendablePiece } from './triologue/transcript.js';
+import { JsonlTranscriptWriter, asAppendablePiece, lastSeqInFile } from './triologue/transcript.js';
 import { agentIO } from './agent-io.js';
 import { autoState } from './auto-state.js';
 import { runHealthCheck, displayStartupBanner } from './startup.js';
@@ -123,7 +123,29 @@ export async function main(): Promise<void> {
   // runs the callback immediately when the hub already exists and otherwise queues
   // it until registerServeHubFactory() drains the queue, so the path is wired no
   // matter when (or whether) serve activates.
-  onServeHubReady((hub) => hub.setTranscriptPath(triologuePath));
+  onServeHubReady((hub) => {
+    hub.setTranscriptPath(triologuePath);
+    // Bind the RECORD STREAM: the hub renders live chat rows from this
+    // writer's display observer, so the socket and /history are two
+    // projections of the same records. Registered alongside the path for the
+    // same lazy-loading reason (see the comment above).
+    hub.setDisplayWriter(transcriptWriter);
+    // Cards are CREATED by the hub (not observed from the writer), so it needs
+    // its own door into the same journal: a pending card must survive a reload
+    // or the agent blocks on a question the browser can no longer show.
+    hub.setCardJournal((card) =>
+      transcriptWriter.note({
+        level: 'info',
+        tool: 'card',
+        // `text` is the row's plain body — also what a reader that does not
+        // understand `card` still sees, so it must be the human question, not a
+        // JSON dump.
+        text: card.query,
+        at: new Date().toISOString(),
+        card
+      })
+    );
+  });
 
   // Pass initial query to prompt handler
   setInitialQuery(initialQuery);
@@ -206,20 +228,29 @@ export async function main(): Promise<void> {
   // Declared BEFORE the Triologue ctor so the onMessage closure below
   // references an initialized binding (declaration-order safety, and
   // mirrors teammate-worker.ts where the writer precedes the ctor too).
-  const transcriptWriter = new JsonlTranscriptWriter(triologuePath, (writeErr) => {
-    // Don't crash on transcript write failure, but make it observable
-    // so disk-full / permission / invalid-path issues are not silently
-    // lost — without this, every subsequent message is dropped from the
-    // durable transcript with zero diagnostic.
-    agentIO.verbose(
-      'triologue',
-      `Transcript write failed: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`
-    );
-    loopEvents.emit('triologue_event', {
-      kind: 'transcript_write_error',
-      detail: writeErr instanceof Error ? writeErr.message : String(writeErr)
-    });
-  });
+  const transcriptWriter = new JsonlTranscriptWriter(
+    triologuePath,
+    (writeErr) => {
+      // Don't crash on transcript write failure, but make it observable
+      // so disk-full / permission / invalid-path issues are not silently
+      // lost — without this, every subsequent message is dropped from the
+      // durable transcript with zero diagnostic.
+      agentIO.verbose(
+        'triologue',
+        `Transcript write failed: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`
+      );
+      loopEvents.emit('triologue_event', {
+        kind: 'transcript_write_error',
+        detail: writeErr instanceof Error ? writeErr.message : String(writeErr)
+      });
+    },
+    // Continue the sequence after whatever a RESTORED session already
+    // journaled. Starting again at 1 would reuse identities the client already
+    // rendered: `advanceCursor` could never move past them, so the cursor
+    // would stop advancing and a live frame could be mistaken for one already
+    // on screen. (A fresh session's file is empty → lastSeqInFile returns 0.)
+    lastSeqInFile(triologuePath) + 1
+  );
 
   const triologue = new Triologue({
     tokenThreshold,
@@ -236,6 +267,16 @@ export async function main(): Promise<void> {
       transcriptWriter.append(asAppendablePiece(msg));
     }
   });
+
+  // Wire the DISPLAY-NOTE journal: every line agentIO.brief prints is recorded
+  // as a role-less `kind:'note'` record in this same transcript, so /history can
+  // replay what the terminal showed.
+  //
+  // Registered HERE (not in the serve layer) because a note must be journaled
+  // even when the WebUI never runs — a terminal-only session that later starts
+  // /serve must not lose everything printed before it. The writer stays the
+  // single append door; agent-io only sees a sink callback.
+  agentIO.setDisplayNoteSink((note) => transcriptWriter.note(note));
 
   // Wire the user-input journal provider: the transcript is the single source
   // of truth for WebUI user bubbles, so a genuine user submission (a prompt

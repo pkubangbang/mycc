@@ -83,11 +83,21 @@ function briefCrossroadCutpoint(ctx: MachineEnv['ctx'], cutpoint: string | undef
  * raw markup reaches the terminal. Content that is ENTIRELY DSML strips to
  * empty and is skipped (nothing displayable).
  */
-function briefAssistantContent(ctx: MachineEnv['ctx'], content: string | undefined): void {
+function briefAssistantContent(ctx: MachineEnv['ctx'], content: string | undefined, journaled: boolean): void {
   if (!content) return;
   const stripped = stripInternalMarkup(content);
   if (stripped) {
-    ctx.core.brief('info', 'assistant', stripped);
+    // `journaled` is TRUE only where this same prose was just registered as an
+    // assistant MESSAGE record. Then this line is a pure TERMINAL echo, and the
+    // WebUI row comes from that message record: passing `echoOf: 'message'` makes
+    // the display projection drop the note, which is what stopped the browser
+    // drawing the paragraph twice (message row + echo note).
+    //
+    // FALSE on the tool-round path: `triologue.agent(...)` there registers the
+    // turn WITH tool calls, and the prose is not journaled as a message at all,
+    // so this note is the ONLY copy. Flagging it would delete a line the user
+    // saw — the failure mode the flag must never have.
+    ctx.core.brief('info', 'assistant', stripped, undefined, journaled ? { echoOf: 'message' } : undefined);
   }
 }
 
@@ -211,7 +221,7 @@ async function handlePlanScopeBrief(
   // never reached the terminal: the user saw a bare "confidence: x%" line
   // attached to nothing. Ordering matters as much as presence: the brief line
   // must follow the prose it belongs to.
-  briefAssistantContent(ctx, chat.assistantContent);
+  briefAssistantContent(ctx, chat.assistantContent, true);
   const confidence = typeof args?.confidence === 'number' ? args.confidence : undefined;
   if (briefMessage) {
     ctx.core.brief(
@@ -419,7 +429,7 @@ export async function handleHook(env: MachineEnv, turn: TurnVars, chat: ChatData
       // The brief was previously emitted inside handleCrossroad's finally
       // (LLM stage), which put part 3 BEFORE part 1; building it here restores
       // the intended order.
-      briefAssistantContent(ctx, chat.assistantContent);
+      briefAssistantContent(ctx, chat.assistantContent, true);
       briefCrossroadCutpoint(ctx, chat.crossroadCutpoint);
       if (chat.crossroadCandidates && chat.crossroadCandidates.length > 1) {
         // ONE structured event instead of two free-text notes: the card carries
@@ -494,7 +504,9 @@ export async function handleHook(env: MachineEnv, turn: TurnVars, chat: ChatData
       return AgentState.STOP;
     }
 
-    briefAssistantContent(ctx, chat.assistantContent);
+    // `journaled: false` — this round's turn was registered WITH tool calls, so
+    // the prose has no message record and this note is its only copy.
+    briefAssistantContent(ctx, chat.assistantContent, false);
 
     // From the second round onward, mute LLM text responses
     turn.isFirstRound = false;

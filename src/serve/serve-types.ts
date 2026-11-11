@@ -18,6 +18,14 @@ export interface LogEntry {
   content: string;
   /** Optional — omitted for transcript-loaded entries that carry no time. */
   timestamp?: number;
+  /**
+   * Monotonic transcript sequence this row was projected from (see
+   * `JsonlTranscriptWriter`). The WebUI keeps the highest value it has rendered
+   * as its cursor, so a live frame and its /history row are the same identity
+   * and a reconnect can ask for "everything after seq N". Absent for transient
+   * rows (cards, prompts, state flags) that have no transcript record.
+   */
+  seq?: number;
   label?: string;
   /** Tool intent/description (e.g. "RUN USER TO list files"). Outlined in the bubble. */
   detail?: string;
@@ -39,6 +47,13 @@ export interface LogEntry {
    * src/loop/crossroad-card.ts (kept structural here to avoid a web→loop
    * import from the serve layer).
    */
+  /**
+   * A journaled interactive CARD row. Present only on rows projected from a
+   * note record that carried a card payload (see `JsonlTranscriptWriter.note()`
+   * and `projectDisplayRecord`), so a pending card survives a page reload
+   * instead of leaving the agent blocked on a question nobody can see.
+   */
+  card?: CardMessage;
   crossroad?: {
     kind: 'crossroad';
     drafted: number;
