@@ -40,8 +40,9 @@ const props = defineProps<{
   height: number;
   /** Send button gate — mirrors the shell's send() guard exactly. */
   canSend: boolean;
-  /** 压缩上下文 button gate. */
-  canCompact: boolean;
+  /** 魔法查询 (magic query) gate — identical to "a slash command may be sent
+   *  right now" (the wand only opens a dialog of slash commands). */
+  canSlash: boolean;
   /** Lightning bolt is "on" (orthogonal to phase). */
   isAutoMode: boolean;
   /** Lead is in PLAN mode (backend `mode` broadcast) — drives the mode text. */
@@ -53,7 +54,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:text', value: string): void;
   (e: 'send'): void;
-  (e: 'compact'): void;
+  (e: 'magic-query'): void;
   (e: 'auto'): void;
   /** The 附加文件 button was pressed — the shell owns the hidden picker. */
   (e: 'attach'): void;
@@ -127,27 +128,41 @@ const bandHeight = computed(() => {
             @paste="onPaste"
           ></textarea>
           <!-- Three action buttons, overlaid INSIDE the field at the
-             bottom-right. Order left→right: compact, auto, attach. -->
+             bottom-right. Order left→right: magic query, auto, attach. -->
           <div class="composer-box__actions">
+            <!-- Magic wand: opens the 魔法查询 dialog (first entry /compact).
+               It never fires a command itself — its availability is the
+               slash-command window (`canSlash`), the same gate the old
+               压缩上下文 button used. -->
             <button
-              class="tool-btn compact-btn"
-              :disabled="!props.canCompact"
-              title="压缩上下文"
-              @click="emit('compact')"
+              class="tool-btn magic-btn"
+              :disabled="!props.canSlash"
+              title="魔法查询"
+              aria-label="魔法查询"
+              @click="emit('magic-query')"
             >
+              <!-- Magic wand — supplied by the project owner. Only the viewBox is
+                   changed (48 -> 24 via `viewBox`), so the owner's coordinates
+                   and 4-unit stroke are kept byte-for-byte and the SVG scales
+                   itself; no coordinate rewriting, no refit maths.
+
+                   Shape: a hollow 5-point star (the wand head) with a short
+                   handle stub running from its lower-right point out to the
+                   bottom-right corner — exactly the owner's two paths. -->
               <svg
                 width="14"
                 height="14"
-                viewBox="0 0 24 24"
+                viewBox="0 0 48 48"
                 fill="none"
                 stroke="currentColor"
-                stroke-width="2"
+                stroke-width="4"
                 stroke-linecap="round"
                 stroke-linejoin="round"
               >
-                <path d="M3 5 Q6 12 3 19" />
-                <path d="M21 5 Q18 12 21 19" />
-                <path d="M9 3 L14 3 L16 5 L15 21 L8 21 Z" />
+                <path
+                  d="M24.9507 42.3603L30.4164 30.3695L43.1046 26.6501L33.3383 17.7699L33.7059 4.60732L22.2044 11.1099L9.74329 6.69439L12.4013 19.5934L4.33228 30.027L17.4766 31.4965L24.9507 42.3603Z"
+                />
+                <path d="M36.1777 36.0537L44.1777 44.0179" />
               </svg>
             </button>
             <!-- Lightning bolt: one-way "enter auto mode". If already in auto
@@ -494,7 +509,7 @@ const bandHeight = computed(() => {
   cursor: not-allowed;
 }
 .attach-btn:hover:not(:disabled),
-.compact-btn:hover:not(:disabled) {
+.magic-btn:hover:not(:disabled) {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, var(--strip-fill));
 }

@@ -30,6 +30,8 @@ import ComposerBox from './chat-input/ComposerBox.vue';
 import AttachmentBar from './chat-input/AttachmentBar.vue';
 import AttachmentManager from './chat-input/AttachmentManager.vue';
 import InputNoticeBar from './chat-input/InputNoticeBar.vue';
+import MagicQueryDialog from './chat-input/MagicQueryDialog.vue';
+import type { MagicQuery } from './chat-input/MagicQueryDialog.vue';
 
 const props = defineProps<{ state: ChatState }>();
 
@@ -90,12 +92,18 @@ function onAutoClick(): void {
   chatApi.sendAuto();
 }
 
-// "压缩上下文" (compact context) — sends the "/compact" slash command through
-// the normal input path (chatApi.sendInput), reusing the whole existing
-// slash-command pipeline (no new WS type, no backend change). Enabled only
-// when ALL hold: not in auto mode; at PROMPT (isWaiting); no pending card;
-// connected.
-const canCompact = computed(
+// "魔法查询" (magic query) — the wand opens a dialog listing the available
+// magic queries (first: "/compact"). The wand never fires a command itself;
+// the dialog's `run` hands the chosen slash text back here, so
+// chatApi.sendInput (the normal slash-command pipeline) stays the only
+// execution path.
+//
+// `canSlash` = "a slash command may be sent right now", which is exactly the
+// window in which the backend routes raw input into the SLASH state instead of
+// a query/steer turn: at PROMPT (isWaiting), not in auto mode, no pending card,
+// and connected. The wand button AND every dialog row are gated by this single
+// computed — availability is identical to the old 压缩上下文 button it replaced.
+const canSlash = computed(
   () =>
     !props.state.isAutoMode &&
     props.state.isWaiting &&
@@ -103,9 +111,51 @@ const canCompact = computed(
     props.state.connectionStatus === 'connected'
 );
 
-function onCompactClick(): void {
-  if (!canCompact.value) return;
-  chatApi.sendInput('/compact');
+/** Whether the 魔法查询 dialog is open (the wand button only opens it). */
+const magicQueryOpen = ref(false);
+
+function onMagicQueryClick(): void {
+  if (!canSlash.value) return;
+  magicQueryOpen.value = true;
+}
+
+/**
+ * The 魔法查询 list. Order matters: entries escalate in destruction.
+ *
+ *   • `/compact` — summarizes the conversation and replaces it with a short
+ *     recap, freeing the context budget for new turns.
+ *   • `/clear`   — wipes the conversation, todos and issues and starts a
+ *     completely fresh session (in-process; no code reload).
+ *   • `/reload`  — restarts the lead process with fresh code on disk (the
+ *     coordinator is reused, teammates restart, the conversation is cleared).
+ *     Useful after editing mycc itself; the web UI reconnects automatically.
+ */
+const MAGIC_QUERIES: MagicQuery[] = [
+  {
+    query: '/compact',
+    description:
+      '压缩上下文：把当前对话总结成一段简短纪要，释放上下文预算；可追加一个关注点，如 “/compact 输入框布局”。'
+  },
+  {
+    query: '/clear',
+    description: '清空会话：抹掉当前对话、待办与议题，重开一个全新会话（不重载代码）。'
+  },
+  {
+    query: '/reload',
+    description:
+      '重载程序：用磁盘上的最新代码重启 lead（复用 coordinator、清空对话）。改了 mycc 源码后用它生效；Web UI 会自动重连。'
+  }
+];
+
+function closeMagicQuery(): void {
+  magicQueryOpen.value = false;
+}
+
+/** A magic query row was chosen: run it through the normal input path. */
+function onMagicQueryRun(query: string): void {
+  magicQueryOpen.value = false;
+  if (!canSlash.value) return;
+  chatApi.sendInput(query);
 }
 
 // ── Send gate + warning banner (single source of truth) ──
@@ -397,13 +447,13 @@ function fmtTime(at: number): string {
       :placeholder="placeholder"
       :height="composerHeight"
       :can-send="canSend"
-      :can-compact="canCompact"
+      :can-slash="canSlash"
       :is-auto-mode="state.isAutoMode"
       :plan-mode="state.isPlanMode"
       :connected="state.connectionStatus === 'connected'"
       @update:text="(v: string) => (text = v)"
       @send="send"
-      @compact="onCompactClick"
+      @magic-query="onMagicQueryClick"
       @auto="onAutoClick"
       @attach="openFilePicker"
       @paste-files="onPasteFiles"
@@ -430,6 +480,13 @@ function fmtTime(at: number): string {
     <InputNoticeBar :warning="showInputWarning ? inputWarningText : null" :error="uploadError || null" />
     <AttachmentBar :files="files" @manage="openManager" @remove="removeFile" />
     <!-- Teleported to <body> by ModalShell; sits here only for prop wiring. -->
+    <MagicQueryDialog
+      :open="magicQueryOpen"
+      :queries="MAGIC_QUERIES"
+      :runnable="canSlash"
+      @close="closeMagicQuery"
+      @run="onMagicQueryRun"
+    />
     <AttachmentManager
       :open="managerOpen"
       :files="files"
