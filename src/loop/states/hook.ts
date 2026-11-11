@@ -504,9 +504,21 @@ export async function handleHook(env: MachineEnv, turn: TurnVars, chat: ChatData
       return AgentState.STOP;
     }
 
-    // `journaled: false` — this round's turn was registered WITH tool calls, so
-    // the prose has no message record and this note is its only copy.
-    briefAssistantContent(ctx, chat.assistantContent, false);
+    // `journaled: true` — the turn was registered above (line 469,
+    // `triologue.agent(finalAssistantContent, finalToolCalls …)`), so its prose
+    // is ALREADY a message record. This brief is a terminal echo, and without
+    // the echoOf flag the display projection kept it as a second row: the
+    // journal showed the same paragraph as seq N (kind 'new', role assistant,
+    // with tool_calls) and seq N+1 (kind 'note', tool 'assistant', no echoOf),
+    // and the browser drew both — one with action buttons, one without.
+    //
+    // The previous `false` assumed a tool-call turn has no message record. It
+    // does: `tool_calls` does not suppress registration, it only makes the turn
+    // unresolvable until its tool results are appended. Marking the note as the
+    // echo is therefore correct on every path that registers the turn, and
+    // `echoOf` is dropped from the DISPLAY projection only — the terminal still
+    // replays the line.
+    briefAssistantContent(ctx, chat.assistantContent, true);
 
     // From the second round onward, mute LLM text responses
     turn.isFirstRound = false;
