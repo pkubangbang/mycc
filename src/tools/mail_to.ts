@@ -10,6 +10,7 @@
 
 import chalk from 'chalk';
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { explainNonRoutable, parseExternalAddress } from '../peer/mail-identity.js';
 
 export const mailToTool: ToolDefinition = {
   name: 'mail_to',
@@ -21,7 +22,8 @@ export const mailToTool: ToolDefinition = {
       name: {
         type: 'string',
         description:
-          'Target recipient: a teammate name, "lead" for local IPC, or a cross-instance peer identity "<session-id>/lead" to route to a remote mycc instance.'
+          'Target recipient: a teammate name, "lead" for local IPC, or a cross-instance peer identity "<session-id>/lead" to route to a remote mycc instance. ' +
+          'External three-part senders ("<app>/<group>/<id>", e.g. "myview/REDBOX/56232") are one-way and NOT routable — never a valid recipient.'
       },
       title: {
         type: 'string',
@@ -46,6 +48,26 @@ export const mailToTool: ToolDefinition = {
     const title = args.title as string;
     const content = args.content as string;
     const eta = args.eta as number | undefined;
+
+    // An external app address ("<app>/<group>/<id>") is a SENDER format only.
+    // If it shows up as a recipient, name the reason instead of the generic
+    // "unrecognized recipient" text — the two-part error is about peer routes.
+    if (typeof name === 'string') {
+      const ext = parseExternalAddress(name.trim());
+      if (ext) {
+        ctx.core.brief(
+          'error',
+          'mail_to',
+          `External sender '${name}' is non-routable (app "${ext.app}") — mail cannot be sent back.`
+        );
+        return (
+          `Error: '${name}' is an EXTERNAL sender address, not a recipient. It is a ${ext.segments.length}-part ` +
+          `"<app>/<group>/<id>" address pushed by an external application; such senders have no mailbox mycc can ` +
+          `write to, so their mail is one-way and cannot be answered with mail_to. ` +
+          `Routable names are "lead", a live teammate name (no "/"), or a peer "<session-id>/lead".`
+        );
+      }
+    }
 
     const senderName = ctx.core.getName();
     const isChildSender = senderName !== 'lead';
@@ -88,6 +110,25 @@ export const mailToTool: ToolDefinition = {
 
     const isTeammateToLead = name === 'lead' && isChildSender;
 
+    // -------------------------------------------------------------------------
+    // NON-ROUTABLE addresses (fail-fast, before any peer/teammate logic).
+    //
+    // External senders get a three-part address "<app>/<group>/<id>" (e.g.
+    // "myview/REDBOX/56232") stamped into `Mail.from` when they push mail into
+    // our mailbox. Such an app has NO mycc mailbox we can write to, so a reply
+    // is impossible — refusing up front is the honest answer, and it stops the
+    // agent from "replying" into the void or inventing a delivery step.
+    // Classification lives in src/peer/mail-identity.ts (shared with COLLECT,
+    // which renders these senders with an explicit NO-REPLY line).
+    const nonRoutableReason = explainNonRoutable(name);
+    if (nonRoutableReason) {
+      ctx.core.brief('error', 'mail_to', nonRoutableReason);
+      return (
+        `Error: cannot send mail to '${name}'. ${nonRoutableReason} ` +
+        `Valid recipient forms: "lead", a live teammate name (no "/"), or a peer "<session-id>/lead".`
+      );
+    }
+
     // UUID format: 8 hex - 4 hex - 4 hex - 4 hex - 12 hex (case-insensitive).
     // Shared by the peer-routing block and the fail-fast recipient validation.
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -100,22 +141,19 @@ export const mailToTool: ToolDefinition = {
     // silent-failure trap (a bare session-id, a stale/offline peer, or a
     // non-existent teammate name) into an immediate, correctable error.
     //
-    // Three valid recipient forms:
-    //   1. "lead"               — local IPC sentinel (lead↔teammate). Always OK.
-    //   2. "<uuid>/lead"        — cross-instance peer. Must be an ONLINE peer
-    //                            (ctx.peer.isFresh(uuid)); a stale/offline
-    //                            peer's mail is dropped anyway, so failing fast
-    //                            here is informative and correct.
-    //   3. "<teammate-name>"    — a live teammate in the current instance's
-    //                            roster. Validated via ctx.team.listTeammates()
-    //                            ONLY in the lead/parent context — a child
-    //                            teammate's listTeammates() throws FORBIDDEN, and
-    //                            the child writes mailbox files directly, so it
-    //                            cannot validate; we skip the check there.
-    //
-    // Any other slash-bearing name (e.g. "review-peer-1/lead", "<bad-uuid>/lead",
-    // "<uuid>/worker") is rejected: no teammate is named with a "/", and it
-    // isn't a valid fresh peer route, so it is almost certainly a mistake.
+    // The recipient SHAPES, and which of them mycc can actually address, are
+    // decided in ONE place: src/peer/mail-identity.ts (classifySender /
+    // explainNonRoutable). In short:
+    //   - "lead"            — local IPC sentinel (lead↔teammate). Always OK.
+    //   - "<uuid>/lead"     — cross-instance peer. Must be ONLINE; a
+    //                         stale/offline peer's mail is dropped anyway, so
+    //                         failing fast here is informative and correct.
+    //   - "<teammate-name>" — a live teammate in the current roster. Verified
+    //                         ONLY in the lead/parent context (a child's
+    //                         listTeammates() throws FORBIDDEN and it writes
+    //                         mailbox files directly, so there is no roster).
+    //   - "<app>/<group>/<id>" — an EXTERNAL sender format: refused above.
+    //   - anything else     — refused by the non-routable guard above.
     // -------------------------------------------------------------------------
     if (name !== 'lead') {
       const slashIdx = name.indexOf('/');

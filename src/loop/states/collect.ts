@@ -23,6 +23,7 @@ import { resolveHeadlessFirstQuery } from '../../session/index.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { loopEvents } from '../loop-events.js';
+import { describeSender, replyHint } from '../../peer/mail-identity.js';
 
 /**
  * Max consecutive transient COLLECT errors retried within one turn before the
@@ -120,16 +121,19 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
   //    argument of mail_to, so the reply line spells out the exact call —
   //    otherwise the agent has to already know that a peer's session-id is its
   //    reply address. Peers are annotated so local-vs-cross-instance is clear.
+  //    EXTERNAL senders ("<app>/<group>/<id>", e.g. myview/REDBOX/56232) get
+  //    an explicit NO-REPLY line instead of a reply recipe — they have no
+  //    mailbox mycc can write to, so a reply instruction would send the agent
+  //    down a dead end (mail_to refuses such addresses). See
+  //    src/peer/mail-identity.ts for the classification.
   const mails = ctx.mail.collectMails();
   if (mails.length > 0) {
     const parts: string[] = [];
     for (const mail of mails) {
-      const isPeer = mail.from.endsWith('/lead');
-      const peerTag = isPeer ? ' (peer — cross-instance)' : '';
       parts.push(
-        `Mail from ${mail.from}${peerTag}: ${mail.title}\n${mail.content}\n` +
-          `↳ Reply with mail_to(name="${mail.from}", title="${mail.title}: <re>", content="…")` +
-          `${isPeer ? ' — for a peer this session-id IS the name argument.' : ''}`
+        `Mail from ${mail.from}${describeSender(mail.from)}: ${mail.title}\n${mail.content}\n${
+          replyHint(mail.from, mail.title) ?? ''
+        }`
       );
     }
     const mailContent = parts.join('\n\n---\n\n');

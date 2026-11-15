@@ -30,6 +30,7 @@ import { composeTurnWatchdog, type TurnWatchdog } from './turn-watchdog.js';
 import { JsonlTranscriptWriter, asAppendablePiece } from '../loop/triologue/transcript.js';
 import { ipc, sendStatus } from './child/ipc-helpers.js';
 import { parseIntent, isReadOnlyVerb } from '../context/grant/intent-parser.js';
+import { describeSender, replyHint } from '../peer/mail-identity.js';
 
 const POLL_INTERVAL = 5000; // 5 seconds
 const CONFUSION_THRESHOLD = 10; // Same as main process
@@ -353,13 +354,14 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       if (mails.length > 0) {
         const mailContent = mails
           .map((mail) => {
-            const isPeer = mail.from.endsWith('/lead');
-            const peerTag = isPeer ? ' (peer — cross-instance)' : '';
-            return (
-              `Mail from ${mail.from}${peerTag}: ${mail.title}\n${mail.content}\n` +
-              `↳ Reply with mail_to(name="${mail.from}", title="${mail.title}: <re>", content="…")` +
-              `${isPeer ? ' — for a peer this session-id IS the name argument.' : ''}`
-            );
+            // Sender classification is shared with the lead's COLLECT
+            // (src/peer/mail-identity.ts): a peer is "<uuid>/lead", and an
+            // EXTERNAL sender ("<app>/<group>/<id>", e.g. myview/REDBOX/56232)
+            // gets an explicit NO-REPLY line rather than a reply recipe it
+            // could never satisfy.
+            return `Mail from ${mail.from}${describeSender(mail.from)}: ${mail.title}\n${mail.content}\n${
+              replyHint(mail.from, mail.title) ?? ''
+            }`;
           })
           .join('\n\n---\n\n');
         triologue.note('MAIL', mailContent);

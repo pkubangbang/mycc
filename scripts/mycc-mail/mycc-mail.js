@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * mycc-mail.js — Global CLI for cross-instance / cronjob-triggered mail delivery.
+ * mycc-mail.js — Global CLI for cronjob / cross-instance triggered mail delivery.
  *
  * Sends a single mail to a target mycc lead's mailbox by appending a JSONL
  * line to the lead's `unread-lead.jsonl`. The target is identified by session-id;
@@ -27,6 +27,24 @@
  * src/peer/channel.ts appendMailToPath):
  *   {"id":"<8-char>","from":"mycc-mail","title":"<title>","content":"<content>","timestamp":"<ISO-8601>"}
  *
+ * `from` is the SENDER IDENTITY the target lead sees, and mycc classifies it
+ * (src/peer/mail-identity.ts classifySender — imported directly, not mirrored)
+ * to decide whether a reply is possible:
+ *   - "<uuid>/lead"          a mycc peer      → the lead can mail_to it back;
+ *   - "<app>/<group>/<id>"   an external app  → e.g. myview/REDBOX/56232: the
+ *                                              lead shows it as ONE-WAY mail
+ *                                              (no reply address) and mail_to
+ *                                              refuses it as a recipient;
+ *   - "<label>"              e.g. "cron"      → a local label, not routable.
+ * This CLI validates `--from` against that grammar and reports the resulting
+ * routing in its OK line, so a sender learns up front whether it can be
+ * answered instead of discovering it after the fact.
+ *
+ * Implementation note: this shim registers the tsx ESM loader and imports the
+ * TypeScript classifier, so there is exactly ONE sender grammar in the repo.
+ * `src/` must therefore ship alongside `scripts/` in an install (it already
+ * does — `bin/mycc.js` runs src/index.ts the same way).
+ *
  * Run directly during development:
  *   node scripts/mycc-mail/mycc-mail.js <session-id> --title "..." --content "..."
  */
@@ -34,6 +52,73 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { register } from 'tsx/esm/api';
+
+// ---------------------------------------------------------------------------
+// Shared sender grammar — the ONE implementation
+//
+// The `--from` identity must be classified exactly the way the receiving lead
+// classifies mail on intake, or the CLI could promise a reply the lead will
+// refuse. Rather than mirror that logic in JS (it drifted once already — the
+// mirrored copy accepted filesystem paths like "C:/tmp/x" as external
+// addresses), load the real TypeScript module through the tsx ESM loader —
+// the same shim pattern scripts/mycc-compose/mycc-compose.js and bin/mycc.js
+// use. src/peer/mail-identity.ts is self-contained (no imports), so loading it
+// costs one small module.
+//
+// NOTE: the loader registration must happen BEFORE the dynamic import, which
+// is why this file uses top-level await for the classifier rather than a
+// static import (a static ESM import would be resolved before register()).
+// ---------------------------------------------------------------------------
+
+register();
+
+const { classifySender } = await import('../../src/peer/mail-identity.ts');
+
+/**
+ * Classify a `--from` value and report whether the RECEIVING lead can reply.
+ *
+ * Thin wrapper over `classifySender`: mycc's own classification is the source
+ * of truth for "is this routable"; the one extra check here is CLI-ONLY — a
+ * filesystem path ("C:/tmp/x", "/var/mail", "~/.x", "a\b") is a sender-label
+ * typo, not an identity, and it must be rejected BEFORE the 3-segment rule
+ * would otherwise read it as an external "app/group/id" address.
+ *
+ * @returns {{ r: boolean, kind: string, why?: string }}
+ */
+function classifyFrom(from) {
+  if (typeof from !== 'string' || from.trim() === '') {
+    return { r: false, kind: 'empty', why: 'sender identity is empty' };
+  }
+  if (/\s/.test(from)) {
+    return { r: false, kind: 'malformed', why: 'sender identity contains whitespace' };
+  }
+  if (/[\\]/.test(from) || /^[A-Za-z]:\//.test(from) || from.startsWith('/') || from.startsWith('~')) {
+    return { r: false, kind: 'malformed', why: 'sender identity looks like a filesystem path' };
+  }
+  const info = classifySender(from);
+  switch (info.kind) {
+    case 'external':
+      // Accepted: the shape an application stamps. The lead renders it as
+      // one-way mail and mail_to refuses it as a recipient.
+      return { r: false, kind: 'external' };
+    case 'peer':
+      return { r: true, kind: 'peer' };
+    case 'lead':
+      // "lead" is the local IPC sentinel, not an out-of-process sender.
+      return { r: false, kind: 'local-label' };
+    case 'teammate':
+      return { r: false, kind: 'local-label' };
+    default:
+      return {
+        r: false,
+        kind: 'malformed',
+        why:
+          'two-part senders must be "<session-id>/lead" with a UUID session id, ' +
+          'and a bare session id needs "/lead" to be routable'
+      };
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Constants — must mirror src/config.ts and src/peer/identity.ts
@@ -70,6 +155,17 @@ Options:
   --content <s>      Mail body (required for send, or use --content-file).
   --content-file <p> Read mail body from a file (use instead of --content).
   --from <s>         Sender identity recorded in the mail (default: "mycc-mail").
+                     Accepted shapes:
+                       "<session-id>/lead"      a mycc peer — the lead CAN reply
+                       "<app>/<group>/<id>"     an external app, e.g.
+                                                myview/REDBOX/56232 — the lead
+                                                displays it as ONE-WAY mail and
+                                                will NOT reply (there is no
+                                                mailbox to reply to)
+                       "<label>"                e.g. "cron" — a local label,
+                                                not routable
+                     Anything else (a path, a URL, "user@host", a bare session
+                     id without "/lead") is rejected as a usage error.
   --require-online   Refuse delivery unless the lead is PROVABLY live
                      (fresh heartbeat AND recorded pid alive). Exits 1 with a
                      "liveness gate" message and NEVER appends the mail when
@@ -365,13 +461,37 @@ function cmdSend(args) {
   }
 
   const from = args.from || 'mycc-mail';
+
+  // Sender gate: a `--from` that mycc cannot classify would land in the lead's
+  // MAIL note as an address it may try to answer. Reject a malformed value
+  // (usage error, exit 2 — nothing appended); accept a peer identity, an
+  // external app address (one-way), or a local label, and SAY which case the
+  // lead will see.
+  const sender = classifyFrom(from);
+  if (sender.kind === 'empty' || sender.kind === 'malformed') {
+    dieUsage(
+      `invalid --from "${from}" (${sender.why}).\n` +
+        `Valid senders: "<session-id>/lead" (a mycc peer), "<app>/<group>/<id>" ` +
+        `(an external app, e.g. myview/REDBOX/56232 — delivery is one-way), or a bare label ` +
+        `like "cron". If you are a mycc instance, use its own session id: <session-id>/lead.`
+    );
+  }
+
   appendMailToPath(mailboxPath, from, title, content);
+
+  const routing =
+    sender.kind === 'peer'
+      ? 'routable (the lead can reply with mail_to)'
+      : sender.kind === 'external'
+        ? 'one-way (external app address, not routable — the lead will not reply)'
+        : 'label only (not routable — the lead cannot reply to this sender)';
 
   process.stdout.write(
     `OK. Mail delivered to session ${sessionId}:\n` +
       `  from:    ${from}\n` +
       `  title:   ${title}\n` +
-      `  mailbox: ${mailboxPath}\n`
+      `  mailbox: ${mailboxPath}\n` +
+      `  routing: ${routing}\n`
   );
   process.exit(0);
 }
