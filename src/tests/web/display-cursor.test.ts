@@ -17,7 +17,14 @@
  * re-validating) is deliberately thin and sits on top of these two functions.
  */
 import { describe, it, expect } from 'vite-plus/test';
-import { maxSeqOf, advanceCursor, isAlreadyRendered, mergeSnapshot, reconcileOptimisticUserRow } from '../../web/src/display-cursor.js';
+import {
+  maxSeqOf,
+  advanceCursor,
+  isAlreadyRendered,
+  mergeSnapshot,
+  reconcileOptimisticUserRow,
+  wasRenderedBefore
+} from '../../web/src/display-cursor.js';
 
 const row = (seq?: number) => ({ type: 'log' as const, content: 'x', ...(seq === undefined ? {} : { seq }) });
 
@@ -189,5 +196,43 @@ describe('mergeSnapshot — a 200 must not splice away a just-rendered frame', (
     const merged = mergeSnapshot(snapshot, live);
     expect(merged.slice(0, snapshot.length)).toEqual(snapshot);
     expect(merged.map((m) => m.seq)).toEqual([10, 11, 12, 13]);
+  });
+
+  it('never renders the same seq twice, even when the live tail REPEATS it', () => {
+    // The reported defect: the SAME row — identical seq, id and timestamp —
+    // drawn at two adjacent positions. It happens when a live frame is applied
+    // while the /history 200 is still in flight, for a record the snapshot also
+    // carries: the seq is then on both sides of the merge.
+    const snapshot = [snap(1, 'a'), snap(2, 'b')];
+    const live = [snap(1, 'a'), snap(2, 'b'), snap(2, 'b')];
+    const merged = mergeSnapshot(snapshot, live);
+    expect(merged.map((m) => m.seq)).toEqual([1, 2]);
+  });
+
+  it('keeps ONE copy of a live-only row that the tail repeated', () => {
+    // The same guard applies inside the tail: a frame re-delivered after a
+    // reconnect must not be appended twice.
+    const snapshot = [snap(1, 'a')];
+    const live = [snap(1, 'a'), snap(5, 'e'), snap(5, 'e'), snap(6, 'f')];
+    expect(mergeSnapshot(snapshot, live).map((m) => m.seq)).toEqual([1, 5, 6]);
+  });
+});
+
+describe('wasRenderedBefore — "already on screen" needs the row set, not the cursor', () => {
+  const already = new Set([1, 2, 3]);
+
+  it('is true for a snapshot row this page already rendered', () => {
+    expect(wasRenderedBefore({ seq: 2 }, 3, already)).toBe(true);
+  });
+
+  it('is FALSE for an older snapshot row the page never rendered', () => {
+    // The cursor is a high-water mark: `2 <= 3` says nothing about whether row
+    // 2 was ever applied. Only the row set does.
+    expect(wasRenderedBefore({ seq: 2 }, 3, new Set([1, 3]))).toBe(false);
+  });
+
+  it('never calls a row above the cursor or a seq-less row "new"', () => {
+    expect(wasRenderedBefore({ seq: 9 }, 3, new Set([9]))).toBe(false);
+    expect(wasRenderedBefore({}, 3, already)).toBe(true);
   });
 });

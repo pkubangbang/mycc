@@ -32,6 +32,18 @@ import { registerDebugSeam } from './debug';
 import { ensureHighlighterReady } from './highlight';
 import { useChatStore } from './stores/chat-store';
 import { maxSeqOf, advanceCursor, mergeSnapshot, isAlreadyRendered } from './display-cursor';
+import {
+  FrameRing,
+  recordFrame,
+  toDumpMessage,
+  buildClientSlice,
+  mergeDump,
+  serializeDump,
+  dumpFilename,
+  dumpSummaryLine,
+  DUMP_FORMAT
+} from './dump';
+import type { ClientFrame, WebuiDump } from './dump';
 import { readCachedChatlog, writeCachedChatlog, buildCacheKey } from './chatlog-cache';
 import type { ChatlogCacheRecord } from './chatlog-cache';
 import './style.css';
@@ -148,6 +160,27 @@ let historyDirty = false;
  */
 let lastRenderedSeq = 0;
 
+// ── Diagnostic frame rings (`window.$webui.dump()`, see dump.ts) ──
+//
+// Two bounded rings of what crossed this socket, kept for a MANUAL post-
+// incident capture. They are recorded here, in main.ts, rather than inside the
+// dispatch module, for one reason: the INBOUND ring must be written BEFORE the
+// `isAlreadyRendered` gate below. A frame that gate drops is a frame this page
+// deliberately ignored — and "the server sent it and the page threw it away" is
+// exactly the evidence a duplicate-row investigation needs, so recording after
+// the gate would erase the witness.
+//
+// Cost when nobody dumps: one array push plus a cap check per frame.
+const framesIn = new FrameRing();
+const framesOut = new FrameRing();
+/** Socket opens since page load — churn hides frame races, so the dump reports it. */
+let socketOpens = 0;
+
+/** Record an outbound frame. `sent=false` means it never left the page. */
+function recordOutbound(data: object, sent: boolean): void {
+  framesOut.push(recordFrame(data, 'out', { sent }));
+}
+
 // Serialize cache writes so they complete in CALL ORDER, not whichever
 // IndexedDB transaction happens to finish first. Without this, two
 // fire-and-forget writes from different lifecycle paths (e.g. ws.onclose
@@ -178,7 +211,16 @@ function persistChatlog(): void {
   // predecessor guarantees a prior failure can never reject this chain.
   // The chained write still resolves void on any internal failure
   // (writeCachedChatlog never rejects), so the chain stays healthy.
-  lastCacheWrite = lastCacheWrite.catch(() => {}).then(() => writeCachedChatlog(key, messages, teammateMessages));
+  // Persist the DISPLAY CURSOR in the same write as the rows. The two are one
+  // fact — "these rows are on screen" and "everything up to seq N has been
+  // rendered" — and hydrating them apart re-admits rows the page already drew:
+  // a refresh or HMR remount restored the rows but restarted the watermark at 0,
+  // so the live stream re-delivered them and the same record appeared twice
+  // (the transient duplicate bubbles, gone after the next /history 200).
+  const cursor = { lastRenderedSeq, lastHistoryEtag };
+  lastCacheWrite = lastCacheWrite
+    .catch(() => {})
+    .then(() => writeCachedChatlog(key, messages, teammateMessages, cursor));
 }
 
 /**
@@ -216,6 +258,28 @@ async function hydrateFromCache(): Promise<void> {
   for (const m of store.teammateMessages) {
     if (typeof m.id !== 'number') m.id = nextId();
   }
+  // RESTORE THE DISPLAY CURSOR WITH THE ROWS.
+  //
+  // The rows above are the rows the page had RENDERED, and the cached watermark
+  // is the highest seq among them. Seeding it here is what stops the live
+  // stream from re-delivering them: the rows arrive from /history as
+  // `seq > snapshotMax` (a merge) and from the socket as `seq > lastRenderedSeq`
+  // (the cursor gate) — with the watermark at its default 0 the second test
+  // admits every frame it was meant to suppress, and the page draws the same
+  // record again.
+  //
+  // A LEGACY record (written before the field existed) has no watermark: fall
+  // back to the maximum seq among the hydrated rows, which is exactly "what
+  // this page has on screen". Never 0 — 0 would claim nothing was rendered.
+  const cachedCursor = typeof record.lastRenderedSeq === 'number' ? record.lastRenderedSeq : maxSeqOf(store.messages);
+  lastRenderedSeq = advanceCursor(lastRenderedSeq, cachedCursor);
+  // Adopt the cached ETag too: the hydrated rows were validated against it, so
+  // the onopen revalidation can 304 (history unchanged) instead of re-downloading
+  // a body the page already holds. Only when nothing local is pending — a dirty
+  // client must force a 200 (see fetchHistory).
+  if (!historyDirty && typeof record.lastHistoryEtag === 'string') {
+    lastHistoryEtag = record.lastHistoryEtag;
+  }
 }
 
 /**
@@ -226,6 +290,16 @@ async function hydrateFromCache(): Promise<void> {
  * of a silent drop.
  */
 function wsSend(data: object): boolean {
+  const sent = wsSendRaw(data);
+  // Record EVERY outbound frame, including one that never left the page: "the
+  // server dropped my message" and "my message never reached the server" are
+  // different incidents, and only this flag tells them apart after the fact.
+  recordOutbound(data, sent);
+  return sent;
+}
+
+/** The send itself, split out so wsSend can record the outcome either way. */
+function wsSendRaw(data: object): boolean {
   if (ws && ws.readyState === WebSocket.OPEN) {
     try {
       ws.send(JSON.stringify(data));
@@ -514,6 +588,7 @@ function connectWebSocket(): void {
   ws = new WebSocket(`${protocol}//${location.host}/ws`);
 
   ws.onopen = () => {
+    socketOpens++;
     store.connectionStatus = 'connected';
     // CLOSE THE SNAPSHOT→SOCKET GAP.
     //
@@ -548,7 +623,11 @@ function connectWebSocket(): void {
     // from a frame we already applied); applying it again is exactly the
     // duplicate-card defect this work exists to remove. Drop it here, before the
     // store is touched.
-    if (isAlreadyRendered(lastRenderedSeq, msg.seq)) {
+    const dropped = isAlreadyRendered(lastRenderedSeq, msg.seq);
+    // Record BEFORE the gate: see the frame-ring note above. `droppedByGate`
+    // turns the gate's silent decision into a readable fact in the dump.
+    framesIn.push(recordFrame(msg, 'in', { droppedByGate: dropped }));
+    if (dropped) {
       return;
     }
     // Delegate the pure state-transition logic to the DOM-free dispatch module.
@@ -779,6 +858,13 @@ void (async () => {
   // The store was already activated via setActivePinia(pinia) at module
   // load, so useChatStore() above is valid; app.use(pinia) installs the
   // same instance for the component tree.
+  // ONE app instance per document. A Vite HMR reload re-executes this module
+  // without reloading the page, so the previous instance is still mounted on
+  // `#app`; mounting over it makes Vue warn
+  //   "[Vue warn] There is already an app instance mounted on the host container".
+  // Unmount it first (a hot reload replaces the whole tree anyway, so no state
+  // is lost that the HMR cycle was not already recreating).
+  mountedApp?.unmount();
   mountedApp = createApp(App, { state: store });
   mountedApp.use(pinia);
   mountedApp.mount('#app');
@@ -1003,6 +1089,147 @@ export const chatApi = {
 // inject synthetic server messages through the same dispatch path as the real
 // WS handler. Registered only under import.meta.env.DEV; a no-op otherwise.
 registerDebugSeam(store, { nextId, chatApi });
+
+// ── window.$webui — the MANUAL incident dump (see dump.ts) ──
+//
+// F12 → console → `$webui.dump()` → a JSON file downloads. One command, two
+// observers: this page's slice (phase flags, cursor, rendered rows, what crossed
+// the socket) plus the SERVER's slice, fetched from GET /dump and joined here —
+// because the defect that matters (a submission the server never accepted) is
+// invisible from the browser alone: submitInput drops it in server memory.
+//
+// DELIBERATELY NOT `import.meta.env.DEV`-gated, unlike the seam above: serve
+// always runs the Vite dev server (ServeHub.start uses `middlewareMode` +
+// `appType:'custom'`), so the DEV guard is vacuous in practice, and a dump that
+// does not exist when the incident happens is worth nothing. It is still a
+// READ-ONLY inspector plus one user-initiated download — it never uploads, never
+// runs on a timer, and never mutates the chat log.
+//
+// The global is installed exactly once, keyed on `window` (same HMR reasoning as
+// the page listeners above): a hot reload must not stack a second `$webui`.
+interface WebuiSeam {
+  dump(): Promise<WebuiDump>;
+  state(): ClientDumpSlice['state'];
+  frames(): ClientFrame[];
+  help(): void;
+}
+type WebuiGlobals = { $webui?: WebuiSeam };
+const webuiGlobals = window as unknown as WebuiGlobals;
+
+/** Collect the browser half. Reads only; no store mutation. */
+function collectClientSlice(capturedAt: number): ReturnType<typeof buildClientSlice> {
+  return buildClientSlice({
+    capturedAt,
+    href: location.href,
+    userAgent: navigator.userAgent,
+    wsUrl: ws ? ws.url : null,
+    reconnects: Math.max(0, socketOpens - 1),
+    state: {
+      phase: store.phase,
+      isAutoMode: store.isAutoMode,
+      isPlanMode: store.isPlanMode,
+      isWaiting: store.isWaiting,
+      isRunning: store.isRunning,
+      hasPendingCard: store.hasPendingCard,
+      connectionStatus: store.connectionStatus,
+      inputText: store.inputText,
+      pendingFiles: (store.pendingFiles ?? []).map((f) => f.filename),
+      steeringBuffer: store.steeringBuffer.map((n) => ({ id: n.id, text: n.text })),
+      pendingSteeringReview: store.pendingSteeringReview.map((n) => ({ id: n.id, text: n.text }))
+    },
+    cursor: {
+      lastRenderedSeq,
+      historyDirty,
+      lastHistoryEtag,
+      sessionId
+    },
+    messages: store.messages.map(toDumpMessage),
+    teammateMessages: store.teammateMessages.map(toDumpMessage),
+    frames: [...framesOut.snapshot(), ...framesIn.snapshot()].sort((a, b) => a.t - b.t)
+  });
+}
+
+/**
+ * Fetch the server half. Failure is a FACT, not an error: a dump taken because
+ * the server stopped responding must still download, with `server: null` and
+ * the reason recorded.
+ */
+async function fetchServerSlice(): Promise<{ server: unknown | null; error?: string }> {
+  try {
+    const res = await fetch('/dump', { cache: 'no-store' });
+    if (!res.ok) return { server: null, error: `GET /dump → HTTP ${res.status}` };
+    return { server: (await res.json()) as unknown };
+  } catch (err) {
+    return { server: null, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Download a string as a file via a transient <a download> (same pattern as
+ *  MessageItem's markdown download — no new download mechanism). */
+function downloadJson(filename: string, text: string): void {
+  const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+if (!webuiGlobals.$webui) {
+  webuiGlobals.$webui = {
+    async dump(): Promise<WebuiDump> {
+      // One clock reading for BOTH halves: the server slice is stamped with
+      // `capturedAt` on arrival (server-side, see ServeHub.dumpSnapshot), so the
+      // file can be read as one incident rather than two.
+      const capturedAt = Date.now();
+      const client = collectClientSlice(capturedAt);
+      const { server, error } = await fetchServerSlice();
+      const merged = mergeDump(client, server, error);
+      const text = serializeDump(merged);
+      downloadJson(dumpFilename(sessionId, capturedAt), text);
+      // The console line is the eyeball check before the file is attached, and
+      // it names the two numbers that answer "twice?" and "lost?".
+      console.log(dumpSummaryLine(merged));
+      return merged;
+    },
+    state(): ClientDumpSlice['state'] {
+      return collectClientSlice(Date.now()).state;
+    },
+    frames(): ClientFrame[] {
+      return [...framesOut.snapshot(), ...framesIn.snapshot()].sort((a, b) => a.t - b.t);
+    },
+    help(): void {
+      console.log(
+        [
+          '[mycc] window.$webui — manual WebUI incident dump',
+          '',
+          '  $webui.dump()    download mycc-webui-dump-<session>-<time>.json',
+          '                   (browser slice + server slice, timestamp-joined)',
+          '  $webui.state()   the live UI state flags, as JSON-able object',
+          '  $webui.frames()  recent socket frames (200-char previews)',
+          '  $webui.help()    this text',
+          '',
+          `File format: ${DUMP_FORMAT}. Attach it by dragging it into the chat box;`,
+          'it lands in .mycc/uploaded/ and the agent can read it.',
+          '',
+          'What the summary line means:',
+          '  optimisticUserRows  rendered user rows with NO journal seq. Each one is a',
+          '                      bubble the server never confirmed — the "shown twice"',
+          '                      or "never delivered" symptom, visible at a glance.',
+          '  droppedByGate       frames this page discarded because its cursor had',
+          '                      already rendered them (a duplicate the gate PREVENTED).',
+          '  server=UNREACHABLE  GET /dump failed (see serverError); the browser half',
+          '                      is still complete and still worth attaching.',
+          '',
+          'Nothing here runs automatically.'
+        ].join('\n')
+      );
+    }
+  };
+}
 
 // The Vue app is created and mounted INSIDE the async bootstrap above (after
 // hydrateFromCache() but before fetchHistory()), so the first render already

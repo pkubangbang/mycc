@@ -44,6 +44,14 @@ import {
   readTranscriptRecords
 } from './serve-history.js';
 import { DisconnectTimer } from './serve-disconnect-timer.js';
+import {
+  InboundFrameRing,
+  recordInbound,
+  inputStatus,
+  buildServerDumpSlice,
+  type InboundFrame,
+  type ServerDiagnostics
+} from './serve-diag.js';
 import { handleWsMessage, type HubHandler } from './serve-ws-handler.js';
 import { getPeerWireAcceptor } from './peer-wire.js';
 import { registerServeHubFactory, type ServeHubLike } from './serve-registry.js';
@@ -133,6 +141,22 @@ export class ServeHub implements HubHandler, ServeHubLike {
   // Lead-side callback that journals a genuine user submission into the
   // transcript (registered by agent-repl; see setUserJournalProvider).
   private userJournalProvider: ((text: string, source: 'prompt' | 'steer') => void) | null = null;
+
+  // ── Diagnostics: the SERVER half of `window.$webui.dump()` (see serve-diag.ts) ──
+  //
+  // A bounded ring of inbound WS frames with what the input bridge decided about
+  // each one. In-memory and manual-only: it is read when a human types
+  // `$webui.dump()`, never streamed or persisted on a schedule. The ring, the
+  // arrival-time sampling and the ONE status rule live in serve-diag.ts so they
+  // are unit-tested without this file's Express/Vite/agent-io graph.
+  private diagRing = new InboundFrameRing();
+  /**
+   * The ring entry waiting for its outcome. `submitInput` resolves synchronously
+   * inside the dispatch of the SAME frame, so one slot is sufficient — but it is
+   * kept as a slot rather than a global "last status" so a non-input frame can
+   * never inherit an earlier submission's verdict.
+   */
+  private pendingDiagFrame: InboundFrame | null = null;
 
   // ── Disconnect-reconnect (encapsulated in DisconnectTimer) ──
   //
@@ -488,6 +512,24 @@ export class ServeHub implements HubHandler, ServeHubLike {
           );
       });
 
+      // GET /dump → the SERVER half of `window.$webui.dump()` (see serve-diag.ts).
+      //
+      // Read-only, and the only consumer is a human-triggered capture from the
+      // browser console. It must be registered BEFORE `app.use(vite.middlewares)`
+      // below, like `/health`: Vite's HTML/SPA fallback would otherwise answer a
+      // dev-server route of this name and hide the handler.
+      //
+      // It exposes full user text (by design: a redacted dump cannot explain a
+      // lost query). That is not a new exposure — the same text is already in the
+      // transcript under .mycc/sessions/ — but it does mean this endpoint answers
+      // anyone who can reach the WebUI, exactly like /history.
+      this.expressApp.get('/dump', (_req, res) => {
+        res
+          .status(200)
+          .set({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+          .end(JSON.stringify(this.dumpSnapshot(Date.now())));
+      });
+
       this.expressApp.use(this.viteServer.middlewares);
 
       // GET / → serve index.html via Vite HTML transforms (injects HMR client).
@@ -791,6 +833,11 @@ export class ServeHub implements HubHandler, ServeHubLike {
 
   /** Resolve a blocked waitForInput() with the submitted text. */
   submitInput(text: string): void {
+    // Diagnostics: attribute the outcome to the frame that carried this text
+    // BEFORE the branches below consume the state they are judged by. See
+    // serve-diag.ts inputStatus — the silent `else` is the reason a lost query
+    // used to leave no trace at all.
+    this.attributeInputStatus();
     if (this.inputResolver) {
       this.inputResolver(text);
     } else if (this.cardResolvers.size > 0) {
@@ -1034,6 +1081,80 @@ export class ServeHub implements HubHandler, ServeHubLike {
   // (also enforced by the steering-boundary test's allowlist).
 
   // ===========================================================================
+  // Diagnostics — the server half of `window.$webui.dump()` (serve-diag.ts)
+  // ===========================================================================
+
+  /**
+   * Record one inbound WS frame, sampling the input bridge at ARRIVAL.
+   *
+   * Called from the socket's message handler BEFORE dispatch. The sample must
+   * precede the handler because `submitInput` CONSUMES the resolver it is about
+   * to be judged by — sampling afterwards would report "nothing armed" for every
+   * delivered submission and make the dump lie about the one case it exists to
+   * explain.
+   *
+   * A frame that never reaches `submitInput` (steer, exit, interrupt, malformed
+   * JSON) keeps no `status`: its absence is the honest answer, and the slot is
+   * cleared by the caller so it cannot leak onto the next frame.
+   */
+  private recordInboundFrame(rawText: string): void {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch {
+      parsed = { type: '(malformed JSON)' };
+    }
+    const frame = recordInbound(
+      (parsed && typeof parsed === 'object' ? parsed : {}) as { type?: unknown; text?: unknown; files?: unknown },
+      { armed: this.inputResolver !== null, cardPending: this.cardResolvers.size > 0 }
+    );
+    this.diagRing.push(frame);
+    this.pendingDiagFrame = frame;
+  }
+
+  /**
+   * Attribute `submitInput`'s decision to the frame that carried the text.
+   *
+   * Re-reads the bridge state HERE rather than trusting the arrival snapshot:
+   * between arrival and this call nothing else runs (the dispatch is
+   * synchronous), so the two agree — but the status rule must be evaluated where
+   * the decision is MADE, which is this method's whole point (serve-diag's
+   * `inputStatus` is the single statement of it).
+   */
+  private attributeInputStatus(): void {
+    const frame = this.pendingDiagFrame;
+    if (!frame) return;
+    frame.status = inputStatus(this.inputResolver !== null, this.cardResolvers.size > 0);
+  }
+
+  /** The server slice of a dump — pure reads, no side effects. */
+  dumpSnapshot(capturedAt: number): { capturedAt: number; diagnostics: ServerDiagnostics; frames: unknown[] } {
+    const records = this.transcriptPath ? readTranscriptRecords(this.transcriptPath) : [];
+    const steering = getSteeringManager().snapshot();
+    const diagnostics: ServerDiagnostics = {
+      running: this.running,
+      port: this.port,
+      host: this.host,
+      agentRunning: this.agentRunning,
+      auto: this.getAutoState(),
+      mode: this.getMode(),
+      clients: this.clients.size,
+      inputArmed: this.inputResolver !== null,
+      cardResolvers: this.cardResolvers.size,
+      steeringRevision: steering.revision,
+      steeringNotes: steering.notes.map((n) => ({ id: n.id, text: n.text })),
+      fileUploads: this.fileUploadQueue.length,
+      messageLogLength: this.messageLog.length,
+      historyRows: records.length > 0 ? projectDisplayRecords(records).length : this.messageLog.length,
+      historyMaxSeq: maxSeqOfRecords(records)
+    };
+    return {
+      capturedAt,
+      ...buildServerDumpSlice(diagnostics, this.diagRing.snapshot())
+    };
+  }
+
+  // ===========================================================================
   // File upload queue (webui-only)
   // ===========================================================================
 
@@ -1247,7 +1368,18 @@ export class ServeHub implements HubHandler, ServeHubLike {
     } catch {
       /* ignore */
     }
-    ws.on('message', (data) => handleWsMessage(this, ws, wsDataToText(data)));
+    ws.on('message', (data) => {
+      const text = wsDataToText(data);
+      // Record BEFORE dispatch, sampling the input bridge at ARRIVAL — see
+      // recordInboundFrame for why the sample must precede the handler
+      // (submitInput consumes the resolver it is about to be judged by).
+      this.recordInboundFrame(text);
+      // Close the slot: a frame that never reached submitInput (steer, exit,
+      // interrupt, malformed) must not leave a status pending for the NEXT one.
+      this.pendingDiagFrame = null;
+      handleWsMessage(this, ws, text);
+      this.pendingDiagFrame = null;
+    });
     ws.on('close', () => this.onWsClose(ws));
     ws.on('error', (err) => this.onWsError(ws, err));
   }

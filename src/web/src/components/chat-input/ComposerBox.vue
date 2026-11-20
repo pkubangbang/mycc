@@ -27,6 +27,7 @@
  */
 import { computed } from 'vue';
 import type { FileInfo } from '../../types';
+import { clampComposerHeight } from '../../composer-height';
 
 const props = defineProps<{
   /** Current text (v-model:text). */
@@ -82,16 +83,19 @@ function onPaste(event: ClipboardEvent): void {
 // row, which replaces the old CSS `clamp()` over a registered custom property:
 // the arithmetic lives in one TypeScript expression instead of a
 // `@property` + `clamp(min, raw, max)` triple spread across the stylesheet.
-const COMPOSER_MIN_H = 70;
-const COMPOSER_MAX_H = 320;
-const bandHeight = computed(() => {
-  const h = Number.isFinite(props.height) ? props.height : COMPOSER_MIN_H;
-  return Math.min(Math.max(h, COMPOSER_MIN_H), COMPOSER_MAX_H);
-});
+// The bounds come from composer-height.ts because the shell's drag handler
+// clamps against the SAME numbers (see nextDragHeight) — one declaration.
+const bandHeight = computed(() => clampComposerHeight(props.height));
+// The drag handler (the shell) needs the number the DOM actually renders, not
+// the one it asked for: the band's real floor is its intrinsic content height,
+// which can exceed COMPOSER_MIN_H. Exposing the same computed it binds keeps
+// that a single source of truth.
+defineExpose({ bandHeight: () => bandHeight.value });
 
 // ── Mode-label visibility (NORMAL / PLAN under 发送) ──
 //
-// The label is ALWAYS visible: the band floor (COMPOSER_MIN_H = 70px) is above
+// The label is ALWAYS visible: the band floor (composer-height.ts
+// COMPOSER_MIN_H = 70px) is above
 // the label's natural requirement (40px button + 4px gap + 12px line = 56px of
 // content box, plus the row's 8px top padding), so there is no height at which
 // it would spill past the send column's bottom edge. No visibility computed, no

@@ -27,10 +27,34 @@
 import type { ChatMessage } from './types';
 
 /** Bump when the cache record shape changes; an old record is treated as a
- *  miss and overwritten on the next write. */
-export const CACHE_VERSION = 1;
+ *  miss and overwritten on the next write.
+ *
+ *  v2: the record gained `lastRenderedSeq` / `lastHistoryEtag`. Without the
+ *  bump, a v1 record (rows, NO watermark) would hydrate through the legacy
+ *  path while the live stream re-delivered the same rows — the duplicate
+ *  bubbles seen after a refresh. A schema change must invalidate what it
+ *  cannot describe. */
+export const CACHE_VERSION = 2;
 const DB_NAME = 'mycc-chatlog';
 const STORE_NAME = 'sessions';
+
+/**
+ * Is a value accepted by the structured clone algorithm — i.e. can
+ * `IDBObjectStore.put` store it?
+ *
+ * A chat row is JSON-shaped, so `JSON.stringify` is the honest, cheap probe:
+ * anything it cannot serialise (a function, a cycle, a proxy that throws on
+ * access) would make `put` throw `DataCloneError` and abort the WHOLE write.
+ * One such row must cost that row, not the cache.
+ */
+export function isStructuredCloneable(value: unknown): boolean {
+  try {
+    JSON.stringify(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** A cached chatlog record stored under the sessionId key. */
 export interface ChatlogCacheRecord {
@@ -39,6 +63,24 @@ export interface ChatlogCacheRecord {
   savedAt: number;
   messages: ChatMessage[];
   teammateMessages: ChatMessage[];
+  /**
+   * The page's display cursor (`lastRenderedSeq`) at write time.
+   *
+   * Cached ALONGSIDE the rows because the two are one fact: "these rows are on
+   * screen" and "everything up to seq N is rendered" must be restored together.
+   * Hydrating the rows without the watermark re-opened them to the live stream —
+   * a reconnect's cursor started at 0, every re-delivered row was admitted, and
+   * the same record appeared again (two identical bash bubbles, each with its own
+   * `[HH:MM:SS]` header, gone after the next /history 200). A page refresh or an
+   * HMR remount takes exactly this path.
+   *
+   * Optional for backward compatibility with records written before the field
+   * existed: a legacy record hydrates its rows and resumes from the snapshot's
+   * own maximum (see hydrateFromCache), never from 0.
+   */
+  lastRenderedSeq?: number;
+  /** The `/history` ETag the hydrated rows were validated against (see fetchHistory). */
+  lastHistoryEtag?: string | null;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -87,14 +129,21 @@ export function makeCacheRecord(
   sessionId: string,
   messages: ChatMessage[],
   teammateMessages: ChatMessage[],
-  version: number = CACHE_VERSION
+  version: number = CACHE_VERSION,
+  cursor: { lastRenderedSeq?: number; lastHistoryEtag?: string | null } = {}
 ): ChatlogCacheRecord {
   return {
     sessionId,
     version,
     savedAt: Date.now(),
     messages: messages.slice(),
-    teammateMessages: teammateMessages.slice()
+    teammateMessages: teammateMessages.slice(),
+    // Stamped in the SAME write as the rows: a cursor persisted without them
+    // (or the reverse) would hydrate a log the watermark does not describe.
+    // Omitted rather than written as 0 when unknown — 0 means "nothing rendered
+    // yet", which is a fact, not a default.
+    ...(typeof cursor.lastRenderedSeq === 'number' ? { lastRenderedSeq: cursor.lastRenderedSeq } : {}),
+    ...(cursor.lastHistoryEtag !== undefined ? { lastHistoryEtag: cursor.lastHistoryEtag } : {})
   };
 }
 
@@ -192,13 +241,14 @@ export async function readCachedChatlog(sessionId: string | null | undefined): P
 export async function writeCachedChatlog(
   sessionId: string | null | undefined,
   messages: ChatMessage[],
-  teammateMessages: ChatMessage[]
+  teammateMessages: ChatMessage[],
+  cursor: { lastRenderedSeq?: number; lastHistoryEtag?: string | null } = {}
 ): Promise<void> {
   const key = buildCacheKey(sessionId);
   if (!key) return;
   const db = await openDb();
   if (!db) return;
-  const record = makeCacheRecord(key, messages, teammateMessages);
+  const record = makeCacheRecord(key, messages, teammateMessages, CACHE_VERSION, cursor);
   await new Promise<void>((resolve) => {
     try {
       const tx = db.transaction(STORE_NAME, 'readwrite');
@@ -219,7 +269,29 @@ export async function writeCachedChatlog(
           // prune failure is non-fatal — the put below still writes the active record
         }
         // Write the active record.
-        const putReq = store.put(record);
+        //
+        // A throw from `store.put` (DataCloneError: a row carries a value the
+        // structured clone algorithm rejects — an un-serialisable card payload
+        // is the known case) is caught here ONCE and retried without the
+        // offending rows, so a single bad message degrades to "this row is not
+        // cached" instead of aborting the whole write on every persist.
+        const attemptPut = (rows: ChatMessage[]): IDBRequest | null => {
+          try {
+            return store.put({ ...record, messages: rows });
+          } catch {
+            return null;
+          }
+        };
+        let putReq = attemptPut(record.messages);
+        if (!putReq) {
+          // Drop the rows that cannot be cloned, keeping the rest.
+          const safe = record.messages.filter((m) => isStructuredCloneable(m));
+          putReq = attemptPut(safe) ?? attemptPut(record.messages.slice(0, 0));
+        }
+        if (!putReq) {
+          resolve();
+          return;
+        }
         putReq.onsuccess = () => resolve();
         putReq.onerror = () => resolve();
       };

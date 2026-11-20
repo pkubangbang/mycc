@@ -281,6 +281,16 @@ export function applyServerMessage(state: DispatchState, msg: ChatMessage, ctx: 
   // they are routine machinery output, not LLM/user content. The /history
   // path filters them identically in main.ts fetchHistory().
   if (msg.synthetic) return;
+  // A ROW THE LOG ALREADY HOLDS, BY JOURNAL IDENTITY. Every projected row
+  // carries the `seq` of the transcript record it came from, on both paths
+  // (/history and the live socket). A frame whose seq is already on screen is
+  // the SAME row arriving a second time — the duplicate bubble the user sees
+  // (and Vue reports as `Duplicate keys found: "id:221"`). The seq gate in
+  // ws.onmessage cannot catch it: a /history 200 that lands while frames are in
+  // flight re-adopts the snapshot, and a live frame for a record the snapshot
+  // already contained then arrives afterwards. Guard at the single insert
+  // chokepoint, so no caller can create the duplicate.
+  if (typeof msg.seq === 'number' && state.messages.some((m) => m.seq === msg.seq)) return;
   if (msg.label?.startsWith('@')) {
     state.teammateMessages.push(msg);
   } else {

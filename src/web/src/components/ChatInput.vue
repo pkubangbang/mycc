@@ -25,6 +25,8 @@
 import { ref, watch, computed } from 'vue';
 import type { ChatState } from '../types';
 import { chatApi } from '../main';
+import { beginDrag, anchoredHeight } from '../composer-height';
+import type { DragAnchor } from '../composer-height';
 import { useAttachmentQueue } from '../composables/useAttachmentQueue';
 import ComposerBox from './chat-input/ComposerBox.vue';
 import AttachmentBar from './chat-input/AttachmentBar.vue';
@@ -37,6 +39,10 @@ const props = defineProps<{ state: ChatState }>();
 
 const text = ref(props.state.inputText);
 const fileInput = ref<HTMLInputElement | null>(null);
+/** The rendered band, read by the drag handler (see onInputHandleMove). A
+ *  component `ref` gives the INSTANCE, which is why ComposerBox exposes
+ *  `bandHeight()` — the same clamped number it binds as `--band-h`. */
+const composerBoxRef = ref<{ bandHeight: () => number } | null>(null);
 /** Composer band height in px — the single owned value, handed to
  *  <ComposerBox> as `height`. ComposerBox clamps it once; the drag handle below
  *  is the only writer. */
@@ -299,18 +305,19 @@ function removeAllFiles(): void {
 //
 // ChatInput OWNS the height: `composerHeight` is a reactive px value handed to
 // <ComposerBox> as the `height` prop. ComposerBox clamps it once (70–320) and
-// binds it inline as `--band-h`, so this handler never touches styles, never
-// measures a rect for the anchor, and never clamps — it just moves a number.
+// binds it inline as `--band-h`. The handler below only moves a number.
 //
-// The anchor is the CURRENT VALUE of `composerHeight`, not a DOM rect: the
-// `.composer-box` rect also contains the stage strip / notice / attachment
-// rows, so anchoring on it added an ~8px offset, made the box jump on the
-// first pointermove, and let a downward drag overshoot the two-line floor
-// (most visible on a phone).
+// ONE FIXED ANCHOR PER GESTURE. pointerdown records `(anchorY, anchorHeight)`
+// and every move derives the height absolutely from it — never by accumulating
+// a delta. A delta that is clamped away is overshoot the handle must repay
+// before it can follow the pointer again; that is the (m − 80)px / (800 − M)px
+// offset at both ends. `anchorHeight` is the band's RENDERED height (the DOM's
+// own floor is higher than COMPOSER_MIN_H), so the first pixel of travel is
+// already faithful when the band started clamped.
 let inputDragging = false;
 let dragMoved = false;
-let dragStartY = 0;
-let dragStartHeight = 0;
+/** The gesture's fixed anchor — see anchoredHeight(). */
+let dragAnchor: DragAnchor = { anchorY: 0, anchorHeight: 0 };
 /** Pixels of vertical travel before the drag engages (a plain click on the
  *  handle must not resize the box). */
 const DRAG_THRESHOLD = 3;
@@ -320,23 +327,21 @@ function onInputHandleDown(e: PointerEvent): void {
   dragMoved = false;
   (e.target as HTMLElement).setPointerCapture(e.pointerId);
   e.preventDefault();
-  dragStartY = e.clientY;
-  // Snapshot the band height (the prop's value), not a rect: it is the same
-  // number the box is laid out from, so there is no offset to fold in.
-  dragStartHeight = composerHeight.value;
+  // Measure what the DOM rendered, not the value we asked for.
+  dragAnchor = beginDrag(e.clientY, composerBoxRef.value?.bandHeight() ?? composerHeight.value);
 }
 function onInputHandleMove(e: PointerEvent): void {
   if (!inputDragging) return;
-  const dy = dragStartY - e.clientY;
   // Swallow the first couple of pixels: without this, pressing the handle and
   // twitching the pointer resizes the box by a jump of one or two rows.
   if (!dragMoved) {
-    if (Math.abs(dy) < DRAG_THRESHOLD) return;
+    if (Math.abs(e.clientY - dragAnchor.anchorY) < DRAG_THRESHOLD) return;
     dragMoved = true;
   }
-  // The handle is at the TOP edge: dragging up (clientY shrinks) grows the
-  // box. ComposerBox clamps the value, so an overshoot still anchors the drag.
-  composerHeight.value = dragStartHeight + dy;
+  // Absolute, not accumulated: the height is a pure function of where the
+  // pointer is, so returning to a Y always returns to the same height and the
+  // handle cannot drift from the cursor past either bound.
+  composerHeight.value = anchoredHeight(dragAnchor, e.clientY);
 }
 function onInputHandleUp(e: PointerEvent): void {
   inputDragging = false;
@@ -441,12 +446,25 @@ function fmtTime(at: number): string {
       >
     </div>
 
+    <!-- Drag handle: the composer's top edge. A child of the flex-column shell,
+         NOT a grid item of <ComposerBox>: as a grid item it filled one row of
+         that box's 4-row template and shifted every following row by one, so
+         the box laid out ~one row shorter than `--band-h` and the visible edge
+         never matched the height the drag wrote. -->
+    <div
+      class="input-resize-handle"
+      @pointerdown="onInputHandleDown"
+      @pointermove="onInputHandleMove"
+      @pointerup="onInputHandleUp"
+      @pointercancel="onInputHandleUp"
+      title="拖拽调整输入框高度"
+    ></div>
+
     <!-- textarea + floating action strip + 发送. ComposerBox owns the grid and
-         the height clamp; the drag handle is passed into its root via the
-         `handle` slot, so the handler reaches the box with
-         `currentTarget.closest('.composer-box')` — no template `ref` (on a
-         child component that yields the component instance, not an Element). -->
+         the height clamp; the `ref` is the component INSTANCE — the drag
+         handler calls `bandHeight()` for the height the DOM actually rendered. -->
     <ComposerBox
+      ref="composerBoxRef"
       :text="text"
       :placeholder="placeholder"
       :height="composerHeight"
@@ -461,18 +479,7 @@ function fmtTime(at: number): string {
       @auto="onAutoClick"
       @attach="openFilePicker"
       @paste-files="onPasteFiles"
-    >
-      <template #handle>
-        <div
-          class="input-resize-handle"
-          @pointerdown="onInputHandleDown"
-          @pointermove="onInputHandleMove"
-          @pointerup="onInputHandleUp"
-          @pointercancel="onInputHandleUp"
-          title="拖拽调整输入框高度"
-        ></div>
-      </template>
-    </ComposerBox>
+    />
     <!-- Transient "already in auto mode" toast, floating just above the box. -->
     <transition name="auto-toast">
       <div v-if="autoToast" class="auto-toast">{{ autoToast }}</div>
@@ -607,16 +614,18 @@ function fmtTime(at: number): string {
    pointercancel (or lets the page scroll), which severs setPointerCapture
    mid-drag — the "can't drag reliably on touchscreen" bug. */
 .input-resize-handle {
-  /* Sits ON the container's top edge, spanning the FULL width of the composer
-     box (it is a grid item of .composer-box, which has no padding). The 4px of
-     transparent padding straddles the top border so the grip is reachable from
-     just outside; 3px of visible bar marks the edge. */
+  /* The composer's top edge: the first row of the shell's flex column, above
+     <ComposerBox>. It spans the full width (the shell carries no horizontal
+     padding). 3px of transparent padding straddles the box's top border so the
+     grip is reachable from just outside; 2px of visible bar marks the edge.
+     It is NOT a grid item: as one it silently filled a row of the box's grid
+     template and shifted every following row by one, which made the visible
+     edge disagree with `--band-h`. */
+  flex: 0 0 auto;
   position: relative;
-  grid-column: 1 / 3;
-  grid-row: 1;
-  height: 3px;
-  margin: -4px 0 1px;
-  padding: 4px 0;
+  height: 2px;
+  margin: -3px 0 0;
+  padding: 3px 0;
   cursor: row-resize;
   background: var(--border-color);
   z-index: 5;

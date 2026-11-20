@@ -97,6 +97,32 @@ export function isAlreadyRendered(cursor: number, seq: number | undefined): bool
 }
 
 /**
+ * Was a snapshot row already on screen before this snapshot was adopted?
+ *
+ * The watermark alone cannot answer this: it is a HIGH-WATER mark, so
+ * `seq <= cursor` is true for every row of a log the page has been following —
+ * the overlap between a snapshot and what the page already rendered is not "at
+ * or below the cursor", it is "the page already holds this exact seq". A second
+ * reader of the same cursor therefore needs the row set: `already` is the seqs
+ * present in the live log before the snapshot was merged.
+ *
+ * The distinction matters in one concrete place: a row this page rendered from
+ * a LIVE frame is in `already`, and if that frame arrived while the snapshot was
+ * still in flight, `mergeSnapshot` re-appends it only when it outran the
+ * snapshot's maximum. Counting it as "new" makes a caller re-append what the
+ * merge already carried — the duplicated bubble.
+ */
+export function wasRenderedBefore(
+  snapshotRow: { seq?: number },
+  cursor: number,
+  already: ReadonlySet<number>
+): boolean {
+  const seq = snapshotRow.seq;
+  if (typeof seq !== 'number' || !Number.isFinite(seq)) return true; // no identity — never a "new" row
+  return seq <= cursor && already.has(seq);
+}
+
+/**
  * Merge a /history snapshot with the live frames that outran it.
  *
  * `snapshot` is the body of a 200 read while the socket was already open; frames
@@ -117,9 +143,22 @@ export function mergeSnapshot<T extends { seq?: number }>(snapshot: readonly T[]
     const seq = m.seq;
     if (typeof seq === 'number' && Number.isFinite(seq) && seq > snapshotMax) snapshotMax = seq;
   }
+  // Dedupe by seq: a row can legitimately appear in BOTH the snapshot and the
+  // live tail — a live frame rendered while the 200 was in flight, for a record
+  // the snapshot already contained, leaves the same seq on both sides. Keeping
+  // both drew the same bubble twice (identical id, timestamp and seq). The
+  // snapshot copy wins (it is the body the server just produced); a live row is
+  // appended only when the snapshot does not already carry its seq.
+  const seen = new Set<number>();
+  for (const m of snapshot) {
+    if (typeof m.seq === 'number' && Number.isFinite(m.seq)) seen.add(m.seq);
+  }
   const outran = live.filter((m) => {
     const seq = m.seq;
-    return typeof seq === 'number' && Number.isFinite(seq) && seq > snapshotMax;
+    if (typeof seq !== 'number' || !Number.isFinite(seq)) return false;
+    if (seq <= snapshotMax || seen.has(seq)) return false;
+    seen.add(seq); // guard against a live row repeated within the tail itself
+    return true;
   });
   return [...snapshot, ...outran];
 }
