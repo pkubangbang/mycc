@@ -25,18 +25,31 @@ interface Emitted {
  */
 function makeEnv(state: { todos: string; team: string }): { env: MachineEnv; emitted: Emitted[] } {
   const emitted: Emitted[] = [];
+  // The suppression lifetime is measured in assistant turns, counted the same
+  // way `ageOut()` counts them — so the mock must expose a messages array the
+  // test can grow. `advanceTurns()` pushes one assistant message per turn.
+  const messages: { role: string }[] = [];
   const env = {
     triologue: {
       note: (category: string, message: string, opts?: Emitted['opts']) => {
         emitted.push({ category, message, opts });
-      }
+      },
+      getMessagesRaw: () => messages
     },
     ctx: {
       todo: { hasOpenTodo: () => state.todos !== '', printTodoList: () => state.todos },
-      team: { printTeam: async () => state.team }
-    }
+      team: { printTeam: async () => state.team },
+      peer: { listChannels: () => [], listIdentities: () => [], isFresh: () => false }
+    },
+    __messages: messages
   } as unknown as MachineEnv;
   return { env, emitted };
+}
+
+/** Push N assistant messages — one per completed turn, as the TTL clock counts. */
+function advanceTurns(env: MachineEnv, n = 1): void {
+  const messages = (env as unknown as { __messages: { role: string }[] }).__messages;
+  for (let i = 0; i < n; i++) messages.push({ role: 'assistant' });
 }
 
 const turn = {} as TurnVars;
@@ -136,18 +149,27 @@ describe('runReminders — emission contract', () => {
   beforeEach(() => resetReminders());
 
   it('emits in REGISTRY order, not build-resolution order', async () => {
-    // Make team.printTeam slow so an await-order implementation would emit it
-    // last; the registry order must still win.
+    // Make team.printTeam SLOW so an await-order implementation would emit it
+    // last; the registry order must still win. (The delay has to be a real
+    // timer — a resolved promise settles in microtask order, which cannot
+    // distinguish registry order from await order.)
     const emitted: Emitted[] = [];
     const env = {
       triologue: {
         note: (category: string, message: string, opts?: Emitted['opts']) => {
           emitted.push({ category, message, opts });
-        }
+        },
+        getMessagesRaw: () => []
       },
       ctx: {
         todo: { hasOpenTodo: () => true, printTodoList: () => 'open #1' },
-        team: { printTeam: async () => 'slow teammate' }
+        team: {
+          printTeam: async () => {
+            await new Promise((r) => setTimeout(r, 5));
+            return 'slow teammate';
+          }
+        },
+        peer: { listChannels: () => [], listIdentities: () => [], isFresh: () => false }
       }
     } as unknown as MachineEnv;
 
@@ -177,7 +199,8 @@ describe('runReminders — emission contract', () => {
       triologue: {
         note: (category: string, message: string, opts?: Emitted['opts']) => {
           emitted.push({ category, message, opts });
-        }
+        },
+        getMessagesRaw: () => []
       },
       ctx: {
         todo: {
@@ -186,7 +209,8 @@ describe('runReminders — emission contract', () => {
           },
           printTodoList: () => ''
         },
-        team: { printTeam: async () => 'No teammates.' }
+        team: { printTeam: async () => 'No teammates.' },
+        peer: { listChannels: () => [], listIdentities: () => [], isFresh: () => false }
       }
     } as unknown as MachineEnv;
 
@@ -196,13 +220,49 @@ describe('runReminders — emission contract', () => {
     expect(emitted.some((e) => e.opts?.phantom?.family === 'brief-nudge')).toBe(true);
   });
 
+  it('a steady todo list is re-emitted once its note has aged out', async () => {
+    // The B3 regression: identical-body suppression must LAPSE when the note it
+    // suppressed is gone from the provider view, or a stable reminder is
+    // delivered once and lost forever.
+    const state = { todos: 'open #1', team: 'No teammates.' };
+    const { env, emitted } = makeEnv(state);
+    const todoEmits = () => emitted.filter((e) => e.opts?.phantom?.family === 'todo-nudge');
+
+    for (let pass = 1; pass <= 3; pass++) {
+      await runReminders(env, turn);
+      advanceTurns(env);
+    }
+    expect(todoEmits()).toHaveLength(1);
+
+    // 3 more passes inside the ttl: identical body → still suppressed.
+    for (let pass = 1; pass <= 3; pass++) {
+      await runReminders(env, turn);
+      advanceTurns(env);
+    }
+    expect(todoEmits()).toHaveLength(1);
+
+    // Past ttl: the note has aged out, so suppression must lapse and re-emit.
+    for (let pass = 1; pass <= 6; pass++) {
+      await runReminders(env, turn);
+      advanceTurns(env);
+    }
+    expect(todoEmits().length).toBeGreaterThan(1);
+  });
+
   it('exposes a stable registry shape', () => {
     const ids = REMINDERS.map((r) => r.id);
-    expect(ids).toEqual(['team-status', 'todo-nudge', 'brief-nudge', 'worktree-nudge']);
+    expect(ids).toEqual(['team-status', 'todo-nudge', 'peer-nudge', 'brief-nudge', 'worktree-nudge']);
     for (const r of REMINDERS) {
       expect(r.every).toBeGreaterThan(0);
       expect(r.ttl).toBeGreaterThan(0);
     }
+    // team-status is the one reminder whose subject (the roster) is useful
+    // whenever a teammate exists, so its note must outlive the gap to its
+    // replacement. peer-nudge deliberately violates the opposite way (ttl 2 <
+    // every 3): a stale ROUTING address is worse than no address, so it is
+    // meant to age out fast — do not "fix" that by raising its ttl.
+    const team = REMINDERS.find((r) => r.id === 'team-status')!;
+    expect(team.ttl).toBeGreaterThanOrEqual(team.every);
   });
 });
 

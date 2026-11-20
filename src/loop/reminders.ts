@@ -49,8 +49,10 @@
  * its siblings and corrupt the cadence.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import type { MachineEnv, TurnVars } from './state-machine.js';
-import type { NoteCategory } from '../types.js';
+import type { ChannelFile, NoteCategory } from '../types.js';
 import { listWorktrees } from '../context/worktree-store.js';
 
 /**
@@ -90,6 +92,24 @@ export interface Reminder {
 interface ReminderState {
   remaining: number;
   lastBody: string | null;
+  /**
+   * Emit count, used to derive when the note carrying `lastBody` has AGED OUT
+   * of the provider view.
+   *
+   * WHY THIS EXISTS: identical-body suppression and phantom TTL cancel each
+   * other out if suppression has no lifetime. A steady todo list produces an
+   * identical body every period, so `lastBody` suppressed every re-emit — while
+   * the ONE emitted copy aged out after `ttl` assistant turns. The most stable
+   * reminder therefore became the one the model saw LEAST: delivered once, then
+   * gone, including its `[preventStop]` guards.
+   *
+   * `lastEmitAt` is the value of the counting source at the moment of the last
+   * emission, so `ageOf(lastBody)` is comparable to `r.ttl` without the
+   * registry having to know how TTL is measured (see `countTurns`).
+   */
+  lastEmitAt: number;
+  /** Set when `lastBody` is suppressed for the rest of this period. */
+  suppressed: boolean;
 }
 
 /** Process-wide reminder state, keyed by `Reminder.id`. */
@@ -100,10 +120,22 @@ function stateFor(r: Reminder): ReminderState {
   if (!s) {
     // A fresh reminder fires after a full period, matching the historical
     // `nextTodoNudge = 3` / `nextBriefNudge = 5` initial values.
-    s = { remaining: r.every, lastBody: null };
+    s = { remaining: r.every, lastBody: null, lastEmitAt: 0, suppressed: false };
     states.set(r.id, s);
   }
   return s;
+}
+
+/**
+ * How many assistant turns have followed a note emitted now.
+ *
+ * MUST count the same thing `ageOut()` counts (triologue/egress.ts: a note
+ * survives while fewer than `ttl` assistant MESSAGES follow it), or the
+ * suppression lifetime and the actual eviction disagree and the reminder
+ * either resurfaces too late or churns every period.
+ */
+function countTurns(env: MachineEnv): number {
+  return env.triologue.getMessagesRaw().filter((m) => m.role === 'assistant').length;
 }
 
 /** Clear all reminder state (turn boundary / test isolation). */
@@ -145,22 +177,58 @@ export function rearmReminder(id: string): void {
   const s = stateFor(r);
   s.remaining = r.every;
   s.lastBody = null;
+  s.suppressed = false;
+}
+
+/**
+ * Channels currently worth telling the model about: joined, with a known peer,
+ * whose heartbeat is still fresh.
+ *
+ * Same predicate the pre-registry `runTodoNudge` used, and the same one
+ * `PeerManager.hasActiveChannel()` applies — kept as one local helper so
+ * `isActive` and `build` cannot disagree about which channels are live (a
+ * disagreement would arm the reminder and then build an empty body).
+ */
+function activeChannels(env: MachineEnv): ChannelFile[] {
+  return env.ctx.peer
+    .listChannels()
+    .filter((ch) => ch.joined && ch.peerSessionId && env.ctx.peer.isFresh(ch.peerSessionId));
+}
+
+/**
+ * Cheap "is a worktree even plausible" probe for `worktree-nudge.isActive`.
+ *
+ * A synchronous `readdirSync` of `<cwd>/.worktrees` instead of the
+ * `git worktree list` SUBPROCESS that `build()` runs. The subprocess is the
+ * expensive part (the pre-registry code deferred it behind a `0`-sentinel
+ * precisely for that reason), so this keeps `every: 1` — never miss a worktree
+ * created and removed between passes — without paying for a fork on every
+ * COLLECT pass.
+ *
+ * FAILS OPEN: any read error (missing dir, permissions, non-git cwd) returns
+ * true so the real `listWorktrees()` decides. A probe must not be able to
+ * silence the reminder it is gating.
+ */
+function hasOpenWorktreeHint(_env: MachineEnv): boolean {
+  try {
+    return fs.readdirSync(path.join(process.cwd(), '.worktrees')).length > 0;
+  } catch {
+    return true;
+  }
 }
 
 /**
  * The registry. Order here IS emission order within a pass.
- *
- * `worktree` uses `every: 1` to preserve the old `0`-sentinel semantics: the
- * git query runs every pass and only emits when worktrees exist, so a worktree
- * created AND removed inside one window is never silently skipped. Suppression
- * comes from the identical-body rule and its long TTL, not from the counter.
  */
 export const REMINDERS: Reminder[] = [
   {
     id: 'team-status',
     category: 'SYSTEM',
     every: 3,
-    ttl: 2,
+    // ttl MUST be >= every. With ttl 2 the snapshot was evicted one pass before
+    // its replacement existed, so a third of the passes had no roster at all —
+    // masked until now by the duplicate collect.ts emission (see the note below).
+    ttl: 3,
     isActive: () => true,
     build: async (env) => {
       const status = await env.ctx.team.printTeam();
@@ -184,6 +252,69 @@ export const REMINDERS: Reminder[] = [
     build: async (env) => (env.ctx.todo.hasOpenTodo() ? `Update your todos. ${env.ctx.todo.printTodoList()}` : null)
   },
   {
+    /**
+     * Peer-channel nudge — SPLIT OUT of `todo-nudge` and deliberately NOT
+     * re-fused into it.
+     *
+     * The pre-registry `runTodoNudge` emitted the todo list and the "Active
+     * channels:" block from ONE body under ONE counter. That coupling meant a
+     * channel appearing or disappearing did not change the todo list, so the
+     * hand-rolled `compositeState` cursor had to fold both into one string just
+     * to notice either. A separate reminder gives the channel snapshot its own
+     * dedup key for free, which is the whole point of the split: a todo edit
+     * and a peer going stale are independent events and must not suppress each
+     * other.
+     *
+     * Three things the fused version supplied, each now carried here:
+     *  1. channel-ONLY firing — `isActive` arms on channels, not on todos, so a
+     *     session with peers but no todo list still gets the routing recipe;
+     *  2. route METADATA — `build` reproduces the `peer/workdir/channel/topic`
+     *     block, including the `mail_to(name="<sid>/lead", title="<topic>:…")`
+     *     shape, which is the only place the model learns the reply address;
+     *  3. FRESHNESS re-emit — the snapshot embeds each peer's `fresh=` flag, so
+     *     a peer going stale changes the body and the identical-body rule
+     *     re-emits without a composite cursor.
+     *
+     * `ttl: 2` (not todo's 4): a channel snapshot is far more perishable than a
+     * todo list. A stale routing address sends mail to a dead session, so a
+     * wrong hint is worse than no hint — let it age out fast.
+     *
+     * Reads `ctx.peer` directly (option (a)), following `worktree-nudge`'s
+     * precedent of doing async I/O inside `build()`. `listChannels()` /
+     * `listIdentities()` / `isFresh()` are synchronous in-memory reads over the
+     * already-loaded registry, so this adds no disk I/O to the fan-out.
+     */
+    id: 'peer-nudge',
+    category: 'REMINDER',
+    every: 3,
+    ttl: 2,
+    isActive: (env) => activeChannels(env).length > 0,
+    build: async (env) => {
+      const channels = activeChannels(env);
+      if (channels.length === 0) return null;
+      // ChannelFile does not carry workDir; it lives on IdentityEntry. Falls
+      // back to '?' if the peer unregistered between the two reads.
+      const peerWorkDirs = new Map<string, string>();
+      for (const id of env.ctx.peer.listIdentities()) {
+        peerWorkDirs.set(id.sessionId, id.workDir ?? '?');
+      }
+      const lines = channels.map((ch) => {
+        const peerSid = ch.peerSessionId ?? '(unknown)';
+        const workDir = peerWorkDirs.get(peerSid) ?? '?';
+        // `topic` is the channel's static `title` theme; mail_to routes a peer
+        // reply by name="<peerSessionId>/lead". The `title=` convention is
+        // "<topic>:<subject>" so the recipient sees which channel it is on.
+        return (
+          `- peer=${peerSid}\n` +
+          `  workdir=${workDir}\n` +
+          `  channel=${ch.channelId}, topic=${ch.title ?? '(none)'}\n` +
+          `  use mail_to(name="${peerSid}/lead", title="${ch.title ?? ''}:<subject>") to communicate`
+        );
+      });
+      return `Active channels:\n${lines.join('\n\n')}`;
+    }
+  },
+  {
     id: 'brief-nudge',
     category: 'REMINDER',
     every: 5,
@@ -197,7 +328,12 @@ export const REMINDERS: Reminder[] = [
     category: 'REMINDER',
     every: 1,
     ttl: 8,
-    isActive: () => true,
+    // Always armed. The git subprocess moved into `build()`'s natural cadence
+    // instead: `isActive` is now a cheap synchronous directory read of the
+    // worktree ROOT (a new worktree creates `<cwd>/.worktrees/<name>` before it
+    // is useful), so a worktree created and removed between passes is still
+    // caught without spawning git every pass.
+    isActive: (env) => hasOpenWorktreeHint(env),
     build: async () => {
       const worktrees = await listWorktrees(process.cwd());
       if (worktrees.length === 0) return null;
@@ -241,21 +377,39 @@ export async function runReminders(env: MachineEnv, turn: TurnVars): Promise<voi
   );
 
   // ── 2. Emit phase: serial, registry order ──
+  const now = countTurns(env);
   for (const { r, s, body } of built) {
     if (s.remaining > 0) continue;
     if (body === null) {
       // Silent pass: re-arm so a temporarily inactive reminder does not retry
       // on every subsequent pass.
       s.remaining = r.every;
+      s.suppressed = false;
       continue;
     }
-    if (body === s.lastBody) {
-      // Byte-identical to the last emission: carry no new information.
+    if (body === s.lastBody && s.suppressed) {
+      // Byte-identical to the last emission, AND that emission is still in the
+      // provider view — carrying no new information. Re-arm, keep suppressing.
       s.remaining = r.every;
       continue;
     }
     s.lastBody = body;
+    s.lastEmitAt = now;
+    // Arm suppression only AFTER an emit. The next period's identical body is
+    // then swallowed WHILE the note is still visible…
+    s.suppressed = true;
     env.triologue.note(r.category, body, { phantom: { family: r.id, ttl: r.ttl } });
     s.remaining = r.every;
+  }
+
+  // ── 3. Expire suppression whose note has aged out ──
+  // A note survives while fewer than `ttl` assistant messages follow it
+  // (triologue/egress.ts ageOut), so the same inequality decides when its
+  // suppression must lapse: suppressing a body past its eviction point deletes
+  // the reminder instead of deduplicating it. Deferred to its own loop so the
+  // expiry cannot affect this pass's emit decisions.
+  for (const r of REMINDERS) {
+    const s = states.get(r.id);
+    if (s?.suppressed && now - s.lastEmitAt >= r.ttl) s.suppressed = false;
   }
 }

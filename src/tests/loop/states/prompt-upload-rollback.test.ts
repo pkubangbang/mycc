@@ -4,11 +4,17 @@
  *
  * Failure scene: the user attaches an image in the WebUI, then submits a query.
  * During the interrupted run the file upload was drained and saved as a
- * [REMINDER] note. Because triologue.note() merges a note into the last 'user'
- * message (which, after ESC, is the [WRAP_UP] message), the reminder got
- * COMBINED into the [WRAP_UP] message. Then prompt.ts called rollbackWrapUp()
- * AFTER the file drain, so the rollback truncated the combined message and the
- * model never saw the uploaded-file path — it replied "I don't see an image".
+ * [REMINDER] note appended AFTER the [WRAP_UP] user message. Prompt.ts then
+ * called rollbackWrapUp() AFTER the file drain, so the rollback truncated the
+ * triologue back to the wrap-up point and the model never saw the
+ * uploaded-file path — it replied "I don't see an image".
+ *
+ * (Historical note: this used to be described as `triologue.note()` MERGING the
+ * note into the last 'user' message. That is no longer how note() behaves — it
+ * appends its own role:'user' message; coalescing of adjacent notes happens
+ * later, in the provider projection. The ordering hazard the fix addresses is
+ * unchanged: rollback truncates by POSITION, so a note appended before the
+ * rollback point is still lost.)
  *
  * Fix: resolve the wrap-up (commit/rollback) BEFORE draining files/steering, so
  * a [REMINDER] injected afterwards lands past the rollback point and survives.

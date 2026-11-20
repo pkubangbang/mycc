@@ -100,6 +100,24 @@ export interface Message extends ProviderMessage {
    * a restored session would read it as "expire immediately".
    */
   phantom?: PhantomMark;
+
+  /**
+   * PROVENANCE: this user-role message was produced by `triologue.note()`, not
+   * typed by the user. Set by the producer, never inferred downstream — the
+   * same rule as `phantom` and `synthetic`.
+   *
+   * WHY IT EXISTS: the egress projection has to decide which user-role messages
+   * it may merge into a note blob. It used to infer that from the `[CATEGORY] `
+   * CONTENT prefix, which the user can type: a genuine query beginning with
+   * "[SYSTEM] …" was classified as a note and silently absorbed into the
+   * preceding blob, breaking the projection's "a real query is never absorbed"
+   * guarantee. `isUserOrigin` (below) is the matching marker for the opposite
+   * case, so every user-role message now carries an explicit answer.
+   *
+   * Serialised like `phantom` (it is harmless if a provider sees it, and the
+   * store/JSONL/WebUI keep it); it is NOT meaningful to a provider.
+   */
+  note_category?: NoteCategory;
 }
 
 /**

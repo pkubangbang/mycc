@@ -380,12 +380,14 @@ export async function handlePrompt(env: MachineEnv, turn: TurnVars, _chat: ChatD
   //
   // IMPORTANT: this MUST run BEFORE the steering/file-drain block below.
   // During the interrupted run the file uploads / steering notes were drained
-  // into the triologue as a [REMINDER] note that got COMBINED into the
-  // [WRAP_UP] user message (triologue.note() merges into the last user message).
+  // into the triologue as a [REMINDER] note appended AFTER the [WRAP_UP] user
+  // message. (triologue.note() no longer merges into the last user message — it
+  // appends a role:'user' note; egress coalescing merges adjacent notes only
+  // for the provider view.)
   // If the wrap-up then rolls back (e.g. the wrap-up LLM returned empty or did
-  // not complete before this PROMPT), rollbackWrapUp() truncates the whole
-  // merged message — silently dropping the uploaded-file reminder the model
-  // needed to see. Resolving the wrap-up FIRST means any reminder injected
+  // not complete before this PROMPT), rollbackWrapUp() truncates the triologue
+  // back to the wrap-up point — silently dropping the uploaded-file reminder the
+  // model needed to see. Resolving the wrap-up FIRST means any reminder injected
   // afterwards lands past the rollback point and survives.
   if (triologue.hasActiveWrapUp()) {
     const action = evaluateWrapUp();

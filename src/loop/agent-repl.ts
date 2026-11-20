@@ -46,6 +46,7 @@ import { activateServe } from '../serve/activate.js';
 import { handlePrompt, setInitialQuery } from './states/prompt.js';
 import { handleSlash } from './states/slash.js';
 import { handleCollect, reconcileServeStateAfterClear } from './states/collect.js';
+import { resetReminders } from './reminders.js';
 import { handleLlm } from './states/llm.js';
 import { handleHook } from './states/hook.js';
 import { handleTool } from './states/tool.js';
@@ -326,6 +327,11 @@ export async function main(): Promise<void> {
     // fresh conversation would never re-learn whether a WebUI is running
     // (PR #28 review P3 F4 — this is the SECOND triologue-clearing path).
     reconcileServeStateAfterClear();
+    // Re-arm the reminder registry for the same reason: `states` is
+    // process-global, so a stale cadence / `lastBody` from before /clear would
+    // suppress the first post-clear emission of the todo list (and its
+    // `[preventStop]` guards). Same hazard reconcileServeStateAfterClear fixes.
+    resetReminders();
   });
 
   // ── Register project-context populators ──

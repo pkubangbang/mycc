@@ -313,6 +313,7 @@ export class TriologueLite {
         this.addMessage({
           role: 'user',
           content: `[${category}] ${message}`,
+          note_category: category,
           ...(hookName ? { hook_name: hookName } : {})
         });
         return;
@@ -326,7 +327,12 @@ export class TriologueLite {
     // preceding user host in memory, once as a 'merge' transcript piece — so a
     // live payload and a collated replay disagreed. Readers also anchor on the
     // '[CATEGORY] ' prefix, and a merged note makes lastUserQuery ambiguous.
-    this.addMessage({ role: 'user', content: noteContent, ...(hookName ? { hook_name: hookName } : {}) });
+    this.addMessage({
+      role: 'user',
+      content: noteContent,
+      note_category: category,
+      ...(hookName ? { hook_name: hookName } : {})
+    });
   }
 
   /**

@@ -151,22 +151,6 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
     }
   }
 
-  // 2b. Inject team status overview so lead sees deadlines without calling tm_print.
-  //     Deliberately NOT deduped: printTeam() is one-write-many-read (stop.ts,
-  //     tm_print, /team, the child IPC, and the llm.ts hasTeam probe all call it),
-  //     so a consume-style one-shot token would be burned by any sibling reader
-  //     (e.g. a user-issued /team) and the next COLLECT would report nothing.
-  //     The header/footer carry the attribution + action framing instead; a live
-  //     re-emit is cheap and keeps the lead oriented even after a compaction
-  //     summarizes an earlier instance away. See "#18 A-only".
-  const teamStatus = await ctx.team.printTeam();
-  if (teamStatus !== 'No teammates.') {
-    triologue.note(
-      'SYSTEM',
-      `[team status — snapshot, informational]\n${teamStatus}\n\ntm_print for a fresh read; elapsed ETAs are not actionable.`
-    );
-  }
-
   // 2c. Drain steering queue (webui-originated): consume any steering notes
   //     the user queued during this run and inject them as a REMINDER note.
   //     Unlike the PROMPT synthesis path (which merges stale notes with a
@@ -273,9 +257,14 @@ export async function handleCollect(env: MachineEnv, turn: TurnVars, _chat: Chat
       loopEvents.emit('confusion_score', { score: confusionScoreEntry });
     }
 
-    // 1–2. Drain all external inputs (child questions, mail, team status,
-    //      steering notes, headless first-query marker, file uploads).
+    // 1–2. Drain all external inputs (child questions, mail, steering notes,
+    //      headless first-query marker, file uploads).
     //      Returns the freshest steering note (the query source for step 5).
+    //      Team status is NOT drained here: it is a recurring nudge owned by
+    //      the `team-status` reminder in src/loop/reminders.ts (step 4), which
+    //      supplies the cadence AND the phantom TTL. Emitting it here as well
+    //      duplicated it every 3rd pass, and this copy carried no phantom
+    //      marker, so it never aged out.
     const { firstSteerNote } = await collectMailsAndInput(env);
 
     // 3. Hint round. May short-circuit the pass (STOP on ESC).

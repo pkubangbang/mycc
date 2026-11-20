@@ -1,6 +1,6 @@
 # Phantom Notes: TTL-Evicted Reminders and Egress Coalescing
 
-> **Status:** Proposed (design approved, not implemented)
+> **Status:** Implemented (`28223c4`, review fixes follow)
 > **Date:** 2026-11-20
 > **Branch:** `refactor/phantom-memory`
 > **Scope:** `src/types.ts`, `src/loop/triologue.ts`, `src/loop/triologue/store.ts`,

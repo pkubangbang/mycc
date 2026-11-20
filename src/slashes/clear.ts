@@ -8,6 +8,7 @@ import { Triologue } from '../loop/triologue.js';
 import { clearWrapUp } from '../loop/wrap-up-state.js';
 import { skillSuggester, beginFreshSession } from '../loop/states/collect-skill.js';
 import { reconcileServeStateAfterClear } from '../loop/states/collect.js';
+import { resetReminders } from '../loop/reminders.js';
 
 export const clearCommand: SlashCommand = {
   name: 'clear',
@@ -46,6 +47,11 @@ export const clearCommand: SlashCommand = {
     // context this watch exists to provide (PR #28 review P3 F4). The next
     // COLLECT re-reports the live state once.
     reconcileServeStateAfterClear();
+    // Same reasoning for the reminder registry: its `states` map is
+    // process-global, so a stale cadence or `lastBody` from before /clear would
+    // suppress the first post-clear emission of the todo list (and its
+    // `[preventStop]` guards).
+    resetReminders();
     console.log(chalk.green('Conversation, todos, and issues cleared. Starting fresh.'));
   }
 };

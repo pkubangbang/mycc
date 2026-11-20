@@ -492,6 +492,7 @@ export class Triologue {
         this.addMessage({
           role: 'user',
           content: `[${category}] ${message}`,
+          note_category: category,
           ...(hookName ? { hook_name: hookName } : {}),
           ...(phantom ? { phantom } : {})
         });
@@ -509,6 +510,7 @@ export class Triologue {
     this.addMessage({
       role: 'user',
       content: noteContent,
+      note_category: category,
       ...(hookName ? { hook_name: hookName } : {}),
       ...(phantom ? { phantom } : {})
     });

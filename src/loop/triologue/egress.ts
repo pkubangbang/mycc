@@ -23,20 +23,25 @@
  * knows which is which, so only the producer marks it.
  */
 
-import type { Message, NoteCategory } from '../../types.js';
+import type { Message } from '../../types.js';
 
 /**
- * The `[CATEGORY] ` prefixes that mark a note on the wire (types.ts
- * NoteCategory). A note is one of these; a genuine user query is neither, which
- * is exactly what keeps a real query from being absorbed into a note blob.
+ * True when the message is a system-generated note.
+ *
+ * PROVENANCE, NOT CONTENT. This used to test the `[CATEGORY] ` content prefix,
+ * which the user can type: a genuine query beginning with "[SYSTEM] …" was then
+ * classified as a note and merged into the preceding blob, breaking the
+ * "a real query is never absorbed" guarantee. `note_category` is stamped by
+ * `triologue.note()` — the only producer — so a user-authored message can never
+ * carry it.
+ *
+ * The marker is the SOLE authority — there is deliberately no second check
+ * against the content prefix. `note()` bakes the prefix in itself, so a message
+ * carrying the marker but not the prefix is a producer bug, not a case worth
+ * silently reclassifying as user text.
  */
-const NOTE_PREFIX_RE = new RegExp(
-  `^\\[(?:${(['REMINDER', 'HINT', 'URGENT', 'SYSTEM', 'MAIL'] as NoteCategory[]).join('|')})\\] `
-);
-
-/** True when the message begins with a note category prefix. */
 export function isNoteMessage(m: Message): boolean {
-  return m.role === 'user' && typeof m.content === 'string' && NOTE_PREFIX_RE.test(m.content);
+  return m.role === 'user' && typeof m.content === 'string' && m.note_category !== undefined;
 }
 
 /**
