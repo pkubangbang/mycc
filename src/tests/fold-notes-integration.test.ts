@@ -109,3 +109,64 @@ describe('foldStaleNudges wired into MessageStore.getFullMessages', () => {
     expect(out).toContain('[HINT] Problem Analysis: x');
   });
 });
+
+/**
+ * /token must measure what the LLM sees: the conversation share and the
+ * `messages` count come from the FOLDED projection, never from the raw array.
+ * A fold that /token cannot see would make the budget report disagree with the
+ * very payload it claims to describe.
+ */
+const nudge = (body: string): Message =>
+  ({ role: 'user', content: `[NUDGE] ${body}` }) as Message;
+const assistant = (content: string): Message => ({ role: 'assistant', content }) as Message;
+
+describe('token accounting reads the folded projection', () => {
+  it('getConversationForProvider() excludes stale nudge text', () => {
+    const store = new MessageStore();
+    store.push(assistant('a0'));
+    store.push(nudge(`nudge-1 ${'x'.repeat(400)}`));
+    // One later assistant row is what makes the first nudge stale
+    // (STALE_ASSISTANT_ROWS = 1).
+    store.push(assistant('a1'));
+
+    const raw = store.getRaw();
+    const outbound = store.getConversationForProvider();
+
+    // Same rows, same order — only the stale nudge's content differs.
+    expect(outbound.length).toBe(raw.length);
+    expect(outbound.map((m) => m.role)).toEqual(raw.map((m) => m.role));
+    expect(outbound.map((m) => m.content)).toContain(FOLDED_NUDGE_TEXT);
+    // The 400-char body is gone from the outbound view, still present raw.
+    expect(outbound.some((m) => String(m.content).includes('xxxx'))).toBe(false);
+    expect(raw.some((m) => String(m.content).includes('xxxx'))).toBe(true);
+  });
+
+  it('keeps a nudge that no later assistant row has superseded', () => {
+    const store = new MessageStore();
+    store.push(assistant('a0'));
+    store.push(nudge('current-1'));
+
+    expect(store.getConversationForProvider().map((m) => m.content)).toContain('[NUDGE] current-1');
+  });
+
+  it('getContextBudget reports the folded conversation, not the raw one', async () => {
+    const { Triologue } = await import('../loop/triologue.js');
+    const { estimateTokensForMessages } = await import('../utils/token.js');
+    const t = new Triologue({ tokenThreshold: 50000 });
+    t.user('go');
+    t.agent('a1');
+    t.note('NUDGE', `big ${'y'.repeat(400)}`);
+    t.agent('a2');
+    t.note('NUDGE', 'small');
+    t.agent('a3');
+
+    const budget = t.getContextBudget([]);
+    const raw = estimateTokensForMessages(t.getMessagesRaw());
+    // The fold's effect, measured on the outbound payload: the /token figure
+    // must describe the conversation the model sees, not the raw array.
+    const folded = estimateTokensForMessages(t.getMessages()) - budget.projectContext;
+
+    expect(budget.conversation).toBe(folded);
+    expect(budget.conversation).toBeLessThan(raw);
+  });
+});

@@ -1118,7 +1118,10 @@ export class Triologue {
       : this.store.getSystemMessages();
     const system = estimateTokensForMessages(systemMessages);
     const projectContext = estimateTokensForMessages(this.store.getProjectContextMessages());
-    const conversation = estimateTokensForMessages(this.store.getRaw());
+    // Measure the FOLDED projection, not the raw array: stale NUDGE notes are
+    // elided on the outbound path (getFullMessages → foldStaleNudges), so the
+    // raw text would overstate what the next LLM call carries.
+    const conversation = estimateTokensForMessages(this.store.getConversationForProvider());
 
     // Tools schema — serialize each entry and estimate like a message body.
     const toolsTokens = estimateToolSchemaTokens(tools);

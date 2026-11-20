@@ -63,9 +63,8 @@ interface BudgetTriologue {
   /** The system prompt currently set on the store (null before the first LLM
    *  call of a session, since llm.ts builds it lazily per turn). */
   getSystemPrompt?(): string | null;
-  /** Legacy/conversation-only counter, shown for reference. */
+  /** Legacy/conversation-only counter (raw, un-folded), shown for reference. */
   getTokenCount?(): number;
-  getMessagesRaw?(): unknown[];
 }
 
 /**
@@ -165,11 +164,6 @@ export const tokenCommand: SlashCommand = {
     row('project context', budget.projectContext);
     row('conversation', budget.conversation);
     row(`tools (${tools.length})`, budget.tools);
-
-    const messages = typeof triologue.getMessagesRaw === 'function' ? triologue.getMessagesRaw().length : undefined;
-    if (messages !== undefined) {
-      console.log(chalk.gray(`  ${'messages'.padEnd(16)}${messages.toLocaleString().padStart(10)}`));
-    }
 
     console.log(
       chalk.gray(`\n  remaining: ${Math.max(0, allowed - budget.total).toLocaleString()} tokens before auto-compact`)

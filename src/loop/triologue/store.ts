@@ -409,6 +409,24 @@ export class MessageStore {
   }
 
   /**
+   * The OUTBOUND conversation: the conversation segment exactly as it will be
+   * sent — hole-filtered, then passed through {@link foldStaleNudges}.
+   *
+   * Exists so token-budget accounting can measure the conversation without
+   * re-deriving the fold rule: /token must report what the LLM actually sees,
+   * and getRaw() (true text) overstates it by the size of every folded NUDGE.
+   * getFullMessages() = system + projectContext + THIS, so the two stay
+   * consistent by construction.
+   *
+   * NOT for the journal, livelog, compaction summarizer (which persists true
+   * text) or tokenCount — those keep reading getRaw() by design
+   * (docs/loop/note-taxonomy.md §2).
+   */
+  getConversationForProvider(): Message[] {
+    return foldStaleNudges(this.getRaw());
+  }
+
+  /**
    * The project-context contributor to the full request (README, mindmap
    * instructions, platform/calendar, hook info, …), filtered defensively.
    * Used by token-budget accounting so projectContext can be measured apart

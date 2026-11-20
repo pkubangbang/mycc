@@ -18,7 +18,7 @@ possible from `category + staleness` alone.
 
 | Non-goal | Why |
 |---|---|
-| **Saving tokens** | Folding does not change message count, role sequence, or `tokenCount`. The real token weight is `tool` rows holding file contents, not notes. The benefit here is **attention hygiene** only. |
+| **Saving tokens** | Folding does not change the stored message count, role sequence, or `tokenCount`. The real token weight is `tool` rows holding file contents, not notes. The benefit here is **attention hygiene** only — though `/token` does report the folded conversation, because that is the payload the provider receives (§6). |
 | **Teammates** | Intended, but **not achieved structurally** — `TriologueLite` does own a `MessageStore`, so it runs the fold too. It is inert only because teammate producers emit `REMINDER`, never `NUDGE`. See §7 and §11. |
 | **Folding event-like notes** | Mail, steering, uploads, hints, interrupts, and serve-state transitions cannot be recomputed. Dropping one loses information permanently. See §4. |
 
@@ -160,18 +160,33 @@ The message row is kept; only its `content` is replaced:
 
 ```
 triologue.getMessages()                    src/loop/triologue.ts:1006
-  └→ store.getFullMessages()              src/loop/triologue/store.ts:439   ← the projection the model sees
+  └→ store.getFullMessages()               src/loop/triologue/store.ts:457   ← the projection the model sees
        ├─ sysPrompt
        ├─ projectContext                   ← never folded (not conversation)
-       └─ conversation                     ← foldStaleNudges(this.messages) — pure, returns a projection copy
+       └─ conversation                     ← store.getConversationForProvider()
+                                              = foldStaleNudges(getRaw()) — pure, returns a projection copy
 ```
 
 `getFullMessages()` is documented in-tree as "the OUTBOUND path (`retryChat`,
 explorer-agent, esc-wrap-up)" and "a single chokepoint for ALL message access",
-so no projection can bypass the fold.
+so no projection can bypass the fold. The conversation segment is materialised
+by `store.getConversationForProvider()` so the fold rule has ONE site.
+
+**`/token` measures the same projection — through ONE read.** `triologue.getContextBudget()`
+returns both `conversation` (tokens) and `conversationMessages` (rows), estimated
+from the same `store.getConversationForProvider()` array, and the `/token` report
+prints both from that single object. There is deliberately **no** message
+accessor for `/token` to call: two reads could describe two payloads, and the
+"messages" number would then qualify a token figure it did not come from. The
+figure therefore describes the payload the next LLM call sends, not the raw
+history. (Before this, both read `getRaw()`, so `/token` overstated the
+conversation by the size of every folded nudge's body.)
 
 Untouched by construction: `getMessagesRaw()`, `at()`, `length`, `tokenCount`,
-the journal, and the display/livelog path.
+the journal, and the display/livelog path. `getContextBudget` deliberately does
+NOT change `tokenCount`/`needsCompact()`: compaction must keep firing on the
+stored array (§2 "Non-goals: saving tokens" still holds — the fold removes no
+message, so the budget the compaction threshold guards is unchanged).
 
 ## 7. Teammates — the original claim was wrong
 
