@@ -14,6 +14,7 @@ import type { Message, ToolCall } from '../../types.js';
 import type { Role } from './types.js';
 import { estimateTokens, estimateTokensForMessages } from '../../utils/token.js';
 import { agentIO } from '../agent-io.js';
+import { projectForProvider } from './egress.js';
 
 /**
  * Message storage layer.
@@ -447,9 +448,12 @@ export class MessageStore {
       if (m && typeof m === 'object' && m.role) result.push(toProviderMessage(m));
     }
 
-    // Conversation history
-    for (const m of this.messages) {
-      if (m && typeof m === 'object' && m.role) result.push(toProviderMessage(m));
+    // Conversation history, projected for the provider: aged-out phantom
+    // notes dropped, adjacent note runs merged into one user message
+    // (triologue/egress.ts). The store itself is untouched — this is the
+    // ONLY place the outbound view diverges from the audit record.
+    for (const m of projectForProvider(this.getRaw())) {
+      result.push(toProviderMessage(m));
     }
 
     return result;

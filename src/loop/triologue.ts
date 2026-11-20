@@ -9,7 +9,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { Message, ToolCall, Tool, NoteCategory } from '../types.js';
+import type { Message, ToolCall, Tool, NoteCategory, PhantomMark } from '../types.js';
 import { ResultTooLargeError } from '../types.js';
 import { getLongtextDir, ensureDirs } from '../config.js';
 import { agentIO } from './agent-io.js';
@@ -20,6 +20,21 @@ import { type PieceKind } from './triologue/transcript.js';
 import { truncateAndRecount } from './triologue/truncate.js';
 
 export type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } from './triologue/types.js';
+
+/**
+ * Optional metadata for `Triologue.note()`.
+ *
+ * Both fields used to be positional concerns (`hookName` was the 3rd
+ * parameter); they are grouped here because a note's PROVENANCE (who emitted
+ * it) and its LIFETIME (how long the provider view keeps it) are both
+ * runtime-only metadata, never content.
+ */
+export interface NoteOptions {
+  /** Originating hook skill name (minifier attribution: `ux[hookName]|`). */
+  hookName?: string;
+  /** Phantom membership; see types.ts Message.phantom. */
+  phantom?: PhantomMark;
+}
 
 import { MessageStore } from './triologue/store.js';
 import { estimateTokensForMessages, estimateToolSchemaTokens } from '../utils/token.js';
@@ -40,7 +55,7 @@ import { abortWrapUpCapsule } from './wrap-up-state.js';
  */
 type DeferredInput =
   | { kind: 'user'; text: string }
-  | { kind: 'note'; category: NoteCategory; hookName?: string; text: string };
+  | { kind: 'note'; category: NoteCategory; hookName?: string; text: string; phantom?: PhantomMark };
 
 export class Triologue {
   private store: MessageStore = new MessageStore();
@@ -383,7 +398,7 @@ export class Triologue {
       if (item.kind === 'user') {
         this.user(item.text);
       } else {
-        this.note(item.category, item.text, item.hookName);
+        this.note(item.category, item.text, { hookName: item.hookName, phantom: item.phantom });
       }
     }
   }
@@ -450,15 +465,23 @@ export class Triologue {
    *   note is stored as a SEPARATE message (never combined with the last user
    *   message) and tagged with `hook_name` so the minifier can emit `ux[hookName]|`.
    *   This preserves per-hook attribution when multiple hooks fire in one move.
+   * @param opts.hookName - The originating hook skill name (see above).
+   * @param opts.phantom - Optional phantom membership (types.ts
+   *   Message.phantom). Set ONLY by a producer that knows the note is a
+   *   superseded state re-snapshot — never an event. It travels with the
+   *   message into the deferred queue, so a note held back behind outstanding
+   *   tool calls keeps its family and TTL on replay.
    */
-  note(category: NoteCategory, message: string, hookName?: string): void {
+  note(category: NoteCategory, message: string, opts?: NoteOptions): void {
+    const phantom = opts?.phantom;
+    const hookName = opts?.hookName;
     // Guard 1 — tool_calls outstanding: DEFER (same invariant as user(); the
     // note must not be interposed between the assistant's tool_calls and their
     // results). Deferring here ALSO prevents the cascade: because nothing is
     // appended, tool() still sees lastRole==='assistant' and tool_no_assistant
     // never fires a second synthetic assistant.
     if (this.ledger.size > 0) {
-      this.deferInput({ kind: 'note', category, text: message, hookName });
+      this.deferInput({ kind: 'note', category, text: message, hookName, phantom });
       return;
     }
     const lastRole = this.getLastRole();
@@ -469,7 +492,8 @@ export class Triologue {
         this.addMessage({
           role: 'user',
           content: `[${category}] ${message}`,
-          ...(hookName ? { hook_name: hookName } : {})
+          ...(hookName ? { hook_name: hookName } : {}),
+          ...(phantom ? { phantom } : {})
         });
         return;
       }
@@ -482,7 +506,12 @@ export class Triologue {
     // Legality: a note lands only after an assistant with no outstanding
     // tool_calls (the ledger guard + the tool()/skipPendingTools flushes
     // guarantee it); tpFix recovers for any provider that objects.
-    this.addMessage({ role: 'user', content: noteContent, ...(hookName ? { hook_name: hookName } : {}) });
+    this.addMessage({
+      role: 'user',
+      content: noteContent,
+      ...(hookName ? { hook_name: hookName } : {}),
+      ...(phantom ? { phantom } : {})
+    });
   }
 
   /**

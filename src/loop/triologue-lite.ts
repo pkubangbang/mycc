@@ -248,7 +248,7 @@ export class TriologueLite {
       if (item.kind === 'user') {
         this.user(item.text);
       } else {
-        this.note(item.category, item.text, item.hookName);
+        this.note(item.category, item.text, { hookName: item.hookName });
       }
     }
   }
@@ -294,7 +294,8 @@ export class TriologueLite {
    *   note is stored as a SEPARATE message (never combined with the last user
    *   message) and tagged with `hook_name`.
    */
-  note(category: NoteCategory, message: string, hookName?: string): void {
+  note(category: NoteCategory, message: string, opts?: { hookName?: string }): void {
+    const hookName = opts?.hookName;
     // Guard 1 — tool_calls outstanding: DEFER (same invariant as user(); a note
     // must not be interposed between the assistant's tool_calls and their
     // results). Deferring here also prevents the cascade: because nothing is

@@ -247,21 +247,21 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
   //     a clean turn.
   it('should reset TurnVars on PROMPT re-entry after the ESC route through STOP from LLM', async () => {
     const deps = createMockDeps();
-    const promptTurnVars: { isFirstRound: boolean; nextTodoNudge: number }[] = [];
+    const promptTurnVars: { isFirstRound: boolean; lastUserQuery: string }[] = [];
     let promptCalls = 0;
 
     const handlers: Record<AgentState, StateHandler> = {
       [AgentState.PROMPT]: vi.fn(async (_env, turn) => {
         promptCalls++;
         // Mutate turn to detect whether the SAME object is reused (would mean no reset)
-        promptTurnVars.push({ isFirstRound: turn.isFirstRound, nextTodoNudge: turn.nextTodoNudge });
+        promptTurnVars.push({ isFirstRound: turn.isFirstRound, lastUserQuery: turn.lastUserQuery });
         return promptCalls === 1 ? AgentState.COLLECT : null;
       }),
       [AgentState.SLASH]: vi.fn(),
       [AgentState.COLLECT]: vi.fn(async (_env, turn) => {
         // COLLECT runs in the same turn as the originating PROMPT — flip a field
         // to confirm the post-ESC PROMPT gets a fresh object, not this mutated one.
-        turn.nextTodoNudge = 99;
+        turn.lastUserQuery = 'leaked';
         return AgentState.LLM;
       }),
       [AgentState.LLM]: vi.fn(async () => AgentState.STOP), // ESC → STOP
@@ -273,10 +273,10 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
 
     await buildMachine(deps, handlers).run();
 
-    // Both PROMPT calls should have the default nextTodoNudge=3 (fresh TurnVars).
-    // The COLLECT mutation (99) must NOT leak into the second PROMPT.
-    expect(promptTurnVars[0].nextTodoNudge).toBe(3);
-    expect(promptTurnVars[1].nextTodoNudge).toBe(3);
+    // Both PROMPT calls should have a FRESH TurnVars (lastUserQuery cleared).
+    // The COLLECT mutation ('leaked') must NOT leak into the second PROMPT.
+    expect(promptTurnVars[0].lastUserQuery).toBe('');
+    expect(promptTurnVars[1].lastUserQuery).toBe('');
     expect(promptTurnVars[1].isFirstRound).toBe(true);
   });
 

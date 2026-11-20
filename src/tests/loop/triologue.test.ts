@@ -178,7 +178,7 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
 
   it('hook notes NEVER combine: each hook note is its own new piece', () => {
     triologue.user('task');
-    triologue.note('MAIL', 'from hook', 'some-hook');
+    triologue.note('MAIL', 'from hook', { hookName: 'some-hook' });
     expect(captured).toHaveLength(2);
     const hookPiece = captured[1].msg as Captured['msg'] & {
       hook_name?: string;
@@ -1101,3 +1101,4 @@ describe('Triologue sequence conformance (60 cases, provider-measured)', () => {
     expect(illegalSequence([U('q1'), U('q2'), U('q3')])).toBe(false);
   });
 });
+

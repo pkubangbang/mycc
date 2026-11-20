@@ -27,9 +27,6 @@ import type { Triologue } from '../../loop/triologue.js';
 export function createTurnVars(overrides: Partial<TurnVars> = {}): TurnVars {
   return {
     isFirstRound: true,
-    nextTodoNudge: 3,
-    lastTodoState: '',
-    nextBriefNudge: 5,
     lastUserQuery: '',
     lastBriefMessage: '',
     lastHintFocus: '',
@@ -228,7 +225,7 @@ export function createMockMachineEnv(options: MockMachineEnvOptions): MachineEnv
       getDuplicationReport: vi.fn(() => ''),
       clear: vi.fn(),
       ...options.requestEmbeddingTracker
-    } as unknown as RequestEmbeddingTracker,
-    nextWtNudge: 0
+    } as unknown as RequestEmbeddingTracker
   };
 }
+

@@ -165,7 +165,7 @@ describe('TriologueLite', () => {
 
     it('note() keeps hook-originated notes as separate messages', () => {
       t.user('task');
-      t.note('REMINDER', 'hook fired', 'my-hook');
+      t.note('REMINDER', 'hook fired', { hookName: 'my-hook' });
       const raw = t.getMessagesRaw();
       expect(raw).toHaveLength(2);
       expect(raw[1].hook_name).toBe('my-hook');
@@ -571,3 +571,4 @@ describe('TriologueLite', () => {
     });
   });
 });
+

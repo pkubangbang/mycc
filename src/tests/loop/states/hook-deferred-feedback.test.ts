@@ -84,7 +84,7 @@ describe('handleHook — deferred hook feedback (row lead-002)', () => {
     expect(triologue.note).toHaveBeenCalledWith(
       'REMINDER',
       'Hook "lint-after-edit" deferred this message: lint reported 2 errors',
-      'lint-after-edit'
+      { hookName: 'lint-after-edit' }
     );
     expect(chat.hookFeedbackDelivered).toBe(true);
   });

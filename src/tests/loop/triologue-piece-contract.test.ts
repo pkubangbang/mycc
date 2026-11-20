@@ -180,7 +180,7 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
 
   it('hook notes NEVER combine: each hook note is its own new piece', () => {
     triologue.user('task');
-    triologue.note('MAIL', 'from hook', 'some-hook');
+    triologue.note('MAIL', 'from hook', { hookName: 'some-hook' });
     expect(captured).toHaveLength(2);
     const hookPiece = captured[1].msg as Captured['msg'] & {
       hook_name?: string;
@@ -335,3 +335,4 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     expect(captured[4].seen[1].content).toBe('[HINT] h'); // the note stands alone
   });
 });
+

@@ -74,16 +74,11 @@ export interface MachineEnv {
   crossroadOccurred: boolean;
   /** Semantic duplication tracker for embedding-based confusion scoring */
   requestEmbeddingTracker: RequestEmbeddingTracker;
-  /** Countdown to the next worktree cleanup nudge (0 = no worktrees present) */
-  nextWtNudge: number;
 }
 
 /** Turn lifetime — fresh when entering PROMPT from STOP/startup, persists across COLLECT→LLM→HOOK iterations */
 export interface TurnVars {
   isFirstRound: boolean;
-  nextTodoNudge: number;
-  lastTodoState: string;
-  nextBriefNudge: number;
   /** User's last real query, preserved across compaction */
   lastUserQuery: string;
   /** Last brief message (brief source) — agent's self-reported focus, set in TOOL state */
@@ -215,8 +210,7 @@ export class AgentStateMachine {
       sessionFilePath,
       pendingSlashQuery: null,
       crossroadOccurred: false,
-      requestEmbeddingTracker,
-      nextWtNudge: 0
+      requestEmbeddingTracker
     };
     // Bind the hint-round singleton to the live env for the main process.
     // Children never run a hint round (they mail the lead), so they stay
@@ -256,9 +250,6 @@ export class AgentStateMachine {
   async run(): Promise<void> {
     let turn: TurnVars = {
       isFirstRound: true,
-      nextTodoNudge: 3,
-      lastTodoState: '',
-      nextBriefNudge: 5,
       lastUserQuery: '',
       lastBriefMessage: '',
       lastHintFocus: '',
@@ -292,9 +283,6 @@ export class AgentStateMachine {
       if ((state === AgentState.PROMPT || state === AgentState.AWAIT) && prevState !== AgentState.SLASH) {
         turn = {
           isFirstRound: true,
-          nextTodoNudge: 3,
-          lastTodoState: '',
-          nextBriefNudge: 5,
           lastUserQuery: '',
           lastBriefMessage: '',
           lastHintFocus: '',

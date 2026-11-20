@@ -58,6 +58,7 @@
 
 import type { MachineEnv, TurnVars } from './state-machine.js';
 import type { SequenceEvent } from '../hook/sequence.js';
+import type { NoteOptions } from './triologue.js';
 import { retryChat, MODEL } from '../engine/chat-provider.js';
 import type { NoteCategory, WikiModule, SearchResult } from '../types.js';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
@@ -571,7 +572,7 @@ export class HintRound {
       hintLines.push('');
       hintLines.push('Use the `brief` tool to post a status update.');
 
-      this.note('HINT', hintLines.join('\n'));
+      this.note('HINT', hintLines.join('\n'), { phantom: { family: 'hint', ttl: 1 } });
 
       return { status: 'success', focusOn: hintData.focus_on };
     } catch (err) {
@@ -600,8 +601,8 @@ export class HintRound {
   }
 
   /** Push a note into the bound triologue (no-op when unbound). */
-  private note(category: NoteCategory, message: string): void {
-    this.env?.triologue.note(category, message);
+  private note(category: NoteCategory, message: string, opts?: NoteOptions): void {
+    this.env?.triologue.note(category, message, opts);
   }
 
   /**

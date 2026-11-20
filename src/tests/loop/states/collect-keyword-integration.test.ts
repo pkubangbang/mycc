@@ -480,7 +480,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     await handleCollect(env, turn, createChatData());
 
-    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('mycc-online-hotfix'));
+    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('mycc-online-hotfix'), expect.anything());
   });
 
   it('RANKING: a weak 7-pt match needs a strong semantic hit to pass', async () => {
@@ -506,7 +506,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     await handleCollect(env, turn, createChatData());
 
-    expect(triologue.note).not.toHaveBeenCalledWith('HINT', expect.anything());
+    expect(triologue.note).not.toHaveBeenCalledWith('HINT', expect.anything(), expect.anything());
   });
 
   it('RANKING: a pure-semantic skill (0 keyword points) can NEVER surface', async () => {
@@ -519,7 +519,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     await handleCollect(env, turn, createChatData());
 
-    expect(triologue.note).not.toHaveBeenCalledWith('HINT', expect.anything());
+    expect(triologue.note).not.toHaveBeenCalledWith('HINT', expect.anything(), expect.anything());
   });
 
   it('RANKING: wiki failure degrades to keyword-only ranking (no throw)', async () => {
@@ -535,7 +535,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     await handleCollect(env, turn, createChatData());
 
-    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('mycc-online-hotfix'));
+    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('mycc-online-hotfix'), expect.anything());
   });
 
   it("P1 SCOPE: another scope's wiki row does NOT boost the local same-named skill", async () => {
@@ -555,7 +555,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     await handleCollect(env, turn, createChatData());
 
     // No boost applied → 10 pts is NOT > 10 → nothing surfaces → no HINT.
-    expect(triologue.note).not.toHaveBeenCalledWith('HINT', expect.anything());
+    expect(triologue.note).not.toHaveBeenCalledWith('HINT', expect.anything(), expect.anything());
   });
 
   it("P1 SCOPE positive control: the MATCHING scope's row DOES boost (HINT injected)", async () => {
@@ -568,7 +568,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     await handleCollect(env, turn, createChatData());
 
-    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('code-review'));
+    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('code-review'), expect.anything());
   });
 
   // ---------------------------------------------------------------------------
@@ -622,7 +622,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     await handleCollect(env, turn, createChatData());
 
-    expect(triologue.note).not.toHaveBeenCalledWith('HINT', expect.anything());
+    expect(triologue.note).not.toHaveBeenCalledWith('HINT', expect.anything(), expect.anything());
     // The success-path marking is PRESERVED (unlike the old clearThrottle(),
     // which reset the cursor to '' and re-fired extraction on the next pass).
     expect(skillSuggester.getLastQuery()).toBe('help me test things');
@@ -690,7 +690,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     expect(mockedExtractKeywords).toHaveBeenCalledTimes(1);
     expect(skillSuggester.getRetryBudget()).toBe(0);
-    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.anything());
+    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.anything(), expect.anything());
   });
 
   // ---------------------------------------------------------------------------
@@ -800,3 +800,4 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     expect(result).toBe(AgentState.LLM);
   });
 });
+

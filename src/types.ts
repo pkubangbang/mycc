@@ -82,6 +82,36 @@ export interface Message extends ProviderMessage {
    * marked — it is genuine context and must stay readable.
    */
   synthetic?: boolean;
+
+  /**
+   * Phantom membership: this note is a superseded STATE RE-SNAPSHOT, not an
+   * event, so the provider view may drop it once it has aged out.
+   *
+   * Set by the PRODUCER (the code that knows what the note means), never
+   * inferred downstream. Read ONLY by the egress projection
+   * (triologue/store.ts `getFullMessages` → triologue/egress.ts): the store,
+   * `getRaw()`, the JSONL backlog and the WebUI projection keep every note,
+   * so hook conditions, the skill dedup ledger and the hint analyzer's
+   * self-escalation are unaffected.
+   *
+   * `ttl` is measured in ASSISTANT TURNS after this message. ABSENT means
+   * never expires. It is deliberately not `Infinity`: `emit()` serialises the
+   * message into the transcript, and `JSON.stringify(Infinity)` is `null`, so
+   * a restored session would read it as "expire immediately".
+   */
+  phantom?: PhantomMark;
+}
+
+/**
+ * The phantom marker carried by a `Message` (see `Message.phantom`).
+ *
+ * `family` is the reminder identity — a grouping key for debugging, never
+ * shown to the model.
+ */
+export interface PhantomMark {
+  family: string;
+  /** Assistant turns of survival after this message; absent = never expires. */
+  ttl?: number;
 }
 
 // ============================================================================

@@ -408,7 +408,7 @@ export class SkillSuggester {
       'Discipline: this is a silent nudge. If a skill helps the current task, load it with skill_load; otherwise continue.'
     );
 
-    triologue.note('HINT', lines.join('\n'));
+    triologue.note('HINT', lines.join('\n'), { phantom: { family: 'skill-hint', ttl: 6 } });
   }
 
   // ── Ranking (delegates to the shared scorer) ──────────────────────────

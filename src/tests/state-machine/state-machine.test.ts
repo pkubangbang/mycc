@@ -276,9 +276,8 @@ describe('AgentStateMachine', () => {
 
     // First PROMPT call should have fresh TurnVars
     expect(turnVarsHistory[0].isFirstRound).toBe(true);
-    expect(turnVarsHistory[0].nextTodoNudge).toBe(3);
-    expect(turnVarsHistory[0].nextBriefNudge).toBe(5);
-    expect(turnVarsHistory[0].lastTodoState).toBe('');
+    // Nudge cadences no longer live on TurnVars — they moved to the reminder
+    // registry (src/loop/reminders.ts), keyed by reminder id.
     expect(turnVarsHistory[0].lastUserQuery).toBe('');
     expect(turnVarsHistory[0].lastBriefMessage).toBe('');
     expect(turnVarsHistory[0].lastHintFocus).toBe('');
@@ -570,9 +569,8 @@ describe('AgentStateMachine', () => {
         expect(env.requestEmbeddingTracker).toBe(deps.requestEmbeddingTracker);
         // turn starts fresh
         expect(turn.isFirstRound).toBe(true);
-        expect(turn.nextTodoNudge).toBe(3);
-        expect(turn.nextBriefNudge).toBe(5);
-        expect(turn.lastTodoState).toBe('');
+        // Nudge cadences moved to the reminder registry (src/loop/reminders.ts);
+        // TurnVars no longer carries them.
         expect(turn.lastUserQuery).toBe('');
         expect(turn.lastBriefMessage).toBe('');
         expect(turn.lastHintFocus).toBe('');

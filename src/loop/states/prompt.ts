@@ -22,6 +22,7 @@ import chalk from 'chalk';
 import * as fs from 'fs';
 import * as path from 'path';
 import { AgentState } from '../state-machine.js';
+import { rearmReminder } from '../reminders.js';
 import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
 import { loader } from '../../context/shared/loader.js';
 import { openMultilineEditor } from '../../utils/multiline-input.js';
@@ -233,7 +234,7 @@ export async function handlePrompt(env: MachineEnv, turn: TurnVars, _chat: ChatD
   autoState.resetStreak();
 
   // Reset brief nudge when entering PROMPT state (start of new turn)
-  turn.nextBriefNudge = 5;
+  rearmReminder('brief-nudge');
 
   let query: string | null;
 

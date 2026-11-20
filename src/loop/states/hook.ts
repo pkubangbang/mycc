@@ -139,7 +139,7 @@ function injectDeferredHookMessages(
     triologue.note(
       'REMINDER',
       dm.hookName ? `Hook "${dm.hookName}" deferred this message: ${dm.message}` : dm.message,
-      dm.hookName
+      { hookName: dm.hookName }
     );
   }
   // The pass-scoped flag is how the no-calls branch knows a COLLECT loop-back

@@ -13,8 +13,8 @@ import { autoState } from '../auto-state.js';
 import { isVerbose } from '../../config.js';
 import { isTransientError } from '../../engine/chat-helpers.js';
 import { hintRound } from '../hint-round.js';
+import { runReminders } from '../reminders.js';
 import { skillSuggester } from './collect-skill.js';
-import { listWorktrees } from '../../context/worktree-store.js';
 import { getSteeringManager } from '../steering-manager.js';
 import { tryGetServeHub } from '../../serve/serve-registry.js';
 import { isWebUiUp } from '../loop-events.js';
@@ -75,7 +75,7 @@ export function reconcileServeStateAfterClear(): void {
  *
  * @returns the freshest steering note drained this pass (`firstSteerNote`),
  *          or null if none. This is the query source for
- *          skillSuggester.suggestSkill (step 6) — steering notes take
+ *          skillSuggester.suggestSkill (step 5) — steering notes take
  *          priority over lastUserQuery as the freshest mid-task direction.
  */
 async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: string | null }> {
@@ -142,14 +142,12 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
       // them as two attributed notes. Welding them made the mail wear the
       // [URGENT] category and buried its sender/reply routing under an
       // interrupt notice about the user's own ESC.
-      triologue.note(
-        'URGENT',
-        'User interrupted (ESC). Finish the current step and stop; do NOT start new work.',
-        'esc'
-      );
-      triologue.note('MAIL', mailContent);
+      triologue.note('URGENT', 'User interrupted (ESC). Finish the current step and stop; do NOT start new work.', {
+        hookName: 'esc'
+      });
+      triologue.note('MAIL', mailContent, { phantom: { family: 'mail' } });
     } else {
-      triologue.note('MAIL', mailContent);
+      triologue.note('MAIL', mailContent, { phantom: { family: 'mail' } });
     }
   }
 
@@ -254,114 +252,7 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
 }
 
 /**
- * Step 4: todo + peer-channel nudging with state tracking.
- *
- * The guard fires when there are open todos OR an active peer channel (a
- * joined channel with a fresh peer). Channel state is appended to the same
- * nudge so the LLM sees peer context without a separate mechanism (keeps
- * todo.ts pure — channel info comes from ctx.peer).
- *
- * Side effects on `turn`: `nextTodoNudge` (decremented / reset) and
- * `lastTodoState` (dedup cursor for the nudge).
- */
-async function runTodoNudge(env: MachineEnv, turn: TurnVars): Promise<void> {
-  const { triologue, ctx } = env;
-  const activeChannels = ctx.peer
-    .listChannels()
-    .filter((ch) => ch.joined && ch.peerSessionId && ctx.peer.isFresh(ch.peerSessionId));
-  // Look up each peer's workDir from the identity registry (ChannelFile does
-  // not carry workDir; it lives on IdentityEntry). Falls back to '?' if the
-  // peer unregistered between listChannels() and now (shouldn't happen for a
-  // fresh peer, but be defensive). Malformed identity entries never reach here:
-  // readIdentityMap() drops them at the parse boundary.
-  const peerWorkDirs = new Map<string, string>();
-  for (const id of ctx.peer.listIdentities()) {
-    peerWorkDirs.set(id.sessionId, id.workDir ?? '?');
-  }
-  const channelLine = (ch: (typeof activeChannels)[number]): string => {
-    const peerSid = ch.peerSessionId ?? '(unknown)';
-    const workDir = peerWorkDirs.get(peerSid) ?? '?';
-    // `topic` is the channel's static `title` theme; mail_to routes a peer
-    // reply by name="<peerSessionId>/lead". The `title=` value convention is
-    // "<topic>:<subject>" so the recipient sees which channel the reply is on.
-    return (
-      `- peer=${peerSid}\n` +
-      `  workdir=${workDir}\n` +
-      `  channel=${ch.channelId}, topic=${ch.title ?? '(none)'}\n` +
-      `  use mail_to(name="${peerSid}/lead", title="${ch.title ?? ''}:<subject>") to communicate`
-    );
-  };
-  if (ctx.todo.hasOpenTodo() || activeChannels.length > 0) {
-    const currentTodoState = ctx.todo.printTodoList();
-    const channelState =
-      activeChannels.length > 0
-        ? activeChannels
-            .map(
-              (ch) =>
-                `  [channel ${ch.channelId}] peer=${ch.peerSessionId} fresh=${ctx.peer.isFresh(ch.peerSessionId!)} title="${ch.title}"`
-            )
-            .join('\n')
-        : '';
-    const compositeState = `${currentTodoState}\n${channelState}`;
-    if (compositeState !== turn.lastTodoState) {
-      turn.nextTodoNudge = 3;
-      turn.lastTodoState = compositeState;
-    }
-    turn.nextTodoNudge--;
-    if (turn.nextTodoNudge === 0) {
-      // The nudge prints the current list (incl. any [preventStop: …] guards).
-      const nudgeParts = [`Update your todos. ${ctx.todo.printTodoList()}`];
-      if (activeChannels.length > 0) {
-        nudgeParts.push(`Active channels:\n${activeChannels.map(channelLine).join('\n\n')}`);
-      }
-      triologue.note('REMINDER', nudgeParts.join('\n'));
-      turn.nextTodoNudge = 3;
-    }
-  }
-}
-
-/**
- * Steps 5 + 5b: brief nudging and worktree cleanup nudging.
- *
- * Side effects on `turn`: `nextBriefNudge` (decremented / reset to 5).
- * Side effects on `env`: `nextWtNudge` (the worktree check sentinel).
- */
-async function runBriefAndWorktreeNudges(env: MachineEnv, turn: TurnVars): Promise<void> {
-  const { triologue } = env;
-
-  // 5. Brief nudging - remind agent to use brief tool
-  turn.nextBriefNudge--;
-  if (turn.nextBriefNudge <= 0) {
-    triologue.note(
-      'REMINDER',
-      'Provide a brief status update using the brief tool: brief("<what you are doing now>", <confidence 0-10>).'
-    );
-    turn.nextBriefNudge = 5;
-  }
-
-  // 5b. Worktree cleanup nudge.
-  //     nextWtNudge == 0 is the "check now" sentinel: cheaply call
-  //     listWorktrees() (async git query) each chat. If worktrees exist,
-  //     inject a REMINDER and arm the counter to N so we don't nag every
-  //     turn. If none, leave the counter at 0 (re-checkes next pass).
-  //     When the counter is nonzero, just decrement it.
-  if (env.nextWtNudge === 0) {
-    const worktrees = await listWorktrees(process.cwd());
-    if (worktrees.length > 0) {
-      const lines = worktrees.map((w) => `- ${w.name} at ${w.path} (branch: ${w.branch})`);
-      triologue.note(
-        'REMINDER',
-        `Worktrees present. Remove one with bash (git worktree remove <path>) only if you are sure its branch is merged and no teammate is still working in it:\n${lines.join('\n')}`
-      );
-      env.nextWtNudge = 5;
-    }
-  } else {
-    env.nextWtNudge--;
-  }
-}
-
-/**
- * Step 7: log message count and token consumption in verbose mode.
+ * Step 6: log message count and token consumption in verbose mode.
  */
 function logVerboseStats(env: MachineEnv, messageCount: number): void {
   if (!isVerbose()) return;
@@ -384,23 +275,21 @@ export async function handleCollect(env: MachineEnv, turn: TurnVars, _chat: Chat
 
     // 1–2. Drain all external inputs (child questions, mail, team status,
     //      steering notes, headless first-query marker, file uploads).
-    //      Returns the freshest steering note (the query source for step 6).
+    //      Returns the freshest steering note (the query source for step 5).
     const { firstSteerNote } = await collectMailsAndInput(env);
 
     // 3. Hint round. May short-circuit the pass (STOP on ESC).
     const hintSignal = await hintRound.run(turn);
     if (hintSignal === 'stop') return AgentState.STOP;
 
-    // 4. Todo + peer-channel nudging.
-    await runTodoNudge(env, turn);
+    // 4. Recurring nudges (todo, brief, worktree, team status) — one registry,
+    //    fan-out build then serial emit (see src/loop/reminders.ts).
+    await runReminders(env, turn);
 
-    // 5. Brief + worktree cleanup nudges.
-    await runBriefAndWorktreeNudges(env, turn);
-
-    // 6. Composite keyword extraction for proactive skill discovery.
+    // 5. Composite keyword extraction for proactive skill discovery.
     await skillSuggester.suggestSkill(env, turn, firstSteerNote);
 
-    // 7. Verbose token/message logging.
+    // 6. Verbose token/message logging.
     const messageCount = triologue.getMessagesRaw().length;
     logVerboseStats(env, messageCount);
 

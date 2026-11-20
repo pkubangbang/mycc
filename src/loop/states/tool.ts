@@ -7,6 +7,7 @@
  */
 
 import { AgentState } from '../state-machine.js';
+import { rearmReminder } from '../reminders.js';
 import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
 import { agentIO } from '../agent-io.js';
 import { ResultTooLargeError } from '../../types.js';
@@ -180,7 +181,7 @@ export async function handleTool(env: MachineEnv, turn: TurnVars, chat: ChatData
 
       // Reset brief nudge only when brief tool is used
       if (toolName === 'brief') {
-        turn.nextBriefNudge = 5;
+        rearmReminder('brief-nudge');
 
         // Store the brief message for the COLLECT skill-discovery composite
         // (X source). Keyword extraction itself has moved to COLLECT, which
