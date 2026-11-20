@@ -49,8 +49,6 @@
  * its siblings and corrupt the cadence.
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
 import type { MachineEnv, TurnVars } from './state-machine.js';
 import type { ChannelFile, NoteCategory } from '../types.js';
 import { listWorktrees } from '../context/worktree-store.js';
@@ -63,6 +61,22 @@ import { listWorktrees } from '../context/worktree-store.js';
  * phantom family (the eviction grouping key) and simultaneously the counter
  * key; it never reaches the model.
  */
+/**
+ * Hard ceiling on any reminder's `ttl`.
+ *
+ * WHY: a phantom note is one more assistant message appended to the history. A
+ * note with a long ttl keeps that region of the conversation MUTABLE for the
+ * whole ttl window — every re-emission and every `ageOut()` splice rewrites
+ * what precedes the latest turn, so the provider's prefix cache misses for the
+ * full lifetime instead of just the turn that emitted it. `ttl: 8` meant the
+ * last 8 turns were never stably prompt-cached, for a reminder that only needed
+ * to survive one cadence window.
+ *
+ * 5 is the ceiling: deep enough for the widest cadence (every: 5) to hand off
+ * with zero gap, short enough that the cache churn stays local.
+ */
+export const MAX_PHANTOM_TTL = 5;
+
 export interface Reminder {
   /** Stable identity: phantom family + counter key. Never shown to the LLM. */
   id: string;
@@ -70,7 +84,10 @@ export interface Reminder {
   category: NoteCategory;
   /** Fire every N turns (a pass through COLLECT after a turn boundary). */
   every: number;
-  /** Assistant turns the emitted note survives in the provider view. */
+  /**
+   * Assistant turns the emitted note survives in the provider view. Never
+   * greater than MAX_PHANTOM_TTL — see that constant for why.
+   */
   ttl: number;
   /** Cheap short-circuit: does this reminder have anything to say at all? */
   isActive(env: MachineEnv, turn: TurnVars): boolean;
@@ -180,37 +197,6 @@ function activeChannels(env: MachineEnv): ChannelFile[] {
 }
 
 /**
- * Cheap "is a worktree even plausible" probe for `worktree-nudge.isActive`.
- *
- * A synchronous `readdirSync` of `<cwd>/.worktrees` instead of the
- * `git worktree list` SUBPROCESS that `build()` runs. The subprocess is the
- * expensive part (the pre-registry code deferred it behind a `0`-sentinel
- * precisely for that reason), so this keeps `every: 1` — never miss a worktree
- * created and removed between passes — without paying for a fork on every
- * COLLECT pass.
- *
- * FAILS OPEN: any stat error (missing dir, permissions, non-git cwd) returns
- * true so the real `listWorktrees()` decides. A probe must not be able to
- * silence the reminder it is gating.
- *
- * COST: one `statSync` on the directory itself — no readdir, no allocation of
- * the entry list, no dirent materialisation. This runs on EVERY COLLECT pass
- * (`every: 1`), which is why it is a stat and not a directory listing: an empty
- * string means the directory exists but is empty, so `null` is the honest
- * "plausible or unknown" answer and we let the subprocess say no.
- */
-function hasOpenWorktreeHint(_env: MachineEnv): boolean {
-  try {
-    // A directory entry count is not exposed by stat, so an existing-but-empty
-    // `.worktrees` reports "plausible" here and costs one git call in build().
-    // That is the safe direction: a missed worktree is worse than a wasted fork.
-    return fs.statSync(path.join(process.cwd(), '.worktrees')).isDirectory();
-  } catch {
-    return true;
-  }
-}
-
-/**
  * The registry. Order here IS emission order within a pass.
  */
 export const REMINDERS: Reminder[] = [
@@ -272,9 +258,14 @@ export const REMINDERS: Reminder[] = [
      *     snapshot re-emits each period regardless; freshness only changes WHAT
      *     it says, not whether it is sent.
      *
-     * `ttl: 2` (not todo's 4): a channel snapshot is far more perishable than a
-     * todo list. A stale routing address sends mail to a dead session, so a
-     * wrong hint is worse than no hint — let it age out fast.
+     * `ttl: 3`, equal to `every` — the same invariant `team-status` uses. The
+     * snapshot must cover the gap between firings exactly: at `ttl: 2` the note
+     * died on the second assistant message after it was sent, so roughly one
+     * pass in three (more on tool-heavy passes) had NO reply address in
+     * context. Staleness is not reduced by a shorter ttl — `isActive` re-checks
+     * `isFresh()` on every firing pass and `fresh=` is embedded in the body, so
+     * a shorter life only removes the reminder for a pass, it does not make the
+     * address any fresher. Do not shrink it back.
      *
      * Reads `ctx.peer` directly (option (a)), following `worktree-nudge`'s
      * precedent of doing async I/O inside `build()`. `listChannels()` /
@@ -284,7 +275,7 @@ export const REMINDERS: Reminder[] = [
     id: 'peer-nudge',
     category: 'REMINDER',
     every: 3,
-    ttl: 2,
+    ttl: 3,
     isActive: (env) => activeChannels(env).length > 0,
     build: async (env) => {
       const channels = activeChannels(env);
@@ -323,14 +314,21 @@ export const REMINDERS: Reminder[] = [
   {
     id: 'worktree-nudge',
     category: 'REMINDER',
-    every: 1,
-    ttl: 8,
-    // Always armed. The git subprocess moved into `build()`'s natural cadence
-    // instead: `isActive` is now a cheap synchronous directory read of the
-    // worktree ROOT (a new worktree creates `<cwd>/.worktrees/<name>` before it
-    // is useful), so a worktree created and removed between passes is still
-    // caught without spawning git every pass.
-    isActive: (env) => hasOpenWorktreeHint(env),
+    every: 5,
+    ttl: 5,
+    // `every: 5` restores the pre-registry cadence (`nextWtNudge = 5`) and makes
+    // `ttl` mean lifetime again under the `ttl >= every` invariant: the previous
+    // copy expires in the very pass that carries its replacement, so exactly one
+    // notice is resident instead of the eight identical copies that `every: 1` /
+    // `ttl: 8` produced once body suppression was removed. `ttl: 8` also broke
+    // the prompt cache for 8 turns of history (MAX_PHANTOM_TTL).
+    //
+    // TRADE, deliberate: a worktree created AND removed inside one 5-pass window
+    // is not reported. The old `every: 1` + per-pass probe existed to catch that,
+    // at the cost of a filesystem probe on every COLLECT pass. A worktree that
+    // brief is almost certainly not something the lead needs to act on, so the
+    // probe and its per-pass cost go with it.
+    isActive: () => true,
     build: async () => {
       const worktrees = await listWorktrees(process.cwd());
       if (worktrees.length === 0) return null;
@@ -347,9 +345,10 @@ export const REMINDERS: Reminder[] = [
  * Run every reminder for this COLLECT pass.
  *
  * Build phase fans out (side-effect free); emit phase is serial in registry
- * order. A reminder that is inactive, returns null, or repeats its previous
- * body re-arms without emitting — and re-arming is what keeps the cadence
- * honest for the silent case.
+ * order. The counter is decremented once, before branching: a reminder that is
+ * still counting down, is inactive, or whose `build()` returned null re-arms
+ * without emitting — re-arming is what keeps the cadence honest for the silent
+ * case. There is no body comparison (see `ReminderState`).
  */
 export async function runReminders(env: MachineEnv, turn: TurnVars): Promise<void> {
   // ── 1. Build phase: parallel, no mutation ──

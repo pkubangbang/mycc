@@ -10,8 +10,21 @@
  * form of it.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
-import { REMINDERS, resetReminders, rearmReminder, reminderRemaining, runReminders } from '../../loop/reminders.js';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// `worktree-nudge.build()` shells out to `git worktree list`. The suite must not
+// depend on the developer's actual `.worktrees/` contents — that made emitted
+// counts environment-dependent — so the subprocess is stubbed here. Returning []
+// exercises the "build produced nothing" path; the probe (`readdirSync`) is
+// deliberately left real, since it is a filesystem stat the test cannot fake
+// meaningfully and its answer only gates whether build() runs at all.
+vi.mock('../../context/worktree-store.js', () => ({
+  listWorktrees: vi.fn(async () => []),
+  findWorktreeByName: vi.fn(async () => undefined),
+  findWorktreeByPath: vi.fn(async () => undefined)
+}));
+
+import { MAX_PHANTOM_TTL, REMINDERS, resetReminders, rearmReminder, reminderRemaining, runReminders } from '../../loop/reminders.js';
 import type { MachineEnv, TurnVars } from '../../loop/state-machine.js';
 
 interface Emitted {
@@ -21,36 +34,25 @@ interface Emitted {
 }
 
 /**
- * A minimal env: only the surface the four registry entries actually touch
- * (todo, team, worktree git query mocked at the module level below).
+ * A minimal env: only the surface the five registry entries actually touch
+ * (todo, team, peer, worktree). `listWorktrees` is mocked at the module level so
+ * the `worktree-nudge` build never spawns a real `git worktree list`.
  */
 function makeEnv(state: { todos: string; team: string }): { env: MachineEnv; emitted: Emitted[] } {
   const emitted: Emitted[] = [];
-  // The suppression lifetime is measured in assistant turns, counted the same
-  // way `ageOut()` counts them — so the mock must expose a messages array the
-  // test can grow. `advanceTurns()` pushes one assistant message per turn.
-  const messages: { role: string }[] = [];
   const env = {
     triologue: {
       note: (category: string, message: string, opts?: Emitted['opts']) => {
         emitted.push({ category, message, opts });
-      },
-      getMessagesRaw: () => messages
+      }
     },
     ctx: {
       todo: { hasOpenTodo: () => state.todos !== '', printTodoList: () => state.todos },
       team: { printTeam: async () => state.team },
       peer: { listChannels: () => [], listIdentities: () => [], isFresh: () => false }
-    },
-    __messages: messages
+    }
   } as unknown as MachineEnv;
   return { env, emitted };
-}
-
-/** Push N assistant messages — one per completed turn, as the TTL clock counts. */
-function advanceTurns(env: MachineEnv, n = 1): void {
-  const messages = (env as unknown as { __messages: { role: string }[] }).__messages;
-  for (let i = 0; i < n; i++) messages.push({ role: 'assistant' });
 }
 
 const turn = {} as TurnVars;
@@ -234,20 +236,17 @@ describe('runReminders — emission contract', () => {
 
     for (let pass = 1; pass <= 3; pass++) {
       await runReminders(env, turn);
-      advanceTurns(env);
     }
     expect(todoEmits()).toHaveLength(1);
 
     // Next period: one more emission, exactly on the cadence boundary.
     for (let pass = 1; pass <= 3; pass++) {
       await runReminders(env, turn);
-      advanceTurns(env);
     }
     expect(todoEmits()).toHaveLength(2);
 
     for (let pass = 1; pass <= 3; pass++) {
       await runReminders(env, turn);
-      advanceTurns(env);
     }
     expect(todoEmits()).toHaveLength(3);
   });
@@ -258,14 +257,24 @@ describe('runReminders — emission contract', () => {
     for (const r of REMINDERS) {
       expect(r.every).toBeGreaterThan(0);
       expect(r.ttl).toBeGreaterThan(0);
+      // A long ttl keeps the note's neighbourhood of the conversation mutable
+      // for its whole lifetime, so the provider's prefix cache misses across
+      // that window instead of just the emitting turn. See MAX_PHANTOM_TTL.
+      expect(r.ttl, `${r.id}: ttl must not exceed MAX_PHANTOM_TTL`).toBeLessThanOrEqual(MAX_PHANTOM_TTL);
     }
-    // team-status is the one reminder whose subject (the roster) is useful
-    // whenever a teammate exists, so its note must outlive the gap to its
-    // replacement. peer-nudge deliberately violates the opposite way (ttl 2 <
-    // every 3): a stale ROUTING address is worse than no address, so it is
-    // meant to age out fast — do not "fix" that by raising its ttl.
-    const team = REMINDERS.find((r) => r.id === 'team-status')!;
-    expect(team.ttl).toBeGreaterThanOrEqual(team.every);
+    // `ttl >= every` is the rule for AUTO-EMITTING reminders: they carry
+    // information with no other source, so the copy must survive until its
+    // replacement arrives — at `ttl == every` that is a seamless handoff, zero
+    // gap. `brief-nudge` (5/1) is outside the rule because it asks for something
+    // OPTIONAL: an expired, unanswered nudge loses nothing, so it should show
+    // once and not nag. Pinned per id so a new reminder must opt in explicitly
+    // instead of inheriting an assumption.
+    for (const id of ['team-status', 'todo-nudge', 'peer-nudge', 'worktree-nudge']) {
+      const r = REMINDERS.find((x) => x.id === id)!;
+      expect(r.ttl, `${id}: ttl must cover the gap to its replacement`).toBeGreaterThanOrEqual(r.every);
+    }
+    const brief = REMINDERS.find((r) => r.id === 'brief-nudge')!;
+    expect(brief.ttl).toBeLessThan(brief.every); // a suggestion, not information
   });
 });
 

@@ -48,9 +48,9 @@ export const clearCommand: SlashCommand = {
     // COLLECT re-reports the live state once.
     reconcileServeStateAfterClear();
     // Same reasoning for the reminder registry: its `states` map is
-    // process-global, so a stale cadence or `lastBody` from before /clear would
-    // suppress the first post-clear emission of the todo list (and its
-    // `[preventStop]` guards).
+    // process-global, so a stale cadence from before /clear would delay the
+    // first post-clear emission of the todo list by up to `every - 1` passes
+    // (and defer its `[preventStop]` guards with it).
     resetReminders();
     console.log(chalk.green('Conversation, todos, and issues cleared. Starting fresh.'));
   }

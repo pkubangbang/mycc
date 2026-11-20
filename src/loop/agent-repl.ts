@@ -328,9 +328,10 @@ export async function main(): Promise<void> {
     // (PR #28 review P3 F4 — this is the SECOND triologue-clearing path).
     reconcileServeStateAfterClear();
     // Re-arm the reminder registry for the same reason: `states` is
-    // process-global, so a stale cadence / `lastBody` from before /clear would
-    // suppress the first post-clear emission of the todo list (and its
-    // `[preventStop]` guards). Same hazard reconcileServeStateAfterClear fixes.
+    // process-global, so a stale cadence from before /clear would delay the
+    // first post-clear emission of the todo list by up to `every - 1` passes
+    // (and defer its `[preventStop]` guards with it). Same hazard
+    // reconcileServeStateAfterClear fixes.
     resetReminders();
   });
 

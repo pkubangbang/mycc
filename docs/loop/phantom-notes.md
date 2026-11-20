@@ -19,7 +19,7 @@ COLLECT re-emits the same informational notes on a timer. Each emission is a
 separate `triologue.note()` message that stays in the conversation for the rest
 of the session:
 
-| Note | Producer | Cadence | Payload |
+| Note | Producer | Cadence (before this change) | Payload |
 |---|---|---|---|
 | team status | `collect.ts:166` | every COLLECT pass | `printTeam()` snapshot |
 | todo nudge | `collect.ts:317` | every 3 turns | full `printTodoList()` snapshot |
@@ -152,11 +152,11 @@ Consumers that bypass it and keep full visibility (by design):
 
 ## 5. Reminder registry
 
-Only the four **timer-driven** nudges move into the registry — they are the ones
-that today duplicate the same shape (counter → threshold → emit → re-arm) with
+Only the five **timer-driven** nudges move into the registry — they are the ones
+that duplicate the same shape (counter → threshold → emit → re-arm) with
 three different conventions on two different tiers:
 
-| Reminder | Field | Today |
+| Reminder | Field | Before this change |
 |---|---|---|
 | todo nudge | `TurnVars.nextTodoNudge` = 3 | `state-machine.ts:84`, reset `:259-261`, `:295-297` |
 | todo dedup | `TurnVars.lastTodoState` | `state-machine.ts:85` |
@@ -189,15 +189,40 @@ export interface Reminder {
 
 | id | category | `every` | `ttl` | `build()` |
 |---|---|---|---|---|
-| `team-status` | `SYSTEM` | 3 | 2 | `printTeam()` unless `'No teammates.'` |
+| `team-status` | `SYSTEM` | 3 | 3 | `printTeam()` unless `'No teammates.'` |
 | `todo-nudge` | `REMINDER` | 3 | 4 | `Update your todos. ${printTodoList()}` |
+| `peer-nudge` | `SYSTEM` | 3 | 3 | active-channel snapshot + `mail_to` routing block |
 | `brief-nudge` | `REMINDER` | 5 | 1 | the fixed brief string |
-| `worktree-nudge` | `REMINDER` | 1 | 8 | `listWorktrees(cwd)` lines |
+| `worktree-nudge` | `REMINDER` | 5 | 5 | `listWorktrees(cwd)` lines |
 
-`worktree-nudge` uses `every: 1` to preserve today's semantics. Its current
-`0`-sentinel means "check every pass, emit only when worktrees exist"; a genuine
-`every: 5` would let a worktree created and removed inside one window go
-unmentioned. Repetition is bounded by `ttl: 8` instead of by a counter.
+`ttl` is the assistant-message lifetime of a note, and it has a hard ceiling:
+**`MAX_PHANTOM_TTL = 5`**, asserted in the registry tests. A note is one more
+assistant message in the history, and while it lives its neighbourhood stays
+mutable — every re-emission and every `ageOut()` splice rewrites what precedes
+the latest turn, so the provider's prefix cache misses across the whole ttl
+window rather than just the emitting turn. `ttl: 8` meant the last 8 turns were
+never stably prompt-cached. At most five keeps that churn local.
+reminders it must be `>= every`: those notes carry information that has no other
+source, so a copy that expires before its replacement arrives loses it.
+`team-status` (3/3) and `worktree-nudge` (5/5) sit exactly on that boundary, and
+`peer-nudge` was raised from 2 to 3 for the same reason (at 2 it left roughly a
+third of passes with no reply address at all, and freshness is re-decided at
+fire time, so a shorter life never made the address safer).
+
+`brief-nudge` (5/1) is outside that rule because it asks for something optional.
+If the model never calls `brief`, nothing is lost — the nudge was a suggestion
+that expired unanswered, which is a fine outcome. So its `ttl: 1` needs no gap
+protection: show it once, and do not keep nagging. Its out-of-band re-arm (the
+brief tool, and each PROMPT entry) restarts the cadence after the ask is
+satisfied, but it is not what makes `ttl: 1` correct.
+
+`worktree-nudge` uses `every: 5, ttl: 5`, matching the pre-registry
+`nextWtNudge = 5`. The old `every: 1` existed only to catch a worktree created
+and removed inside one window, paid for with a filesystem probe on every COLLECT
+pass; a worktree that short-lived was never something the lead needed to act on,
+so both the cadence and the probe are gone. `ttl == every` keeps exactly one
+notice resident — the previous copy expires in the pass that carries its
+replacement.
 
 `todo-nudge` does NOT fold in `lastTodoState`: that dedup stays deleted, and
 the registry does not dedup bodies either (§5.3), so an unchanged list is
@@ -208,7 +233,11 @@ re-sent each period.
 ```
 1. builds = Promise.all(active reminders → build())     ← parallel, side-effect free
 2. for (r of REMINDERS)                                 ← registry order, serial
-     note(r.category, body, undefined, { phantom: { family: r.id, ttl: r.ttl } })
+     // decrement happens ONCE, before branching, so the skip path needs no re-arm
+     remaining -= 1
+     if (remaining > 0) continue
+     if (body === null) { re-arm to r.every; continue }   ← inactive / nothing to say
+     note(r.category, body, { phantom: { family: r.id, ttl: r.ttl } })
      re-arm counter to r.every
 ```
 
@@ -218,8 +247,8 @@ function of which `await` resolved first. `transcript.ts` collation and the
 serve projection both read that order, so it must stay deterministic.
 
 **`build()` must be side-effect free** because every build runs before any
-emit. Today `runTodoNudge` mutates `turn.nextTodoNudge` and `turn.lastTodoState`
-inside its own body; that moves into the runner.
+emit. The pre-registry `runTodoNudge` mutated `turn.nextTodoNudge` and
+`turn.lastTodoState` inside its own body; that moved into the runner.
 
 **There is NO identical-body suppression, and re-adding it needs a different
 clock.** An earlier revision suppressed a byte-identical body between periods,
@@ -231,11 +260,17 @@ suppression lifetime stopped matching `ageOut()`'s eviction. It also forced
 expiry to be evaluated after the emit loop, which made a `ttl == every`
 reminder (team-status, 3/3) suppress on the pass its own note died. Both were
 review findings; the layer was removed rather than patched. The accepted cost:
-a reminder with a stable body re-emits that text each period, and `ttl` bounds
-how many copies can coexist.
+a reminder with a stable body re-emits that text each period. `ttl` bounds the
+damage: a note survives `ttl` assistant messages after emission, so at most
+`floor((ttl - 1) / every) + 1` copies coexist — with `ttl >= every` that is a
+seamless handoff, and `team-status` (3/3) holds exactly one copy at all times.
+Those copies are still counted by `needsCompact()`, which reads the RAW store
+token count rather than the projected view, so they pull auto-compaction
+slightly earlier than the model's actual payload warrants.
 
-State: one `Map<string, number>` on `MachineEnv`, replacing the four scattered
-fields and both reset sites.
+State: one module-level `Map<string, ReminderState>` in `reminders.ts`, keyed by
+`Reminder.id` and holding `{ remaining }`. It replaces the four scattered
+`TurnVars`/`MachineEnv` fields and both reset sites.
 
 ## 6. Producers that stay put
 
@@ -321,17 +356,17 @@ New:
     intact
   - a real user query breaks the run and is never absorbed
   - an unmarked note passes through uncoalesced when isolated
-  - teammate path (`triologue-lite`) coalesces and never filters
+  - teammate path (`triologue-lite`) coalesces without filtering (covered by
+    `triologue-piece-contract.test.ts`, not this file)
 - `src/tests/loop/reminder-registry.test.ts`
   - each reminder fires at its `every` cadence
   - identical body re-emits every period (suppression removed; see §5.3)
-  - state change re-arms without waiting for the counter
+  - a changed body is NOT sent early — it waits for the next cadence boundary
   - emit order follows registry order, not build resolution order
-  - a deferral mid-batch preserves the phantom family
+  - a build that throws does not abort the pass
 
 Updated (each edit justified as an intended behaviour change, never silenced):
-`triologue.test.ts:80`, `triologue-piece-contract.test.ts:82`,
-`serve-history-invariant.test.ts:74`.
+`triologue.test.ts:80`, `triologue-piece-contract.test.ts:82`.
 
 Gate: `vp check` and `vp test`.
 

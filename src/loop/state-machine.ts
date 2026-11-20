@@ -34,6 +34,7 @@ import { loopEvents } from './loop-events.js';
 import { agentIO } from './agent-io.js';
 import { skillSuggester } from './states/collect-skill.js';
 import { hintRound } from './hint-round.js';
+import { resetReminders } from './reminders.js';
 
 // ============================================================================
 // States
@@ -305,6 +306,15 @@ export class AgentStateMachine {
         // deferredCompact belongs to the previous pass/turn. It survives
         // COLLECT resets only until its LLM consumer runs, never across turns.
         chat.deferredCompact = false;
+        // The reminder registry's counters are PER-TURN, matching the old
+        // `nextTodoNudge = 3` / `nextBriefNudge = 5` / `nextWtNudge = 0` fields
+        // on TurnVars. Its other callers (double-Ctrl+L, /clear) are out-of-band
+        // clears, not turn boundaries, so without this a cadence armed in turn N
+        // arrived armed in turn N+1 and the todo list could be nudged a period
+        // late. Reset here rather than at each PROMPT entry for the same reason
+        // as the crossroad flag: this block is the one place every PROMPT/AWAIT
+        // entry passes through.
+        resetReminders();
       }
       // COLLECT = fresh pipeline pass — always reset. Preserve
       // `deferredCompact`: HOOK sets it (e.g. compact-on-intent-trap) and
