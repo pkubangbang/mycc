@@ -161,8 +161,16 @@ export async function runAutoCompact(
   // CALLER (composition root), keeping this layer wiki-agnostic.
   const domains = deps.domains;
 
-  // Ask LLM to summarize
-  const conversationText = minifyMessages(deps.getRawMessages());
+  // Ask LLM to summarize.
+  //
+  // Reads the FOLDED view, not getRawMessages(): the summary must describe what
+  // the model actually saw. Using the raw array here would re-inject verbatim
+  // nudge content that the fold had already elided for the model, and the
+  // resulting summary would carry it for a whole compaction window — a
+  // representation leak that defeats the fold (docs/loop/note-taxonomy.md §6).
+  // Neither the fold nor this change touches what is persisted: saveTranscript
+  // above still writes the TRUE text.
+  const conversationText = minifyMessages(deps.getFullMessages());
   const summaryPrompt = buildSummaryPrompt(conversationText, deps, domains, focus);
 
   // Working-memory focus prompt — runs concurrently with the summary via

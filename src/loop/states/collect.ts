@@ -164,7 +164,7 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
   const teamStatus = await ctx.team.printTeam();
   if (teamStatus !== 'No teammates.') {
     triologue.note(
-      'SYSTEM',
+      'NUDGE',
       `[team status — snapshot, informational]\n${teamStatus}\n\ntm_print for a fresh read; elapsed ETAs are not actionable.`
     );
   }
@@ -174,8 +174,10 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
   //     Unlike the PROMPT synthesis path (which merges stale notes with a
   //     fresh query after an interrupt), this is the in-flight path: the LLM
   //     reached COLLECT mid-run with notes still queued, so they are current
-  //     direction for the ongoing work and injected as-is. Reuses the
-  //     REMINDER NoteCategory — no new category needed.
+  //     direction for the ongoing work and injected as-is.
+  //     REMINDER, not NUDGE: steering is user direction and is NOT
+  //     recomputable — folding it away would silently discard an instruction.
+  //     See docs/loop/note-taxonomy.md §3.
   //     Reads go through the loop-homed manager (plan §6 — hub steering
   //     methods would side-effect-instantiate a hub in non-serve runs, Δ3),
   //     and the old getServeHub().isRunning() guard is DROPPED: the empty
@@ -312,9 +314,12 @@ async function runTodoNudge(env: MachineEnv, turn: TurnVars): Promise<void> {
       // The nudge prints the current list (incl. any [preventStop: …] guards).
       const nudgeParts = [`Update your todos. ${ctx.todo.printTodoList()}`];
       if (activeChannels.length > 0) {
-        nudgeParts.push(`Active channels:\n${activeChannels.map(channelLine).join('\n\n')}`);
+        nudgeParts.push(
+          `Active channels:\n${activeChannels.map(channelLine).join('\n\n')}`,
+          'peer_list for a fresh read; mail a peer with mail_to(name="<session-id>/lead").'
+        );
       }
-      triologue.note('REMINDER', nudgeParts.join('\n'));
+      triologue.note('NUDGE', nudgeParts.join('\n'));
       turn.nextTodoNudge = 3;
     }
   }
@@ -333,7 +338,7 @@ async function runBriefAndWorktreeNudges(env: MachineEnv, turn: TurnVars): Promi
   turn.nextBriefNudge--;
   if (turn.nextBriefNudge <= 0) {
     triologue.note(
-      'REMINDER',
+      'NUDGE',
       'Provide a brief status update using the brief tool: brief("<what you are doing now>", <confidence 0-10>).'
     );
     turn.nextBriefNudge = 5;
@@ -350,7 +355,7 @@ async function runBriefAndWorktreeNudges(env: MachineEnv, turn: TurnVars): Promi
     if (worktrees.length > 0) {
       const lines = worktrees.map((w) => `- ${w.name} at ${w.path} (branch: ${w.branch})`);
       triologue.note(
-        'REMINDER',
+        'NUDGE',
         `Worktrees present. Remove one with bash (git worktree remove <path>) only if you are sure its branch is merged and no teammate is still working in it:\n${lines.join('\n')}`
       );
       env.nextWtNudge = 5;

@@ -14,6 +14,7 @@ import type { Message, ToolCall } from '../../types.js';
 import type { Role } from './types.js';
 import { estimateTokens, estimateTokensForMessages } from '../../utils/token.js';
 import { agentIO } from '../agent-io.js';
+import { foldStaleNudges } from './fold-notes.js';
 
 /**
  * Message storage layer.
@@ -447,8 +448,12 @@ export class MessageStore {
       if (m && typeof m === 'object' && m.role) result.push(toProviderMessage(m));
     }
 
-    // Conversation history
-    for (const m of this.messages) {
+    // Conversation history — with stale NUDGE notes folded out of the model's
+    // view (docs/loop/note-taxonomy.md). Read-time-only projection: same
+    // length, same role sequence, no mutation, so TP, the journal and
+    // tokenCount (incremental, above) are all unaffected.
+    const conversation = foldStaleNudges(this.messages);
+    for (const m of conversation) {
       if (m && typeof m === 'object' && m.role) result.push(toProviderMessage(m));
     }
 

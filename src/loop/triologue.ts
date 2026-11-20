@@ -444,7 +444,7 @@ export class Triologue {
    * Internally uses role: 'user' with note_category metadata for filtering.
    * The category is prepended as a [TITLE] prefix on the content.
    *
-   * @param category - The note category (REMINDER, HINT, URGENT, SYSTEM, MAIL)
+   * @param category - The note category (NUDGE, REMINDER, HINT, URGENT, SYSTEM, MAIL)
    * @param message - The note content
    * @param hookName - Optional: the originating hook skill name. When set, the
    *   note is stored as a SEPARATE message (never combined with the last user

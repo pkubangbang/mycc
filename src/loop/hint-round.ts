@@ -394,7 +394,8 @@ export class HintRound {
     const messages = env.triologue.getMessagesRaw();
 
     // Filter out system noise messages that would distract hint analysis.
-    // REMINDER now covers what was previously CONTINUE/FYI (merged into REMINDER).
+    // REMINDER covers the one-shot reminders (steering, uploads, hand-over
+    // output); NUDGE covers the periodic COLLECT nudges.
     // WRAP_UP remains a hardcoded string prefix (no longer a NoteCategory, but
     // the literal "[WRAP_UP] ..." still appears in the triologue from beginWrapUp()).
     //
@@ -409,7 +410,12 @@ export class HintRound {
     const filteredMessages = messages.filter((msg) => {
       if (msg.role === 'system') return false;
       if (msg.role === 'user' && msg.content) {
-        if (/^\[(?:REMINDER|WRAP_UP)\]/.test(msg.content)) return false;
+        // NUDGE joins the excluded set: periodic COLLECT nudges (todo/brief/
+        // worktree/team snapshots) carry no diagnosis, so feeding them to the
+        // analyzer would read as conversation. Note this runs on
+        // getMessagesRaw() — the UNFOLDED array — so the rationale is "not
+        // diagnostic", not "already elided"; see docs/loop/note-taxonomy.md §3.
+        if (/^\[(?:NUDGE|REMINDER|WRAP_UP)\]/.test(msg.content)) return false;
         if (msg.content.startsWith('[HINT]') && !/^\[HINT\]\s*Problem Analysis:/s.test(msg.content)) return false;
       }
       return true;

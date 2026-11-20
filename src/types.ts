@@ -43,7 +43,29 @@ export interface ToolCall extends ProviderToolCall {
  * neither of which fits the static note() category model.
  */
 export type NoteCategory =
-  /** Reminders: todo nudges, brief nudges, "continue with task" prompts, bang command results */
+  /**
+   * Periodic, content-recomputable nudges re-emitted by COLLECT: team snapshot,
+   * todo nudge, brief nudge, worktree nudge. A later COLLECT reproduces an
+   * equivalent note, so a stale one carries no information the model cannot
+   * recover. This is the ONLY foldable category — see
+   * docs/loop/note-taxonomy.md §3/§4 before adding a second or migrating a
+   * producer into it.
+   *
+   * CAREFUL: the lead path uses NUDGE; teammate workers still use REMINDER for
+   * their equivalent nudges (teammate-worker.ts). That split is the ONLY thing
+   * keeping folding off the teammate path — the fold is not structurally
+   * excluded there (§7). Migrating a teammate nudge to NUDGE turns folding on.
+   */
+  | 'NUDGE'
+  /**
+   * One-shot reminders on the lead path: user steering, uploaded files,
+   * hand-over output, uploads from an interrupted run. NOT foldable — dropping
+   * one loses user direction or a live file reference permanently.
+   *
+   * On the teammate path this also carries periodic nudges, which is a
+   * historical accident, not a definition. They survive folding only because
+   * of the category, so keep them here deliberately.
+   */
   | 'REMINDER'
   /** Problem analysis hints generated during confusion */
   | 'HINT'
