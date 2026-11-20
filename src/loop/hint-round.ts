@@ -572,7 +572,15 @@ export class HintRound {
       hintLines.push('');
       hintLines.push('Use the `brief` tool to post a status update.');
 
-      this.note('HINT', hintLines.join('\n'), { phantom: { family: 'hint', ttl: 1 } });
+      // ttl 3, not 1. The analyzer reads the STORE (getMessagesRaw) and is
+      // explicitly told its earlier [HINT] notes are "in the context" so it can
+      // escalate instead of re-deriving. The model reads the PROJECTION, where
+      // ttl 1 dropped this note after a single assistant message — and a re-fire
+      // needs confusion to rebuild (>= CONFUSION_THRESHOLD), which takes many
+      // turns. So the antecedent was ALWAYS already evicted: the model was being
+      // told to escalate against advice it never saw. 3 keeps one prior analysis
+      // visible across the window in which the next one can fire.
+      this.note('HINT', hintLines.join('\n'), { phantom: { family: 'hint', ttl: 3 } });
 
       return { status: 'success', focusOn: hintData.focus_on };
     } catch (err) {

@@ -55,6 +55,7 @@ import type { Skill, Message } from '../../types.js';
 import type { Triologue } from '../triologue.js';
 import { extractKeywords, type KeywordExtractionResult } from '../keyword-extractor.js';
 import { scoreSkills, SKILL_SEMANTIC_TOPK, getSkillMatchThreshold, type RankedSkill } from '../skill-matcher.js';
+import { MAX_PHANTOM_TTL } from '../triologue/egress.js';
 
 // Scoring constants (KEYWORD_WEIGHTS, SKILL_SCORE_FLOOR, SKILL_TOP_N,
 // SKILL_SEMANTIC_TOPK) and the scope-aware semantic-boost logic now live in
@@ -408,7 +409,10 @@ export class SkillSuggester {
       'Discipline: this is a silent nudge. If a skill helps the current task, load it with skill_load; otherwise continue.'
     );
 
-    triologue.note('HINT', lines.join('\n'), { phantom: { family: 'skill-hint', ttl: 6 } });
+    // ttl 5 = MAX_PHANTOM_TTL. This asked for 6, which the egress clamp silently
+    // lowered anyway; stating the ceiling value keeps the source honest instead
+    // of relying on the clamp to catch it.
+    triologue.note('HINT', lines.join('\n'), { phantom: { family: 'skill-hint', ttl: MAX_PHANTOM_TTL } });
   }
 
   // ── Ranking (delegates to the shared scorer) ──────────────────────────

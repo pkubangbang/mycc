@@ -95,6 +95,27 @@ describe('runReminders — cadence', () => {
 describe('runReminders — cadence (no identical-body suppression)', () => {
   beforeEach(() => resetReminders());
 
+  it('counts in PASSES, not turns', async () => {
+    // A pass is one COLLECT entry (docs/loop/phantom-notes.md §0); a turn can
+    // contain many. The countdown must advance once per runReminders() call, so
+    // the SAME turn object driven N times is N passes. If someone moves the
+    // decrement to a per-turn site (the PROMPT boundary), the counters would
+    // stop moving here and this test would go silent, not red — hence asserting
+    // the countdown value itself, not just the emission count.
+    const state = { todos: 'open #1', team: 'No teammates.' };
+    const { env } = makeEnv(state);
+
+    // State is created lazily by the first pass (`stateFor`), not at
+    // registration — so a reminder has no counter until it has been ticked.
+    expect(reminderRemaining('todo-nudge')).toBeUndefined();
+    await runReminders(env, turn); // pass 1 — same turn throughout
+    expect(reminderRemaining('todo-nudge')).toBe(2);
+    await runReminders(env, turn); // pass 2
+    expect(reminderRemaining('todo-nudge')).toBe(1);
+    await runReminders(env, turn); // pass 3 — fires, re-arms
+    expect(reminderRemaining('todo-nudge')).toBe(3);
+  });
+
   it('re-emits an unchanged todo list every period', async () => {
     // The registry deliberately does NOT suppress a repeated body (see the
     // ReminderState comment: the suppression clock could not survive

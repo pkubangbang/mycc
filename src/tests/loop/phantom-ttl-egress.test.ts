@@ -11,7 +11,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Triologue } from '../../loop/triologue.js';
-import { ageOut, coalesce, projectForProvider } from '../../loop/triologue/egress.js';
+import { ageOut, coalesce, projectForProvider, MAX_PHANTOM_TTL } from '../../loop/triologue/egress.js';
 import type { Message } from '../../types.js';
 
 /**
@@ -56,6 +56,20 @@ describe('ageOut — TTL measured in assistant turns', () => {
     expect(ageOut(messages).some((m) => m.content.startsWith('[REMINDER]'))).toBe(false);
   });
 
+  it('clamps a producer that asks for more than MAX_PHANTOM_TTL', () => {
+    // The ceiling used to be asserted only over the reminder registry, so a
+    // producer outside it (skill-hint asked for 6) exceeded it invisibly.
+    // ageOut is the single reader of ttl, so the clamp here is the real
+    // enforcement point.
+    const over = { role: 'user' as const, content: '[HINT] x', note_category: 'HINT' as const, phantom: { family: 'skill-hint', ttl: 99 } };
+    // MAX_PHANTOM_TTL assistant turns after it: no more than that survives.
+    const msgs = [over];
+    for (let i = 0; i < MAX_PHANTOM_TTL; i++) msgs.push({ role: 'assistant' as const, content: `a${i}` });
+    expect(ageOut(msgs).filter((m) => m.phantom?.family === 'skill-hint')).toHaveLength(0);
+    // And it is not over-eager: one turn short of the ceiling it still survives.
+    expect(ageOut(msgs.slice(0, MAX_PHANTOM_TTL)).filter((m) => m.phantom?.family === 'skill-hint')).toHaveLength(1);
+  });
+
   it('never drops a phantom note with no ttl (mail)', () => {
     const messages: Message[] = [user('[MAIL] from lead', { family: 'mail' })];
     for (let i = 0; i < 20; i++) messages.push(ASSISTANT);
@@ -84,6 +98,23 @@ describe('coalesce — adjacent notes become one user message', () => {
     expect(out).toHaveLength(1);
     expect(out[0].role).toBe('user');
     expect(out[0].content).toBe('[SYSTEM] team status\n\n[MAIL] hello\n\n[REMINDER] Update your todos.');
+  });
+
+  it('takes the SHORTEST ttl in the run, not the head ttl', () => {
+    // Two [HINT] producers share the category: the analyzer (ttl 3) and the
+    // skill suggester (ttl 5). They routinely land on the same pass, so the
+    // merged blob is the NORMAL case. Keeping only the head's ttl silently
+    // promoted the short-lived note to the long-lived one's lifetime.
+    //
+    // The SHORT ttl must be on the TAIL: a head-only implementation returns
+    // `{...head}`, so a short head would pass this assertion by identity and
+    // prove nothing.
+    const head = { role: 'user' as const, content: '[HINT] New relevant skills', note_category: 'HINT' as const, phantom: { family: 'skill-hint', ttl: 5 } };
+    const tail = { role: 'user' as const, content: '[HINT] Problem Analysis: x', note_category: 'HINT' as const, phantom: { family: 'hint', ttl: 3 } };
+    const [blob] = coalesce([head, tail]);
+    expect(blob.phantom?.ttl).toBe(3);
+    expect(blob.content).toContain('New relevant skills');
+    expect(blob.content).toContain('Problem Analysis');
   });
 
   it('leaves a single note untouched (no allocation)', () => {

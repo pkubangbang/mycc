@@ -1,6 +1,27 @@
 /**
  * reminders.ts - ONE registry for COLLECT's recurring nudges (fan-out).
  *
+ * VOCABULARY — the countdown basis
+ * --------------------------------
+ * This module counts in PASSES, a fourth term alongside mycc's three:
+ *
+ *   session  start to quit
+ *   turn     one user query to the next
+ *   chat     one LLM call in the LLM stage
+ *   PASS     one entry into COLLECT — "from COLLECT to COLLECT"
+ *
+ * A turn contains many passes. In the common case a pass leads to exactly one
+ * chat, which is why the two read as interchangeable — but they are not:
+ *
+ *   - a pass that ends a turn (`collect` → PROMPT) or stops (`collect` → STOP)
+ *     emits and ticks with NO chat at all;
+ *   - a transient COLLECT retry re-enters COLLECT (`collect` → COLLECT), so one
+ *     chat attempt costs two passes.
+ *
+ * `every` is therefore a pass count, not a turn count. This is deliberate:
+ * `nextTodoNudge = 3` also decremented once per COLLECT entry, so reproducing
+ * the old cadence REQUIRES per-pass counting.
+ *
  * WHAT THIS REPLACES
  * ------------------
  * Four nudges, three arming conventions, two state tiers:
@@ -62,31 +83,27 @@ import { listWorktrees } from '../context/worktree-store.js';
  * key; it never reaches the model.
  */
 /**
- * Hard ceiling on any reminder's `ttl`.
- *
- * WHY: a phantom note is one more assistant message appended to the history. A
- * note with a long ttl keeps that region of the conversation MUTABLE for the
- * whole ttl window — every re-emission and every `ageOut()` splice rewrites
- * what precedes the latest turn, so the provider's prefix cache misses for the
- * full lifetime instead of just the turn that emitted it. `ttl: 8` meant the
- * last 8 turns were never stably prompt-cached, for a reminder that only needed
- * to survive one cadence window.
- *
- * 5 is the ceiling: deep enough for the widest cadence (every: 5) to hand off
- * with zero gap, short enough that the cache churn stays local.
+ * Hard ceiling on any reminder's `ttl` — owned by the egress projection, which
+ * is the only reader of `ttl` and clamps it for EVERY note producer, not just
+ * this registry. Re-exported here so registry code and its tests have one name.
  */
-export const MAX_PHANTOM_TTL = 5;
+export { MAX_PHANTOM_TTL } from './triologue/egress.js';
 
 export interface Reminder {
   /** Stable identity: phantom family + counter key. Never shown to the LLM. */
   id: string;
   /** The note() category — decides the `[CATEGORY]` prefix the model reads. */
   category: NoteCategory;
-  /** Fire every N turns (a pass through COLLECT after a turn boundary). */
+  /**
+   * Fire every N PASSES — a pass is one COLLECT entry, i.e. "from COLLECT to
+   * COLLECT". A turn (one user query to the next) contains MANY passes, one per
+   * tool round-trip and per state re-entry, so this is not a turn count.
+   */
   every: number;
   /**
-   * Assistant turns the emitted note survives in the provider view. Never
-   * greater than MAX_PHANTOM_TTL — see that constant for why.
+   * ASSISTANT MESSAGES the emitted note survives in the provider view — the
+   * unit `ageOut()` counts in, not turns or passes. Never greater than
+   * MAX_PHANTOM_TTL — see that constant for why.
    */
   ttl: number;
   /** Cheap short-circuit: does this reminder have anything to say at all? */
@@ -150,7 +167,7 @@ function stateFor(r: Reminder): ReminderState {
   return s;
 }
 
-/** Clear all reminder state (turn boundary / test isolation). */
+/** Clear all reminder state (a fresh turn / test isolation). */
 export function resetReminders(): void {
   states.clear();
 }

@@ -45,6 +45,25 @@ export function isNoteMessage(m: Message): boolean {
 }
 
 /**
+ * Hard ceiling on any phantom note's `ttl`, enforced at the one place that reads
+ * it.
+ *
+ * WHY GLOBAL AND NOT PER-PRODUCER: this used to be asserted only over the
+ * reminder registry, which made it a promise about one producer rather than a
+ * property of the projection. `collect-skill.ts` writes `skill-hint` at `ttl: 6`
+ * — a value the registry test never saw, quietly exceeding a ceiling the docs
+ * called "hard". Clamping here covers every producer, present and future,
+ * without each one having to remember.
+ *
+ * WHY 5: a live note keeps its neighbourhood of the history mutable — every
+ * re-emission and every splice rewrites what precedes it, so the provider's
+ * prefix cache misses across the whole ttl window instead of just the chat that
+ * emitted it. Five is deep enough for the widest cadence to hand off with zero
+ * gap and short enough that the cache churn stays local.
+ */
+export const MAX_PHANTOM_TTL = 5;
+
+/**
  * Drop phantom notes that have aged out.
  *
  * The clock is ASSISTANT TURNS after the note's own position, walked from the
@@ -68,8 +87,12 @@ export function ageOut(messages: Message[]): Message[] {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     const mark = m.phantom;
-    if (mark && typeof mark.ttl === 'number' && assistantTurns >= mark.ttl) {
-      continue; // aged out — the provider never sees it
+    if (mark && typeof mark.ttl === 'number') {
+      // Clamp, don't trust: a producer that asks for more than the ceiling gets
+      // the ceiling (see MAX_PHANTOM_TTL). `Math.min` also turns a negative or
+      // fractional ttl into "already expired" rather than a never-expiring note.
+      const ttl = Math.max(0, Math.min(mark.ttl, MAX_PHANTOM_TTL));
+      if (assistantTurns >= ttl) continue; // aged out — the provider never sees it
     }
     out.push(m);
     if (m.role === 'assistant') assistantTurns++;
@@ -102,11 +125,21 @@ export function coalesce(messages: Message[]): Message[] {
     if (run.length === 1) {
       out.push(run[0]);
     } else {
-      // Keep the FIRST message's runtime metadata (phantom marker if any) as
-      // the blob's identity; the content is the only field that changes.
+      // The blob's ttl is the SHORTEST ttl among the merged notes, not the
+      // head's. A merged run is one message on the wire, so it can only expire
+      // as a unit — and expiring when the most perishable part would have is
+      // the only choice that never keeps a note past its own lifetime. Keeping
+      // the head's value silently promoted a ttl:1 hint to a ttl:6 skill-hint's
+      // lifetime whenever they landed on the same pass (they share the [HINT]
+      // category, so this was the normal case, not an edge case).
       const head = run[0];
+      const ttls = run.map((m) => m.phantom?.ttl).filter((t): t is number => typeof t === 'number');
+      const blobPhantom = head.phantom
+        ? { ...head.phantom, ...(ttls.length > 0 ? { ttl: Math.min(...ttls) } : {}) }
+        : undefined;
       out.push({
         ...head,
+        ...(blobPhantom ? { phantom: blobPhantom } : {}),
         content: run.map((m) => m.content).join('\n\n')
       });
     }

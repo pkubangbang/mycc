@@ -9,6 +9,23 @@
 > `src/loop/states/collect-skill.ts`, `src/loop/hint-round.ts`,
 > `src/loop/states/prompt.ts` (comment only)
 
+## 0. Vocabulary
+
+This design counts in **passes**, a fourth term alongside mycc's three:
+
+| Term | Span | Whose boundary |
+|---|---|---|
+| **session** | start → quit | process |
+| **turn** | one user query → the next | user input |
+| **chat** | one LLM call in the LLM stage | the model |
+| **pass** | one entry into COLLECT — "from COLLECT to COLLECT" | the state machine |
+
+A turn contains many passes. A pass *usually* leads to exactly one chat, which
+is why the two read as interchangeable, but they are not equivalent: a pass that
+ends a turn (`collect` → PROMPT) or stops (`collect` → STOP) ticks the counters
+with no chat at all, and a transient COLLECT retry (`collect` → COLLECT) costs
+two passes for one chat attempt. `every` is a pass count.
+
 ## 1. Problem
 
 The lead's conversation carries two independent defects that share one seam.
@@ -22,9 +39,9 @@ of the session:
 | Note | Producer | Cadence (before this change) | Payload |
 |---|---|---|---|
 | team status | `collect.ts:166` | every COLLECT pass | `printTeam()` snapshot |
-| todo nudge | `collect.ts:317` | every 3 turns | full `printTodoList()` snapshot |
-| brief nudge | `collect.ts:335` | every 5 turns | a **byte-identical** fixed string |
-| worktree nudge | `collect.ts:352` | every 5 turns | `listWorktrees()` list |
+| todo nudge | `collect.ts:317` | every 3 passes | full `printTodoList()` snapshot |
+| brief nudge | `collect.ts:335` | every 5 passes | a **byte-identical** fixed string |
+| worktree nudge | `collect.ts:352` | every 5 passes | `listWorktrees()` list |
 
 These are *state re-snapshots*: each one makes its predecessors redundant — the
 newest todo list is a superset of every older one, and the brief nudge is the
@@ -173,9 +190,9 @@ export interface Reminder {
   id: string;
   /** The note() category — decides the [CATEGORY] prefix the model reads. */
   category: NoteCategory;
-  /** Fire every N turns. */
+  /** Fire every N passes (see §0: a pass is one COLLECT entry). */
   every: number;
-  /** Assistant turns the note survives in the provider view. */
+  /** Assistant messages the note survives in the provider view. */
   ttl: number;
   /** Cheap short-circuit: does this reminder have anything to say at all? */
   isActive(env: MachineEnv, turn: TurnVars): boolean;
