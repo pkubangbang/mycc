@@ -197,19 +197,17 @@ export interface Reminder {
 `worktree-nudge` uses `every: 1` to preserve today's semantics. Its current
 `0`-sentinel means "check every pass, emit only when worktrees exist"; a genuine
 `every: 5` would let a worktree created and removed inside one window go
-unmentioned. Suppression comes from the identical-body rule and `ttl: 8`
-instead of the counter.
+unmentioned. Repetition is bounded by `ttl: 8` instead of by a counter.
 
-`todo-nudge` folds in `lastTodoState`: the identical-body rule (below) subsumes
-"reset the counter when the snapshot changed".
+`todo-nudge` does NOT fold in `lastTodoState`: that dedup stays deleted, and
+the registry does not dedup bodies either (§5.3), so an unchanged list is
+re-sent each period.
 
 ### 5.3 Runner
 
 ```
 1. builds = Promise.all(active reminders → build())     ← parallel, side-effect free
 2. for (r of REMINDERS)                                 ← registry order, serial
-     if (body === r.lastBody) { re-arm; continue }
-     r.lastBody = body
      note(r.category, body, undefined, { phantom: { family: r.id, ttl: r.ttl } })
      re-arm counter to r.every
 ```
@@ -223,10 +221,18 @@ serve projection both read that order, so it must stay deterministic.
 emit. Today `runTodoNudge` mutates `turn.nextTodoNudge` and `turn.lastTodoState`
 inside its own body; that moves into the runner.
 
-**Identical-body suppression** is a runner responsibility, not a per-reminder
-one: if the produced body is byte-identical to the last emission, re-arm without
-emitting. This kills the redundant brief nudge (an identical string every 5
-turns) and the repeated todo list, at zero context cost.
+**There is NO identical-body suppression, and re-adding it needs a different
+clock.** An earlier revision suppressed a byte-identical body between periods,
+keyed on `lastEmitAt` = the absolute assistant-message count of the current
+conversation. That clock is not monotonic: `installCompacted()` replaces the
+conversation with a summary or splices out an archived prefix while keeping the
+tail, so the count moves backwards across normal lifecycle events and the
+suppression lifetime stopped matching `ageOut()`'s eviction. It also forced
+expiry to be evaluated after the emit loop, which made a `ttl == every`
+reminder (team-status, 3/3) suppress on the pass its own note died. Both were
+review findings; the layer was removed rather than patched. The accepted cost:
+a reminder with a stable body re-emits that text each period, and `ttl` bounds
+how many copies can coexist.
 
 State: one `Map<string, number>` on `MachineEnv`, replacing the four scattered
 fields and both reset sites.
@@ -318,7 +324,7 @@ New:
   - teammate path (`triologue-lite`) coalesces and never filters
 - `src/tests/loop/reminder-registry.test.ts`
   - each reminder fires at its `every` cadence
-  - identical body re-arms without emitting
+  - identical body re-emits every period (suppression removed; see §5.3)
   - state change re-arms without waiting for the counter
   - emit order follows registry order, not build resolution order
   - a deferral mid-batch preserves the phantom family

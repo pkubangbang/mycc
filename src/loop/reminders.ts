@@ -82,34 +82,41 @@ export interface Reminder {
 }
 
 /**
- * Cadence + last-emitted-body bookkeeping, one entry per reminder id.
+ * Cadence bookkeeping, one entry per reminder id.
  *
- * `remaining` is the countdown to the next fire. `lastBody` powers the
- * identical-body suppression: a byte-identical re-emission carries no new
- * information (the brief nudge is a fixed string; the todo nudge repeats the
- * same list until state changes), so it re-arms without spending context.
+ * `remaining` is the countdown to the next fire — the ONLY cross-pass state a
+ * reminder has.
+ *
+ * WHY THERE IS NO IDENTICAL-BODY SUPPRESSION
+ * ------------------------------------------
+ * This registry used to carry `lastBody` / `lastEmitAt` / `suppressed` so an
+ * unchanged body could be swallowed between periods. That layer was removed on
+ * purpose; do not reintroduce it without reading this.
+ *
+ * It could not be made correct. Suppression needs a lifetime ("is the previous
+ * emission still in the provider view?"), and the only clock available was the
+ * absolute assistant-message count of the CURRENT conversation array. That
+ * clock is not monotonic: `installCompacted()` replaces the conversation with a
+ * summary, or splices out an archived prefix while keeping the tail, so the
+ * count moves BACKWARDS across normal lifecycle events. Two consequences, both
+ * filed against this file in review:
+ *
+ *  1. Expiry had to be evaluated after the emit loop (so it could not influence
+ *     the pass it ran on), which made a `ttl == every` reminder — team-status,
+ *     3/3 — suppress on the very pass its note died, deferring the replacement
+ *     by a full extra period.
+ *  2. Suppression state and `ageOut()`'s eviction disagreed by construction
+ *     after any compaction, because they measured different things.
+ *
+ * Rather than patch the clock, the dedup went away. The cost is bounded and
+ * known: a reminder whose body is stable re-emits the same text each period.
+ * Phantom TTL still bounds the conversation — the older copies age out — so
+ * this spends context on a steady run, it does not grow it without limit.
+ * Removing it also restores the pre-registry behavior where an unchanged todo
+ * list was re-sent each period; `lastTodoState` stays deleted.
  */
 interface ReminderState {
   remaining: number;
-  lastBody: string | null;
-  /**
-   * Emit count, used to derive when the note carrying `lastBody` has AGED OUT
-   * of the provider view.
-   *
-   * WHY THIS EXISTS: identical-body suppression and phantom TTL cancel each
-   * other out if suppression has no lifetime. A steady todo list produces an
-   * identical body every period, so `lastBody` suppressed every re-emit — while
-   * the ONE emitted copy aged out after `ttl` assistant turns. The most stable
-   * reminder therefore became the one the model saw LEAST: delivered once, then
-   * gone, including its `[preventStop]` guards.
-   *
-   * `lastEmitAt` is the value of the counting source at the moment of the last
-   * emission, so `ageOf(lastBody)` is comparable to `r.ttl` without the
-   * registry having to know how TTL is measured (see `countTurns`).
-   */
-  lastEmitAt: number;
-  /** Set when `lastBody` is suppressed for the rest of this period. */
-  suppressed: boolean;
 }
 
 /** Process-wide reminder state, keyed by `Reminder.id`. */
@@ -120,22 +127,10 @@ function stateFor(r: Reminder): ReminderState {
   if (!s) {
     // A fresh reminder fires after a full period, matching the historical
     // `nextTodoNudge = 3` / `nextBriefNudge = 5` initial values.
-    s = { remaining: r.every, lastBody: null, lastEmitAt: 0, suppressed: false };
+    s = { remaining: r.every };
     states.set(r.id, s);
   }
   return s;
-}
-
-/**
- * How many assistant turns have followed a note emitted now.
- *
- * MUST count the same thing `ageOut()` counts (triologue/egress.ts: a note
- * survives while fewer than `ttl` assistant MESSAGES follow it), or the
- * suppression lifetime and the actual eviction disagree and the reminder
- * either resurfaces too late or churns every period.
- */
-function countTurns(env: MachineEnv): number {
-  return env.triologue.getMessagesRaw().filter((m) => m.role === 'assistant').length;
 }
 
 /** Clear all reminder state (turn boundary / test isolation). */
@@ -161,23 +156,12 @@ export function reminderRemaining(id: string): number | undefined {
  * `brief` tool resets `brief-nudge`, exactly as `turn.nextBriefNudge = 5` did
  * before the registry existed.
  *
- * CLEARS `lastBody` as well as the countdown. Without that the identical-body
- * rule would permanently suppress a reminder with a CONSTANT body: the brief
- * nudge always produces the same string, so a rearmed counter would reach zero
- * and then be swallowed by `body === s.lastBody` on every future period. Re-arm
- * means "fire again after a full period" — which requires forgetting what was
- * last said. (The suppression rule itself is unchanged: it still stops a
- * reminder from repeating itself on consecutive periods.)
- *
  * A no-op for an unknown id so a stale caller can never crash a turn.
  */
 export function rearmReminder(id: string): void {
   const r = REMINDERS.find((x) => x.id === id);
   if (!r) return;
-  const s = stateFor(r);
-  s.remaining = r.every;
-  s.lastBody = null;
-  s.suppressed = false;
+  stateFor(r).remaining = r.every;
 }
 
 /**
@@ -205,13 +189,22 @@ function activeChannels(env: MachineEnv): ChannelFile[] {
  * created and removed between passes — without paying for a fork on every
  * COLLECT pass.
  *
- * FAILS OPEN: any read error (missing dir, permissions, non-git cwd) returns
+ * FAILS OPEN: any stat error (missing dir, permissions, non-git cwd) returns
  * true so the real `listWorktrees()` decides. A probe must not be able to
  * silence the reminder it is gating.
+ *
+ * COST: one `statSync` on the directory itself — no readdir, no allocation of
+ * the entry list, no dirent materialisation. This runs on EVERY COLLECT pass
+ * (`every: 1`), which is why it is a stat and not a directory listing: an empty
+ * string means the directory exists but is empty, so `null` is the honest
+ * "plausible or unknown" answer and we let the subprocess say no.
  */
 function hasOpenWorktreeHint(_env: MachineEnv): boolean {
   try {
-    return fs.readdirSync(path.join(process.cwd(), '.worktrees')).length > 0;
+    // A directory entry count is not exposed by stat, so an existing-but-empty
+    // `.worktrees` reports "plausible" here and costs one git call in build().
+    // That is the safe direction: a missed worktree is worse than a wasted fork.
+    return fs.statSync(path.join(process.cwd(), '.worktrees')).isDirectory();
   } catch {
     return true;
   }
@@ -235,8 +228,9 @@ export const REMINDERS: Reminder[] = [
       if (status === 'No teammates.') return null;
       // The snapshot is intentionally NOT deduped at the source (printTeam is
       // one-write-many-read: stop.ts, tm_print, /team, the child IPC and the
-      // llm.ts hasTeam probe all call it), so the identical-body rule in the
-      // runner is what keeps a steady-state team from re-emitting.
+      // llm.ts hasTeam probe all call it). The registry no longer dedups bodies
+      // either, so a steady-state team re-emits the same snapshot each period;
+      // its single note ages out on `ttl`, so the snapshot never stacks up.
       return `[team status — snapshot, informational]\n${status}\n\ntm_print for a fresh read; elapsed ETAs are not actionable.`;
     }
   },
@@ -246,9 +240,11 @@ export const REMINDERS: Reminder[] = [
     every: 3,
     ttl: 4,
     isActive: (env) => env.ctx.todo.hasOpenTodo(),
-    // `Update your todos. <list>` — the old `lastTodoState` dedup is subsumed
-    // by the runner's identical-body rule: an unchanged list produces an
-    // identical body and is suppressed; a changed list re-emits immediately.
+    // `Update your todos. <list>` — the old `lastTodoState` dedup stays gone, but
+    // for a different reason than the one it was originally replaced by: the
+    // registry no longer suppresses identical bodies either (see ReminderState),
+    // so an unchanged list is re-sent each period. That is accepted — see the
+    // cost note there — not an oversight.
     build: async (env) => (env.ctx.todo.hasOpenTodo() ? `Update your todos. ${env.ctx.todo.printTodoList()}` : null)
   },
   {
@@ -272,8 +268,9 @@ export const REMINDERS: Reminder[] = [
      *     block, including the `mail_to(name="<sid>/lead", title="<topic>:…")`
      *     shape, which is the only place the model learns the reply address;
      *  3. FRESHNESS re-emit — the snapshot embeds each peer's `fresh=` flag, so
-     *     a peer going stale changes the body and the identical-body rule
-     *     re-emits without a composite cursor.
+     *     a peer going stale changes the body. With body dedup gone the
+     *     snapshot re-emits each period regardless; freshness only changes WHAT
+     *     it says, not whether it is sent.
      *
      * `ttl: 2` (not todo's 4): a channel snapshot is far more perishable than a
      * todo list. A stale routing address sends mail to a dead session, so a
@@ -377,39 +374,15 @@ export async function runReminders(env: MachineEnv, turn: TurnVars): Promise<voi
   );
 
   // ── 2. Emit phase: serial, registry order ──
-  const now = countTurns(env);
   for (const { r, s, body } of built) {
     if (s.remaining > 0) continue;
     if (body === null) {
       // Silent pass: re-arm so a temporarily inactive reminder does not retry
       // on every subsequent pass.
       s.remaining = r.every;
-      s.suppressed = false;
       continue;
     }
-    if (body === s.lastBody && s.suppressed) {
-      // Byte-identical to the last emission, AND that emission is still in the
-      // provider view — carrying no new information. Re-arm, keep suppressing.
-      s.remaining = r.every;
-      continue;
-    }
-    s.lastBody = body;
-    s.lastEmitAt = now;
-    // Arm suppression only AFTER an emit. The next period's identical body is
-    // then swallowed WHILE the note is still visible…
-    s.suppressed = true;
     env.triologue.note(r.category, body, { phantom: { family: r.id, ttl: r.ttl } });
     s.remaining = r.every;
-  }
-
-  // ── 3. Expire suppression whose note has aged out ──
-  // A note survives while fewer than `ttl` assistant messages follow it
-  // (triologue/egress.ts ageOut), so the same inequality decides when its
-  // suppression must lapse: suppressing a body past its eviction point deletes
-  // the reminder instead of deduplicating it. Deferred to its own loop so the
-  // expiry cannot affect this pass's emit decisions.
-  for (const r of REMINDERS) {
-    const s = states.get(r.id);
-    if (s?.suppressed && now - s.lastEmitAt >= r.ttl) s.suppressed = false;
   }
 }

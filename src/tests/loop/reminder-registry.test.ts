@@ -3,10 +3,11 @@
  * (src/loop/reminders.ts).
  *
  * The behaviours protected here are the ones the old three-convention code got
- * wrong or duplicated: cadence, identical-body suppression (which subsumes the
- * old `lastTodoState` dedup), registry-ordered emission (history determinism),
- * and side-effect-freedom of `build()` (which the parallel build phase
- * requires).
+ * wrong or duplicated: cadence, registry-ordered emission (history
+ * determinism), and side-effect-freedom of `build()` (which the parallel build
+ * phase requires). Identical-body suppression was tried here and REMOVED — see
+ * the ReminderState comment in src/loop/reminders.ts before reintroducing any
+ * form of it.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -89,20 +90,23 @@ describe('runReminders — cadence', () => {
   });
 });
 
-describe('runReminders — identical-body suppression', () => {
+describe('runReminders — cadence (no identical-body suppression)', () => {
   beforeEach(() => resetReminders());
 
-  it('does not re-emit an unchanged todo list (subsumes lastTodoState)', async () => {
+  it('re-emits an unchanged todo list every period', async () => {
+    // The registry deliberately does NOT suppress a repeated body (see the
+    // ReminderState comment: the suppression clock could not survive
+    // compaction). An unchanged list is therefore re-sent every `every` passes.
     const state = { todos: 'open #1', team: 'No teammates.' };
     const { env, emitted } = makeEnv(state);
+    const todoEmits = () => emitted.filter((e) => e.opts?.phantom?.family === 'todo-nudge');
 
     for (let pass = 1; pass <= 3; pass++) await runReminders(env, turn);
-    const todoEmits = () => emitted.filter((e) => e.opts?.phantom?.family === 'todo-nudge');
     expect(todoEmits()).toHaveLength(1); // fired at pass 3
 
     for (let pass = 4; pass <= 9; pass++) await runReminders(env, turn);
-    // Two more periods elapsed, but the list is byte-identical → suppressed.
-    expect(todoEmits()).toHaveLength(1);
+    // Two more periods elapsed, body unchanged → emitted again each period.
+    expect(todoEmits()).toHaveLength(3);
   });
 
   it('re-emits immediately when the todo body changes', async () => {
@@ -221,9 +225,9 @@ describe('runReminders — emission contract', () => {
   });
 
   it('a steady todo list is re-emitted once its note has aged out', async () => {
-    // The B3 regression: identical-body suppression must LAPSE when the note it
-    // suppressed is gone from the provider view, or a stable reminder is
-    // delivered once and lost forever.
+    // Guarded here as the reviewer asked: with suppression gone this must hold
+    // for the SIMPLE reason (it re-emits every period), so the assertion is now
+    // an exact cadence check rather than an "eventually resurfaces" check.
     const state = { todos: 'open #1', team: 'No teammates.' };
     const { env, emitted } = makeEnv(state);
     const todoEmits = () => emitted.filter((e) => e.opts?.phantom?.family === 'todo-nudge');
@@ -234,19 +238,18 @@ describe('runReminders — emission contract', () => {
     }
     expect(todoEmits()).toHaveLength(1);
 
-    // 3 more passes inside the ttl: identical body → still suppressed.
+    // Next period: one more emission, exactly on the cadence boundary.
     for (let pass = 1; pass <= 3; pass++) {
       await runReminders(env, turn);
       advanceTurns(env);
     }
-    expect(todoEmits()).toHaveLength(1);
+    expect(todoEmits()).toHaveLength(2);
 
-    // Past ttl: the note has aged out, so suppression must lapse and re-emit.
-    for (let pass = 1; pass <= 6; pass++) {
+    for (let pass = 1; pass <= 3; pass++) {
       await runReminders(env, turn);
       advanceTurns(env);
     }
-    expect(todoEmits().length).toBeGreaterThan(1);
+    expect(todoEmits()).toHaveLength(3);
   });
 
   it('exposes a stable registry shape', () => {
