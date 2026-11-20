@@ -303,6 +303,37 @@ describe('applyServerMessage — phase transitions', () => {
     expect(state.messages.some((m) => m.type === 'card' && m.card?.cardId === 'c1')).toBe(true);
   });
 
+  it('the SAME card arriving twice renders ONE row (the Duplicate keys warning)', () => {
+    // Three routes deliver the same card: broadcastCard's own send (flat, no
+    // seq), a journal-projected /history row (nested under `card`, WITH a seq)
+    // and a re-broadcast on reconnect (flat, no seq). Each push used to mint a
+    // fresh v-for key, so Vue reported `Duplicate keys "id:N"`.
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, { type: 'card', content: 'Confirm?', cardId: 'c9', kind: 'confirm' }, ctx);
+    applyServerMessage(
+      state,
+      { type: 'card', content: 'Confirm?', seq: 42, card: { cardId: 'c9', query: 'Confirm?', kind: 'confirm' } },
+      ctx
+    );
+    applyServerMessage(state, { type: 'card', content: 'Confirm?', cardId: 'c9', kind: 'confirm' }, ctx);
+
+    const rows = state.messages.filter((m) => m.type === 'card');
+    expect(rows).toHaveLength(1);
+    expect(new Set(rows.map((m) => m.id)).size).toBe(1);
+    // The phase transition still happens on every delivery — dedupe is about
+    // the ROW, not about the state.
+    expect(state.phase).toBe('card');
+  });
+
+  it('a DIFFERENT card still renders its own row', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, { type: 'card', content: 'A?', cardId: 'c1', kind: 'confirm' }, ctx);
+    applyServerMessage(state, { type: 'card', content: 'B?', cardId: 'c2', kind: 'confirm' }, ctx);
+    expect(state.messages.filter((m) => m.type === 'card')).toHaveLength(2);
+  });
+
   it('auto:on from idle transitions to await', () => {
     const state = makeState();
     const ctx = makeCtx();

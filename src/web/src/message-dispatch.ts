@@ -103,6 +103,41 @@ export interface DispatchContext {
 }
 
 /**
+ * THE ONLY WAY a row enters the chat log.
+ *
+ * A row inserted twice carries two v-for keys, and Vue reports
+ * `Duplicate keys found: "id:N"`. Four producers push rows — the socket frame
+ * handler, the /history merge, the optimistic echo on send, and the card branch
+ * below — each with its own idea of identity. One chokepoint instead:
+ *
+ *   1. an id is assigned only when the row has none (a re-broadcast that already
+ *      carries one keeps it, so it collides with the earlier copy);
+ *   2. a row whose identity is already present is dropped — journal `seq`, then
+ *      card `cardId`, then `id`;
+ *   3. an id that already exists is REPLACED in place, never added beside.
+ *
+ * @returns true when the row was inserted, false when it was a duplicate.
+ */
+function insertRow(state: DispatchState, row: ChatMessage, ctx: DispatchContext): boolean {
+  const messages = state.messages;
+  if (row.id === undefined) row.id = ctx.nextId();
+
+  const cardId = row.type === 'card' ? row.card?.cardId : undefined;
+  const duplicate = messages.some((m) => {
+    if (typeof row.seq === 'number' && typeof m.seq === 'number' && m.seq === row.seq) return true;
+    if (cardId !== undefined && m.type === 'card' && m.card?.cardId === cardId) return true;
+    return m.id !== undefined && m.id === row.id;
+  });
+  if (duplicate) {
+    const at = messages.findIndex((m) => m.id !== undefined && m.id === row.id);
+    if (at >= 0) messages.splice(at, 1, row);
+    return false;
+  }
+  messages.push(row);
+  return true;
+}
+
+/**
  * Apply a single parsed server message to the store, mirroring the previous
  * `ws.onmessage` logic exactly but routing phase changes through
  * `store.setPhase()` / `store.setAutoMode()` per the transition table. Returns
@@ -118,6 +153,8 @@ export interface DispatchContext {
 export function applyServerMessage(state: DispatchState, msg: ChatMessage, ctx: DispatchContext): void {
   // Ensure every live message has a stable id for v-for keys.
   if (msg.id === undefined) msg.id = ctx.nextId();
+  // `ctx` is the row factory for insertRow below — see its doc for the rule.
+  const insert = (row: ChatMessage): boolean => insertRow(state, row, ctx);
 
   // Record the last server message BEFORE any branching so EVERY wire type —
   // the explicitly-handled ones below AND anything falling through the default
@@ -131,9 +168,7 @@ export function applyServerMessage(state: DispatchState, msg: ChatMessage, ctx: 
     state.setPhase('prompt');
     // Retry button appears when the prompt is a Retry? [Y/n] question
     state.showRetry = /retry/i.test(msg.content);
-    if (msg.content) {
-      state.messages.push(msg);
-    }
+    if (msg.content) insert(msg);
     // Surface the "继续…" review card from the steering notes STILL QUEUED in
     // the server's snapshot at PROMPT — i.e. notes the agent never consumed.
     // Reads `steeringQueue` (authoritative), NOT `steeringBuffer` (which is
@@ -174,7 +209,11 @@ export function applyServerMessage(state: DispatchState, msg: ChatMessage, ctx: 
     // A card with no identity can never be answered (the server has no resolver
     // for ''), so it must not be rendered as if it could be.
     if (!cardPayload.cardId) return;
-    state.messages.push({ type: 'card', content: query, id: ctx.nextId(), card: cardPayload });
+    // ONE CARD, ONE ROW. The same card arrives by three routes — broadcastCard's
+    // own send, a journal-projected /history row, and a re-broadcast on
+    // reconnect — and the last two carry an `id`/`seq` the first does not.
+    // insertRow() keys on cardId, so two deliveries cannot become two rows.
+    insert({ type: 'card', content: query, card: cardPayload });
     return;
   }
 
@@ -303,7 +342,7 @@ export function applyServerMessage(state: DispatchState, msg: ChatMessage, ctx: 
     if (reconciled) {
       state.messages.splice(0, state.messages.length, ...reconciled);
     } else {
-      state.messages.push(msg);
+      insert(msg);
     }
   }
 }
