@@ -13,6 +13,7 @@ import { autoState, type AutoCommitEntry } from '../../loop/auto-state.js';
 import type { CrossroadCardWire } from '../../loop/crossroad-card.js';
 import { getVisionModel, isVisionEnabled, getImgCacheDir, getApiProvider } from '../../config.js';
 import { filetypeinfo } from '../../utils/magic-bytes.js';
+import { formatVisionFramePrompt, type VisionFrame } from '../../utils/vision-frame.js';
 import { BaseCore } from '../shared/base-core.js';
 import { evaluateGrant, isPlanModeWritablePath } from '../grant/grant-evaluator.js';
 import { isWebUiUp } from '../../loop/loop-events.js';
@@ -150,6 +151,16 @@ export class Core extends BaseCore implements CoreModule {
    * Cached read_picture results live here as <hash>.json files.
    */
   private readonly pictureCacheDir: string;
+
+  /**
+   * Geometry of the most recent vision description (original vs sent pixels).
+   *
+   * Tools need the numbers themselves, not only the model's prose: the model
+   * is asked to answer in original-image coordinates, but a tool result the
+   * agent can re-derive from is what makes that verifiable. Set by
+   * `imgDescribe`, read after the call.
+   */
+  lastVisionFrame?: { originalWidth: number; originalHeight: number; sentWidth: number; sentHeight: number };
 
   constructor(workDir?: string) {
     super(workDir || process.cwd());
@@ -375,12 +386,22 @@ export class Core extends BaseCore implements CoreModule {
       this.brief('info', 'img_describe', `Processing base64 image (${base64Image.length} chars)`);
     }
 
-    // Resize image if too large (width > 1920px) to keep payload manageable
-    const { base64: resizedBase64, tempPath } = await this.resizeImageIfNeeded(base64Image, imagePath);
-    base64Image = resizedBase64;
+    // Resize image if too large (width > 1920px) to keep payload manageable.
+    // The step also reports the frame geometry: after a downscale the model
+    // sees DIFFERENT pixels than the file holds, and only the model can read
+    // coordinates — so without these numbers no caller could map a reported
+    // position back to the original image (see src/utils/vision-frame.ts).
+    const frameSource = await this.resizeImageIfNeeded(base64Image, imagePath);
+    base64Image = frameSource.base64;
+
+    // Attaching the frame block HERE (not in each tool) is what gets the size
+    // info to every call path at once: screen, read_picture's cache miss, and
+    // read_picture's new-focus merge all reach the model through this method.
+    const framePrompt = customPrompt + formatVisionFramePrompt(frameSource.frame);
+    this.lastVisionFrame = frameSource.frame;
 
     try {
-      const description = await imgDescribe(base64Image, customPrompt, signal);
+      const description = await imgDescribe(base64Image, framePrompt, signal);
       this.brief('info', 'img_describe', `Image description complete (${description.length} chars)`);
       return description;
     } catch (err) {
@@ -410,15 +431,6 @@ export class Core extends BaseCore implements CoreModule {
       }
 
       throw new Error(`Vision model failed: ${errMsg}\n\nGuidance: ${guidance}`, { cause: err });
-    } finally {
-      // Cleanup temp file if created
-      if (tempPath) {
-        try {
-          fs.unlinkSync(tempPath);
-        } catch {
-          // ignore cleanup errors
-        }
-      }
     }
   }
 
@@ -430,7 +442,7 @@ export class Core extends BaseCore implements CoreModule {
   private async resizeImageIfNeeded(
     base64Image: string,
     _originalPath?: string
-  ): Promise<{ base64: string; tempPath?: string }> {
+  ): Promise<{ base64: string; frame?: VisionFrame }> {
     const maxWidth = 1920;
 
     try {
@@ -440,20 +452,46 @@ export class Core extends BaseCore implements CoreModule {
 
       // Get metadata to check dimensions
       const metadata = await image.metadata();
+      const originalWidth = metadata.width ?? 0;
+      const originalHeight = metadata.height ?? 0;
 
-      if (!metadata.width || metadata.width <= maxWidth) {
-        // No resize needed
-        return { base64: base64Image };
+      if (!originalWidth || originalWidth <= maxWidth) {
+        // No resize needed. Report the frame anyway: the geometry is what lets
+        // the model answer "how big is this" and the agent map coordinates.
+        return {
+          base64: base64Image,
+          frame: originalWidth
+            ? { originalWidth, originalHeight, sentWidth: originalWidth, sentHeight: originalHeight }
+            : undefined
+        };
       }
 
       // Resize needed
-      this.brief('info', 'img_describe', `Resizing image from ${metadata.width}px to ${maxWidth}px wide`);
+      this.brief('info', 'img_describe', `Resizing image from ${originalWidth}px to ${maxWidth}px wide`);
 
       // Resize and convert to buffer
       const resizedBuffer = await sharp(imageBuffer).resize(maxWidth).toBuffer();
+      // Re-read the ACTUAL output geometry instead of computing it: the
+      // resize is width-locked so the height should be
+      // round(originalHeight * maxWidth / originalWidth), but rounding and any
+      // future `fit` change must not be guessed at — the model's scale factor
+      // depends on these exact numbers.
+      const resizedMeta = await sharp(resizedBuffer).metadata();
+      const sentWidth = resizedMeta.width ?? maxWidth;
+      const sentHeight = resizedMeta.height ?? 0;
 
-      return { base64: resizedBuffer.toString('base64') };
+      return {
+        base64: resizedBuffer.toString('base64'),
+        frame: { originalWidth, originalHeight, sentWidth, sentHeight }
+      };
     } catch (err) {
+      // An undecodable image must not fail the describe call: return the
+      // original bytes and an undefined frame, which the prompt formatter turns
+      // into the explicit "dimensions unknown" wording.
+      if (base64Image) {
+        this.brief('warn', 'img_describe', `Could not measure image geometry: ${(err as Error).message}`);
+        return { base64: base64Image };
+      }
       throw new Error(`Failed to process image: ${(err as Error).message}`, { cause: err });
     }
   }
@@ -568,6 +606,23 @@ export class Core extends BaseCore implements CoreModule {
     const entry = this.readCacheFile(cacheFile);
     const cacheHit = !!entry && entry.statKey === statKey;
 
+    // Frame geometry for the RESULT (not the cache): it belongs to the file on
+    // disk, so it is measured fresh on every call — a cache entry written
+    // before this field existed must not yield a frame-less result. Reuses the
+    // same sharp metadata read the describe path performs; a failure here only
+    // means the note is omitted, never that the read fails.
+    const frameForResult = async (): Promise<PictureResult['frame']> => {
+      try {
+        const metadata = await sharp(imagePath).metadata();
+        const width = metadata.width ?? 0;
+        const height = metadata.height ?? 0;
+        if (!width) return undefined;
+        return { originalWidth: width, originalHeight: height, sentWidth: width, sentHeight: height };
+      } catch {
+        return undefined;
+      }
+    };
+
     // Cache miss: vision call, write fresh entry
     if (!cacheHit) {
       this.brief('info', 'read_picture_cached', `cache miss: ${imagePath}`);
@@ -575,7 +630,9 @@ export class Core extends BaseCore implements CoreModule {
       const newEntry: PictureCacheEntry = { statKey, pairs: [{ focus, description }] };
       this.writeCacheFile(cacheFile, newEntry);
       const token = this.computeCacheToken(imagePath, [focus]);
-      return { pairs: newEntry.pairs, cacheToken: token };
+      // imgDescribe measured the frame it actually sent; report that, since it
+      // is the geometry the coordinates in `description` belong to.
+      return { pairs: newEntry.pairs, cacheToken: token, frame: this.lastVisionFrame };
     }
 
     // Cache hit: compute the current token from existing focuses
@@ -585,20 +642,20 @@ export class Core extends BaseCore implements CoreModule {
     // No cache token passed: return cached pairs, no vision call (prompt ignored)
     if (!cacheToken) {
       this.brief('info', 'read_picture_cached', `cache hit (no token): ${imagePath}`);
-      return { pairs: entry!.pairs, cacheToken: currentToken };
+      return { pairs: entry!.pairs, cacheToken: currentToken, frame: await frameForResult() };
     }
 
     // Stale token: return current state, no vision call
     if (cacheToken !== currentToken) {
       this.brief('info', 'read_picture_cached', `cache hit (stale token): ${imagePath}`);
-      return { pairs: entry!.pairs, cacheToken: currentToken };
+      return { pairs: entry!.pairs, cacheToken: currentToken, frame: await frameForResult() };
     }
 
     // Valid token: check if focus exists (exact string match, trimmed)
     const existing = entry!.pairs.find((p) => p.focus.trim() === focus);
     if (existing) {
       this.brief('info', 'read_picture_cached', `cache hit (focus exists): ${imagePath}`);
-      return { pairs: entry!.pairs, cacheToken: currentToken };
+      return { pairs: entry!.pairs, cacheToken: currentToken, frame: await frameForResult() };
     }
 
     // New focus: vision call, add pair, return all pairs + new token
@@ -607,7 +664,7 @@ export class Core extends BaseCore implements CoreModule {
     const updatedEntry: PictureCacheEntry = { statKey, pairs: [...entry!.pairs, { focus, description }] };
     this.writeCacheFile(cacheFile, updatedEntry);
     const newToken = this.computeCacheToken(imagePath, [...currentFocuses, focus]);
-    return { pairs: updatedEntry.pairs, cacheToken: newToken };
+    return { pairs: updatedEntry.pairs, cacheToken: newToken, frame: this.lastVisionFrame };
   }
 
   /**

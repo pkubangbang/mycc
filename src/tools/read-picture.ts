@@ -15,6 +15,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolvePath, isInsideWorkspace } from '../utils/path.js';
+import { formatVisionFrameNote } from '../utils/vision-frame.js';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { isCancellation } from '../loop/cancellation.js';
 
@@ -45,11 +46,15 @@ function safePath(p: string, workdir: string): string {
 function formatResult(
   imagePath: string,
   pairs: Array<{ focus: string; description: string }>,
-  cacheToken: string
+  cacheToken: string,
+  frameNote: string
 ): string {
   const pairsBlock = pairs.map((p) => `[${p.focus}]: ${p.description}`).join('\n\n');
   const hint = `To ask a question about this image, call read_picture again with cache="${cacheToken}" and your new prompt. The new focus will be merged into the cache.`;
-  return `## Image: ${imagePath}\n\n${pairsBlock}\n\n---\n💡 Cache token: ${cacheToken}\n${hint}`;
+  // The frame note is what lets the agent convert a coordinate the model
+  // reported back to the file's own pixels; omitted when unmeasurable.
+  const frame = frameNote ? `\n${frameNote}` : '';
+  return `## Image: ${imagePath}\n\n${pairsBlock}\n\n---\n💡 Cache token: ${cacheToken}\n${hint}${frame}`;
 }
 
 export const readPictureTool: ToolDefinition = {
@@ -119,7 +124,7 @@ export const readPictureTool: ToolDefinition = {
       // cache miss / new focus (the latent twin of the screen tool bug).
       const result = await ctx.core.readPictureCached(safe, prompt, cacheToken, signal);
 
-      return formatResult(imagePath, result.pairs, result.cacheToken);
+      return formatResult(imagePath, result.pairs, result.cacheToken, formatVisionFrameNote(result.frame));
     } catch (error: unknown) {
       // A cancelled vision call is rethrown, not reported: the caller (Loader,
       // then TOOL) owns the STOP/wrap-up decision. See src/loop/cancellation.ts.

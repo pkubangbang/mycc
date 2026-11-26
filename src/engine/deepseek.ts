@@ -847,6 +847,11 @@ export async function imgDescribe(image: string, prompt?: string, signal?: Abort
   const response = await retryChat(
     {
       model,
+      // See ollama.ts's imgDescribe: a vision description needs no reasoning
+      // pass. retryChat converts `think: false` into `thinking:{type:'disabled'}`
+      // and drops `reasoning_effort` for DeepSeek, so this one flag keeps both
+      // providers on the no-thinking path.
+      think: false,
       messages: [
         {
           role: 'user',

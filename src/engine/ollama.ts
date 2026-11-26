@@ -500,6 +500,14 @@ export async function imgDescribe(image: string, prompt?: string, signal?: Abort
   const response = await retryChat(
     {
       model: getVisionModel(),
+      // Reasoning is wasted work for a description call: the vision model is
+      // asked one focused question, its answer is consumed verbatim, and a
+      // thinking pass only adds latency and tokens (it also makes the
+      // spinner-less timeout windows harder to tune). Pinned here rather than
+      // relying on retryChat's default so the vision path keeps holding it if
+      // that default ever changes. DeepSeek maps `think: false` to
+      // `thinking: {type:'disabled'}` — the same pin, provider-neutral.
+      think: false,
       messages: [
         {
           role: 'user',

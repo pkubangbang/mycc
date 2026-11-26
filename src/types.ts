@@ -191,6 +191,15 @@ export type ToolScope = 'main' | 'child';
 export interface PictureResult {
   pairs: Array<{ focus: string; description: string }>;
   cacheToken: string;
+  /**
+   * Geometry of the image behind these descriptions (original vs the pixels
+   * actually sent to the vision model), when the parent could measure it.
+   *
+   * Not cached with the pairs: it is a property of the file on disk, cheap to
+   * recompute, and a cache entry written before this field existed must not
+   * hand back a stale or absent frame.
+   */
+  frame?: { originalWidth: number; originalHeight: number; sentWidth: number; sentHeight: number };
 }
 
 // ============================================================================

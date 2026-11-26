@@ -23,10 +23,23 @@ import * as path from 'path';
 import * as os from 'os';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { isCancellation } from '../loop/cancellation.js';
+import { formatVisionFrameNote, type VisionFrame } from '../utils/vision-frame.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
+
+/**
+ * The geometry of the image the vision model just saw.
+ *
+ * `CoreModule.imgDescribe` records it on the Core instance rather than in its
+ * return value (the return type is the description string, shared with the
+ * child IPC path). Absent when the core cannot measure the image.
+ */
+function visionFrameOf(core: unknown): VisionFrame | undefined {
+  const frame = (core as { lastVisionFrame?: VisionFrame }).lastVisionFrame;
+  return frame && typeof frame.originalWidth === 'number' ? frame : undefined;
+}
 
 /** Default prompt for screen reading */
 const DEFAULT_PROMPT =
@@ -453,7 +466,12 @@ export const screenTool: ToolDefinition = {
       // cloud vision model — retryChat honors it via the POST-race +
       // collectStream watchdog (previously this hung indefinitely).
       const description = await ctx.core.imgDescribe(screenshotPath, customPrompt, signal);
-      return `## Screen Content\n\n${description}`;
+      // Report the frame geometry alongside the description so the agent can
+      // convert a coordinate the model quoted back to the monitor's own
+      // pixels — imgDescribe downscales anything wider than 1920px. Read it
+      // AFTER the call: imgDescribe records the geometry it actually sent.
+      const frameNote = formatVisionFrameNote(visionFrameOf(ctx.core));
+      return `## Screen Content\n\n${description}${frameNote ? `\n\n${frameNote}` : ''}`;
     } catch (error: unknown) {
       // Cancellation propagates; the `finally` below still removes the temp
       // screenshot, so rethrowing does not leak the file.
