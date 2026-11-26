@@ -214,7 +214,7 @@ interface ToolDefinition {
 
 **Description**: Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence parameter (0-10). State the conclusion first, then the evidence.
 
-> The description deliberately carries no lead-only teaching: `brief` is `['main', 'child']`, so the same description reaches teammates. The `brief` contract lives in the `## Briefs` section of the root `AGENTS.md`, injected verbatim as project context for both the lead and teammates (formerly a hard-coded lead-only system-prompt section, `buildBriefSection()` in `src/loop/prompts/common.ts`).
+> The description deliberately carries no lead-only teaching: `brief` is `['main', 'child']`, so the same description reaches teammates. The `brief` contract lives in the lead-only `## Briefs` section (`buildBriefSection()` in `src/loop/prompts/common.ts`, rendered via `buildLeadAgentMemorySection()` into the system prompt).
 
 **Parameters**:
 | Name | Type | Required | Description |

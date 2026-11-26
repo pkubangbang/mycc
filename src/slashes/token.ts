@@ -23,14 +23,17 @@
  *
  * WHERE THE AGENT'S RULES ARE COUNTED — read this before "fixing" the split.
  *   The output-behavior rules (`## Output Behavior`) and the `## Briefs`
- *   contract are PROJECT CONTEXT, not system-prompt text: they live in the
- *   root AGENTS.md and arrive through the project-context populator. So they
- *   are counted under `project context` in the breakdown below, NOT under
- *   `system prompt`, and the README/AGENTS.md bodies are counted there too.
- *   The split is a property of where the prose is DELIVERED, which is why it
- *   moved when the rules left the hard-coded prompt: the TOTAL the provider
- *   sees is unchanged, only its label is. A reviewer who expects those rules
- *   under `system prompt` will read a consistent report as a regression.
+ *   contract are SYSTEM-PROMPT text: they live in
+ *   src/loop/prompts/common.ts (buildOutputBehaviorSection /
+ *   buildBriefSection) and arrive with the system prompt itself. So they are
+ *   counted under `system prompt` in the breakdown below, NOT under
+ *   `project context`. The split is a property of where the prose is
+ *   DELIVERED, not of who wrote it. (Commit e016c2a3 briefly moved these rules
+ *   into the root AGENTS.md → project context, so the same prose was
+ *   temporarily labelled `project context`; the TOTAL the provider saw was
+ *   unchanged, only its label was. They are back in the system prompt, and so
+ *   is the label.) A reviewer who expects those rules under the system prompt
+ *   will read a consistent report as a regression.
  *
  *   This command builds the SAME prompt llm.ts builds (same builder, same
  *   workDir, same hasTeam, same plan/normal branch) and passes the same

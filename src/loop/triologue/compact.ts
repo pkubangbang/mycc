@@ -71,9 +71,10 @@ export function buildSummaryPrompt(
     : '';
 
   // NOTE: no brief guidance here. "When/how to call brief" is taught in ONE
-  // place — the root `AGENTS.md` (injected verbatim as project context).
-  // Repeating it in the compaction summary prompt pollutes the injected
-  // context with a second, drifting copy of the same policy.
+  // place — `buildBriefSection()` in src/loop/prompts/common.ts (lead system
+  // prompt, `## Briefs`). Repeating it in the compaction summary prompt
+  // pollutes the injected context with a second, drifting copy of the same
+  // policy.
 
   return (
     `Summarize this conversation for continuity. Cover the following sections:\n\n` +

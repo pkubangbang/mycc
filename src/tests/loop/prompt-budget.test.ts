@@ -33,16 +33,24 @@ import { buildPlanModePrompt, buildNormalModePrompt } from '../../loop/prompts/l
 // ---------------------------------------------------------------------------
 
 const BASELINES = {
-  soloPlan: 6370,
-  teamPlan: 7385,
-  // Lowered from 7304 when the output-behavior rules moved OUT of the system
-  // prompt into the root AGENTS.md (injected verbatim as project context).
-  // The section was 100% identical in every variant, so all five baselines
-  // dropped; only soloNormal's old ±15% floor (6208) tripped. Pinned to the
-  // measured size so the guard keeps catching drift.
-  soloNormal: 6025,
-  teamNormal: 8142,
-  teammate: 6094
+  soloPlan: 6515,
+  teamPlan: 7529,
+  // Re-pinned after the `## Output Behavior` + `## Briefs` sections came back
+  // into the system prompt (commit e016c2a3 had exiled them to the root
+  // AGENTS.md), and then again after three rebalances:
+  //   - the reply rules ("match the user's language", "speak positively, do not
+  //     interleave fault analysis") merged into Output Behavior instead of a
+  //     separate lead-only section — so teammates get them too;
+  //   - the "Cite Your Sources" requirement moved OUT to root AGENTS.md as repo
+  //     policy, so every variant shrank slightly;
+  //   - the two overlapping guidance lists collapsed into ONE ordered list under
+  //     `### How to Shape a Reply and an Explanation` (conclusion-first and
+  //     evidence were stated twice before); its positive-framing rule was then
+  //     tightened for budget (-128 tokens per normal-mode variant).
+  // The ±15% tolerance is unchanged — widen it only with a measured reason.
+  soloNormal: 7355,
+  teamNormal: 9472,
+  teammate: 7270
 } as const;
 
 const TOLERANCE = 0.15; // ±15%

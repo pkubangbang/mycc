@@ -9,11 +9,13 @@
  * normal-mode prompts. The intent-language section lives in intent-lang.ts.
  *
  * The output-behavior rules (how to phrase replies, high-quality
- * explanations) deliberately do NOT live here: they are project-owned prose in
- * the root AGENTS.md, which the project-context populator injects verbatim.
- * Keeping them out of the system prompt lets a project tighten or replace the
- * wording without a code change, and keeps the leading prompt-cache prefix
- * byte-stable across releases.
+ * explanations, the brief contract) DO live here, in buildOutputBehaviorSection(),
+ * and are delivered to lead AND teammates through buildCommonSections(). They
+ * were briefly relocated to the root AGENTS.md as project policy, but they are
+ * harness mechanics shared by every agent, so a project restating them was pure
+ * duplication: one copy here, one delivery path. Project-owned prose still
+ * belongs in the project's AGENTS.md (injected verbatim by the project-context
+ * populator).
  */
 
 import { getLaunchArgs } from '../../config.js';
@@ -22,6 +24,41 @@ import { buildIntentLanguageSection } from './intent-lang.js';
 // ============================================================================
 // Common Sections (shared across prompts)
 // ============================================================================
+
+/**
+ * The agent's speaking rules: how a reply is shaped, what a `brief` is, and how
+ * an explanation must be argued.
+ *
+ * ROLE-AGNOSTIC — deliberately rendered by buildCommonSections(), so both the
+ * lead and teammate prompts receive it. These are harness mechanics (every
+ * agent in this program speaks to a human through the same channel), not
+ * project policy, so a project should not be able to retune them from its own
+ * AGENTS.md, and they must not be duplicated there: one copy, one delivery
+ * path. Project-owned prose still belongs in the project's AGENTS.md, which
+ * the project-context populator injects verbatim.
+ */
+export function buildOutputBehaviorSection(): string {
+  return [
+    '## Output Behavior',
+    '**CRITICAL**: you MUST follow these instructions when you respond.',
+    '- When you detect dilemma, use the brief tool to state it clearly with a low confidence (1~5).',
+    '- Avoid repeating the content that has been output by the brief tool.',
+    '- Do NOT explain, comment on, or narrate your response to hook/skill [REMINDER] or [Hook] notifications. ' +
+      'If a reminder tells you to do something, do it silently. ' +
+      'If it is informational, acknowledge it implicitly by continuing your task.',
+    '',
+    '### How to Shape a Reply and an Explanation',
+    'These govern how you SPEAK; they never change what you DO.',
+    '**Before output**, double check the resources you used to ensure they exist.',
+    '',
+    "1. **Match the user's language.** Reply in the same language as the user's query (Chinese query → Chinese reply, English query → English reply), even when the code, docs, or tool output are in another language. Only code, identifiers, paths and commands stay verbatim.",
+    '2. **Start with the conclusion.** Open with what changed or what you recommend in ONE line before any explanation.',
+    '3. **Provide your evidence.** Each argument should cover a distinct aspect, and together they should fully support your conclusion.',
+    '4. **Speak positively; never interleave fault analysis.** Lead with what was achieved and verified. Report faults, causes and limits in a SEPARATE block with their effect and next step, not woven into the narrative — alternating success and failure sentence by sentence is hard to read.',
+    '5. **Outline the difference.** Use "BEFORE / AFTER" to say it clearly.',
+    '6. **No filler narration.** "Let me take a look...", "I can see that...", "What this does is..." → delete these. Just say what the result is.'
+  ].join('\n');
+}
 
 export function buildVerificationSection(): string {
   return [
@@ -112,8 +149,9 @@ export function buildProjectIgnoreSection(): string {
 // ============================================================================
 
 export function buildCommonSections(): string {
-  // NOTE: no output-behavior section here — those rules are project-owned prose
-  // in the root AGENTS.md (injected verbatim by the project-context populator).
+  // Output Behavior is shared by lead AND teammates: it is harness mechanics,
+  // not project policy, so it is delivered here (once) instead of from a
+  // project's AGENTS.md, where every project would have to restate it.
   return [
     buildLaunchArgsSection(),
     '',
@@ -122,7 +160,8 @@ export function buildCommonSections(): string {
     buildVerificationSection(),
     '',
     buildIntentLanguageSection(),
-    ''
+    '',
+    buildOutputBehaviorSection()
   ].join('\n');
 }
 
@@ -166,7 +205,28 @@ export function buildLeadAgentMemorySection(): string {
     'You have structured capability modules beyond basic file I/O. They organize along a few conceptual axes:',
     ...commonAxes,
     'You also coordinate: spawn/await teammates, broadcast, and discover peer instances.',
-    'Communication is async (mail_to), status (brief), or topic-shift (mycc_title).'
+    'Communication is async (mail_to), status (brief), or topic-shift (mycc_title).',
+    '',
+    buildBriefSection()
+  ].join('\n');
+}
+
+// ============================================================================
+// Briefs Section (lead-only — teammates must never see it)
+// ============================================================================
+
+/**
+ * The brief contract, stated ONLY here and in the `brief` tool's description.
+ *
+ * Lead-only by construction: this builder is called from
+ * buildLeadAgentMemorySection() only. The teammate prompt assembles
+ * buildTeammateAgentMemorySection() + buildCommonSections(), neither of which
+ * reaches it.
+ */
+export function buildBriefSection(): string {
+  return [
+    '## Briefs',
+    'A `brief` is a checkpoint the user reads AND the durable record of where an exploration stands. Emit it as the SOLE tool call of its turn (conclusion first, then evidence), then keep working.'
   ].join('\n');
 }
 
