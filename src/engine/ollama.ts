@@ -492,9 +492,17 @@ export async function webFetch(url: string, signal?: AbortSignal): Promise<WebFe
  * @param prompt - Custom prompt for the vision model
  * @param signal - Optional AbortSignal for ESC handling (threaded from the
  *   tool handler's signal via core.imgDescribe)
+ * @param secondImage - Optional second image (base64) appended AFTER `image` in
+ *   the same message. Ollama decodes `images[]` in order, so the diff frame the
+ *   prompt refers to as "image 2" really is the second one.
  * @returns The vision model's text description of the image
  */
-export async function imgDescribe(image: string, prompt?: string, signal?: AbortSignal): Promise<string> {
+export async function imgDescribe(
+  image: string,
+  prompt?: string,
+  signal?: AbortSignal,
+  secondImage?: string
+): Promise<string> {
   // noSpinner: the tool handler / core wrapper already briefs progress; a
   // second spinner would visually conflict with the parent "Thinking" one.
   const response = await retryChat(
@@ -512,7 +520,7 @@ export async function imgDescribe(image: string, prompt?: string, signal?: Abort
         {
           role: 'user',
           content: prompt || 'Describe this image in detail.',
-          images: [image]
+          images: secondImage ? [image, secondImage] : [image]
         }
       ]
     },

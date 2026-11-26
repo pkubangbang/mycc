@@ -100,10 +100,11 @@ export class ChildCore extends BaseCore implements CoreModule {
    *   that would be thrown away.
    * @returns Description of the image
    */
-  async imgDescribe(image: string, prompt?: string, signal?: AbortSignal): Promise<string> {
+  async imgDescribe(image: string, prompt?: string, signal?: AbortSignal, secondImage?: string): Promise<string> {
     const response = await ipc.sendRequest<{ description: string }>('core_img_describe', {
       image,
       prompt,
+      secondImage,
       aborted: signal?.aborted ?? false
     });
     return response.description;

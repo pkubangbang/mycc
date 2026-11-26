@@ -827,9 +827,17 @@ export async function webFetch(_url: string, _signal?: AbortSignal): Promise<Web
  * @param image - Base64-encoded image string (no `data:` prefix)
  * @param prompt - Optional custom prompt for the vision model
  * @param signal - Optional AbortSignal for ESC handling
+ * @param secondImage - Optional second image (base64) emitted as an extra
+ *   `image_url` block after the first. Both are produced by the same PNG
+ *   pipeline, so the single `imageMime` below is correct for both.
  * @returns The vision model's text description of the image
  */
-export async function imgDescribe(image: string, prompt?: string, signal?: AbortSignal): Promise<string> {
+export async function imgDescribe(
+  image: string,
+  prompt?: string,
+  signal?: AbortSignal,
+  secondImage?: string
+): Promise<string> {
   const model = process.env.DEEPSEEK_VISION_MODEL ?? DEFAULT_DEEPSEEK_VISION_MODEL;
   const text = prompt || 'Describe this image in detail.';
 
@@ -861,7 +869,7 @@ export async function imgDescribe(image: string, prompt?: string, signal?: Abort
           // Synthetic fields consumed by the request builder in retryChat:
           // `images[]` triggers multimodal block emission, `imageMime` sets the
           // data-URL media type.
-          images: [image],
+          images: secondImage ? [image, secondImage] : [image],
           imageMime: mime
         } as ProviderMessage
       ]

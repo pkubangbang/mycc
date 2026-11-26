@@ -733,8 +733,19 @@ interface ToolDefinition {
 **Behavior**:
 - Auto-detects OS, display server (Wayland/X11), and available screenshot tools
 - Selects the best tool for the environment (screencapture, gnome-screenshot, grim, scrot, import)
-- Auto-resizes large screenshots (>1280px wide) using ImageMagick if available
+- Downscales anything wider than `VISION_MAX_WIDTH` (1920px) with `sharp` before the vision call
 - Sends base64-encoded image to configured vision model
+- **Baseline diff**: the frame is read into memory before the temp file is unlinked and kept as a
+  baseline (`src/utils/screen-diff.ts`, one slot per process). On the next call, when the baseline is
+  from the same monitor and under 15 minutes old, a pixel-difference image is computed; if at least
+  15% of pixels are identical (`DIFF_IDENTICAL_MIN_RATIO`) it is sent as a **second image** in the
+  same vision call and a `_[diff: …% identical vs baseline …s old]_` line is appended to the result.
+  The ratio is measured at NATIVE resolution, before any resize — resampling would blur a one-pixel
+  change into grey and make "identical" depend on the resampler. Only the resulting diff image is
+  capped to `VISION_MAX_WIDTH`, so its pixels line up with the frame the model saw.
+  A failed diff or a failed describe silently degrades to the single-image behaviour, and the
+  baseline is only committed after a successful describe, so a retry still diffs against the last
+  screen the model actually saw.
 
 **Example**:
 ```json

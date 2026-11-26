@@ -13,11 +13,23 @@ import { autoState, type AutoCommitEntry } from '../../loop/auto-state.js';
 import type { CrossroadCardWire } from '../../loop/crossroad-card.js';
 import { getVisionModel, isVisionEnabled, getImgCacheDir, getApiProvider } from '../../config.js';
 import { filetypeinfo } from '../../utils/magic-bytes.js';
-import { formatVisionFramePrompt, type VisionFrame } from '../../utils/vision-frame.js';
+import { formatVisionFramePrompt, VISION_MAX_WIDTH, type VisionFrame } from '../../utils/vision-frame.js';
 import { BaseCore } from '../shared/base-core.js';
 import { evaluateGrant, isPlanModeWritablePath } from '../grant/grant-evaluator.js';
 import { isWebUiUp } from '../../loop/loop-events.js';
 import { atomicWrite } from '../../utils/atomic-write.js';
+
+/**
+ * Appended to the vision prompt when a pixel-difference frame rides along as
+ * the second image. Kept next to `imgDescribe` because it documents the
+ * ordering contract both engines rely on (`images[0]` = current, `images[1]` =
+ * difference) — nothing else in the pipeline is allowed to reorder them.
+ */
+const DIFF_PROMPT_SUFFIX =
+  '\n\n[Two images are attached. Image 1 is the CURRENT screen. Image 2 is the PIXEL DIFFERENCE ' +
+  'between image 1 and an earlier capture of the same screen: black means unchanged, bright means ' +
+  'changed. Base your description on image 1, and use image 2 to state precisely WHAT changed ' +
+  'since the earlier capture and WHERE.]';
 
 /**
  * One REFUSED grant verdict, recorded at the lead's grant chokepoint.
@@ -353,9 +365,14 @@ export class Core extends BaseCore implements CoreModule {
    * @param signal - Optional AbortSignal for ESC handling, threaded into the
    *   engine's imgDescribe (which routes through retryChat). Without it a slow
    *   cloud vision model hangs the call and ESC cannot interrupt it.
+   * @param secondImage - Optional second image (base64) sent alongside `image`
+   *   in the SAME vision call. Used by `screen` to attach a pixel-difference
+   *   frame. Appended as the last parameter so every existing caller compiles
+   *   unchanged. `lastVisionFrame` keeps describing the FIRST image only: that
+   *   is the frame whose pixels the model is asked to quote coordinates in.
    * @returns Description of the image
    */
-  async imgDescribe(image: string, prompt?: string, signal?: AbortSignal): Promise<string> {
+  async imgDescribe(image: string, prompt?: string, signal?: AbortSignal, secondImage?: string): Promise<string> {
     // Check if vision is enabled first
     if (!isVisionEnabled()) {
       throw new Error(
@@ -400,8 +417,23 @@ export class Core extends BaseCore implements CoreModule {
     const framePrompt = customPrompt + formatVisionFramePrompt(frameSource.frame);
     this.lastVisionFrame = frameSource.frame;
 
+    // Second image: resize it under the same width cap so both frames the model
+    // receives share one geometry. A second frame that fails to decode must not
+    // fail the describe call — the first frame is what the answer is about, so
+    // a broken diff degrades to today's single-image behavior.
+    let secondB64: string | undefined;
+    if (secondImage) {
+      try {
+        secondB64 = (await this.resizeImageIfNeeded(secondImage)).base64;
+      } catch (err) {
+        this.brief('warn', 'img_describe', `Second image dropped: ${(err as Error).message}`);
+        secondB64 = undefined;
+      }
+    }
+    const promptWithDiff = secondB64 ? framePrompt + DIFF_PROMPT_SUFFIX : framePrompt;
+
     try {
-      const description = await imgDescribe(base64Image, framePrompt, signal);
+      const description = await imgDescribe(base64Image, promptWithDiff, signal, secondB64);
       this.brief('info', 'img_describe', `Image description complete (${description.length} chars)`);
       return description;
     } catch (err) {
@@ -443,7 +475,7 @@ export class Core extends BaseCore implements CoreModule {
     base64Image: string,
     _originalPath?: string
   ): Promise<{ base64: string; frame?: VisionFrame }> {
-    const maxWidth = 1920;
+    const maxWidth = VISION_MAX_WIDTH;
 
     try {
       // Decode base64 to buffer

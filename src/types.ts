@@ -503,9 +503,12 @@ export interface CoreModule {
    * @param signal - Optional AbortSignal for ESC handling, threaded into the
    *   engine's imgDescribe (which routes through retryChat so a slow cloud
    *   vision model can neither hang the call nor escape ESC interrupt).
+   * @param secondImage - Optional second image (base64) sent in the SAME vision
+   *   call, ordered AFTER `image`. `screen` uses it for a pixel-difference
+   *   frame. Appended as the last parameter so existing callers are unchanged.
    * @returns Description of the image
    */
-  imgDescribe(image: string, prompt?: string, signal?: AbortSignal): Promise<string>;
+  imgDescribe(image: string, prompt?: string, signal?: AbortSignal, secondImage?: string): Promise<string>;
   /**
    * Read an image with multi-focus caching. Returns accumulated [focus, description]
    * pairs and a cache token (M). Pass the token back to add a new focus.

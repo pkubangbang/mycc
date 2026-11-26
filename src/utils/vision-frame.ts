@@ -21,6 +21,17 @@
  * is already read for the resize decision) and passes the numbers in.
  */
 
+/**
+ * The width cap `imgDescribe` downscales to before the vision call.
+ *
+ * Exported because a second consumer needs the SAME geometry: the screen diff
+ * (src/utils/screen-diff.ts) caps its difference image — never its ratio, which
+ * is measured at native resolution — to this width, so the pixels it highlights
+ * line up with the frame the model actually sees. Two inline copies of 1920
+ * would drift apart the day one of them is tuned.
+ */
+export const VISION_MAX_WIDTH = 1920;
+
 /** The geometry of one vision call: what was measured, and what was sent. */
 export interface VisionFrame {
   /** Width of the image as stored on disk / handed to the tool. */

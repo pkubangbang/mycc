@@ -24,6 +24,13 @@ import * as os from 'os';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { isCancellation } from '../loop/cancellation.js';
 import { formatVisionFrameNote, type VisionFrame } from '../utils/vision-frame.js';
+import {
+  computePairDiff,
+  DIFF_IDENTICAL_MIN_RATIO,
+  getScreenBaseline,
+  setScreenBaseline,
+  type ScreenBaseline
+} from '../utils/screen-diff.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -461,17 +468,51 @@ export const screenTool: ToolDefinition = {
 
       ctx.core.brief('info', 'screen', `Captured via ${capture.method}`);
 
+      // --- Baseline & pixel diff -----------------------------------------
+      // The capture file is deleted in the `finally` below, so the frame is
+      // read into a Buffer HERE — the baseline is owned bytes, never a path
+      // that could be deleted (or, in an earlier design, overwritten) before
+      // the next call compares against it.
+      //
+      // Order matters twice:
+      //  - the previous baseline is read BEFORE the new frame replaces it;
+      //  - the new baseline is committed only AFTER a successful describe, so
+      //    a failed vision call does not consume the older frame — the retry
+      //    still diffs against the last screen the model actually saw.
+      // Any failure in this block degrades to today's single-image behavior.
+      let secondImage: string | undefined;
+      let diffNote = '';
+      let pendingBaseline: ScreenBaseline | undefined;
+      try {
+        const afterPng = fs.readFileSync(screenshotPath);
+        const previous = getScreenBaseline(desktopNum);
+        if (previous) {
+          const diff = await computePairDiff(previous, afterPng);
+          if (diff.identicalRatio >= DIFF_IDENTICAL_MIN_RATIO) {
+            secondImage = diff.diffPng.toString('base64');
+            const ageSeconds = Math.round((Date.now() - previous.takenAt) / 1000);
+            diffNote = `_[diff: ${(diff.identicalRatio * 100).toFixed(1)}% identical vs baseline ${ageSeconds}s old — sent screen + difference]_`;
+            ctx.core.brief('info', 'screen', `Diff attached (${(diff.identicalRatio * 100).toFixed(1)}% identical)`);
+          }
+        }
+        pendingBaseline = { png: afterPng, monitor: desktopNum, takenAt: Date.now() };
+      } catch (err) {
+        ctx.core.brief('warn', 'screen', `Diff skipped: ${(err as Error).message}`);
+      }
+
       // Describe via imgDescribe (handles resizing). Thread the handler's
       // signal so ESC / the escAware abortController can interrupt a slow
       // cloud vision model — retryChat honors it via the POST-race +
       // collectStream watchdog (previously this hung indefinitely).
-      const description = await ctx.core.imgDescribe(screenshotPath, customPrompt, signal);
+      const description = await ctx.core.imgDescribe(screenshotPath, customPrompt, signal, secondImage);
+      if (pendingBaseline) setScreenBaseline(pendingBaseline);
       // Report the frame geometry alongside the description so the agent can
       // convert a coordinate the model quoted back to the monitor's own
       // pixels — imgDescribe downscales anything wider than 1920px. Read it
       // AFTER the call: imgDescribe records the geometry it actually sent.
       const frameNote = formatVisionFrameNote(visionFrameOf(ctx.core));
-      return `## Screen Content\n\n${description}${frameNote ? `\n\n${frameNote}` : ''}`;
+      const suffix = [diffNote, frameNote].filter(Boolean).join('\n\n');
+      return `## Screen Content\n\n${description}${suffix ? `\n\n${suffix}` : ''}`;
     } catch (error: unknown) {
       // Cancellation propagates; the `finally` below still removes the temp
       // screenshot, so rethrowing does not leak the file.

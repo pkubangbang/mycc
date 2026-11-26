@@ -579,14 +579,19 @@ export class ParentContext implements AgentContext {
         messageType: 'core_img_describe',
         module: 'core',
         handler: async (_sender, payload, ctx, sendResponse) => {
-          const { image, prompt, aborted } = payload as { image: string; prompt?: string; aborted?: boolean };
+          const { image, prompt, secondImage, aborted } = payload as {
+            image: string;
+            prompt?: string;
+            secondImage?: string;
+            aborted?: boolean;
+          };
           try {
             // A child can request an abort by passing aborted:true (from its
             // imgDescribe signal). When set, create a pre-aborted signal so
             // the engine's retryChat rejects immediately via StreamAbortedError
             // rather than issuing a vision call that will be thrown away.
             const signal: AbortSignal | undefined = aborted ? AbortSignal.abort() : undefined;
-            const result = await ctx.core.imgDescribe(image, prompt, signal);
+            const result = await ctx.core.imgDescribe(image, prompt, signal, secondImage);
             sendResponse('core_result', true, { description: result });
           } catch (err) {
             sendResponse('core_result', false, undefined, (err as Error).message);
