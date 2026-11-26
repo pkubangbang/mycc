@@ -444,6 +444,120 @@ describe('editTool', () => {
     expect(editTool.input_schema.required).toContain('new_text');
   });
 
+  // ── Post-edit duplication sanity check ────────────────────────────────
+  // The tool used to answer a bare "OK" for the three copy-paste shapes the
+  // LLM produces when it re-includes a neighbour line: AADC / ADCC / ABDC.
+  // The edit must still be APPLIED (duplication is sometimes intended) but the
+  // result must carry a warning the agent can act on.
+  describe('duplication sanity warning', () => {
+    /** Read back what the tool actually left on disk. */
+    const disk = (dir: string, name: string): string => fs.readFileSync(path.join(dir, name), 'utf-8');
+
+    it('warns (and still applies) when new_text re-includes the preceding line → AADC', async () => {
+      fs.writeFileSync(path.join(tempDir, 'echo-prefix.txt'), 'alpha\nanchor line\ngamma\n');
+
+      const result = await runTool(
+        editTool,
+        ctx,
+        { path: 'echo-prefix.txt', old_text: 'anchor line', new_text: 'alpha\nchanged' },
+        testSignal
+      );
+
+      expect(result).toMatch(/^OK/);
+      expect(result).toContain('Warning: possible unintended duplication');
+      expect(result).toContain('appears twice in a row');
+      // The byte-level self-check fields survive alongside the warning.
+      expect(result).toContain('bom=');
+      expect(result).toContain('newline=');
+      // Applied, not rolled back.
+      expect(disk(tempDir, 'echo-prefix.txt')).toBe('alpha\nalpha\nchanged\ngamma\n');
+      expect(ctx.core.brief).toHaveBeenCalledWith('warn', 'edit', expect.stringContaining('echo-prefix.txt'));
+    });
+
+    it('warns (and still applies) when new_text re-includes the following line → ADCC', async () => {
+      fs.writeFileSync(path.join(tempDir, 'echo-suffix.txt'), 'alpha\nanchor line\ngamma\n');
+
+      const result = await runTool(
+        editTool,
+        ctx,
+        { path: 'echo-suffix.txt', old_text: 'anchor line', new_text: 'changed\ngamma' },
+        testSignal
+      );
+
+      expect(result).toContain('Warning: possible unintended duplication');
+      expect(disk(tempDir, 'echo-suffix.txt')).toBe('alpha\nchanged\ngamma\ngamma\n');
+    });
+
+    it('warns when new_text keeps the anchor → ABDC', async () => {
+      fs.writeFileSync(path.join(tempDir, 'anchor-kept.ts'), 'export const alpha = 1;\nexport const beta = 2;\n');
+
+      const result = await runTool(
+        editTool,
+        ctx,
+        {
+          path: 'anchor-kept.ts',
+          old_text: 'export const beta = 2;',
+          new_text: 'export const beta = 2;\nexport const gamma = 3;'
+        },
+        testSignal
+      );
+
+      expect(result).toContain('Warning: possible unintended duplication');
+      expect(result).toContain('still contains old_text verbatim');
+      expect(disk(tempDir, 'anchor-kept.ts')).toContain('export const gamma = 3;');
+    });
+
+    it('stays silent for a clean in-line replacement', async () => {
+      fs.writeFileSync(path.join(tempDir, 'clean.txt'), 'alpha\nanchor line\ngamma\n');
+
+      const result = await runTool(
+        editTool,
+        ctx,
+        { path: 'clean.txt', old_text: 'anchor line', new_text: 'changed' },
+        testSignal
+      );
+
+      expect(result).toMatch(/^OK/);
+      expect(result).not.toContain('Warning');
+      expect(disk(tempDir, 'clean.txt')).toBe('alpha\nchanged\ngamma\n');
+      // The human-facing brief channel must not be told about a non-event.
+      expect(ctx.core.brief).not.toHaveBeenCalledWith('warn', 'edit', expect.anything());
+    });
+
+    it('keeps the result a success for the loop (never an Error:) when it warns', async () => {
+      fs.writeFileSync(path.join(tempDir, 'not-an-error.txt'), 'alpha\nanchor line\ngamma\n');
+
+      const result = await runTool(
+        editTool,
+        ctx,
+        { path: 'not-an-error.txt', old_text: 'anchor line', new_text: 'alpha\nchanged' },
+        testSignal
+      );
+
+      // isErrorResult() (src/loop/states/tool.ts) would bump the confusion
+      // index for a *correct* edit if the warning read like a failure.
+      const lower = result.toLowerCase();
+      expect(lower.startsWith('error')).toBe(false);
+      for (const needle of ['not found', 'does not exist', 'no such file', 'permission denied', 'enoent']) {
+        expect(lower).not.toContain(needle);
+      }
+    });
+
+    it('preserves the existing new_text-multiplicity warning', async () => {
+      fs.writeFileSync(path.join(tempDir, 'multi.txt'), 'unique\nkeep\ntail\n');
+
+      const result = await runTool(
+        editTool,
+        ctx,
+        { path: 'multi.txt', old_text: 'unique', new_text: 'keep' },
+        testSignal
+      );
+
+      expect(result).toMatch(/^OK/);
+      expect(result).toContain('new_text appears 2 times');
+    });
+  });
+
   // The tool description is the ONLY always-in-context channel that tells the
   // agent why edit_file beats shell text replacement (bash `sed -i`, pwsh
   // `-replace | Set-Content`) for in-place edits. Without this wording the

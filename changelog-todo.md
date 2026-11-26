@@ -32,6 +32,13 @@ When updating the changelog, use the following procedure:
 <!-- October 2026 entries rotated to changelog-202610.md on 2026-11-03. -->
 <!-- Add new (November 2026 onward) entries below this line. -->
 
+## 2026-11-26
+### Features
+- **Edit**: `edit_file` now runs a post-edit duplication sanity check (`src/utils/edit-sanity.ts`) and appends a non-fatal warning to an otherwise successful `OK` result. Two shapes are detected on the on-disk before/after pair: `adjacent-duplicate` (the LLM re-included a neighbouring line in `new_text`, leaving `A,B,C` as `AADC` / `ADCC`) and `anchor-retained` (`new_text` still contains `old_text`, leaving `ABDC`). The edit is never rolled back — duplication is sometimes intended — but the agent is told what looks wrong and the human sees a `warn` brief. Punctuation-only lines are ignored; the warning avoids every substring `isErrorResult` treats as a failure, so a correct edit never bumps the confusion index. Known limits are documented in the module header: replacing the *wrong* unique line is lexically undetectable, and content lost by a rewrite (no duplicated pair, no retained anchor) is out of scope. Tests: `src/tests/utils/edit-sanity.test.ts` (20) + 6 integration cases in `src/tests/tools/edit.test.ts`.
+
+### Fixes
+- **Docs**: `docs/tools/agent-tools.md` records the sanity check and its blind spots; the `edit_file` tool description mentions the warning so the agent checks it before moving on.
+
 ## 2026-11-08
 ### Features
 - **Filesync**: Shared folders synced across wire peers — bind a folder with `--share <id>`/`MYCC_SHARES`/`/share`, and members whose `announce` carries the same id converge on one folder over the existing peer wire. FastCDC chunking, a content-addressed piece store (resume cursor + dedupe cache), LWW manifests with tombstones, atomic apply, and conflict copies reported to the lead by mail. The wire carries `sync-*` frames; the engine speaks transport-free `kind` messages, and `wire-codec.ts` is the only place the two vocabularies meet.

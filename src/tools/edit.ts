@@ -9,11 +9,12 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 import { resolvePath, isInsideWorkspace } from '../utils/path.js';
 import { checkSensitivePath } from '../utils/sensitive-paths.js';
 import { stripBom, detectLineEnding, normalizeLineEndings, countReplacementChars, hasBom } from '../utils/encoding.js';
+import { checkEditSanity, formatSanityWarning, type SanityFinding } from '../utils/edit-sanity.js';
 
 export const editTool: ToolDefinition = {
   name: 'edit_file',
   description:
-    "Replace exact text in an existing file (old_text is a literal match, not a regex). Use this for targeted edits instead of rewriting entire files. PREFER this over shell text replacement for editing existing files (bash `sed -i`, pwsh `(Get-Content x) -replace ... | Set-Content`) — unlike those, it refuses an ambiguous old_text that matches more than once (instead of silently editing the first match), preserves the file's BOM state and CRLF/LF line endings, and re-reads + verifies the write, restoring the original content on failure.",
+    "Replace exact text in an existing file (old_text is a literal match, not a regex). Use this for targeted edits instead of rewriting entire files. PREFER this over shell text replacement for editing existing files (bash `sed -i`, pwsh `(Get-Content x) -replace ... | Set-Content`) — unlike those, it refuses an ambiguous old_text that matches more than once (instead of silently editing the first match), preserves the file's BOM state and CRLF/LF line endings, and re-reads + verifies the write, restoring the original content on failure. It also appends a non-fatal warning when the result looks like an unintended duplication (a line that already bordered the replaced region now appears twice, or new_text merely extends old_text instead of replacing it) — the edit is still applied, so check any warning before continuing.",
   input_schema: {
     type: 'object',
     properties: {
@@ -160,6 +161,26 @@ export const editTool: ToolDefinition = {
       const writtenIsCRLF = detectLineEnding(writtenStripped) === 'crlf';
       const writtenNormalized = writtenIsCRLF ? normalizeLineEndings(writtenStripped) : writtenStripped;
 
+      // --- Post-edit duplication sanity check ---
+      // Everything above proves only that the intended bytes landed. It cannot
+      // say whether the intended bytes were SHAPED right: an LLM that wants
+      // "change B to D" on lines A,B,C often sends new_text="A\nD" or "D\nC"
+      // (re-including a neighbour) or "B\nD" (keeping the anchor), leaving
+      // AADC / ADCC / ABDC. Those results pass every check above, so the tool
+      // used to answer with a bare "OK". Detect the shapes on the on-disk
+      // result and WARN — never roll back, because duplication is sometimes
+      // intended (see src/utils/edit-sanity.ts).
+      const sanityFindings: SanityFinding[] = checkEditSanity({
+        before: normalizedContent,
+        after: writtenNormalized,
+        oldText: normalizedOldText,
+        newText: normalizedNewText
+      });
+      if (sanityFindings.length > 0) {
+        ctx.core.brief('warn', 'edit', `possible unintended duplication in ${filePath}`);
+      }
+      const withSanityWarning = (body: string): string => body + formatSanityWarning(sanityFindings, filePath);
+
       // Post-write check: old_text should be gone UNLESS new_text itself
       // contains old_text as a substring (e.g. replacing "header" with
       // "header\nmiddle" — old_text legitimately reappears). In that case the
@@ -195,7 +216,9 @@ export const editTool: ToolDefinition = {
           // duplicates text that already existed elsewhere. The edit itself is
           // likely still correct, so we do NOT roll back, but we surface the
           // anomaly so the agent can read_file and review.
-          return `OK (warning: new_text appears ${newCount} times in the result — review with read_file to confirm the edit is as intended)`;
+          return withSanityWarning(
+            `OK (warning: new_text appears ${newCount} times in the result — review with read_file to confirm the edit is as intended)`
+          );
         }
       }
 
@@ -209,7 +232,7 @@ export const editTool: ToolDefinition = {
       // stripped copy, so the agent sees whether the BOM was preserved/removed.
       const bomPresent = written.length >= 3 && written[0] === 0xef && written[1] === 0xbb && written[2] === 0xbf;
       const leStyle = detectLineEnding(writtenStripped);
-      return `OK (first4=${first4}, bom=${bomPresent}, newline=${leStyle})`;
+      return withSanityWarning(`OK (first4=${first4}, bom=${bomPresent}, newline=${leStyle})`);
     } catch (error: unknown) {
       return `Error: ${(error as Error).message}`;
     }

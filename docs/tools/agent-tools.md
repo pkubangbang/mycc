@@ -161,6 +161,8 @@ interface ToolDefinition {
 - Fails if `old_text` appears multiple times (need more context for uniqueness)
 - Replaces the single occurrence; file re-read and verified after write
 - On verification failure, original content is restored
+- **Duplication sanity check** (`src/utils/edit-sanity.ts`): after a successful write the tool compares the pre-edit and post-edit content and appends a non-fatal warning when the result looks like an unintended duplication. Two shapes are reported — `adjacent-duplicate` (a line that already bordered the replaced region now appears twice in a row, i.e. `A,B,C` → `AADC` / `ADCC`) and `anchor-retained` (`new_text` still contains `old_text` verbatim, so the text was extended rather than replaced, i.e. `ABDC`; only for anchors of 8+ non-whitespace chars). The edit is **never** rolled back for this: duplication is sometimes intended. Punctuation-only lines are ignored, and the warning text deliberately avoids the substrings `isErrorResult` treats as failures so a correct edit never bumps the confusion index. Known blind spot: replacing the *wrong* unique line yields a result lexically identical to a correct edit, and content lost by a bad rewrite (no duplicated pair, no retained anchor) is out of scope.
+- The older `OK (warning: new_text appears N times …)` path (new_text already existed elsewhere in the file) is kept and is now also combined with the sanity warning.
 
 **Example**:
 ```json
