@@ -13,6 +13,22 @@
  * `applyServerMessage` (e.g. 'log' | 'warn' | 'error' | 'result' | 'prompt' |
  * 'system' | 'user' | 'card').
  */
+/**
+ * What a parked input wait (ServeHub.waitForInput) resolves to.
+ *
+ * `fromSteering` marks the text as steering notes being DELIVERED rather than a
+ * freshly typed query, so PROMPT can journal the query without minting a second
+ * user bubble: the note's own `'steer'` row already IS that utterance's bubble.
+ *
+ * A structured value (rather than a bare string) keeps that provenance on the
+ * one channel which already crosses the serve→loop boundary, so no loop-side
+ * import of the hub is needed.
+ */
+export interface SteeringDeliveredInput {
+  text: string | null;
+  fromSteering: boolean;
+}
+
 export interface LogEntry {
   type: string;
   content: string;

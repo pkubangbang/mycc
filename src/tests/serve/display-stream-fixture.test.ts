@@ -131,7 +131,7 @@ describe('v6 display stream — one row per journaled record (fixture)', () => {
 
   it('(f) switching sessions resets the watermark to 0 and replays NO previous frame', () => {
     // Session A: the client rendered the whole fixture (highest row seq = 9).
-    const cursorA = advanceCursor(0, maxSeqOf(projectDisplay(transcriptPath)));
+    const cursorA = advanceCursor(0, maxSeqOf(projectDisplay(transcriptPath) as unknown as Parameters<typeof maxSeqOf>[0]));
     expect(cursorA).toBe(9);
 
     // Session B: seq restarts at 1. main.ts resets the watermark on a

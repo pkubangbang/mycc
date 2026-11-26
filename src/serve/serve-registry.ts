@@ -46,7 +46,8 @@
 // avoids a second, drifting spelling of the same shape (see the note on
 // DisplayObserverHost in transcript.ts).
 import type { DisplayObserverHost } from '../loop/triologue/transcript.js';
-import type { CardMessage } from './serve-types.js';
+import type { SteeringNote } from '../loop/steering-manager.js';
+import type { CardMessage, SteeringDeliveredInput } from './serve-types.js';
 
 /**
  * Alias kept for the serve layer's own vocabulary: the transcript writer is the
@@ -99,8 +100,8 @@ export interface ServeHubLike {
   journalUserSubmission(text: string, source: 'prompt' | 'steer'): void;
 
   // ── input bridge ──
-  waitForInput(): Promise<string | null>;
-  submitInput(text: string): void;
+  waitForInput(): Promise<SteeringDeliveredInput>;
+  submitInput(text: string, opts?: { fromSteering?: boolean; notes?: readonly SteeringNote[] }): void;
   abortInput(): void;
   rejectInput(): void;
   isInputBlocked(): boolean;

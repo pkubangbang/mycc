@@ -206,6 +206,15 @@ export type TranscriptRecord = {
   kind: PieceKind;
   /** True only for pieces carrying genuine user input (never notes/bridges) */
   user_origin?: true;
+  /**
+   * Serve display-projection marker: this user message is a steering note being
+   * DELIVERED to the loop, whose own `'steer'` record (written at submission
+   * time) already renders as that utterance's user bubble. `projectDisplayRecord`
+   * skips such a record so the message renders once; every model-side projection
+   * still includes it, and the collating destructures strip the flag so it never
+   * reaches a provider payload.
+   */
+  steer_delivery?: true;
   /** Wall-clock ms at append time (preserved by collateEntries for UI ordering) */
   timestamp: number;
   /**
@@ -368,10 +377,14 @@ export function collateMessages(
 
     // The spread copies every non-envelope key (role/content/tool_name/
     // tool_call_id/reasoning_content/hook_name/...) in insertion order.
-    const { kind: _k, user_origin: _u, timestamp: _ts, ...message } = record;
+    // `steer_delivery` is stripped with the rest of the display envelope: it is
+    // a serve-projection marker, and letting it ride into the message would put
+    // a display concern into the prompt sent to the provider.
+    const { kind: _k, user_origin: _u, timestamp: _ts, steer_delivery: _sd, ...message } = record;
     void _k;
     void _u;
     void _ts;
+    void _sd;
     if (message.role === undefined) continue; // defensive: never push shapeless records
 
     if ((record.kind === 'merge' || record.kind === 'user') && lastUserIndex !== -1) {
@@ -468,10 +481,11 @@ export function collateEntries(
 
     // The user-input journal: one entry per genuine submission.
     if (isUserJournalKind(record.kind)) {
-      const { kind: _k, user_origin: _u, timestamp: _ts, ...message } = record;
+      const { kind: _k, user_origin: _u, timestamp: _ts, steer_delivery: _sd, ...message } = record;
       void _k;
       void _u;
       void _ts;
+      void _sd;
       if (message.role === undefined) {
         emitAnomaly(`${record.kind} journal record without a role — skipped`);
         continue;
@@ -483,9 +497,10 @@ export function collateEntries(
       continue;
     }
 
-    const { kind: _k, user_origin, timestamp: _ts, ...message } = record;
+    const { kind: _k, user_origin, timestamp: _ts, steer_delivery: _sd, ...message } = record;
     void _k;
     void _ts;
+    void _sd;
     if (message.role === undefined) continue; // defensive
     if (message.role === 'user' && user_origin !== true) continue; // injected note, not input
     entries.push({

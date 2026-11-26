@@ -87,7 +87,7 @@ export class WebInputProvider implements InputProvider {
       // (2) A restart-webui click transiently has running === false. Keep
       //     waiting: the same hub is coming back on the same port, and
       //     treating the gap as "serve is gone" would kill the daemon.
-      if (hub && hub.isRestarting()) return hub.waitForInput();
+      if (hub && hub.isRestarting()) return (await hub.waitForInput()).text;
       // (1) Headless daemon with serve as the intended input mode — the
       //     terminal fallback can never resolve. Throwing is the only safe
       //     signal: null would be read as "autonomous skip" by prompt.ts and
@@ -140,7 +140,7 @@ export class WebInputProvider implements InputProvider {
     // (with the same three-way guard as getInput's entry: a restart-webui
     // click must keep waiting, and a headless daemon must exit, not hang).
     if (!hub.isRunning()) {
-      if (hub.isRestarting()) return hub.waitForInput();
+      if (hub.isRestarting()) return (await hub.waitForInput()).text;
       // Gated on shouldDaemon() — see getInput() entry guard: a non-daemon
       // session must use the terminal fallback even without a real TTY (the
       // Coordinator proxies keys via IPC).
@@ -153,7 +153,7 @@ export class WebInputProvider implements InputProvider {
       logSteeringWipe('terminal-fallback (post-await)');
       return this.userProvider.getInput(initialContent);
     }
-    return result;
+    return result.text;
   }
 
   async promptRetry(errorMessage: string): Promise<boolean> {

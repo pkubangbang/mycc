@@ -60,6 +60,16 @@
 export interface SteeringNote {
   id: number;
   text: string;
+  /**
+   * Whether this note's own `'steer'` submission record became DURABLE in the
+   * journal. Stamped by the hub right after it journals the note, read at
+   * delivery time.
+   *
+   * It exists so a delivery row may drop its own display copy ONLY when the
+   * submission row provably exists. If the journal write failed, the delivery
+   * row is the only trace of the note and must keep rendering.
+   */
+  journaled?: boolean;
 }
 
 /** The queue plus its version — the unit of client adoption. */
@@ -114,6 +124,24 @@ export class SteeringManager {
   private revision = 0;
   /** Registered observers (the hub registers exactly one, at start()). */
   private listeners = new Set<SteeringListener>();
+  /**
+   * Delivery-provenance register: note id → "is this note's own `'steer'`
+   * submission row durable?" Armed by the hub at RESOLVE time (inside the
+   * branch that really invokes the parked resolver) and consumed once by
+   * PROMPT, so it describes exactly one turn.
+   *
+   * Keyed by note ID, never by text: a user may type a sentence identical to an
+   * earlier note, and `joinSteeringNotes` joins N notes with '\n\n' so a text
+   * key would not even match the joined delivery.
+   *
+   * It lives on this loop-homed singleton because the delivery text crosses a
+   * promise boundary between the serve layer (which writes it) and PROMPT
+   * (which journals the query). That keeps `src/loop/**` a READER of the
+   * manager and spares it any reach into the hub (see steering-boundary test).
+   */
+  private delivered = new Map<number, boolean>();
+  /** Text handed to PROMPT by the last delivery, to recognise a typed repeat. */
+  private deliveredText = '';
 
   /** Current queue + version. The client-side unit of adoption. */
   snapshot(): SteeringSnapshot {
@@ -232,6 +260,53 @@ export class SteeringManager {
     return this.drainNotes();
   }
 
+  /**
+   * Stamp whether a queued note's own submission record is durable. Called by
+   * the hub right after it journals the note; a no-op when the note already
+   * left the queue (the write seam delivered it synchronously — that path
+   * carries the verdict it stamped before flushing).
+   */
+  markJournaled(noteId: number, journaled: boolean): void {
+    const note = this.notes.find((n) => n.id === noteId);
+    if (note) note.journaled = journaled;
+  }
+
+  /**
+   * Record that notes were really delivered INTO THE LOOP — a parked PROMPT wait
+   * actually resolved with them — and whether each one's `'steer'` row is
+   * durable.
+   *
+   * Called by the hub at resolve time, never at drain time: `resolveSteering`
+   * drains the queue unconditionally and then calls `submitInput`, which
+   * silently drops the text when no wait is parked. Arming a mark there would
+   * strand it and later suppress the bubble of a genuinely typed query.
+   */
+  markDelivered(noteIds: readonly number[], journaled: readonly boolean[], text: string): void {
+    noteIds.forEach((id, i) => this.delivered.set(id, journaled[i] === true));
+    this.deliveredText = text;
+  }
+
+  /**
+   * Consume the delivery provenance — read exactly once by PROMPT, immediately
+   * after its input wait resolves, so a mark can never outlive its turn.
+   *
+   * Consume-on-read and always defined (never `undefined`), so a caller cannot
+   * leave a stale value behind on a re-prompt. The delivered TEXT rides along
+   * because the steering synthesis can rewrite the query afterwards, and only
+   * the raw delivered text can be compared with what the bridge handed over.
+   */
+  takeDelivered(): { delivered: number; journaled: number; text: string } {
+    let journaled = 0;
+    for (const ok of this.delivered.values()) {
+      if (ok) journaled++;
+    }
+    const delivered = this.delivered.size;
+    const text = this.deliveredText;
+    this.delivered.clear();
+    this.deliveredText = '';
+    return { delivered, journaled, text };
+  }
+
   /** Wipe the queue. Lifecycle-only: terminal stop / input fallback (A2) —
    * never called by restartServe() or any park-time seam.
    *
@@ -249,6 +324,10 @@ export class SteeringManager {
   clear(reason: string = 'clear'): void {
     this.lastClearReason = reason;
     this.notes = [];
+    // A wipe invalidates the queue the delivery marks describe; letting a stale
+    // mark outlive it would suppress the bubble of some later typed query.
+    this.delivered.clear();
+    this.deliveredText = '';
     this.emit();
   }
 

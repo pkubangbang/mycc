@@ -23,7 +23,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test';
 import { ServeHub } from '../../serve/serve-hub.js';
-import { isWebUiUp, setWebUiUp } from '../../loop/loop-events.js';
+import { isWebUiUp, setWebUiUp } from '../../loop/loop-events.js';import type { SteeringDeliveredInput } from '../../serve/serve-types.js';
 
 describe('restartServe() keeps isWebUiUp() true throughout the recycle (P2 #3)', () => {
   let hub: ServeHub;
@@ -126,7 +126,7 @@ describe('restartServe() keeps isWebUiUp() true throughout the recycle (P2 #3)',
       new Promise<{ status: 'pending' }>((resolve) => setTimeout(() => resolve({ status: 'pending' }), 50))
     ]);
     expect(settled.status).toBe('settled');
-    expect((settled as { value: string | null }).value).toBeNull();
+    expect((settled as { value: SteeringDeliveredInput }).value.text).toBeNull();
   });
 
   it('a GENUINE stop() (not a restart) still publishes the down state', async () => {

@@ -350,6 +350,13 @@ export function projectDisplayRecord(record: TranscriptRecord, knownTimestamp?: 
   const role = typeof record.role === 'string' ? record.role : undefined;
   if (role === undefined) return null; // injected/role-less record — not a bubble
   if (role === 'user' && record.user_origin !== true) return null; // injected note
+  // Steering DELIVERY: the query PROMPT journaled when a parked wait was
+  // resolved with steering notes. Those notes were journaled at submission time
+  // as their own `'steer'` rows — that row IS this utterance's user bubble — so
+  // rendering this second row would draw the same message twice. Gated on an
+  // explicit flag, never on content equality (a user may legitimately repeat
+  // themselves). The record still reaches every model-side projection.
+  if (record.steer_delivery === true) return null;
   if (role === 'tool') return null; // tool activity is shown as brief notes, not raw results
   if (typeof record.content !== 'string' || record.content === '') return null;
   const row: LogEntry = { type: roleToType(role), content: stripAnsi(record.content) };

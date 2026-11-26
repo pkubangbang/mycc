@@ -54,7 +54,7 @@ export type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } fr
  * drift.
  */
 type DeferredInput =
-  | { kind: 'user'; text: string }
+  | { kind: 'user'; text: string; steerDelivery?: boolean }
   | { kind: 'note'; category: NoteCategory; hookName?: string; text: string };
 
 export class TriologueLite {
@@ -83,10 +83,13 @@ export class TriologueLite {
    * time, so it keeps working across compact()/clear() store swaps (same
    * lazy-binding pattern as the feature-domain delegates).
    */
-  private emit(piece: Message, kind: PieceKind, opts?: { userOrigin?: boolean }): void {
+  private emit(piece: Message, kind: PieceKind, opts?: { userOrigin?: boolean; steerDelivery?: boolean }): void {
     const copy: Message = { ...piece };
     if (opts?.userOrigin) {
       (copy as { user_origin?: true }).user_origin = true;
+    }
+    if (opts?.steerDelivery) {
+      (copy as { steer_delivery?: true }).steer_delivery = true;
     }
     (copy as { kind?: PieceKind }).kind = kind;
     this.options.onMessage(copy, () => this.store.getRaw());
@@ -190,7 +193,8 @@ export class TriologueLite {
    * wire shape on both supported providers (ollama, deepseek); a provider that
    * objects is bridged by tpFix.
    */
-  user(content: string): void {
+  user(content: string, opts?: { steerDelivery?: boolean }): void {
+    const steerDelivery = opts?.steerDelivery === true;
     // Guard 1 — tool_calls outstanding: DEFER. A user message may not be
     // interposed between an assistant's tool_calls and their results (the
     // provider rejects it), so it is replayed by tool() once the ledger drains.
@@ -198,7 +202,7 @@ export class TriologueLite {
     // (assistant(p1,p2) → tool(p1) → here) has lastRole==='tool' with p2 still
     // outstanding, and an assistant-only guard would orphan p2.
     if (this.ledger.size > 0) {
-      this.deferInput({ kind: 'user', text: content });
+      this.deferInput({ kind: 'user', text: content, steerDelivery });
       return;
     }
     const lastRole = this.getLastRole();
@@ -210,14 +214,14 @@ export class TriologueLite {
         // new conversation turn. lastUserQuery MUST be updated here too: this
         // path returns before the tail setLastUserQuery below.
         this.store.setLastUserQuery(content);
-        this.addMessage({ role: 'user', content }, { isUserOrigin: true });
+        this.addMessage({ role: 'user', content }, { isUserOrigin: true, steerDelivery });
         return;
       }
       // 'recovered': bridge was injected, fall through to add user message
     }
     // Track last real user query for auto-compact context preservation
     this.store.setLastUserQuery(content);
-    this.addMessage({ role: 'user', content }, { isUserOrigin: true });
+    this.addMessage({ role: 'user', content }, { isUserOrigin: true, steerDelivery });
   }
 
   /**
@@ -246,7 +250,7 @@ export class TriologueLite {
     this.deferredInputs = [];
     for (const item of pending) {
       if (item.kind === 'user') {
-        this.user(item.text);
+        this.user(item.text, { steerDelivery: item.steerDelivery });
       } else {
         this.note(item.category, item.text, item.hookName);
       }
@@ -573,12 +577,13 @@ export class TriologueLite {
    * Emits ONE 'new' piece per appended message (per-piece contract).
    * Replay is purely positional — no turn identity is needed.
    */
-  private addMessage(message: Message, opts?: { isUserOrigin?: boolean }): void {
+  private addMessage(message: Message, opts?: { isUserOrigin?: boolean; steerDelivery?: boolean }): void {
     this.store.push(message);
     this.store.incrementTokenCount(message);
 
     this.emit(message, 'new', {
-      userOrigin: opts?.isUserOrigin
+      userOrigin: opts?.isUserOrigin,
+      steerDelivery: opts?.steerDelivery
     });
   }
 

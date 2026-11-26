@@ -111,7 +111,7 @@ describe('A2 hub/provider wipe-site pins (source-text guards)', () => {
     // isRestarting branch above it must `return` before reaching the wipe.
     const entryIdx = provider.indexOf('async getInput(');
     const branch1 = provider.slice(entryIdx, provider.indexOf("logSteeringWipe('terminal-fallback", entryIdx));
-    expect(branch1).toContain('if (hub && hub.isRestarting()) return hub.waitForInput();');
+    expect(branch1).toContain('if (hub && hub.isRestarting()) return (await hub.waitForInput()).text;');
     expect(branch1).toContain('if (shouldDaemon()) throw new ServeDetachedExitError();');
     // The hub comes from the lazy accessor, not a stored field.
     expect(branch1).toContain('this.liveHub()');
@@ -121,7 +121,7 @@ describe('A2 hub/provider wipe-site pins (source-text guards)', () => {
     // Branch 2: post-abort fallback — same guard shape.
     const abortIdx = provider.indexOf('abortInput() resolved waitForInput() with null');
     const branch2 = provider.slice(abortIdx, provider.indexOf("logSteeringWipe('terminal-fallback", abortIdx));
-    expect(branch2).toContain('if (hub.isRestarting()) return hub.waitForInput();');
+    expect(branch2).toContain('if (hub.isRestarting()) return (await hub.waitForInput()).text;');
     expect(branch2).toContain('if (shouldDaemon()) throw new ServeDetachedExitError();');
   });
 });

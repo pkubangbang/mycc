@@ -29,10 +29,10 @@ import { PromptAbortError } from '../loop/agent-io.js';
 import { setResultCallback } from '../utils/letter-box.js';
 import { getMaxUploadMb, shouldDaemon, getApiProvider, isVerbose } from '../config.js';
 import { sendToParent } from '../utils/parent-ipc.js';
-import { getSteeringManager, joinSteeringNotes } from '../loop/steering-manager.js';
+import { getSteeringManager, joinSteeringNotes, type SteeringNote } from '../loop/steering-manager.js';
 import { setWebUiUp } from '../loop/loop-events.js';
 import { isWrapUpInFlight } from '../loop/wrap-up-state.js';
-import type { LogEntry, FileUploadEntry, CardMessage } from './serve-types.js';
+import type { LogEntry, FileUploadEntry, CardMessage, SteeringDeliveredInput } from './serve-types.js';
 export type { CardMessage } from './serve-types.js';
 import { stripAnsi, detectLanIpv4, detectAllLanIpv4 } from './serve-utils.js';
 import { ClientRegistry } from './serve-clients.js';
@@ -92,7 +92,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
   private host: string | null = null;
 
   // ── Input bridge — single resolver, no AbortController ──
-  private inputResolver: ((input: string | null) => void) | null = null;
+  private inputResolver: ((input: string | null, fromSteering?: boolean) => void) | null = null;
   // Rejecter paired with inputResolver: an external wake (peer channel join)
   // REJECTs waitForInput() with PromptAbortError (→ prompt.ts catch → AWAIT),
   // distinct from abortInput() which RESOLVES with null (→ terminal fallback).
@@ -141,6 +141,16 @@ export class ServeHub implements HubHandler, ServeHubLike {
   // Lead-side callback that journals a genuine user submission into the
   // transcript (registered by agent-repl; see setUserJournalProvider).
   private userJournalProvider: ((text: string, source: 'prompt' | 'steer') => void) | null = null;
+  /**
+   * Count of journaled display records this hub has forwarded. Incremented ONLY
+   * in {@link broadcastDisplayRecord}, which the transcript writer calls on the
+   * SUCCESS path of `append()` — below its `return false` when the sink throws
+   * and below `nextSeq++`. That makes it the hub's only honest answer to "did
+   * this record become durable?": neither a provider throw (swallowed by
+   * journalUserSubmission) nor a normal return (agent-repl discards append()'s
+   * boolean) can tell you. pushSteer compares it across its journal write.
+   */
+  private journaledRecords = 0;
 
   // ── Diagnostics: the SERVER half of `window.$webui.dump()` (see serve-diag.ts) ──
   //
@@ -811,12 +821,12 @@ export class ServeHub implements HubHandler, ServeHubLike {
    * channel join). Returns the input string, null if aborted (serve stopped),
    * or throws PromptAbortError if rejected (→ prompt.ts catch → AWAIT).
    */
-  waitForInput(): Promise<string | null> {
+  waitForInput(): Promise<SteeringDeliveredInput> {
     return new Promise((resolve, reject) => {
-      this.inputResolver = (input: string | null) => {
+      this.inputResolver = (input: string | null, fromSteering?: boolean) => {
         this.inputResolver = null;
         this.inputRejecter = null;
-        resolve(input);
+        resolve({ text: input, fromSteering: fromSteering === true });
       };
       this.inputRejecter = reject;
       // Arm-point delivery (plan §5, seam B instant 2 of 3): a note that was
@@ -831,15 +841,33 @@ export class ServeHub implements HubHandler, ServeHubLike {
     });
   }
 
-  /** Resolve a blocked waitForInput() with the submitted text. */
-  submitInput(text: string): void {
+  /**
+   * Resolve a blocked waitForInput() with the submitted text.
+   *
+   * @param opts.fromSteering - the text is steering notes being DELIVERED (not a
+   *   freshly typed query). The notes' ids are recorded as delivered, together
+   *   with whether each note's own `'steer'` row is durable, so PROMPT can
+   *   journal the query without minting a second user bubble. Recorded ONLY in
+   *   the branch that really invokes the resolver: a delivery that lands nowhere
+   *   must not arm provenance for a turn that will never run — an armed mark
+   *   would then be consumed by a later, genuinely typed query and suppress IT.
+   */
+  submitInput(text: string, opts?: { fromSteering?: boolean; notes?: readonly SteeringNote[] }): void {
     // Diagnostics: attribute the outcome to the frame that carried this text
     // BEFORE the branches below consume the state they are judged by. See
     // serve-diag.ts inputStatus — the silent `else` is the reason a lost query
     // used to leave no trace at all.
     this.attributeInputStatus();
     if (this.inputResolver) {
-      this.inputResolver(text);
+      const fromSteering = opts?.fromSteering === true;
+      if (fromSteering && opts.notes && opts.notes.length > 0) {
+        getSteeringManager().markDelivered(
+          opts.notes.map((n) => n.id),
+          opts.notes.map((n) => n.journaled === true),
+          text
+        );
+      }
+      this.inputResolver(text, fromSteering);
     } else if (this.cardResolvers.size > 0) {
       // A card is pending and the user typed in the chat box instead — dialog
       // input can't reach the TOOL-blocked card resolver. Surface a warning.
@@ -873,9 +901,17 @@ export class ServeHub implements HubHandler, ServeHubLike {
     }
   }
 
-  /** Whether a PROMPT wait (waitForInput) is currently blocked. */
+  /** Whether a PROMPT wait (waitForInput) is currently blocked.
+   *
+   *  Judged by the RESOLVER, not by inputRejecter: the resolver is the single
+   *  source of truth for "a wait is parked". In production both were assigned
+   *  together, but the rejecter is nulled by `rejectInput`/the resolver tail, so
+   *  reading it here made the steering seams unable to see a parked wait when a
+   *  caller (or a test, or a restarted hub) armed only the resolve half —
+   *  takeForDelivery then HELD every note and no delivery provenance could ever
+   *  be recorded. */
   isInputBlocked(): boolean {
-    return this.inputRejecter !== null;
+    return this.inputResolver !== null;
   }
 
   // ===========================================================================
@@ -978,16 +1014,32 @@ export class ServeHub implements HubHandler, ServeHubLike {
   // ===========================================================================
 
   /** Buffer a steering note and journal it. The clients learn about it from
-   *  the manager's onChange observer (start()), not from a local echo. */
-  pushSteer(text: string): void {
-    getSteeringManager().addNote(text);
+   *  the manager's onChange observer (start()), not from a local echo.
+   *
+   *  @returns true iff the note's `'steer'` journal row became DURABLE. The
+   *  caller stamps this on the note (markJournaled) so a later delivery can drop
+   *  its own display row only when the submission's row provably exists.
+   *
+   *  The verdict comes from the hub's journal counter, not from the provider's
+   *  return: journalUserSubmission swallows provider throws, and agent-repl
+   *  discards append()'s boolean. A failed sink and a healthy write look
+   *  identical from there — but not from broadcastDisplayRecord, which only runs
+   *  after a successful write. */
+  pushSteer(text: string): boolean {
+    const note = getSteeringManager().addNote(text);
     // Journal the note as user input so it survives a page refresh and
     // re-renders as a right-side bubble (the transcript is the single source
     // of truth for user bubbles). Journaled at SUBMISSION time: the text is a
     // genuine user submission the moment it is typed, whether COLLECT later
     // injects it as a [REMINDER] note or PROMPT folds it into a synthesised
     // query. A no-op when the loop has not registered the provider yet.
+    const before = this.journaledRecords;
     this.journalUserSubmission(text, 'steer');
+    const journaled = this.journaledRecords > before;
+    // Stamp BEFORE any seam can run: the flush below may deliver this note
+    // synchronously, and the delivery reads `note.journaled` to decide whether
+    // its own display row is redundant.
+    getSteeringManager().markJournaled(note.id, journaled);
     // Write-point delivery (plan §5, seam B instant 1 of 3): when a PROMPT
     // wait is already parked and the wrap-up window is closed, the note can
     // ride the wait immediately; takeForDelivery otherwise HOLDS it for the
@@ -995,6 +1047,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
     // armed resolver is the pre-existing stale-client no-op, so this is safe
     // to run unconditionally.
     this.flushSteeringAtSeam();
+    return journaled;
   }
 
   /**
@@ -1012,7 +1065,11 @@ export class ServeHub implements HubHandler, ServeHubLike {
     if (deliverable) {
       // No broadcast: takeForDelivery drained the manager, whose onChange
       // observer reports the new (empty) snapshot as 'steer-state'.
-      this.submitInput(joinSteeringNotes(deliverable));
+      //
+      // `notes` carries the drained notes so submitInput records, at the moment
+      // it really resolves the parked wait, that they were DELIVERED and whether
+      // each one's own 'steer' row is durable.
+      this.submitInput(joinSteeringNotes(deliverable), { fromSteering: true, notes: deliverable });
     }
   }
 
@@ -1068,7 +1125,10 @@ export class ServeHub implements HubHandler, ServeHubLike {
       );
     }
     if (selected.length > 0) {
-      this.submitInput(joinSteeringNotes(selected));
+      // `notes` carries the drained notes so submitInput can record — at the
+      // moment it really resolves a parked wait — that they were DELIVERED and
+      // whether each one's own 'steer' row is durable.
+      this.submitInput(joinSteeringNotes(selected), { fromSteering: true, notes: selected });
     }
     return selected.map((n) => n.text);
   }
@@ -1299,6 +1359,11 @@ export class ServeHub implements HubHandler, ServeHubLike {
    * keeps no parallel copy of what it already journaled.
    */
   broadcastDisplayRecord(record: TranscriptRecord): void {
+    // A record reaching this observer is DURABLE: the writer's append() only
+    // notifies the display stream after its sink write succeeded (it returns
+    // early on failure, before `nextSeq++` and this callback). Counting here is
+    // therefore the only truthful "the journal landed" signal the hub has.
+    this.journaledRecords++;
     // Emission-order timestamp inheritance across the LIVE stream, matching
     // projectDisplay's file-order walk.
     const row = projectDisplayRecord(record, this.lastDisplayTimestamp);

@@ -237,6 +237,21 @@ export async function handlePrompt(env: MachineEnv, turn: TurnVars, _chat: ChatD
 
   let query: string | null;
 
+  // Steering-delivery provenance for the query this turn will journal: true
+  // when the input wait was resolved by steering notes being DELIVERED rather
+  // than by a freshly typed query, and when those notes' own `'steer'` rows are
+  // durable (only then may the delivery row drop its display copy, since the
+  // submission row is the surviving bubble).
+  //
+  // Declared at TURN scope because it is consumed post-loop at the
+  // triologue.user() call — NOT inside the Priority-3 input block where it is
+  // assigned. Both are assigned unconditionally on every getInput return: the
+  // input loop has a `continue` (multiline reload), so a conditional assignment
+  // would survive it and mark a genuinely typed second query as a delivery,
+  // suppressing its bubble.
+  let p0Delivered = false;
+  let p0DeliveryJournaled = false;
+
   // Serve-mode flag, hoisted to function scope so both the Priority 3 input
   // loop (multi-line editor guard) and the downstream steering/file/user-log
   // logic can reference it without a redundant accessor call. LAZY: may be
@@ -277,6 +292,26 @@ export async function handlePrompt(env: MachineEnv, turn: TurnVars, _chat: ChatD
           return AgentState.AWAIT;
         }
         throw e;
+      }
+
+      // Steering-delivery provenance: read-and-CLEAR as the very first
+      // statement after the wait resolves, before the exit-list/multiline
+      // returns below can drop it — takeDelivered consumes on read, so a later
+      // read would find nothing and the duplicate would return silently. Both
+      // flags are assigned UNCONDITIONALLY: the loop may `continue`, and a stale
+      // `true` would suppress a genuinely typed next query's bubble.
+      p0Delivered = false;
+      p0DeliveryJournaled = false;
+      const steeringMarks = getSteeringManager().takeDelivered();
+      // Recognise a delivery only when the text the bridge handed over is
+      // exactly what arrived: the synthesis below can rewrite `query`, and a
+      // rewritten query must not be mistaken for a typed one later.
+      if (steeringMarks.delivered > 0 && steeringMarks.text === p0Input) {
+        p0Delivered = true;
+        // Fail-open: suppress the delivery's bubble only when EVERY delivered
+        // note's submission row is durable. A partial journal write leaves this
+        // false, so the delivery row keeps rendering and the text cannot vanish.
+        p0DeliveryJournaled = steeringMarks.journaled === steeringMarks.delivered;
       }
 
       // null = autonomous skip or EOF → proceed without user message
@@ -463,7 +498,12 @@ export async function handlePrompt(env: MachineEnv, turn: TurnVars, _chat: ChatD
   // 'new' piece) that /history renders as the right-side user bubble, so no
   // side file is needed and the query survives a page refresh even in
   // terminal mode.
-  triologue.user(query);
+  // `steerDelivery` is set only when the query WAS a steering delivery whose
+  // notes all have a durable submission row: that row already is this
+  // utterance's bubble, so the journal record for the query itself carries the
+  // display marker and the serve projection skips it. The query still enters
+  // the livelog as a normal user message — the model must see it either way.
+  triologue.user(query, { steerDelivery: p0Delivered && p0DeliveryJournaled });
   turn.lastUserQuery = query;
   env.ctx.core.resetConfusionIndex();
   env.crossroadOccurred = false; // clear stale cooldown at turn start
