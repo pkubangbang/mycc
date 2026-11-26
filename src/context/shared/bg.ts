@@ -9,6 +9,7 @@ import { filterCliXml, PS51_LAYER2_PATCH } from '../../loop/agent-exec.js';
 import { agentIO } from '../../loop/agent-io.js';
 import { getSteeringManager } from '../../loop/steering-manager.js';
 import { armExitDrain, type ExitDrain } from '../../utils/exit-drain.js';
+import { isPidAlive } from '../../utils/process-liveness.js';
 
 /** Maximum accumulated output per task (100 KB). Older output is trimmed. */
 const MAX_OUTPUT_BYTES = 100 * 1024;
@@ -266,9 +267,15 @@ export class BackgroundTasks implements BgModule {
   }
 
   /**
-   * Check if there are running tasks
+   * Check if there are running tasks.
+   *
+   * Reaps first: a task whose child died without our 'exit' handler running
+   * (Lead SIGKILLed mid-flight, or a seeded task never wired to a live
+   * process) would otherwise be reported as running forever, keeping its dead
+   * stdio pipe attached. See {@link reapDeadTasks}.
    */
   async hasRunningBgTasks(): Promise<boolean> {
+    this.reapDeadTasks();
     return Array.from(this.tasks.values()).some((t) => t.status === 'running');
   }
 
@@ -292,9 +299,48 @@ export class BackgroundTasks implements BgModule {
         const msg = err instanceof Error ? err.message : String(err);
         this.core.brief('warn', 'bg', `Failed to kill pid ${pid}: ${msg}`);
       }
+      this.detachStdio(pid, proc);
       this.processes.delete(pid);
     }
+    this.finishKilledTask(pid);
+  }
 
+  /**
+   * Release our ends of a child's stdio pipes.
+   *
+   * WHY this matters more than it looks: `runCommand()` spawns the child with
+   * `detached:true` + `unref()` so it can outlive the Lead, and Node creates
+   * those pipes as AF_UNIX socketpairs. If the Lead exits WITHOUT killing the
+   * child (SIGKILL, a crash, or a synchronous spin), the child keeps writing
+   * into a socketpair whose reader is a dead process. On a *synchronous* write
+   * path that produces an unkillable, hot-looping orphan: one cheap failing
+   * write(2) plus error formatting per iteration, never yielding, so no timer,
+   * no signal handler and no exit path can run again — the 2026-11-26 hog
+   * (PID 290457, 2h24m at one core, SIGKILL-only) had exactly this fd shape.
+   *
+   * Closing our ends here (on both the kill path and the natural-exit path)
+   * means a child that has finished or been torn down never leaves a pipe
+   * attached to this process, so nothing can be written into a reader-less
+   * socket after we stop reading. `destroy()` is idempotent and safe on an
+   * already-ended stream.
+   */
+  private detachStdio(pid: number, proc: ChildProcess): void {
+    this.drains.get(pid)?.cancel();
+    this.drains.delete(pid);
+    for (const stream of [proc.stdin, proc.stdout, proc.stderr]) {
+      try {
+        stream?.destroy();
+      } catch {
+        // already destroyed / never created — nothing to release
+      }
+    }
+  }
+
+  /**
+   * Mark a task killed and finalize its output. Shared by the kill path and
+   * the stale-task reap so both leave the task map in the same state.
+   */
+  private finishKilledTask(pid: number): void {
     const task = this.tasks.get(pid);
     if (task) {
       task.status = 'killed';
@@ -305,6 +351,38 @@ export class BackgroundTasks implements BgModule {
       this.drains.get(pid)?.cancel();
       this.drains.delete(pid);
     }
+  }
+
+  /**
+   * Reap tasks whose child process died without our 'exit' handler running
+   * (the Lead was SIGKILLed mid-flight, or the task was seeded and never
+   * wired to a live process). A `running` task whose pid is no longer alive
+   * but is still listed as running would otherwise be reported by
+   * `hasRunningBgTasks()` forever and would keep a dead stdio pipe attached.
+   *
+   * Liveness is `process.kill(pid, 0)`: it throws ESRCH when the pid is gone,
+   * and EPERM when the pid exists but belongs to another user (treat as alive
+   * — never reap a process we cannot prove is ours and dead). A pid that was
+   * *reused* by an unrelated process is indistinguishable here, which is why
+   * this only ever downgrades a task's status and closes OUR pipe ends — it
+   * never signals the pid.
+   *
+   * Returns the pids that were reaped, for logging/tests.
+   */
+  reapDeadTasks(): number[] {
+    const reaped: number[] = [];
+    for (const [pid, task] of this.tasks) {
+      if (task.status !== 'running') continue;
+      if (isPidAlive(pid)) continue;
+      reaped.push(pid);
+      const proc = this.processes.get(pid);
+      if (proc) {
+        this.detachStdio(pid, proc);
+        this.processes.delete(pid);
+      }
+      this.finishKilledTask(pid);
+    }
+    return reaped;
   }
 
   /**

@@ -105,10 +105,20 @@ export function installVerboseLog(role: 'coordinator' | 'lead'): string | null {
       const data = typeof chunk === 'string' ? chunk : Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : String(chunk);
       fs.writeSync(fd, data);
     } catch (err) {
-      // Don't crash the process, but warn ONCE so disk-full / permission /
-      // closed-fd errors are not silently lost.
+      // Latch FIRST, warn second. The latch is what guarantees this loop can
+      // never turn into a spin: once a write to the log fd has failed, the fd
+      // is dead for the life of the process (disk full, revoked permission,
+      // closed fd) and every later attempt would fail identically. Re-trying
+      // it is pure loss — and a sync retry loop is exactly the shape that
+      // starved the event loop in the 2026-11-26 orphan spin (see
+      // docs/loop/orphan-write-spin.md): one cheap failing write(2) plus
+      // userspace error formatting per iteration, never yielding, so no
+      // timer, no signal handler and no exit path can ever run again.
       verboseWriteFailed = true;
       try {
+        // The warning goes to the UNWRAPPED stderr write, so it is emitted
+        // exactly once and cannot be fed back through this tee. If that write
+        // also fails the fd is equally dead — do not attempt anything else.
         realStderrWrite(
           `[verbose-log] Write to ${logPath} failed, logging disabled: ${err instanceof Error ? err.message : String(err)}\n`
         );

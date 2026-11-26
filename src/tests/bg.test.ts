@@ -466,3 +466,112 @@ describe('BackgroundTasks — bounded post-exit drain (EXIT_DRAIN_GRACE_MS)', ()
     expect(result.output ?? '').toContain('fast-path');
   });
 });
+
+describe('BackgroundTasks.reapDeadTasks — orphan reap without signalling', () => {
+  /** Seed the private processes map so detachStdio has streams to close. */
+  function seedProcess(
+    bg: BackgroundTasks,
+    pid: number,
+    streams: { stdout?: unknown; stderr?: unknown; stdin?: unknown }
+  ) {
+    const fake = { pid, ...streams } as unknown as import('child_process').ChildProcess;
+    (bg as unknown as { processes: Map<number, import('child_process').ChildProcess> }).processes.set(pid, fake);
+  }
+
+  function killSpy() {
+    return vi.spyOn(process, 'kill');
+  }
+
+  it('marks a running task killed when its pid is gone, and closes our pipe ends', () => {
+    const { bg } = makeBg();
+    // PID 4_000_000 is far above any live pid; a spawn was never attempted for
+    // it, which is exactly the "Lead died without our exit handler" shape.
+    const deadPid = 4_000_000;
+    seedTask(bg, deadPid, 'running', 'orphan output\n');
+    const stdoutDestroy = vi.fn();
+    const stderrDestroy = vi.fn();
+    const stdinDestroy = vi.fn();
+    seedProcess(bg, deadPid, {
+      stdout: { destroy: stdoutDestroy },
+      stderr: { destroy: stderrDestroy },
+      stdin: { destroy: stdinDestroy }
+    });
+
+    const reaped = bg.reapDeadTasks();
+
+    expect(reaped).toContain(deadPid);
+    expect(bg.getTask(deadPid)?.status).toBe('killed');
+    // Output is final at reap time — same contract as killTask.
+    expect(bg.getTask(deadPid)?.outputFinalized).toBe(true);
+    // Every one of OUR ends is released, so nothing can later write into a
+    // reader-less socketpair (the 2026-11-26 hog's exact fd shape).
+    expect(stdoutDestroy).toHaveBeenCalledTimes(1);
+    expect(stderrDestroy).toHaveBeenCalledTimes(1);
+    expect(stdinDestroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('NEVER signals the pid it reaps (a recycled pid may belong to someone else)', () => {
+    const { bg } = makeBg();
+    const deadPid = 4_000_001;
+    seedTask(bg, deadPid, 'running');
+    // `process.kill(pid, 0)` is the liveness PROBE, not a signal — only a
+    // non-zero signal argument would be a kill, and that is what must never
+    // happen for a pid we did not spawn.
+    const signals: { pid: number; signal?: string | number }[] = [];
+    const spy = vi.spyOn(process, 'kill').mockImplementation(((p: number, sig?: string | number) => {
+      if (sig !== undefined && sig !== 0) signals.push({ pid: p, signal: sig });
+      const err = new Error('ESRCH') as NodeJS.ErrnoException;
+      err.code = 'ESRCH';
+      throw err;
+    }) as typeof process.kill);
+
+    bg.reapDeadTasks();
+
+    expect(signals).toEqual([]);
+    spy.mockRestore();
+  });
+
+  it('leaves a live pid alone — it is not ours to reclaim', () => {
+    const { bg } = makeBg();
+    // Our own pid is guaranteed live; the reaper must treat it as running.
+    seedTask(bg, process.pid, 'running');
+    const spy = killSpy();
+    spy.mockClear();
+
+    const signals: { pid: number; signal?: string | number }[] = [];
+    spy.mockImplementation(((p: number, sig?: string | number) => {
+      if (sig !== undefined && sig !== 0) signals.push({ pid: p, signal: sig });
+      return true;
+    }) as typeof process.kill);
+
+    const reaped = bg.reapDeadTasks();
+
+    expect(reaped).not.toContain(process.pid);
+    expect(bg.getTask(process.pid)?.status).toBe('running');
+    expect(signals).toEqual([]);
+    spy.mockRestore();
+  });
+
+  it('ignores finished tasks and is idempotent on a second pass', () => {
+    const { bg } = makeBg();
+    const deadPid = 4_000_002;
+    seedTask(bg, deadPid, 'completed', 'done\n');
+
+    expect(bg.reapDeadTasks()).toEqual([]);
+    // A completed task keeps its status: reaping must only downgrade `running`.
+    expect(bg.getTask(deadPid)?.status).toBe('completed');
+  });
+
+  it('hasRunningBgTasks reaps dead children before answering', async () => {
+    const { bg } = makeBg();
+    const deadPid = 4_000_003;
+    seedTask(bg, deadPid, 'running');
+    const stdoutDestroy = vi.fn();
+    seedProcess(bg, deadPid, { stdout: { destroy: stdoutDestroy } });
+
+    // Without the reap this would report `true` forever and keep the dead
+    // pipe attached, so teardown would believe work is still in flight.
+    await expect(bg.hasRunningBgTasks()).resolves.toBe(false);
+    expect(stdoutDestroy).toHaveBeenCalledTimes(1);
+  });
+});
