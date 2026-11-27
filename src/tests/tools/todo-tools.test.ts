@@ -312,7 +312,12 @@ describe('todo-update', () => {
         { id: 999, hash: 'abc12345', name: 'Task A', done: true },
         testSignal
       );
-      expect(result).toBe('Error: Todo item #999 not found. Use the current todo list to find the correct id.');
+      expect(result).toBe(
+        'Error: Todo item #999 not found. A RULED-OUT todo (a completed non-pinned item) is removed ' +
+          'from the list, so this id may belong to work you already finished — completion is ' +
+          'irreversible. Use the current todo list for a live id, or todo_create a new item if the ' +
+          'work is genuinely not done.'
+      );
     });
 
     // Input validation

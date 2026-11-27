@@ -86,16 +86,25 @@ export class Todo implements TodoModule {
     pushPreviousHash(existing, newHash);
     existing.hash = newHash;
 
-    // Auto-clear: when every NON-PINNED item is done, drop only the non-pinned
-    // items so the prompt stops showing a fully-checked checklist of ephemeral
-    // work. Pinned items (done or not) always remain — they are long-term
-    // reminders that survive completion. Keep nextId monotonic across the
-    // session so IDs never collide with prior (now-cleared) hash references
-    // the LLM may still hold in the triologue.
-    if (this.items.length > 0 && this.items.filter((i) => !i.pinned).every((i) => i.done)) {
-      this.items = this.items.filter((i) => i.pinned);
+    // Ad-hoc retention: a COMPLETED non-pinned item is ruled out IMMEDIATELY,
+    // on the same call that marks it done — the checklist only ever shows
+    // outstanding work. This replaces the old batch rule ("clear once every
+    // non-pinned item is done"), so a finished item no longer lingers as an
+    // `[x]` line while its siblings remain open.
+    //
+    // Pinned items are exempt in BOTH directions: they survive completion
+    // (long-term reminders, and a `preventStop` guard on a done item is still
+    // meaningful). Keep nextId monotonic across the session so IDs never
+    // collide with prior (now-dropped) hash references the LLM may still hold
+    // in the triologue.
+    if (existing.done && !existing.pinned) {
+      this.items = this.items.filter((i) => i !== existing);
     }
 
+    // `existing` is a detached copy-safe view: for a dropped item it is still
+    // returned (with its CURRENT hash and lineage ring) so callers that keep
+    // their own record — the wire-plane reminders in parent-context.ts,
+    // tm_remove's cleanup todo — can see the completed state they wrote.
     return { ...existing };
   }
 
@@ -158,6 +167,19 @@ export class Todo implements TodoModule {
     existing.pinned = pinned;
     // Clear the guard when un-pinning; set/overwrite when pinning.
     existing.preventStop = pinned ? preventStop : undefined;
+
+    // Retention applies to EVERY write that can clear `pinned`, not just to
+    // `updateTodo`. Without this, pin → mark done → unpin leaves a completed
+    // NON-pinned item in the list forever: `updateTodo`'s drop is unreachable
+    // (the item is already done, so no further `done` transition fires) and
+    // `hasOpenTodo()` is false, so nothing nudges it away. That ghost is
+    // exactly what ad-hoc retention set out to remove — and the STOP path
+    // instructs the agent to call `pinned=false` to release a satisfied guard,
+    // so this path is hit in normal use, not just by an adversarial caller.
+    if (existing.done && !existing.pinned) {
+      this.items = this.items.filter((i) => i !== existing);
+    }
+
     return { ...existing };
   }
 

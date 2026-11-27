@@ -1,34 +1,33 @@
 /**
  * todo.test.ts - Direct unit tests for the Todo class (not the tool wrapper)
- * Verifies hash integrity, auto-clear-on-all-done, and monotonic nextId.
+ * Verifies hash integrity, ad-hoc retention (a completed non-pinned item is
+ * ruled out immediately), and monotonic nextId.
  */
 
 import { describe, it, expect } from 'vite-plus/test';
 import { Todo } from '../../../context/shared/todo.js';
 
 describe('Todo', () => {
-  it('should auto-clear items when the last open item is marked done', () => {
+  it('should rule out a completed item immediately (ad-hoc retention)', () => {
     const todo = new Todo();
     const a = todo.createTodo('Task A');
     const b = todo.createTodo('Task B');
 
-    // Mark A done — B still open, list should remain
-    todo.updateTodo(a.id, a.hash, a.name, true);
-    expect(todo.getItems().length).toBe(2);
-
-    // Mark B done — all done, list should auto-clear
-    const result = todo.updateTodo(b.id, b.hash, b.name, true);
+    // Mark A done — A is dropped NOW, B still open and still listed.
+    const result = todo.updateTodo(a.id, a.hash, a.name, true);
     expect(result).not.toBeNull();
     expect(result!.done).toBe(true);
-    expect(todo.getItems().length).toBe(0);
-    expect(todo.hasOpenTodo()).toBe(false);
+    const items = todo.getItems();
+    expect(items.length).toBe(1);
+    expect(items[0].id).toBe(b.id);
+    expect(todo.hasOpenTodo()).toBe(true);
   });
 
-  it('should keep nextId monotonic across auto-clear', () => {
+  it('should keep nextId monotonic across a ruled-out item', () => {
     const todo = new Todo();
     const a = todo.createTodo('Task A');
     todo.updateTodo(a.id, a.hash, a.name, true);
-    // items now cleared
+    // items now empty
     expect(todo.getItems().length).toBe(0);
 
     // New item should NOT reuse id 1 — must continue from 2
@@ -37,28 +36,28 @@ describe('Todo', () => {
     expect(todo.getItems().length).toBe(1);
   });
 
-  it('should not auto-clear when at least one item remains open', () => {
+  it('should keep other OPEN items when one is ruled out', () => {
     const todo = new Todo();
     const a = todo.createTodo('Task A');
-    todo.createTodo('Task B');
+    const b = todo.createTodo('Task B');
 
     todo.updateTodo(a.id, a.hash, a.name, true);
-    expect(todo.getItems().length).toBe(2);
+    expect(todo.getItems().map((i) => i.id)).toEqual([b.id]);
     expect(todo.hasOpenTodo()).toBe(true);
   });
 
-  it('should print "No todos." after auto-clear', () => {
+  it('should print "No todos." after the last item is ruled out', () => {
     const todo = new Todo();
     const a = todo.createTodo('Task A');
     todo.updateTodo(a.id, a.hash, a.name, true);
     expect(todo.printTodoList()).toBe('No todos.');
   });
 
-  it('should reject update with stale hash after auto-clear', () => {
+  it('should reject update with stale hash after the item was ruled out', () => {
     const todo = new Todo();
     const a = todo.createTodo('Task A');
     todo.updateTodo(a.id, a.hash, a.name, true);
-    // list cleared — old reference should fail (id no longer found)
+    // item ruled out — old reference should fail (id no longer found)
     const result = todo.updateTodo(a.id, a.hash, a.name, true);
     expect(result).toBeNull();
   });
@@ -78,10 +77,11 @@ describe('Todo', () => {
   it('should recompute hash after an update', () => {
     const todo = new Todo();
     const a = todo.createTodo('Task A');
-    const updated = todo.updateTodo(a.id, a.hash, 'Renamed', true);
+    // done=false so the item survives (a completed non-pinned item is ruled out)
+    const updated = todo.updateTodo(a.id, a.hash, 'Renamed', false);
     expect(updated!.hash).not.toBe(a.hash);
     // Re-updating with old hash fails (stale)
-    expect(todo.updateTodo(a.id, a.hash, 'Renamed', true)).toBeNull();
+    expect(todo.updateTodo(a.id, a.hash, 'Renamed', false)).toBeNull();
   });
 
   it('clear() should reset both items and nextId', () => {
@@ -95,15 +95,15 @@ describe('Todo', () => {
 
   // ── Pinned todos & reactivation ────────────────────────────────────────
 
-  it('should NOT auto-clear pinned items when all todos are done', () => {
+  it('should keep a COMPLETED pinned item when a regular one is ruled out', () => {
     const todo = new Todo();
     const a = todo.createTodo('Task A');
     const b = todo.createTodo('Task B');
     todo.pinTodo(b.id, b.hash, true);
 
-    // Mark both done — non-pinned A is dropped, pinned B remains
+    // Mark both done — non-pinned A is ruled out immediately, pinned B remains
     todo.updateTodo(a.id, a.hash, a.name, true);
-    todo.updateTodo(b.id, b.hash, b.name, true);
+    todo.updateTodo(b.id, todo.getItems().find((i) => i.id === b.id)!.hash, b.name, true);
 
     const items = todo.getItems();
     expect(items.length).toBe(1);
@@ -112,15 +112,17 @@ describe('Todo', () => {
     expect(items[0].done).toBe(true);
   });
 
-  it('should auto-clear normally when there are no pinned items (backward compat)', () => {
+  it('should leave an empty list when every regular item is ruled out one by one', () => {
     const todo = new Todo();
     const a = todo.createTodo('Task A');
     const b = todo.createTodo('Task B');
 
     todo.updateTodo(a.id, a.hash, a.name, true);
+    expect(todo.getItems().map((i) => i.id)).toEqual([b.id]);
     todo.updateTodo(b.id, b.hash, b.name, true);
 
     expect(todo.getItems().length).toBe(0);
+    expect(todo.printTodoList()).toBe('No todos.');
   });
 
   it('should keep an uncompleted pinned todo after non-pinned items complete', () => {
@@ -174,6 +176,49 @@ describe('Todo', () => {
     expect(result!.preventStop).toBeUndefined();
   });
 
+  it('should RULE OUT a done item when it is un-pinned (no [x] ghost)', () => {
+    // The hole this locks: pinTodo used to apply no retention rule, so
+    // pin → done → unpin left a completed NON-pinned item in the list forever
+    // (updateTodo's drop is unreachable once done, and hasOpenTodo() is false,
+    // so collect's nudge never clears it). The STOP path tells the agent to
+    // release guards with pinned=false, so this path is hit in normal use.
+    const todo = new Todo();
+    const a = todo.createTodo('Guard holder');
+    todo.pinTodo(a.id, a.hash, true, 'tests pass');
+    const pinned = todo.getItems()[0];
+    todo.updateTodo(pinned.id, pinned.hash, pinned.name, true);
+    expect(todo.getItems()).toHaveLength(1); // pinned + done survives
+
+    const unpinned = todo.pinTodo(pinned.id, todo.getItems()[0].hash, false);
+    expect(unpinned).not.toBeNull();
+    expect(unpinned!.done).toBe(true);
+    expect(unpinned!.pinned).toBe(false);
+    expect(todo.getItems()).toHaveLength(0);
+    expect(todo.printTodoList()).toBe('No todos.');
+    expect(todo.hasOpenTodo()).toBe(false);
+  });
+
+  it('should keep an OPEN item when it is un-pinned (retention targets done only)', () => {
+    const todo = new Todo();
+    const a = todo.createTodo('Task A');
+    todo.pinTodo(a.id, a.hash, true, 'tests pass');
+    const unpinned = todo.pinTodo(a.id, todo.getItems()[0].hash, false);
+    expect(unpinned).not.toBeNull();
+    expect(todo.getItems()).toHaveLength(1);
+    expect(todo.getItems()[0].pinned).toBe(false);
+    expect(todo.hasOpenTodo()).toBe(true);
+  });
+
+  it('should reject a stale write on a ruled-out id (gone, not resurrectable)', () => {
+    const todo = new Todo();
+    const a = todo.createTodo('Task A');
+    todo.updateTodo(a.id, a.hash, a.name, true);
+    expect(todo.getItems()).toHaveLength(0);
+    expect(todo.updateTodo(a.id, a.hash, 'Renamed', false)).toBeNull();
+    expect(todo.pinTodo(a.id, a.hash, true)).toBeNull();
+    expect(todo.getItems()).toHaveLength(0);
+  });
+
   it('getPreventStopTodos returns pinned+guarded items regardless of done', () => {
     const todo = new Todo();
     const open = todo.createTodo('Open pinned w/ guard');
@@ -221,22 +266,33 @@ describe('Todo', () => {
   it('should record the old hash in the lineage ring when updateTodo recomputes', () => {
     const todo = new Todo();
     const a = todo.createTodo('Task A');
-    // Companion open item keeps `a` alive when we flip it done (auto-clear
-    // only drops non-pinned items once EVERY non-pinned item is done).
-    todo.createTodo('Task B');
     const oldHash = a.hash;
-    const updated = todo.updateTodo(a.id, a.hash, 'Renamed', true);
+    // done=false: a completed non-pinned item is ruled out, so the ring is
+    // observed through a name-only update. The RETURNED copy is the record —
+    // it must carry the ring even for an item that was dropped.
+    const updated = todo.updateTodo(a.id, a.hash, 'Renamed', false);
     expect(updated).not.toBeNull();
+    expect(updated!.previousHashes).toEqual([oldHash]);
     const stored = todo.getItems().find((i) => i.id === a.id)!;
     expect(stored.previousHashes).toEqual([oldHash]);
+  });
+
+  it('should carry the lineage ring on the returned copy of a RULED-OUT item', () => {
+    const todo = new Todo();
+    const a = todo.createTodo('Task A');
+    const oldHash = a.hash;
+    const updated = todo.updateTodo(a.id, a.hash, a.name, true);
+    expect(updated).not.toBeNull();
+    expect(updated!.done).toBe(true);
+    expect(updated!.previousHashes).toEqual([oldHash]);
+    // …while the list no longer holds it
+    expect(todo.getItems()).toHaveLength(0);
   });
 
   it('should cap the lineage ring at 3 (oldest dropped first)', () => {
     const todo = new Todo();
     const a = todo.createTodo('Task A');
-    // Companion open item so `a` is never auto-cleared (we keep done=false
-    // throughout and only vary the name → the hash changes each iteration).
-    todo.createTodo('Task B');
+    // done=false throughout: the item must survive to be a ring holder.
     const hashes: string[] = [a.hash];
     let cur = todo.getItems().find((i) => i.id === a.id)!.hash;
     // Drive 4 hash-changing updates (name-only) → ring keeps the last 3 olds.
@@ -260,10 +316,9 @@ describe('Todo', () => {
   it('findByPreviousHash should resolve a stale hash to the CURRENT item', () => {
     const todo = new Todo();
     const a = todo.createTodo('Task A');
-    // Companion open item keeps `a` alive after the done flip below.
-    todo.createTodo('Task B');
     const oldHash = a.hash;
-    const updated = todo.updateTodo(a.id, a.hash, 'Renamed', true);
+    // done=false keeps the item alive (a completed non-pinned item is dropped).
+    const updated = todo.updateTodo(a.id, a.hash, 'Renamed', false);
     expect(updated).not.toBeNull();
     const currentHash = updated!.hash;
 

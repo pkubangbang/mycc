@@ -134,9 +134,9 @@ New tool `peer_connect(url)` — the lead calls it when the user says
    (silent accept). So on wire establishment BOTH sides create a **pinned
    todo** (`ctx.todo.createTodo` + `pinTodo`) recording `remote peer <sid>
    at <endpoint> — wire, mail_to("<sid>/lead")`. Pinned + never-done keeps
-   it re-injected through nudge cycles across compactions, and keeps it out
-   of the ephemeral checklist auto-clear (a non-pinned never-done todo would
-   block the checklist from ever clearing). Lifecycle follows the REGISTRY
+   it re-injected through nudge cycles across compactions, and keeps it a
+   PINNED item (a non-pinned todo is ruled out as soon as it is marked done,
+   so an unpinned reminder would disappear rather than survive the cycle). Lifecycle follows the REGISTRY
    ENTRY, not the socket: a transient close with the capped-redial loop
    running keeps it; a terminal close (4000/4001/`peer_disconnect`) marks it
    done with the annotation "disconnected — re-run peer_connect", which
@@ -191,7 +191,8 @@ and its reconnect loop re-dials immediately.
 - **Reminder lifecycle**: terminal teardown (either side, 4000/4001) marks the
   pair's pinned reminder todo done — annotated "disconnected — re-run
   peer_connect" (§2 step 3). Pinned, so it stays visible in /todos as a
-  re-connect hint instead of vanishing with the auto-clear.
+  re-connect hint instead of vanishing with the ad-hoc rule-out that removes a
+  completed non-pinned todo.
 - Distinct from `peer.stop()`, which is the process-exit bulk cleanup that
   closes all dialed sockets.
 

@@ -7,9 +7,12 @@
 
 ## Motivation
 
-The todo system (`src/context/shared/todo.ts`) is a temporary checklist: when
-all items are marked done, the list is cleared. Pinned todos survive that
-clear so long-term reminders stay visible.
+The todo system (`src/context/shared/todo.ts`) is a temporary checklist, kept
+ad-hoc: a non-pinned item is ruled out on the very update that marks it done,
+so the list only ever shows outstanding work. Pinned todos are exempt from that
+rule (they survive completion) so long-term reminders stay visible. The rule
+applies to every write that can clear `pinned`, so un-pinning a COMPLETED item
+rules it out instead of leaving a done `[x]` line behind.
 
 A reminder, however, is passive: it is visible in the prompt, and whether the
 agent acts on it is left entirely to the model's goodwill. Some conditions must
@@ -166,7 +169,7 @@ export interface TodoItem {
   done: boolean;
   note?: string;
   hash: string;
-  pinned?: boolean;       // completed pinned items survive auto-clear
+  pinned?: boolean;       // exempt from ad-hoc retention: survives completion
   preventStop?: string;   // STOP-GUARD condition (replaces `reactivate`)
 }
 

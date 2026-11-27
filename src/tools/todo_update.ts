@@ -67,7 +67,12 @@ export const todoUpdateTool: ToolDefinition = {
       const items = ctx.todo.getItems();
       const exists = items.some((i) => i.id === id);
       if (!exists) {
-        return `Error: Todo item #${id} not found. Use the current todo list to find the correct id.`;
+        return (
+          `Error: Todo item #${id} not found. A RULED-OUT todo (a completed non-pinned item) is ` +
+          `removed from the list, so this id may belong to work you already finished — ` +
+          `completion is irreversible. Use the current todo list for a live id, or ` +
+          `todo_create a new item if the work is genuinely not done.`
+        );
       }
       // Hash mismatch — the item exists but was updated since the LLM last
       // read it. Try to resolve the stale hash against the item's lineage

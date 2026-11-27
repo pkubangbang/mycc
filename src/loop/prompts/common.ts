@@ -82,9 +82,14 @@ export function buildVerificationSection(): string {
 export function buildPinnedTodoSection(): string {
   return [
     '### Pinned Todos',
-    'Regular todos are auto-cleared when all are completed. Pinned todos persist:',
+    'Regular todos are ruled out the moment they are completed (ad-hoc: a done non-pinned item ' +
+      'disappears immediately). Pinned todos persist:',
     '- Use `todo_pinning(id, hash, pinned=true)` to pin a todo after creating it with `todo_create`.',
-    '- Pinned todos are NOT removed when all todos are completed.',
+    '- Completion is IRREVERSIBLE for a regular todo: once ruled out it is gone from the list, and ' +
+      '`todo_update` / `todo_pinning` on its id then fail with "not found". Re-create it with ' +
+      '`todo_create` if the work is genuinely not done.',
+    '- Pinned todos are NOT dropped when they are completed — they persist as long-term reminders. ' +
+      'Unpinning a completed pinned todo rules it out (the retention rule applies to that write too).',
     '- Use pinned todos for persistent reminders (e.g., schema definitions, invariant rules, ' +
       'materialized view refresh tasks).',
     '',

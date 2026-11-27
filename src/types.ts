@@ -232,8 +232,9 @@ export interface TodoItem {
   note?: string;
   hash: string; // SHA256(name|done|note), first 8 hex chars — integrity signature
   /**
-   * Pinned todos are NOT auto-cleared when all (non-pinned) todos are completed.
-   * They persist as long-term reminders. Set via `todo_pinning` tool.
+   * Pinned todos are NOT dropped when they are completed: whereas a regular
+   * (non-pinned) item is ruled out the moment it is marked done, a pinned one
+   * persists as a long-term reminder. Set via `todo_pinning` tool.
    * The hash does NOT include this field — pinned/preventStop are managed
    * through `todo_pinning`, which itself requires the current hash, so the
    * anti-hallusion guarantee is preserved.

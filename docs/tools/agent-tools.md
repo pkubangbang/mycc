@@ -870,7 +870,7 @@ interface ToolDefinition {
 
 **Scope**: `['main']` (lead agent only)
 
-**Description**: Pin or unpin a todo item. Pinned todos are NOT auto-cleared when all todos are completed. Optionally set a reactivation condition.
+**Description**: Pin or unpin a todo item. A regular (non-pinned) todo is ruled out the moment it is marked done; pinned todos are NOT dropped on completion and persist as long-term reminders. Unpinning a COMPLETED pinned todo rules it out (retention applies to that write too). Optionally set a `preventStop` guard condition.
 
 **Parameters**:
 | Name | Type | Required | Description |
@@ -878,16 +878,18 @@ interface ToolDefinition {
 | id | integer | yes | Todo item ID to pin/unpin |
 | hash | string | yes | Current hash of the item |
 | pinned | boolean | yes | true to pin, false to unpin |
-| reactivate | string | no | Natural-language reactivation condition (only when pinned=true) |
+| preventStop | string | no | Natural-language stop-guard condition (only when pinned=true) |
 
 **Behavior**:
-- Pinned todos persist as long-term reminders
-- Reactivation condition: system evaluates completed pinned todos against conversation context and auto-reactivates when condition is met
+- A completed non-pinned todo is ruled out immediately; completion is irreversible
+- Pinned todos persist as long-term reminders, including after completion
+- Unpinning a completed pinned todo rules it out
+- Stop-guard: while the condition holds, the turn cannot end — STOP re-evaluates it and sends the agent back to work
 - Requires current hash (anti-staleness)
 
 **Example**:
 ```json
-{ "id": 1, "hash": "abc12345", "pinned": true, "reactivate": "when the users table is modified" }
+{ "id": 1, "hash": "abc12345", "pinned": true, "preventStop": "the failing test in todo.test.ts passes" }
 ```
 
 ---

@@ -8,7 +8,7 @@
 ## TL;DR
 
 Every `TodoItem` now carries `previousHashes?: string[]` (cap 3, oldest
-dropped first). When `updateTodo` or `closeCheckpointTodo` recomputes the
+dropped first). When `updateTodo` recomputes the
 integrity hash, the OLD hash is pushed into that ring first. When
 `todo_update` rejects a write on a hash mismatch, it calls
 `findByPreviousHash(staleHash)`: if the stale hash is found in some live
@@ -169,15 +169,14 @@ function pushPreviousHash(item: TodoItem, newHash: string): void {
 }
 ```
 
-It is called from exactly two places — every site that recomputes the hash:
+It is called from exactly one place — the only site that recomputes the hash:
 
-1. **`updateTodo`** — after assigning the new `name`/`done`/`note`, compute
-   `newHash`, push the old hash, then assign `existing.hash = newHash`.
-2. **`closeCheckpointTodo`** — same pattern (the `done` flip changes the
-   hash, so the old hash is recorded first).
+- **`updateTodo`** — pushes the old hash after computing `newHash` and before
+  the caller-visible value is swapped in, so the ring always records a hash the
+  item genuinely had.
 
 It is **NOT** called from `pinTodo`, because `pinTodo` does not recompute the
-hash (`pinned`/`reactivate` are not part of the signature). This is the key
+hash (`pinned`/`preventStop` are not part of the signature). This is the key
 invariant that keeps the ring honest: **the ring only ever holds hashes the
 item actually transitioned through.**
 
@@ -278,7 +277,7 @@ function pushPreviousHash(item: TodoItem, oldHash: string): void {
 
 It was called *before* `existing.hash` was reassigned, so `oldHash` was
 `existing.hash` — the guard was *always* true and nothing was ever pushed.
-`findByPreviousHash` and the `closeCheckpointTodo` ring test both got
+`findByPreviousHash` and the ring test both got
 `undefined` for `previousHashes`.
 
 **Fix:** change the contract to "call after computing the new hash, pass the
@@ -289,21 +288,21 @@ before the caller reassigns it. Lesson: **a guard that compares a parameter to
 the live field is a hazard when the call site hasn't updated the field yet** —
 pass the *new* value in and compare against the live (old) one.
 
-### 5.2 `updateTodo` auto-clear vs. single-item tests
+### 5.2 Ad-hoc retention vs. single-item tests
 
-Several lineage tests flipped the *only* non-pinned todo to `done: true`.
-`updateTodo` auto-clears all non-pinned items once every non-pinned item is
-done — so the item under test was dropped from `this.items`, and
-`getItems().find(…)` returned `undefined`. The test then crashed reading
-`.hash` off `undefined`, which looked like an implementation bug but was a
-test-setup bug.
+Retention is **ad-hoc**: a non-pinned item is ruled out on the very
+`updateTodo` call that sets `done: true`. Any test that flips the target to
+`done` and then looks it up via `getItems().find(…)` sees `undefined` — which
+looked like an implementation bug but is a test-setup bug.
 
-**Fix:** each affected test creates a companion open non-pinned todo so the
-target survives the `done` flip, and the cap test uses name-only changes
-(never flips `done`) so the item is never a candidate for auto-clear. Lesson:
-**when testing `updateTodo`'s side effects, account for auto-clear** — it
-fires on the same call that recomputes the hash, so it can remove the very
-item you're inspecting.
+**Fix:** each affected test drives the hash change with `done: false`
+(name-only updates) so the item survives, and asserts on the value
+`updateTodo` RETURNED when it needs to observe the post-update state of a
+ruled-out item (the returned copy still carries the new hash and the lineage
+ring). Lesson: **when testing `updateTodo`'s side effects, account for
+retention** — it fires on the same call that recomputes the hash, so it can
+remove the very item you're inspecting. Pinned items are exempt and still
+survive completion.
 
 ---
 
@@ -317,7 +316,10 @@ item you're inspecting.
   ring.
 - **`printTodoList`** — unchanged; `previousHashes` is not rendered (it's
   internal metadata).
-- **The auto-clear rule** — unchanged.
+- **The retention rule** — a completed non-pinned item is dropped on the same
+  call (ad-hoc); pinned items survive completion. The ring logic itself is
+  untouched by retention: the hash is pushed before the drop, and the
+  returned copy keeps it.
 - **The nudge cycle** — unchanged; it still re-surfaces fresh hashes. The
   warm hint just makes the common case not *need* to wait for it.
 
@@ -339,7 +341,7 @@ New/changed tests:
 - `todo.test.ts` — 7 new lineage tests: ring push on `updateTodo`, cap-3
   eviction, `findByPreviousHash` resolves to the current item, returns null
   on no match, no-op update doesn't push, stale write still rejected on a
-  lineage match, `closeCheckpointTodo` pushes the old hash.
+  lineage match, and the ring survives a ruled-out (completed) item.
 - `todo-update.test.ts` — 2 new tests: warm hint with current hash on a
   lineage match (write still rejected); silent generic mismatch when the
   stale hash is not in any ring. Existing "hash mismatch" test preserved
@@ -355,7 +357,7 @@ New/changed tests:
 | File | Change |
 |------|--------|
 | `src/types.ts` | `previousHashes?: string[]` on `TodoItem`; `findByPreviousHash` on `TodoModule`. |
-| `src/context/shared/todo.ts` | `LINEAGE_RING_CAP`, `pushPreviousHash` helper; ring push in `updateTodo` + `closeCheckpointTodo`; `findByPreviousHash` method. |
+| `src/context/shared/todo.ts` | `LINEAGE_RING_CAP`, `pushPreviousHash` helper; ring push in `updateTodo`; `findByPreviousHash` method. |
 | `src/tools/todo_update.ts` | Mismatch branch calls `findByPreviousHash`; warm hint on match, generic message otherwise. |
 | `src/tests/context/shared/todo.test.ts` | 7 lineage tests. |
 | `src/tests/tools/todo-update.test.ts` | 2 warm-hint tests; mock gains `findByPreviousHash`. |

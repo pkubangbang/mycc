@@ -151,7 +151,7 @@ peer：跨实例 peer discovery 与通信
 ### updateTodo
 增量更新待办事项。需要提供 id 和当前 hash（防幻觉），返回更新后的 item 或 null（id 不存在或 hash 不匹配）。
 
-当所有非 pinned 的 item 完成时，自动清除非 pinned 项。
+当某个非 pinned 的 item 被标记为完成时，立即在这一次更新的返回前把它从列表中移除（ad-hoc 保留：清单只显示未完成的工作）。完成后不可逆转——被移除的 id 无法再用 updateTodo/pinTodo 找到。pinned 项完成时保留。同一规则也适用于 pinTodo 中取消置顶的写入：把一个已完成的 pinned 项取消置顶，会把它移除。
 
 ### printTodoList
 返回待办事项列表的 toString 表示，用于组装大模型 prompt。
@@ -160,7 +160,7 @@ peer：跨实例 peer discovery 与通信
 返回 true/false，表示是否有未完成的待办事项。
 
 ### pinTodo / getReactivationCandidates
-`pinTodo(id, hash, pinned, reactivate?)` — 置顶/取消置顶 todo，可选设置自然语言重激活条件。需要当前 hash。pinned todo 在所有非 pinned todo 完成时不会被自动清除。
+`pinTodo(id, hash, pinned, reactivate?)` — 置顶/取消置顶 todo，可选设置自然语言重激活条件。需要当前 hash。pinned todo 完成时不会被移除；把一个已完成的 pinned todo 取消置顶，会按 ad-hoc 保留规则把它移除。
 
 `getReactivationCandidates()` — 返回带有重激活条件且已完成的 pinned todo，供 COLLECT 状态评估是否重新打开。
 

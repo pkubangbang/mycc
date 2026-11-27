@@ -12,8 +12,10 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 export const todoPinningTool: ToolDefinition = {
   name: 'todo_pinning',
   description:
-    'Pin or unpin a todo item. Pinned todos are NOT auto-cleared when all ' +
-    'todos are completed — they persist as long-term reminders. Optionally set ' +
+    'Pin or unpin a todo item. A regular (non-pinned) todo is ruled out the ' +
+    'moment it is marked done, so the list only shows outstanding work. ' +
+    'Pinned todos are NOT dropped on completion — they persist as long-term ' +
+    'reminders. Optionally set ' +
     'a preventStop guard: a natural-language statement about the state the work ' +
     'must reach. While it holds, you cannot finish your turn — STOP sends you ' +
     'back to work with a SYSTEM note explaining what is still missing, so use it ' +
@@ -68,10 +70,12 @@ export const todoPinningTool: ToolDefinition = {
     const updated = ctx.todo.pinTodo(id, hash.trim(), pinned, preventStop?.trim() || undefined);
 
     if (!updated) {
-      const items = ctx.todo.getItems();
-      const exists = items.some((i) => i.id === id);
-      if (!exists) {
-        return `Error: Todo item #${id} not found. Use the current todo list to find the correct id.`;
+      const stillLive = ctx.todo.getItems().some((i) => i.id === id);
+      if (!stillLive) {
+        return (
+          `Error: Todo item #${id} not found. A ruled-out (completed non-pinned) todo is removed ` +
+          `from the list, and completion is irreversible — use the current todo list for a live id.`
+        );
       }
       return `Error: Hash mismatch for todo #${id}. The item may have been updated since you last read it. Check the current todo list for the latest hash.`;
     }

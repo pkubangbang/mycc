@@ -76,7 +76,12 @@ export const todosCommand: SlashCommand = {
       const updated = context.ctx.todo.updateTodo(id, item.hash, item.name, done, note ?? item.note);
 
       if (updated) {
-        const status = done ? 'done' : 'undone';
+        // Ad-hoc retention: a completed non-pinned item is dropped from the
+        // list on this same call, so say so instead of implying it is still
+        // visible in the checklist. Unpinning a DONE pinned item also drops it
+        // (retention applies to every write that clears `pinned`).
+        const ruledOut = updated.done && !updated.pinned;
+        const status = done ? (ruledOut ? 'done — ruled out' : 'done (pinned, kept)') : 'undone';
         console.log(chalk.green(`Todo ${id} marked as ${status}.`));
       } else {
         console.log(chalk.red(`Failed to update todo ${id} (hash mismatch?).`));
