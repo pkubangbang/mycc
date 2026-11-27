@@ -634,13 +634,45 @@ function quoteContent(): void {
   padding: 4px 16px;
   margin: 2px 0;
 }
+/* User rows right-align the whole bubble column (WeChat self-bubble style).
+   This row-level justify-content is what actually pushes the column to the
+   right edge; the .is-user .message-col align-items below only aligns the
+   column's own children. Must NOT be dropped when adding assistant clearance
+   rules — without it user bubbles collapse to the left. */
 .message-row.is-user {
   justify-content: flex-end;
 }
+/* Assistant (left-aligned) rows reserve the card's footprint on the right so
+   their bubbles never slide under the floating TeammateCard. EVERY non-user
+   row is left-aligned (assistant, tool results, system notes, hook/steering
+   rows, and any future left-aligned type) and must clear the card — hence
+   :not(.is-user) rather than a list of specific row classes. The two
+   variables are published on .middle-section (App.vue) and inherited:
+   --team-card-clearance = card footprint (right offset + card width),
+   --team-card-gap = breathing room. Both are 0 when the card is hidden, so
+   this is a no-op then. User rows (.is-user) are excluded — they stay flush
+   to the right edge. */
+.message-row:not(.is-user) {
+  padding-right: calc(var(--team-card-gap, 16px) + var(--team-card-clearance, 0px));
+}
+/* Assistant column width cap. Base cap is the aesthetic 80% (also used by
+   user rows). For ASSISTANT rows the cap is --team-assistant-max, published
+   on .middle-section (App.vue) and INHERITED down: 80% normally, 100% when
+   the team card is visible (has-team-card) and clearance is reserved. Lifting
+   the cap only while clearance > 0 lets assistant bubbles use the full
+   reserved content box — on a 390px phone the 80% cap limited them to 182px
+   and left a dead band even though the gutter already keeps them clear of
+   the card. User rows are untouched (the base 80% rule below governs them);
+   their flush-right alignment is set on .is-user. Using an inherited custom
+   property (not the ancestor .has-team-card selector) keeps this scoped
+   stylesheet decoupled from App.vue's markup. */
 .message-col {
   max-width: 80%;
   display: flex;
   flex-direction: column;
+}
+.message-row:not(.is-user) .message-col {
+  max-width: var(--team-assistant-max, 80%);
 }
 .message-row.is-user .message-col {
   align-items: flex-end;

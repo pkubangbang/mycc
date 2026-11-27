@@ -43,7 +43,7 @@ function closeDrawer(): void {
     <StatusBar :state="state" />
     <SteeringBuffer :notes="state.steeringBuffer" />
     <DebugPanel v-if="state.debugMode" :state="state" />
-    <div class="middle-section">
+    <div class="middle-section" :class="{ 'has-team-card': !drawerOpen && state.teammateMessages.length > 0 }">
       <ChatLog :messages="state.messages" :state="state" />
       <TodoCard :messages="state.messages" />
       <TeammateCard
@@ -98,5 +98,47 @@ function closeDrawer(): void {
   display: flex;
   position: relative;
   overflow: hidden;
+  /* --team-card-clearance is the card's FOOTPRINT measured from the right
+     edge: `right` offset (16px) + card width. --team-card-gap is the breathing
+     room between the assistant bubble's right edge and the card's left edge.
+     MessageItem reserves `gap + clearance` as right padding on non-user rows,
+     so the bubble stops `gap` px short of the card. Arithmetic (wide card
+     180px, right:16px): clearance = 16 + 180 = 196; card left edge sits at
+     viewportRight − 196; bubble right edge = viewportRight − (gap + clearance)
+     = viewportRight − (8 + 196); gap between them = 8px. Both numbers are 0
+     when the card is hidden (drawer open or no teammates), so the rule is a
+     genuine no-op then. User (right-aligned) rows are excluded — they stay
+     flush right. Consumed by MessageItem (padding-right) and TeammateCard
+     (max-width, derived from the same clearance). */
+  --team-card-clearance: 0px;
+  /* Breathing room between the assistant bubble's right edge and the card's
+     left edge. Single owner for the gap — MessageItem consumes this var, not
+     a hard-coded literal. */
+  --team-card-gap: 8px;
+}
+.middle-section.has-team-card {
+  /* Wide card is 180px at right:16px → footprint 196px. */
+  --team-card-clearance: 196px;
+  /* While the card is visible, lift the assistant bubble's aesthetic 80%
+     width cap to 100%: the reserved clearance gutter already keeps bubbles
+     clear of the card, so the cap would only waste the reclaimed width
+     (a dead band on phones). Inherited down to MessageItem's .message-col.
+     Reset to 80% implicitly when this class is absent. */
+  --team-assistant-max: 100%;
+}
+/* Narrow screens (≤600px): the card collapses to a compact auto-width pill.
+   The WIDEST narrow variant is the collapsed "Team · 已完成" pill (~95px); the
+   active "TEAM (x)" pill is narrower (~71px). Size clearance for the WIDEST
+   pill so neither variant overlaps: footprint = 16 + 95 = 111px. With the 8px
+   gap the collapsed pill sits 8px clear of the bubble; the narrower active
+   pill leaves more slack (≈32px) — accepted, to avoid a fragile per-state
+   measured publisher for a ~24px dead band.
+   KEEP IN SYNC with TeammateCard.vue's NARROW_QUERY = '(max-width: 600px)'
+   (the matchMedia breakpoint that switches the card to its narrow pill): the
+   pill layout and this clearance must agree on the cutoff. */
+@media (max-width: 600px) {
+  .middle-section.has-team-card {
+    --team-card-clearance: 111px;
+  }
 }
 </style>

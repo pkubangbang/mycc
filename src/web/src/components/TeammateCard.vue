@@ -32,6 +32,11 @@ const emit = defineEmits<{ (e: 'open-teammate', name: string): void }>();
  * matchMedia listener (set up in onMounted, torn down in onBeforeUnmount)
  * rather than a raw resize handler so it only re-evaluates on breakpoint
  * crossings, not every pixel change.
+ *
+ * KEEP IN SYNC with App.vue's `@media (max-width: 600px)` block, which sets
+ * the narrow --team-card-clearance (111px = 16 right offset + 95 widest pill).
+ * This breakpoint decides WHEN the card becomes a pill; App.vue decides how
+ * much room the bubble reserves for that pill — they must share the cutoff.
  */
 const NARROW_QUERY = '(max-width: 600px)';
 const isNarrow = ref(false);
@@ -233,11 +238,18 @@ function onNarrowClick(): void {
   color: var(--text-status);
   border-radius: 8px;
   padding: 6px 8px;
-  /* Fixed outer width — the card does not grow/shrink with content. The
-     four-corner row layout keeps each field on its own cell so long tool
-     names truncate within their cell rather than overflowing. Narrowed
-     from 200px to 180px since content now splits across two lines. */
+  /* Preferred outer width on wide screens — the card does not grow/shrink
+     with content. The four-corner row layout keeps each field on its own cell
+     so long tool names truncate within their cell rather than overflowing.
+     Narrowed from 200px to 180px since content now splits across two lines. */
   width: 180px;
+  /* Cap the card to the footprint budgeted by --team-card-clearance (App.vue)
+     so it never crosses into the assistant bubble column. clearance = right
+     offset (16px) + card width, so max-width = clearance − 16. With clearance
+     0 (card hidden) this component isn't rendered, so the clamp only applies
+     while visible. Single source of truth: the clearance var is the one
+     number both this cap and MessageItem's bubble padding derive from. */
+  max-width: calc(var(--team-card-clearance, 196px) - 16px);
   box-shadow: var(--scroll-shadow);
   font-size: 13px;
   display: flex;
