@@ -180,6 +180,18 @@ export class ClientRegistry {
   }
 
   /**
+   * Broadcast a CONTENT-LESS state frame (no `seq`, no `content`) to every open
+   * client. Used for signals that must not become chat rows — e.g.
+   * `clear-history`, which tells each browser to empty its chat log at a
+   * `/clear` boundary. `ClientRegistry.broadcast()` cannot serve that: it
+   * always carries `content` and would render a bubble.
+   */
+  broadcastState(type: string): void {
+    const payload = JSON.stringify({ type });
+    this.forEachOpen((ws) => this.sendTo(ws, payload));
+  }
+
+  /**
    * Broadcast a message to all connected clients EXCEPT the sender. Used for
    * user-query/steer echo so the sending client (which already has a local
    * optimistic bubble via sendInput/sendSteer in main.ts) doesn't get a

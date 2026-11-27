@@ -21,7 +21,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { ServeHub } from '../../serve/serve-hub.js';
 import { JsonlTranscriptWriter, readTranscript } from '../../loop/triologue/transcript.js';
-import { projectDisplay, readHistory } from '../../serve/serve-history.js';
+import { projectDisplay, projectDisplayRecords, readTranscriptRecords } from '../../serve/serve-history.js';
 import type { CardMessage } from '../../serve/serve-types.js';
 
 const CARD: CardMessage = {
@@ -78,9 +78,10 @@ describe('broadcastCard -> journal note -> /history card row (P0-2)', () => {
   it('the journaled card PROJECTS to a card row after a reload', () => {
     hub.broadcastCard(CARD);
 
-    // A reload is readHistory over the file — the messageLog is deliberately
-    // empty here, proving the row does not depend on serve-lifetime memory.
-    const history = readHistory(transcriptPath, []);
+    // A reload is the ROUTE's projection over the file (records present ⇒ the
+    // transcript owns the body, the messageLog is never consulted), proving the
+    // row does not depend on serve-lifetime memory.
+    const history = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     expect(history).toHaveLength(1);
     expect(history[0].type).toBe('card');
     expect(history[0].card?.cardId).toBe('c-42');

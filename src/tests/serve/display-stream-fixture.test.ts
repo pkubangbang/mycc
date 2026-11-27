@@ -28,7 +28,8 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import {
   projectDisplay,
-  readHistory,
+  projectDisplayRecords,
+  readTranscriptRecords,
   computeHistoryVersion,
   etagMatchesIfNoneMatch,
   countTranscriptRecords
@@ -38,6 +39,21 @@ import { advanceCursor, isAlreadyRendered, maxSeqOf } from '../../web/src/displa
 import type { LogEntry } from '../../serve/serve-types.js';
 
 const FIXTURE = path.resolve(__dirname, '../fixtures/transcripts/display-stream-v6.jsonl');
+
+/**
+ * The GET /history body rule, stated ONCE as the route states it:
+ * `records.length > 0 ? projectDisplayRecords(records) : messageLog`.
+ *
+ * The deleted `readHistory(path, messageLog)` helper existed only to hold this
+ * decision, and had zero production callers — tests drove the helper, the route
+ * drove its own inline copy, and the two could drift unnoticed. Asserting the
+ * predicate here keeps the fallback window pinned WITHOUT resurrecting a
+ * lookalike: the one line below IS the route's expression.
+ */
+function routeBody(path: string, messageLog: LogEntry[]): LogEntry[] {
+  const records = readTranscriptRecords(path);
+  return records.length > 0 ? projectDisplayRecords(records) : messageLog;
+}
 
 /** sha256 over `label \0 content` — a relabel cannot pass as the same row. */
 function hashOf(label: string | undefined, content: string): string {
@@ -84,7 +100,7 @@ describe('v6 display stream — one row per journaled record (fixture)', () => {
     expect(userRecords).toHaveLength(3);
     expect(new Set(userRecords.map((r) => r.timestamp)).size).toBe(1);
 
-    const historyRows = readHistory(transcriptPath, []).filter((r) => r.type === 'user');
+    const historyRows = projectDisplayRecords(readTranscriptRecords(transcriptPath)).filter((r) => r.type === 'user');
     // What the old timestamp-keyed merge got wrong is visible here: rows are
     // keyed by RECORD/seq, so a shared timestamp cannot collapse or double them.
     expect(historyRows.map((r) => r.seq)).toEqual([1, 2, 3]);
@@ -105,7 +121,7 @@ describe('v6 display stream — one row per journaled record (fixture)', () => {
     // (MessageItem's isUser). The live socket projects the same records through
     // the same rule, so both surfaces must agree on a 1-prompt-per-turn session.
     const live = projectDisplay(transcriptPath);
-    const refreshed = readHistory(transcriptPath, []);
+    const refreshed = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     const userRows = (rows: LogEntry[]): number => rows.filter((r) => r.type === 'user').length;
     expect(userRows(live)).toBe(3);
     expect(userRows(refreshed)).toBe(3);
@@ -148,7 +164,7 @@ describe('v6 display stream — one row per journaled record (fixture)', () => {
     fs.writeFileSync(emptyPath, '', 'utf-8'); // the 'wx' zero-byte file
     expect(countTranscriptRecords(emptyPath)).toBe(0);
     const fallbackRows: LogEntry[] = [{ type: 'log', content: 'serve-lifetime line', timestamp: 1 }];
-    expect(readHistory(emptyPath, fallbackRows)).toEqual(fallbackRows);
+    expect(routeBody(emptyPath, fallbackRows)).toEqual(fallbackRows);
 
     // Once ONE record lands the file owns the body outright — projected per
     // record, so the fallback (seq-less) rows are gone.
@@ -157,7 +173,7 @@ describe('v6 display stream — one row per journaled record (fixture)', () => {
       JSON.stringify({ kind: 'note', note: { level: 'info', tool: 'x', text: 'n', at: '0' }, timestamp: 1 }) + '\n'
     );
     expect(countTranscriptRecords(emptyPath)).toBe(1);
-    expect(readHistory(emptyPath, fallbackRows)).toEqual([{ type: 'log', content: 'n', label: 'x', timestamp: 1 }]);
+    expect(routeBody(emptyPath, fallbackRows)).toEqual([{ type: 'log', content: 'n', label: 'x', timestamp: 1 }]);
   });
 
   it('§1 the brief echo note draws NO row (the duplicate assistant row)', () => {

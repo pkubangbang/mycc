@@ -5,7 +5,12 @@
  * WebUI LogEntry types/labels and are the key rendering contract for the
  * /history endpoint. Includes the unknown / undefined role branches.
  *
- * readHistory is now sourced from the triologue transcript journal alone
+ * The projection is asserted through projectDisplayRecords(readTranscriptRecords(path)),
+ * the same call GET /history makes after its single transcript read. It used to
+ * go through a readHistory(path, messageLog) helper with ZERO production
+ * callers; that lookalike was deleted, so these cases pin the live path.
+ *
+ * History is sourced from the triologue transcript journal alone
  * (the serve-only user.jsonl side file was deleted): right-side user
  * bubbles come from kind:'user'|'steer' records stamped user_origin:true,
  * while marker-less 'new' user records (injected notes) and 'merge'
@@ -16,7 +21,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { roleToType, roleToLabel, readHistory } from '../../serve/serve-history.js';
+import {
+  roleToType,
+  roleToLabel,
+  projectDisplayRecords,
+  readTranscriptRecords
+} from '../../serve/serve-history.js';
 import { collateMessages } from '../../loop/triologue/transcript.js';
 import type { LogEntry } from '../../serve/serve-types.js';
 
@@ -70,7 +80,7 @@ describe('roleToLabel', () => {
   });
 });
 
-describe('readHistory (transcript journal projection)', () => {
+describe('projectDisplayRecords (transcript journal projection)', () => {
   let tmpDir: string;
   let transcriptPath: string;
 
@@ -94,7 +104,7 @@ describe('readHistory (transcript journal projection)', () => {
         '\n',
       'utf-8'
     );
-    const history = readHistory(transcriptPath, []);
+    const history = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     expect(history.map((e) => e.content)).toEqual(['fix the bug', 'on it']);
     expect(history[0].type).toBe('user');
     expect(history[1].type).toBe('result');
@@ -112,7 +122,7 @@ describe('readHistory (transcript journal projection)', () => {
       }) + '\n',
       'utf-8'
     );
-    const history = readHistory(transcriptPath, []);
+    const history = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     expect(history).toHaveLength(1);
     expect(history[0]).toEqual({ type: 'user', content: 'stop and reconsider', timestamp: 50 });
   });
@@ -139,7 +149,7 @@ describe('readHistory (transcript journal projection)', () => {
         '\n',
       'utf-8'
     );
-    const history = readHistory(transcriptPath, []);
+    const history = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     const contents = history.map((e) => e.content);
     expect(contents).toContain('working');
     // Tool records do NOT project a row: the terminal shows tool activity
@@ -164,7 +174,7 @@ describe('readHistory (transcript journal projection)', () => {
         '\n',
       'utf-8'
     );
-    const history = readHistory(transcriptPath, []);
+    const history = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     expect(history.map((e) => e.content)).toEqual(['A', 'AB']);
     expect(history.map((e) => e.timestamp)).toEqual([10, 11]);
   });
@@ -182,7 +192,7 @@ describe('readHistory (transcript journal projection)', () => {
         '\n',
       'utf-8'
     );
-    const history = readHistory(transcriptPath, []);
+    const history = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     expect(history.map((e) => e.content)).toEqual(['first', 'second', 'third']);
     // second inherits 100 (emission order), never 0.
     expect(history[1].timestamp).toBe(100);
@@ -204,7 +214,7 @@ describe('readHistory (transcript journal projection)', () => {
         '\n',
       'utf-8'
     );
-    const history = readHistory(transcriptPath, []);
+    const history = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     expect(history.map((e) => e.content)).toEqual(['A', 'B', 'C', 'D']);
     expect(history.map((e) => e.timestamp)).toEqual([0, 0, 100, 200]);
   });
@@ -220,7 +230,7 @@ describe('readHistory (transcript journal projection)', () => {
         '\n',
       'utf-8'
     );
-    const history = readHistory(transcriptPath, []);
+    const history = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     expect(history.map((e) => e.timestamp)).toEqual([100, 100, 200]);
   });
 
@@ -235,7 +245,7 @@ describe('readHistory (transcript journal projection)', () => {
         '\n',
       'utf-8'
     );
-    const history = readHistory(transcriptPath, []);
+    const history = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     expect(history.map((e) => e.content)).toEqual(['A', 'B', 'C']);
     expect(history.map((e) => e.timestamp)).toEqual([0, 0, 0]);
   });
@@ -254,7 +264,7 @@ describe('readHistory (transcript journal projection)', () => {
         '\n',
       'utf-8'
     );
-    const history = readHistory(transcriptPath, []);
+    const history = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     expect(history.map((e) => e.content)).toEqual(['A', 'B', 'C']);
   });
 
@@ -267,8 +277,9 @@ describe('readHistory (transcript journal projection)', () => {
       JSON.stringify({ role: 'assistant', content: 'reply', kind: 'new', timestamp: 300 }) + '\n',
       'utf-8'
     );
-    const messageLog = [{ type: 'result' as const, content: 'reply', label: 'assistant', timestamp: 300 }];
-    const history = readHistory(transcriptPath, messageLog);
+    // NO messageLog is offered: the transcript holds records, so the route's
+    // predicate (records.length > 0) makes the file the body outright.
+    const history = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     expect(history.map((e) => e.content)).toEqual(['reply']);
   });
 
@@ -288,7 +299,7 @@ describe('readHistory (transcript journal projection)', () => {
         '\n',
       'utf-8'
     );
-    const history = readHistory(transcriptPath, []);
+    const history = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     expect(history.map((e) => [e.type, e.label, e.content])).toEqual([
       ['log', 'bash', 'listed 3 files'],
       ['result', 'assistant', 'done']
@@ -311,18 +322,30 @@ describe('readHistory (transcript journal projection)', () => {
     expect(messages.map((m: { content: string }) => m.content)).toEqual(['reply']);
   });
 
-  it('falls back to the log while the transcript file is EMPTY (serve up before the first journal line)', () => {
-    // writeFreshSessionFiles creates the file at boot, BEFORE serve can start,
-    // so the path is already non-null when serve comes up. Keying the fallback
-    // on "is there a path" would project zero rows and drop every turn recorded
-    // before the first journal line — a bubble that renders 0 times.
+  it('drops the serve-lifetime log once the transcript owns the body (EMPTY file, no records)', () => {
+    // THE ROUTE'S PREDICATE: `records.length > 0 ? projectDisplayRecords(records)
+    // : messageLog` (serve-hub.ts, GET /history). It is keyed on "the transcript
+    // has NO RECORDS", not on "there is a path": writeFreshSessionFiles creates
+    // the file at boot BEFORE serve can start, so the path is non-null while the
+    // file is still zero-byte — and only then may the serve-lifetime log supply
+    // the body. Record count, never row count: a populated transcript that merely
+    // projects to nothing must NOT fall back.
+    //
+    // This case pins the EMPTY branch the other way round: with no records the
+    // ROUTE would serve the log, so the projection is consulted only from the
+    // first journaled record onward. `readHistory` (the deleted lookalike) was
+    // the only place that chose between the two, which is why it could never fail
+    // here; the choice now lives in the route, and the fixture suite pins it.
     fs.writeFileSync(transcriptPath, '');
     const messageLog: LogEntry[] = [
       { type: 'user' as const, content: 'typed early', timestamp: 10 },
       { type: 'log' as const, content: 'a brief line', label: 'brief', timestamp: 11 }
     ];
-    const history = readHistory(transcriptPath, messageLog);
-    expect(history.map((e) => e.content)).toEqual(['typed early', 'a brief line']);
+    const records = readTranscriptRecords(transcriptPath);
+    expect(records).toEqual([]);
+    // THE PREDICATE THE ROUTE APPLIES — asserted here, not a second implementation:
+    const body = records.length > 0 ? projectDisplayRecords(records) : messageLog;
+    expect(body.map((e) => e.content)).toEqual(['typed early', 'a brief line']);
   });
 
   it('does NOT fall back when the transcript is populated but PROJECTS to nothing', () => {
@@ -339,8 +362,9 @@ describe('readHistory (transcript journal projection)', () => {
       ].join('\n') + '\n',
       'utf-8'
     );
-    const messageLog: LogEntry[] = [{ type: 'log' as const, content: 'stale serve-only line', timestamp: 10 }];
-    const history = readHistory(transcriptPath, messageLog);
+    // A populated transcript that PROJECTS to nothing must not fall back to the
+    // serve-lifetime log: "no rows" is not the predicate, "no records" is.
+    const history = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     expect(history).toEqual([]);
   });
 
@@ -352,8 +376,9 @@ describe('readHistory (transcript journal projection)', () => {
       JSON.stringify({ role: 'assistant', content: 'first real line', kind: 'new', timestamp: 30 }) + '\n',
       'utf-8'
     );
-    const messageLog: LogEntry[] = [{ type: 'log' as const, content: 'stale serve-only line', timestamp: 10 }];
-    const history = readHistory(transcriptPath, messageLog);
+    // From the first journaled record onward the transcript owns the body, so a
+    // stale serve-lifetime line cannot ride along.
+    const history = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     expect(history.map((e) => e.content)).toEqual(['first real line']);
   });
 
@@ -369,7 +394,7 @@ describe('readHistory (transcript journal projection)', () => {
       lines.push(JSON.stringify({ role: 'user', content: `[HINT] note ${i}`, kind: 'merge', timestamp: i * 100 + 20 }));
     }
     fs.writeFileSync(transcriptPath, lines.join('\n') + '\n', 'utf-8');
-    const history = readHistory(transcriptPath, []);
+    const history = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     const userBubbles = history.filter((e) => e.type === 'user');
     expect(userBubbles.map((e) => e.content)).toEqual(Array.from({ length: 9 }, (_, i) => `query ${i + 1}`));
   });

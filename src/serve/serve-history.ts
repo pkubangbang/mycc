@@ -403,6 +403,81 @@ export function projectDisplay(transcriptPath: string | null): LogEntry[] {
  * ETag) does not pay for a second full read and parse.
  */
 export function projectDisplayRecords(records: readonly TranscriptRecord[]): LogEntry[] {
+  // THE /clear BOUNDARY: everything journaled BEFORE the LAST `kind:'clear'`
+  // piece is excluded from the DISPLAY projection.
+  //
+  // WHY THIS LIVES IN THE PROJECTION, NOT IN THE FILE: the transcript is
+  // append-only and is also the restoration/summarizer source (collateMessages
+  // resets on the same marker), so /clear must never rewrite or truncate it.
+  // The clear MARKER appended by Triologue.clear() → emitControl('clear') is
+  // the durable meta message; a reload of GET /history re-derives the same
+  // cut from it, so cleared chat cannot come back.
+  //
+  // BEFORE: projectDisplayRecords drew every record that ever landed, so a
+  // WebUI reload after /clear replayed the pre-clear conversation that the
+  // terminal (and the LLM context) had already dropped.
+  // AFTER: the live view, the replayed view and the LLM view agree — a clear is
+  // a real boundary on all three surfaces, journaled once, honored everywhere.
+  return projectDisplayRecordsFrom(records, lastClearIndex(records));
+}
+
+/**
+ * Index (into `records`) of the LAST journaled `kind:'clear'` boundary, or -1
+ * when the transcript holds none. ONE statement of "where the pre-clear region
+ * ends", shared by the display projection and its tests.
+ *
+ * Only `'clear'` cuts: `'compact'` / `'rollback'` / `'segment-archive'` are
+ * observable markers — a compact summarizes the conversation, it does not
+ * retract what the user saw, so those rows must stay visible.
+ */
+export function lastClearIndex(records: readonly TranscriptRecord[]): number {
+  for (let i = records.length - 1; i >= 0; i--) {
+    if (records[i]?.kind === 'clear') return i;
+  }
+  return -1;
+}
+
+/**
+ * The journal `seq` at/through which the LAST `/clear` removed records, or 0
+ * when the transcript holds no clear.
+ *
+ * This is the SERVER'S ONE STATEMENT of "where the clear is", derived from the
+ * same {@link lastClearIndex} cut {@link projectDisplayRecords} uses — so the
+ * boundary a client is told about and the cut the body already reflects can
+ * never disagree.
+ *
+ * WHY THE CLIENT NEEDS IT AT ALL: the `/clear` epoch used to be page-local (the
+ * watermark at the instant the `clear-history` frame arrived). A page that
+ * HYDRATED from IndexedDB — a second tab, a sleeping tab, a reload — never saw
+ * that frame, so it had no epoch at all and re-adopted the pre-clear rows from
+ * its own stale snapshot (and re-persisted them: the resurrection was sticky).
+ * A boundary carried by the payload survives hydration, because every /history
+ * response states it.
+ *
+ * Semantics are INCLUSIVE of the marker itself: every record with
+ * `seq <= this` is cleared away, and every post-clear row carries a strictly
+ * higher seq (the marker consumed one, see JsonlTranscriptWriter.append). So a
+ * client's rule is exactly "never re-admit a row at or below this".
+ *
+ * A legacy marker carrying no `seq` degrades to the highest seq in the cleared
+ * region, which is still a truthful upper bound on what was cut. A transcript
+ * with no seqs at all yields 0 — "no boundary stated" — and clients then keep
+ * their pre-existing behaviour rather than inventing one.
+ */
+export function computeClearBoundarySeq(records: readonly TranscriptRecord[]): number {
+  const idx = lastClearIndex(records);
+  if (idx < 0) return 0;
+  return maxSeqOfRecords(records.slice(0, idx + 1));
+}
+
+/**
+ * Project the records AFTER a given boundary index onto chat rows.
+ *
+ * `fromExclusive` is the index of the last clear piece (-1 = no clear). The
+ * emission-order timestamp inheritance starts fresh at the boundary, so a
+ * cleared region's timestamps can never label a post-clear row.
+ */
+export function projectDisplayRecordsFrom(records: readonly TranscriptRecord[], fromExclusive: number): LogEntry[] {
   const rows: LogEntry[] = [];
   // Emission-order timestamp normalisation (pitfall 8547e85b): an untimestamped
   // legacy line inherits the last POSITIVE timestamp seen so far, so it can
@@ -410,7 +485,10 @@ export function projectDisplayRecords(records: readonly TranscriptRecord[]): Log
   // earlier record to inherit from. This only affects the rendered time; row
   // ORDER is file order and is never recomputed from timestamps.
   let knownTimestamp: number | undefined;
-  for (const record of records) {
+  // Start AFTER the boundary: rows before the last clear are gone, and their
+  // timestamps cannot leak into the inheritance chain of post-clear rows.
+  for (let i = fromExclusive + 1; i < records.length; i++) {
+    const record = records[i];
     const row = projectDisplayRecord(record, knownTimestamp);
     if (typeof record.timestamp === 'number' && record.timestamp > 0) {
       knownTimestamp = record.timestamp;
@@ -439,44 +517,15 @@ export function readTranscriptRecords(transcriptPath: string): TranscriptRecord[
 }
 
 /**
- * Reconstruct the full chat history for the /history endpoint.
+ * How many records the transcript file holds (0 when absent/unreadable).
  *
- * The transcript is the SINGLE source: every printed chat line is journaled
- * there (user input as a user journal record, assistant replies as message
- * pieces, brief/status lines as display notes), so this projects the file and
- * nothing else. `messageLog` is no longer a history source — merging it with a
- * projection of the same turns is what shipped one turn as two identical cards.
- *
- * THE FALLBACK CONDITION IS "the transcript contains NO RECORDS", NOT "the
- * projection produced no rows", and not "there is no transcript path". All
- * three look alike and only one is correct:
- *
- *   - "no path" is wrong: `writeFreshSessionFiles` creates the transcript file
- *     at boot, before serve can ever start, so a serve coming up in that window
- *     already holds a path to an EMPTY file. Keying on the path would project
- *     zero rows and silently drop every turn recorded before the first journal
- *     line — a bubble that appears zero times.
- *   - "projection produced no rows" is ALSO wrong, and worse because the bug is
- *     invisible until it matters: a transcript holding only tool records, notes
- *     that are all synthetic, injected user notes or boundary marks is a normal,
- *     populated transcript that happens to draw nothing. Treating it as empty
- *     would resurrect a stale serve-lifetime log over a real journal.
- *   - "no records" is the actual question: has this file ever journaled
- *     anything? Once it has, it owns the history outright.
- *
- * Keying on emptiness keeps the two sources disjoint by CONSTRUCTION rather than
- * by hope: the log is consulted only while the file is literally empty, and the
- * instant it holds a record the log is out of the picture for good.
- *
- * KNOWN RESIDUAL DEFECT (recorded, not fixed here): a turn that only ever
- * reached the serve-lifetime log is visible while the transcript is empty and
- * VANISHES when the first record lands. That is a silent visibility REGRESSION —
- * worse than a stable zero, because a refresh makes a message the user just saw
- * disappear. Making such turns live exactly once end-to-end requires either
- * transferring the log tail into the transcript at that boundary or a
- * timestamp-keyed union-dedup in projectDisplay; both are separate designs that
- * must be reviewed on their own. Reported to the peer as a KNOWN DEFECT, not as
- * solved.
+ * The ONE predicate behind both questions /history asks: "does the transcript
+ * own the body?" (the GET /history route in serve-hub.ts) and "may the body
+ * still be the in-memory log?" (computeHistoryVersion). Sharing it is what
+ * keeps an ETag and the body that carries it from disagreeing about which
+ * source is live. The route applies it inline (`records.length > 0` on the
+ * single read it shares with the ETag), so this count is not a second decision
+ * — it is the number the route's `transcriptHasRecords` term is derived from.
  *
  * WHY THE PREDICATE MUST NOT BE "there is no transcript path". The window is
  * real, and it is reached on EVERY serve start, which is why the tempting
@@ -493,10 +542,23 @@ export function readTranscriptRecords(transcriptPath: string): TranscriptRecord[
  * rows — every turn recorded before the first journal line is dropped from the
  * body instead of falling back to the log. Only RECORD COUNT answers the real
  * question ("has this file journaled anything yet?"), so it is the predicate
- * for BOTH decisions: the body below and the `transcriptHasRecords` term in
- * computeHistoryVersion.
+ * for BOTH decisions: the body and the `transcriptHasRecords` term in
+ * computeHistoryVersion. Record count, not row count, also keeps a populated
+ * transcript that merely PROJECTS to nothing (tool records, synthetic notes,
+ * boundary marks) from resurrecting a stale serve-lifetime log over a real
+ * journal.
  *
- * AND THE UPPER BOUND OF THE DOUBLE-ROW FLICKER — read this before claiming the
+ * KNOWN RESIDUAL DEFECT (recorded, not fixed here): a turn that only ever
+ * reached the serve-lifetime log is visible while the transcript is empty and
+ * VANISHES when the first record lands. That is a silent visibility REGRESSION —
+ * worse than a stable zero, because a refresh makes a message the user just saw
+ * disappear. Making such turns live exactly once end-to-end requires either
+ * transferring the log tail into the transcript at that boundary or a
+ * timestamp-keyed union-dedup in projectDisplay; both are separate designs that
+ * must be reviewed on their own. Reported to the peer as a KNOWN DEFECT, not as
+ * solved.
+ *
+ * THE UPPER BOUND OF THE DOUBLE-ROW FLICKER — read this before claiming the
  * window is harmless. Once the first record lands, the file owns the body and
  * the fallback stops supplying rows, but the BROWSER may still be holding a
  * fallback row it rendered moments earlier from a socket frame or an older
@@ -508,8 +570,7 @@ export function readTranscriptRecords(transcriptPath: string): TranscriptRecord[
  * the store — i.e. until the socket's post-open revalidation or a page reload,
  * bounded by that round-trip and by nothing else. The record-count keying only
  * guarantees the duplicate "obviously goes away"; it does NOT prevent it from
- * appearing. That is a FLICKER, not a fix, and the 4/4 agreement between the two
- * projections does not extend past it.
+ * appearing. That is a FLICKER, not a fix.
  *
  * A real fix must give fallback rows an identity the journal can match (a
  * synthetic seq namespace, or transferring the log tail into the transcript at
@@ -526,40 +587,11 @@ export function readTranscriptRecords(transcriptPath: string): TranscriptRecord[
  * ONLY in the safe direction, and any future edit to those inputs must preserve
  * that direction.
  *
- * @param transcriptPath - durable triologue JSONL path
- * @param messageLog     - serve-lifetime log; consulted only while the
- *                         transcript has journaled nothing at all
- */
-export function readHistory(transcriptPath: string | null, messageLog: LogEntry[]): LogEntry[] {
-  if (transcriptPath) {
-    // Record count, not row count: see the predicate note above — a populated
-    // transcript that projects to no rows must NOT fall back. Counted through
-    // countTranscriptRecords so a caller can ask the SAME question for its ETag.
-    let records: TranscriptRecord[] = [];
-    try {
-      if (countTranscriptRecords(transcriptPath) > 0) records = readTranscript(transcriptPath).records;
-    } catch {
-      records = []; // unreadable file → treat as not-yet-journaled
-    }
-    if (records.length > 0) {
-      try {
-        return projectDisplay(transcriptPath);
-      } catch {
-        // Projection failed on a populated file — fall through rather than
-        // serving nothing at all.
-      }
-    }
-  }
-  return messageLog;
-}
-
-/**
- * How many records the transcript file holds (0 when absent/unreadable).
- *
- * The ONE predicate behind both questions /history asks: "does the transcript
- * own the body?" (readHistory) and "may the body still be the in-memory log?"
- * (computeHistoryVersion). Sharing it is what keeps an ETag and the body that
- * carries it from disagreeing about which source is live.
+ * THERE IS DELIBERATELY NO `readHistory(path, messageLog)` HELPER. It had zero
+ * production callers — the route inlines this predicate so ONE transcript read
+ * feeds both the ETag and the body (see the `records` hoist in the route) — and
+ * a second copy of the rule let tests stay green while the live route drifted.
+ * Assert the rule against the route, not against a lookalike.
  */
 export function countTranscriptRecords(transcriptPath: string | null): number {
   if (!transcriptPath) return 0;

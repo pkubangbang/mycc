@@ -23,7 +23,11 @@ import { fileURLToPath } from 'url';
 import { getSteeringManager, SteeringManager } from '../../loop/steering-manager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const HUB_PATH = path.resolve(__dirname, '..', '..', '..', 'src', 'serve', 'serve-hub.ts');
+// POST-EXTRACTION: the lifecycle transitions (stop / restartServe / the
+// restarting gate) moved out of serve-hub.ts into serve-lifecycle.ts; the hub
+// now only delegates. The A2 wipe contract is a property of those transitions,
+// so the source pins below read the module that owns them.
+const HUB_PATH = path.resolve(__dirname, '..', '..', '..', 'src', 'serve', 'serve-lifecycle.ts');
 const PROVIDER_PATH = path.resolve(__dirname, '..', '..', '..', 'src', 'serve', 'web-input-provider.ts');
 
 // Source-text pins below match CODE SHAPE, not layout: the formatter is free to
@@ -69,30 +73,48 @@ describe('A2 manager contract (real singleton + fresh instances)', () => {
 
 describe('A2 hub/provider wipe-site pins (source-text guards)', () => {
   it('stop() wipes the manager ONLY under the !restarting terminal guard', () => {
-    const hubSrc = read(HUB_PATH);
-    // The wipe exists...
-    expect(hubSrc).toContain('getSteeringManager().clear()');
-    // ...and it is guarded: the unconditional-wipe root cause (停止 race) is
-    // `this.steeringQueue = []` / bare clear() in stop(); the guard must be
-    // present between stop() start and the wipe call.
-    const stopIdx = hubSrc.indexOf('async stop(skipAbortInput');
-    // The CALL site, not the comments: comments above stop() also mention
-    // `getSteeringManager().clear()`, so match the statement form.
-    const clearIdx = hubSrc.indexOf('{ getSteeringManager().clear(); }');
+    const lifecycleSrc = read(HUB_PATH);
+    // The wipe hook exists in the machine's host contract...
+    expect(lifecycleSrc).toContain('clearSteering');
+
+    // ...and the CALL SITE inside stop() is guarded.
+    //
+    // ISSUE #10: this used to slice from `async stop(skipAbortInput` to a bare
+    // `indexOf('{ this.host.clearSteering(); }')` — an EXACT-LAYOUT match that
+    // only holds while the formatter leaves the guard on one line. A reflow
+    // (one statement per line, no braces) made `clearIdx` -1, and the
+    // subsequent `expect(clearIdx).toBeGreaterThan(stopIdx)` would then fail
+    // for a FORMATTING change rather than a behaviour change — the opposite of
+    // a guard. The slice is now bounded by the NEXT method, and the guard is
+    // matched against whitespace-normalised code (`read()` above), so the
+    // assertion pins the CALL SITE and its predicate, not the line breaks.
+    const stopIdx = lifecycleSrc.indexOf('async stop(skipAbortInput');
+    const stopEnd = lifecycleSrc.indexOf('async gracefulShutdown()', stopIdx);
     expect(stopIdx).toBeGreaterThan(-1);
-    expect(clearIdx).toBeGreaterThan(stopIdx);
-    const stopBody = hubSrc.slice(stopIdx, clearIdx + 40);
-    expect(stopBody).toContain('!this.restarting');
-    // The old field-wipe is gone.
-    expect(hubSrc).not.toContain('this.steeringQueue = []');
+    expect(stopEnd, 'gracefulShutdown() bounds the stop() body').toBeGreaterThan(stopIdx);
+    const stopBody = lifecycleSrc.slice(stopIdx, stopEnd);
+
+    // The wipe is reached through the recycle predicate, with the NEGATIVE
+    // polarity (`!isRecycling()`), and the predicate and the call are adjacent
+    // — an unguarded `clearSteering` anywhere else in stop() breaks this.
+    expect(stopBody).toMatch(/if \(!this\.isRecycling\(\)\) \{?\s*this\.host\.clearSteering\(\);/);
+    // Polarity is asserted separately so an inverted predicate names itself
+    // instead of merely failing the regex above.
+    expect(stopBody).not.toContain('if (this.isRecycling()) { this.host.clearSteering();');
+    // The manager is never wiped directly (the hook is the only seam).
+    expect(stopBody).not.toContain('getSteeringManager().clear()');
+    expect(stopBody).not.toContain('this.steeringQueue = []');
   });
 
   it('restartServe() does NOT wipe the manager (restart-preservation)', () => {
-    const hubSrc = read(HUB_PATH);
-    const restartIdx = hubSrc.indexOf('async restartServe()');
-    const endIdx = hubSrc.indexOf('}', hubSrc.indexOf('this.restarting = false;', restartIdx));
-    const restartBody = hubSrc.slice(restartIdx, endIdx);
-    expect(restartBody).not.toContain('clear()');
+    const lifecycleSrc = read(HUB_PATH);
+    const restartIdx = lifecycleSrc.indexOf('restartServe(): Promise<void>');
+    const endIdx = lifecycleSrc.indexOf('this.state.restarting = false;', restartIdx);
+    const restartBody = lifecycleSrc.slice(restartIdx, endIdx);
+    // The recycle path never calls the wipe hook (notes survive a 重启).
+    expect(restartBody).not.toContain('clearSteering');
+    // Nor the manager directly.
+    expect(restartBody).not.toContain('getSteeringManager().clear()');
   });
 
   it('WebInputProvider wipes in BOTH terminal-fallback branches, restart branches return before the wipe', () => {

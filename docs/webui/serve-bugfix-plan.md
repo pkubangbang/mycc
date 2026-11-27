@@ -273,13 +273,13 @@ The `WebInputProvider.promptRetry()` (web-input-provider.ts lines 53-68) current
 ### 3.2 Merge messageLog into /history alongside transcript
 
 **Bug**: M1 — brief/log/warn/error output during WS disconnect is lost on reconnect.  
-**File**: `src/serve/serve-hub.ts` — `readHistory()`  
+**File**: `src/serve/serve-hub.ts` — the `GET /history` route (this predicate was later extracted, then re-inlined; the `readHistory()` helper is gone)  
 **Change**: When `transcriptPath` is set, also include `messageLog` entries that are NOT already represented in the transcript (deduplicate by content+timestamp proximity). Alternatively, always include messageLog entries appended after transcript entries.
 
 ### 3.3 Fix transcript history timestamps
 
 **Bug**: L1  
-**File**: `src/serve/serve-hub.ts` — `readHistory()`  
+**File**: `src/serve/serve-hub.ts` — the `GET /history` route (this predicate was later extracted, then re-inlined; the `readHistory()` helper is gone)  
 **Change**: Parse timestamp from triologue JSONL if the `Message` object includes one. If not available, omit the `timestamp` field entirely rather than setting `0`.
 
 ### 3.4 Echo retry answer as user bubble

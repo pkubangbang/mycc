@@ -14,6 +14,7 @@ export type MessageType =
   | 'system'
   | 'card'
   | 'steer-state'
+  | 'clear-history'
   | 'file-upload'
   | 'file-flush'
   | 'auto'

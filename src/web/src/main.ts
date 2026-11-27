@@ -31,7 +31,7 @@ import { applyServerMessage } from './message-dispatch';
 import { registerDebugSeam } from './debug';
 import { ensureHighlighterReady } from './highlight';
 import { useChatStore } from './stores/chat-store';
-import { maxSeqOf, advanceCursor, mergeSnapshot, isAlreadyRendered } from './display-cursor';
+import { maxSeqOf, advanceCursor, adoptSnapshot, isAlreadyRendered, withoutClearedRows } from './display-cursor';
 import {
   FrameRing,
   recordFrame,
@@ -159,6 +159,30 @@ let historyDirty = false;
  * snapshot). Records predating the field carry no seq and do not move it.
  */
 let lastRenderedSeq = 0;
+
+/**
+ * The `/clear` BOUNDARY this page last learned from the SERVER, as the highest
+ * journal `seq` the last `/clear` removed (0 = no clear stated).
+ *
+ * SERVER-STATED, NOT PAGE-LOCAL: it comes from the `/history` payload
+ * (`clearBoundarySeq`, see computeClearBoundarySeq in serve-history.ts) and is
+ * refreshed on every 200 — including the first one after an IndexedDB
+ * hydration. That is the whole point: the epoch used to be this page's own
+ * watermark at the instant the live `clear-history` frame arrived, which a
+ * second tab, a sleeping tab or a reload never saw at all. Those pages had no
+ * epoch, so their merge re-adopted the cleared conversation out of the stale
+ * cache and persisted it back — a STICKY resurrection.
+ *
+ * `clear-history` frames no longer record anything here: the server states the
+ * boundary authoritatively on the next snapshot, and two mechanisms that can
+ * disagree are how the original bug arose. The frame still empties the visible
+ * log (message-dispatch.ts) — that stays, since it is what makes the clear feel
+ * immediate.
+ *
+ * A row with `seq <=` this was cut and must never be re-admitted, on EITHER
+ * side of a merge (see withoutClearedRows in display-cursor.ts).
+ */
+let clearBoundarySeq = 0;
 
 // ── Diagnostic frame rings (`window.$webui.dump()`, see dump.ts) ──
 //
@@ -362,6 +386,7 @@ async function fetchHistory(): Promise<boolean> {
     const etag = res.headers.get('ETag');
     const data = (await res.json()) as {
       messages: ChatMessage[];
+      clearBoundarySeq?: number;
       steeringBuffer?: SteeringNote[];
       steeringRevision?: number;
       isRunning?: boolean;
@@ -399,17 +424,36 @@ async function fetchHistory(): Promise<boolean> {
     // the body that was read. Replacing the store wholesale would splice those
     // frames away — the user's newest line would blink out and come back.
     //
-    // Merge is sound (NOT "weaker authority") because the projection is a PURE
-    // function of each record and the record stream is append-only: a row, once
-    // projected, is projected by every later call, and `projectDisplayRecord`
-    // never cuts, caps or reorders earlier rows (`/clear` is a boundary mark the
-    // display projection SKIPS, so it does not splice either — see the note in
-    // serve-history.ts). Hence the snapshot's row set is a SUBset of the truth,
-    // and the live rows carrying a seq beyond the snapshot's maximum are exactly
-    // the difference. `src/tests/web/display-cursor.test.ts` pins that purity so
-    // a future cap/collapse rule cannot silently turn this merge into a
-    // resurrection bug.
-    const snapshotMax = maxSeqOf(visible);
+    // THE CLEAR BOUNDARY comes FIRST, and it is now stated by the SERVER.
+    //
+    // The merge below is sound because the projection is a PURE function of each
+    // record over an append-only stream, so the snapshot's row set is a SUBSET of
+    // the truth. `/clear` is the ONE exception — it cuts the projection at its
+    // boundary (serve-history.ts: projectDisplayRecords → lastClearIndex) — so a
+    // pre-boundary row is not a "live tail the snapshot lacks"; re-appending it
+    // resurrects the cleared conversation.
+    //
+    // WHY THE SERVER STATES IT: a page that HYDRATED from IndexedDB (a second
+    // tab, a sleeping tab, a reload) never saw the live `clear-history` frame, so
+    // any page-local epoch was null and the pre-clear rows came back — and were
+    // persisted again, making the resurrection sticky. `clearBoundarySeq` arrives
+    // with every snapshot, so it survives hydration by construction.
+    //
+    // The comparison is inclusive (`seq <= boundary`), taken from ONE source, on
+    // BOTH sides of the merge: the incoming body (possibly stale, from a cache or
+    // a snapshot read before the clear) and the live rows already in the store.
+    // That removes the whole class of "the two epochs disagree" bugs, and it also
+    // retires the old discard-and-refetch retry — filtering is idempotent, so a
+    // snapshot that merely predates the boundary is now CORRECTED rather than
+    // thrown away (and the `return;` that reported success as `undefined`, which
+    // made boot/reconnect withhold the socket and schedule a duplicate fetch, is
+    // gone with it).
+    const boundary =
+      typeof data.clearBoundarySeq === 'number' && Number.isFinite(data.clearBoundarySeq) ? data.clearBoundarySeq : 0;
+    clearBoundarySeq = boundary;
+    // Filter the last /clear out of the body for the cursor + teammate split.
+    const snapshotRows = withoutClearedRows(visible, boundary);
+    const snapshotMax = maxSeqOf(snapshotRows);
     // MONOTONIC advance, never a bare assignment: a frame we already rendered
     // before this snapshot must still count as rendered afterwards.
     lastRenderedSeq = advanceCursor(lastRenderedSeq, snapshotMax);
@@ -417,12 +461,14 @@ async function fetchHistory(): Promise<boolean> {
     // convention. Teammate messages (@name/tool) go to teammateMessages for
     // the accordion UI; everything else stays in messages. See the
     // "@-prefix teammate label convention" section in MYCC.md.
-    const teammateMsgs = visible.filter((m) => m.label?.startsWith('@'));
-    const mainMsgs = visible.filter((m) => !m.label?.startsWith('@'));
-    // Replace with the snapshot, then re-append the frames that outran it — in
-    // their original order, because they are the tail of the same append-only
-    // stream. See mergeSnapshot() for why this cannot resurrect a stale row.
-    store.messages.splice(0, store.messages.length, ...mergeSnapshot(mainMsgs, store.messages));
+    const teammateMsgs = snapshotRows.filter((m) => m.label?.startsWith('@'));
+    // THE MAIN LOG: adopt the snapshot through production's one decision —
+    // filter the clear out of BOTH sides, then merge the live tail. Filtering
+    // the LIVE side is what kills the hydration BLOCKER: a page that never saw
+    // the `clear-history` frame holds the pre-clear conversation in
+    // `store.messages`, and otherwise it would be re-appended as "the live
+    // tail" and persisted back to the cache. See adoptSnapshot().
+    store.messages.splice(0, store.messages.length, ...adoptSnapshot(visible, store.messages, boundary));
     store.teammateMessages.splice(0, store.teammateMessages.length, ...teammateMsgs);
     // Bump the history revision so the ChatLog collapse watcher resets its
     // x/t/trackingTail window — a 200 is an AUTHORITATIVE replacement, and
@@ -543,6 +589,13 @@ async function fetchConfig(): Promise<boolean> {
       // later 200 can repair it because the cursor cannot rewind. Only a page
       // reload recovered — exactly the case the cursor exists to avoid.
       lastRenderedSeq = 0;
+      // RESET THE CLEAR BOUNDARY WITH IT. `seq` restarts at 1 for every new
+      // session, so the previous session's boundary describes a journal that no
+      // longer exists: keeping it (say 40) would filter every row of the new
+      // session as "cleared" until it journaled 40 records. The next /history
+      // states the new session's own boundary authoritatively; until then a
+      // fresh session has no clear, which is exactly 0.
+      clearBoundarySeq = 0;
       // Drop the previous session's chatlog immediately. Steering state is
       // reset too, and for a DIFFERENT reason: the queue revision is
       // per-process, so a new serve process numbers it from 1 again. A client
@@ -655,6 +708,18 @@ function connectWebSocket(): void {
       return;
     }
     applyServerMessage(store, msg, { nextId, chatApi });
+    // The `clear-history` frame empties the visible log (applyServerMessage
+    // above, message-dispatch.ts) — that is what makes a clear feel immediate.
+    // It deliberately records NO epoch any more: the boundary a snapshot is
+    // filtered against is SERVER-STATED (`clearBoundarySeq` in the /history
+    // payload), so a page-local watermark can neither disagree with the server
+    // nor be missing on a page that hydrated from cache. See clearBoundarySeq.
+    if (msg.type === 'clear-history') {
+      // The cached snapshot is about to be overwritten by the emptied store, but
+      // a cache write already in flight may still be holding the pre-clear rows —
+      // persisting NOW keeps the last write (which wins the cache) free of them.
+      persistChatlog();
+    }
     // Advance the display cursor from the LIVE stream too. A frame carrying a
     // journal seq is a row the user now sees; a state frame (prompt / steering
     // / mode / running) carries none and leaves the watermark alone.
@@ -1032,6 +1097,28 @@ export const chatApi = {
   sendRestartWebui(): void {
     wsSend({ type: 'restart-webui' });
   },
+  /**
+   * The browser's `/clear` — `{ type: 'clear-conversation' }`.
+   *
+   * This is the ONLY route a browser has into the clear. The terminal reaches
+   * the same routine with double Ctrl+L, but that callback fires from
+   * AgentIO.handleKeyEvent, which returns early when no LineEditor exists — and
+   * serve mode never builds one (web-input-provider.ts:133). Without this frame
+   * the cleared conversation stayed on screen until a manual refresh, in exactly
+   * the configuration the feature exists for.
+   *
+   * The server answers by broadcasting `clear-history` (no `seq`), which
+   * message-dispatch.ts already handles, so this side needs no clearing logic of
+   * its own: it must NOT splice `store.messages` locally. A reload honours the
+   * same boundary through the transcript marker, so both views agree.
+   *
+   * Sent unconditionally from the 魔法查询 `/clear` row — a terminal session has
+   * no socket, so the frame simply never leaves, and there is no mode branch to
+   * go untested.
+   */
+  sendClearConversation(): void {
+    wsSend({ type: 'clear-conversation' });
+  },
   /** Safety-net expiry for the `submitted` phase. Called by ChatInput.vue's
    *  15s latch when no server message (running:on / prompt / card) transitioned
    *  the phase away from `submitted` in time — a sign the backend is genuinely
@@ -1141,7 +1228,8 @@ function collectClientSlice(capturedAt: number): ReturnType<typeof buildClientSl
       lastRenderedSeq,
       historyDirty,
       lastHistoryEtag,
-      sessionId
+      sessionId,
+      clearBoundarySeq
     },
     messages: store.messages.map(toDumpMessage),
     teammateMessages: store.teammateMessages.map(toDumpMessage),

@@ -99,7 +99,13 @@ export interface WsMessage {
     | 'steer'
     | 'steer-resolve'
     | 'auto'
-    | 'auto-commit-get';
+    | 'auto-commit-get'
+    /**
+     * The browser's `/clear`. The ONE frame name for this operation: the WebUI
+     * sends it verbatim (`chatApi.sendClearConversation`), and the handler's
+     * `case` above matches it. Do not add a second spelling on the client.
+     */
+    | 'clear-conversation';
   text?: string;
   cardId?: string;
   value?: string;

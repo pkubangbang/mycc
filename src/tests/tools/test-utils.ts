@@ -8,7 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { vi } from 'vite-plus/test';
+import { expect, vi } from 'vite-plus/test';
 import type { AgentContext, CoreModule, AskResult, ToolDefinition } from '../../types.js';
 
 // Re-export comprehensive mock utilities

@@ -6,7 +6,8 @@
  * REAL producer seams — `Triologue.user()` / `.note()` and
  * `ServeHub.pushSteer()` — through the actual provider wiring
  * (`setUserJournalProvider` → `submitUser` → `emit` → `onMessage` →
- * `JsonlTranscriptWriter`), then reads the result back through `readHistory`.
+ * `JsonlTranscriptWriter`), then reads the result back through the SAME projection
+ * GET /history applies (`projectDisplayRecords` over the parsed records).
  *
  * The invariant under test (the whole point of the PR):
  *   every REAL typed submission produces exactly ONE WebUI user bubble,
@@ -24,7 +25,7 @@ import { Triologue } from '../../loop/triologue.js';
 import { ServeHub } from '../../serve/serve-hub.js';
 import { JsonlTranscriptWriter, collateMessages, readTranscript } from '../../loop/triologue/transcript.js';
 import { getSteeringManager } from '../../loop/steering-manager.js';
-import { readHistory } from '../../serve/serve-history.js';
+import { projectDisplayRecords, readTranscriptRecords } from '../../serve/serve-history.js';
 import type { Message } from '../../types.js';
 
 describe('PR #26 invariant: real submissions → one bubble each; no note renders', () => {
@@ -98,7 +99,7 @@ describe('PR #26 invariant: real submissions → one bubble each; no note render
     // 4. A steering note typed in the browser → journaled via the hub.
     hub.pushSteer('please stop and reconsider');
 
-    const history = readHistory(transcriptPath, []);
+    const history = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     const userBubbles = history.filter((e) => e.type === 'user');
     const contents = userBubbles.map((e) => e.content);
 
@@ -121,7 +122,7 @@ describe('PR #26 invariant: real submissions → one bubble each; no note render
     const unboundHub = new ServeHub();
     unboundHub.setTranscriptPath(transcriptPath);
     expect(() => unboundHub.pushSteer('orphan steer')).not.toThrow();
-    expect(readHistory(transcriptPath, []).filter((e) => e.type === 'user')).toHaveLength(0);
+    expect(projectDisplayRecords(readTranscriptRecords(transcriptPath)).filter((e) => e.type === 'user')).toHaveLength(0);
   });
 
   it('a marker-less injected user piece never renders (anti-smuggling)', () => {
@@ -132,7 +133,7 @@ describe('PR #26 invariant: real submissions → one bubble each; no note render
     >[0]);
     // And a legitimate submission for contrast.
     triologue.submitUser('legitimate', 'prompt');
-    const userBubbles = readHistory(transcriptPath, []).filter((e) => e.type === 'user');
+    const userBubbles = projectDisplayRecords(readTranscriptRecords(transcriptPath)).filter((e) => e.type === 'user');
     expect(userBubbles.map((e) => e.content)).toEqual(['legitimate']);
   });
 
@@ -160,7 +161,7 @@ describe('PR #26 invariant: real submissions → one bubble each; no note render
     expect(marks.text).toBe('tighten the loop');
     triologue.user(marks.text, { steerDelivery: true });
 
-    const history = readHistory(transcriptPath, []);
+    const history = projectDisplayRecords(readTranscriptRecords(transcriptPath));
     const steerBubbles = history.filter((e) => e.type === 'user' && e.content === 'tighten the loop');
     expect(steerBubbles).toHaveLength(1);
 
@@ -191,7 +192,7 @@ describe('PR #26 invariant: real submissions → one bubble each; no note render
     // an ordinary query and the bubble survives.
     triologue.user(marks.text, { steerDelivery: false });
 
-    const userBubbles = readHistory(transcriptPath, []).filter((e) => e.type === 'user');
+    const userBubbles = projectDisplayRecords(readTranscriptRecords(transcriptPath)).filter((e) => e.type === 'user');
     expect(userBubbles).toHaveLength(1);
     expect(userBubbles[0].content).toBe('no journal backing');
   });
@@ -210,7 +211,7 @@ describe('PR #26 invariant: real submissions → one bubble each; no note render
     expect(marks.delivered).toBe(0);
 
     // The submission bubble is the only trace, as today.
-    const userBubbles = readHistory(transcriptPath, []).filter((e) => e.type === 'user');
+    const userBubbles = projectDisplayRecords(readTranscriptRecords(transcriptPath)).filter((e) => e.type === 'user');
     expect(userBubbles.map((e) => e.content)).toEqual(['dropped note']);
   });
 });

@@ -1,11 +1,12 @@
 /**
  * serve-hub.ts - Express + Vite + WebSocket orchestrator for the /serve web UI.
  *
- * Thin orchestrator: HTTP/Vite/WS setup + the input/card/steering/upload queues
- * live here; fan-out (ClientRegistry), history reconstruction (serve-history),
- * the disconnect timer (serve-disconnect-timer), and WS message dispatch
- * (serve-ws-handler) are extracted into sibling modules. Inbound WS messages
- * are routed via handleWsMessage(); the hub implements HubHandler.
+ * This file is the BRIDGE LAYER only; everything else moved to sibling modules:
+ * serve-web-stack (Express/Vite/WS + routes), serve-lifecycle (the state
+ * machine), serve-ws-events (per-socket handlers), serve-queues (upload buffer,
+ * session signals, diagnostics ring), serve-clients (fan-out), serve-history
+ * (row projection + ETag), serve-ws-handler (inbound dispatch), serve-banner
+ * (display URLs). What remains: the input / card / steering / output bridges.
  *
  * Lifecycle: start(port) → running=true; stop(skipAbortInput?) → running=false
  * (FIRST) → abortInput() (unless skipped) → cleanup. gracefulShutdown() passes
@@ -13,57 +14,38 @@
  * before the fallback `agent >>` prompt (the "ESC quit serve" race).
  */
 
-import express from 'express';
 import type { CrossroadCardWire } from '../loop/crossroad-card.js';
-import http from 'http';
-import * as fs from 'fs';
-import * as path from 'path';
-import { fileURLToPath } from 'url';
-import { WebSocketServer, WebSocket } from 'ws';
-import type { RawData } from 'ws';
-import { createServer as createViteServer, type ViteDevServer } from 'vite';
-import vue from '@vitejs/plugin-vue';
+import { WebSocket, type RawData } from 'ws';
 import chalk from 'chalk';
 import { agentIO } from '../loop/agent-io.js';
 import { PromptAbortError } from '../loop/agent-io.js';
 import { setResultCallback } from '../utils/letter-box.js';
-import { getMaxUploadMb, shouldDaemon, getApiProvider, isVerbose } from '../config.js';
 import { sendToParent } from '../utils/parent-ipc.js';
+import { shouldDaemon } from '../config.js';
 import { getSteeringManager, joinSteeringNotes, type SteeringNote } from '../loop/steering-manager.js';
 import { setWebUiUp } from '../loop/loop-events.js';
 import { isWrapUpInFlight } from '../loop/wrap-up-state.js';
 import type { LogEntry, FileUploadEntry, CardMessage, SteeringDeliveredInput } from './serve-types.js';
 export type { CardMessage } from './serve-types.js';
-import { stripAnsi, detectLanIpv4, detectAllLanIpv4 } from './serve-utils.js';
+import { stripAnsi } from './serve-utils.js';
 import { ClientRegistry } from './serve-clients.js';
 import {
-  computeHistoryVersion,
-  etagMatchesIfNoneMatch,
   maxSeqOfRecords,
   projectDisplayRecords,
+  projectDisplayRecord,
   readTranscriptRecords
 } from './serve-history.js';
 import { DisconnectTimer } from './serve-disconnect-timer.js';
-import {
-  InboundFrameRing,
-  recordInbound,
-  inputStatus,
-  buildServerDumpSlice,
-  type InboundFrame,
-  type ServerDiagnostics
-} from './serve-diag.js';
+import type { ServerDiagnostics } from './serve-diag.js';
 import { handleWsMessage, type HubHandler } from './serve-ws-handler.js';
-import { getPeerWireAcceptor } from './peer-wire.js';
+import type { WsEventHost } from './serve-ws-events.js';
+import { ServeLifecycleState, type LifecycleHost, type LifecycleState } from './serve-lifecycle.js';
+import { mountWebStack, type WebStack } from './serve-web-stack.js';
+import { displayUrl, displayUrls } from './serve-banner.js';
+import { FileUploadQueue, SessionSignals, DiagnosticsRing } from './serve-queues.js';
 import { registerServeHubFactory, type ServeHubLike } from './serve-registry.js';
-import { getWireHooks } from '../peer/wire-registry.js';
 import { wireOutputMirroring } from './activate.js';
-import { projectDisplayRecord } from './serve-history.js';
 import type { DisplayObserverHost, TranscriptRecord } from '../loop/triologue/transcript.js';
-import pkg from '../../package.json';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const WEB_ROOT = path.resolve(__dirname, '..', 'web');
 
 export class ServeHub implements HubHandler, ServeHubLike {
   private static instance: ServeHub | null = null;
@@ -81,15 +63,8 @@ export class ServeHub implements HubHandler, ServeHubLike {
   }
 
   // ── Server handles ──
-  private httpServer: http.Server | null = null;
-  private expressApp: express.Application | null = null;
-  private viteServer: ViteDevServer | null = null;
-  private wsServer: WebSocketServer | null = null;
+  private webStack: WebStack | null = null;
   private clients = new ClientRegistry();
-  private port = 0;
-  private upgradeHandler: ((req: http.IncomingMessage, socket: import('net').Socket, head: Buffer) => void) | null =
-    null;
-  private host: string | null = null;
 
   // ── Input bridge — single resolver, no AbortController ──
   private inputResolver: ((input: string | null, fromSteering?: boolean) => void) | null = null;
@@ -110,12 +85,17 @@ export class ServeHub implements HubHandler, ServeHubLike {
   // call-site duty: this hub registers exactly ONE observer in start() and
   // unsubscribes it in stop(), so every add/drain/resolve/clear — including
   // the ones the loop states perform — reaches the WebUI as one versioned
-  // `steer-state` snapshot. The old hand-written `steer-flush` broadcasts at
-  // four call sites are gone with the delta protocol they served.
+  // `steer-state` snapshot.
   private unsubscribeSteering: (() => void) | null = null;
 
-  // ── File upload queue — ephemeral in-memory buffer ──
-  private fileUploadQueue: FileUploadEntry[] = [];
+  // ── Queues + diagnostics (see serve-queues.ts) ──
+  // The upload queue gets a LAZY view of `messageLog` (never the array itself):
+  // the hub reassigns the field on start, stop and every `/clear` boundary, so
+  // a captured array would be the stale object and the `file-upload` /
+  // `file-flush` / rejection rows would land in a log nothing reads.
+  private readonly fileUploadQueue = new FileUploadQueue(this.clients, () => this.messageLog);
+  private readonly signals = new SessionSignals(this.clients);
+  private readonly diagnostics = new DiagnosticsRing();
 
   // ── Message log for reconnect replay ──
   private messageLog: LogEntry[] = [];
@@ -152,34 +132,14 @@ export class ServeHub implements HubHandler, ServeHubLike {
    */
   private journaledRecords = 0;
 
-  // ── Diagnostics: the SERVER half of `window.$webui.dump()` (see serve-diag.ts) ──
-  //
-  // A bounded ring of inbound WS frames with what the input bridge decided about
-  // each one. In-memory and manual-only: it is read when a human types
-  // `$webui.dump()`, never streamed or persisted on a schedule. The ring, the
-  // arrival-time sampling and the ONE status rule live in serve-diag.ts so they
-  // are unit-tested without this file's Express/Vite/agent-io graph.
-  private diagRing = new InboundFrameRing();
-  /**
-   * The ring entry waiting for its outcome. `submitInput` resolves synchronously
-   * inside the dispatch of the SAME frame, so one slot is sufficient — but it is
-   * kept as a slot rather than a global "last status" so a non-input frame can
-   * never inherit an earlier submission's verdict.
-   */
-  private pendingDiagFrame: InboundFrame | null = null;
-
   // ── Disconnect-reconnect (encapsulated in DisconnectTimer) ──
   //
   // Lifecycle contract: the timer's `persist` predicate (shouldDaemon())
   // guarantees `start()` is a no-op in a daemon, so the timer can NEVER arm
   // and `onGenuineDisconnect` can NEVER fire in persistent mode. The callback
   // therefore has exactly ONE reachable branch — gracefulShutdown() — and
-  // does NOT re-check shouldDaemon() to pick restart-vs-shutdown. (An
-  // earlier version had a dead `if (shouldDaemon()) restartServe()` branch
-  // here; it was unreachable by the timer's own contract and leaked the
-  // hub's lifecycle policy into a callback whose firing condition already
-  // excluded it.) The "restart instead of kill when persistent" intent now
-  // lives entirely in restartServe(), the 重启 button path.
+  // does NOT re-check shouldDaemon() to pick restart-vs-shutdown. The "restart
+  // instead of kill when persistent" intent lives entirely in restartServe().
   private disconnectTimer = new DisconnectTimer(
     {
       onGenuineDisconnect: () => {
@@ -198,10 +158,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
   private autoStateProvider: (() => boolean) | null = null;
   /**
    * Plan/normal mode provider — mirrors the lead's CURRENT mode at display
-   * time instead of caching the last broadcast. The push-only cache was
-   * stale whenever the mode flipped before this hub existed (e.g. plan_on →
-   * /serve): the broadcast was silently dropped (no hub yet), and the replay
-   * then served the hub's own 'normal'. "The hub mirrors, never owns."
+   * time instead of caching the last broadcast. "The hub mirrors, never owns."
    */
   private modeStateProvider: (() => 'plan' | 'normal') | null = null;
   /** Fallback when no provider is installed (hub without an agent context). */
@@ -215,19 +172,44 @@ export class ServeHub implements HubHandler, ServeHubLike {
    * the agent loop, whose change callback broadcasts the new list out.
    */
   private autoCommitBranchesProvider: { get: () => string[] } | null = null;
+  /**
+   * The LOOP-side `/clear` routine (agent-repl's `clearConversation`), installed
+   * through `onServeHubReady`. Same seam as the auto/mode providers: the hub
+   * itself owns no conversation state, so it cannot perform a clear — it can
+   * only forward the browser's request to the one body both surfaces share.
+   *
+   * `null` on a hub with no agent loop behind it (a stub in tests, or serve
+   * started before the loop wired its providers). `clearConversation()` then
+   * throws instead of silently doing nothing, so the WS handler can report it.
+   */
+  private clearConversationProvider: (() => void) | null = null;
 
-  private running = false;
-  // State-machine-driven processing flag (idle PROMPT/AWAIT → false; else true).
-  private agentRunning = false;
-  // Re-entrancy guard for stop().
-  private stopping = false;
-  // Re-entrancy flag for restartServe(): true while the HTTP/Vite/WS stack is
-  // being recycled in-process on the same port. During this window `running`
-  // is transiently false, so WebInputProvider's three-way guard treats this as
-  // "still mine, keep waiting" rather than "serve is gone → exit" (which would
-  // kill a headless daemon on a Restart click). Section 3 ships it returning
-  // false; Section 2 wires the real implementation.
-  private restarting = false;
+  // ── Lifecycle state (owned by ServeLifecycleState; declared before it) ──
+  /** The mutable lifecycle flags the machine owns (by reference). */
+  private readonly lifecycleState: LifecycleState = {
+    running: false,
+    agentRunning: false,
+    stopping: false,
+    restarting: false,
+    port: 0,
+    host: null,
+    webUiUp: false
+  };
+
+  /**
+   * The lifecycle state machine (start / stop / restart / graceful shutdown).
+   * Declared AFTER `lifecycleState` — field initializers run in declaration
+   * order, so the machine must come second or it would capture `undefined`.
+   */
+  private readonly lifecycle = new ServeLifecycleState(this.lifecycleState, this.lifecycleHost);
+
+  private get running(): boolean {
+    return this.lifecycleState.running;
+  }
+
+  private get agentRunning(): boolean {
+    return this.lifecycleState.agentRunning;
+  }
 
   /**
    * Whether the serve stack is mid-restart (stop(true) → start(same port)).
@@ -236,8 +218,10 @@ export class ServeHub implements HubHandler, ServeHubLike {
    * to the headless-exit branch.
    */
   isRestarting(): boolean {
-    return this.restarting;
+    return this.lifecycleState.restarting;
   }
+
+  // ── Bindings the loop installs ──
 
   /** Set the durable triologue transcript path (read by /history). */
   setTranscriptPath(p: string | null): void {
@@ -268,13 +252,8 @@ export class ServeHub implements HubHandler, ServeHubLike {
    * writes ONE transcript journal record ('user'|'steer') for a genuine user
    * submission. The transcript is the single source of truth for WebUI user
    * bubbles (/history reads it), so this replaces the old serve-only
-   * user.jsonl side file.
-   *
-   * The hub never opens the transcript itself — `JsonlTranscriptWriter` is
-   * the single writer (it owns kind stamping and the write-time timestamp),
-   * and the provider is registered by agent-repl once the triologue exists.
-   * Guarded at every call site so a serve started before the loop wired it
-   * is a no-op rather than a crash.
+   * user.jsonl side file. Guarded at every call site so a serve started before
+   * the loop wired it is a no-op rather than a crash.
    */
   setUserJournalProvider(cb: ((text: string, source: 'prompt' | 'steer') => void) | null): void {
     this.userJournalProvider = cb;
@@ -282,101 +261,166 @@ export class ServeHub implements HubHandler, ServeHubLike {
 
   /**
    * Append a real user submission to the transcript's user-input journal via
-   * the registered provider (see setUserJournalProvider). Kept as the single
-   * call the serve layer uses for its own submissions (a steering note typed
-   * in the browser). No-op when no provider is registered yet (serve started
-   * before the agent loop wired it).
+   * the registered provider (see setUserJournalProvider). No-op when no
+   * provider is registered yet (serve started before the agent loop wired it).
    */
   journalUserSubmission(text: string, source: 'prompt' | 'steer'): void {
     try {
       this.userJournalProvider?.(text, source);
     } catch (err) {
-      // Best-effort: a journal failure must NOT break the live submission
-      // (the user still sees their bubble optimistically this session). But
+      // Best-effort: a journal failure must NOT break the live submission, but
       // the transcript is the SINGLE SOURCE OF TRUTH for user bubbles now, so
-      // a write failure means "bubble survives live, disappears on reload" —
-      // surface it on the verbose/error path instead of swallowing it
-      // silently, so the divergence is diagnosable.
+      // surface the divergence instead of swallowing it silently.
       agentIO.verbose('serve', `user-journal write failed (${source}): ${String(err)}`);
     }
   }
 
   // ===========================================================================
-  // Lifecycle
+  // Lifecycle — the transitions live in serve-lifecycle.ts
   // ===========================================================================
 
   isRunning(): boolean {
     return this.running;
   }
 
-  /**
-   * The port the server is currently bound to (0 when not running). Used by
-   * /reload so the coordinator can respawn the lead with `--serve <port>` and
-   * the web UI resumes on the same port after the brief disconnect.
-   */
+  /** The port the server is bound to (0 when not running), for /reload. */
   getPort(): number {
-    return this.port;
+    return this.lifecycleState.port;
   }
 
-  /**
-   * The host the server is bound to (null = localhost-only). Used by /reload
-   * to forward the --host binding to the respawned lead so the web UI stays
-   * reachable on the same interface.
-   */
+  /** The host the server is bound to (null = localhost-only), for /reload. */
   getHost(): string | null {
-    return this.host;
+    return this.lifecycleState.host;
   }
 
   getUrl(): string | null {
     if (!this.running) return null;
-    let displayHost: string;
-    if (this.host && this.host !== '0.0.0.0') {
-      displayHost = this.host; // explicit --host value
-    } else if (this.host === '0.0.0.0') {
-      displayHost = detectLanIpv4() ?? 'localhost'; // all interfaces → LAN IP
-    } else {
-      displayHost = 'localhost';
-    }
-    return `http://${displayHost}:${this.port}`;
+    return displayUrl(this.lifecycleState.host, this.lifecycleState.port);
   }
 
   /**
    * Return all display URLs for the startup banner. When bound to 0.0.0.0,
    * yields a local URL (localhost) plus one network URL per non-internal
-   * IPv4 so the user can see every reachable address, not just the first.
-   * When bound to a specific host, yields that single URL. Returns null
-   * when not running.
+   * IPv4 so the user can see every reachable address. Returns null when not
+   * running.
    */
   getUrls(): { local: string; network: string[] } | { local: string; network: [] } | null {
     if (!this.running) return null;
-    if (this.host && this.host !== '0.0.0.0') {
-      // Specific host — single URL, no separate local/network split.
-      const url = `http://${this.host}:${this.port}`;
-      return { local: url, network: [] };
-    }
-    const local = `http://localhost:${this.port}`;
-    if (this.host === '0.0.0.0') {
-      const network = detectAllLanIpv4().map((ip) => `http://${ip}:${this.port}`);
-      return { local, network };
-    }
-    // localhost-only bind (no --host).
-    return { local, network: [] };
+    return displayUrls(this.lifecycleState.host, this.lifecycleState.port);
   }
 
   /** Start the Express + Vite + WS stack on a single port. */
   async start(port: number, host?: string | null): Promise<void> {
-    if (this.running) return;
-    this.port = port;
-    this.host = host ?? null;
+    return this.lifecycle.start(port, host);
+  }
 
-    // Subscribe to steering mutations as the stack comes up, so a note queued
-    // during startup is still reported. Gated on isRunning() inside the
-    // observer: web-input-provider's terminal-fallback paths call
-    // getSteeringManager().clear() AFTER the hub began shutting down, and
-    // emitting onto a dead hub there would be the 停止-button race the manager
-    // was created to kill. Unsubscribed in stop(), so a restartServe() recycle
-    // re-subscribes exactly once instead of double-emitting.
-    this.unsubscribeSteering?.();
+  /**
+   * Tear down the serve stack. skipAbortInput=true (gracefulShutdown) defers
+   * abortInput() to the caller so the restore message prints first — calling
+   * it here would let WebInputProvider draw `agent >>` before the message,
+   * clobbering the prompt (the "ESC quit serve" bug). The transition ORDER
+   * lives in ServeLifecycleState.stop().
+   */
+  async stop(skipAbortInput = false): Promise<void> {
+    return this.lifecycle.stop(skipAbortInput);
+  }
+
+  /** Called by: exit button, disconnect timeout, ESC neglection handler. */
+  async gracefulShutdown(): Promise<void> {
+    return this.lifecycle.gracefulShutdown();
+  }
+
+  /**
+   * Recycle the HTTP/Vite/WS stack in-process on the same port (the 重启 button
+   * in persistent mode). See ServeLifecycleState.restartServe() for the full
+   * ordering contract.
+   *
+   * NOT `async`: the recycle flag must be armed SYNCHRONOUSLY (before the first
+   * await), so this method must not introduce a microtask boundary of its own.
+   * The state machine returns the real promise, rejections included.
+   */
+  restartServe(): Promise<void> {
+    return this.lifecycle.restartServe();
+  }
+
+  // ── Lifecycle host hooks (ServeLifecycleState's `host` view) ──
+
+  private async startStack(port: number, bindHost: string | null): Promise<void> {
+    this.webStack = await mountWebStack(
+      {
+        clients: this.clients,
+        getMode: () => this.getMode(),
+        getAutoState: () => this.getAutoState(),
+        isRunning: () => this.running,
+        agentRunning: () => this.agentRunning,
+        port: () => this.lifecycleState.port,
+        host: () => this.lifecycleState.host,
+        messageLog: () => this.messageLog,
+        transcriptPath: () => this.transcriptPath,
+        dumpSnapshot: (capturedAt) => this.dumpSnapshot(capturedAt),
+        wsEventHost: () => this.wsEventHost,
+        hub: this
+      },
+      port,
+      bindHost
+    );
+  }
+
+  private async disposeStack(): Promise<void> {
+    const stack = this.webStack;
+    this.webStack = null;
+    if (stack) await stack.dispose();
+  }
+
+  private publishWebUiDown(): void {
+    setWebUiUp(false);
+  }
+
+  private publishWebUiUp(): void {
+    setWebUiUp(true);
+  }
+
+  private notifyParentInactive(): void {
+    sendToParent({ type: 'serve_mode', active: false }); // restore stdin filtering
+  }
+
+  private cancelDisconnectTimer(): void {
+    this.disconnectTimer.cancel();
+  }
+
+  private closeAllClients(): void {
+    this.clients.closeAll();
+  }
+
+  private clearSteering(): void {
+    getSteeringManager().clear();
+  }
+
+  private resetMessageLog(): void {
+    this.messageLog = [];
+  }
+
+  /**
+   * Drop the ephemeral upload buffer (the teardown half of
+   * `FileUploadQueue.reset()`).
+   *
+   * Paired with `resetMessageLog()` in the lifecycle's teardown group: HEAD's
+   * `stop()` did `this.fileUploadQueue = []`, and without an equivalent here a
+   * file attached just before a stop / WebUI restart stayed buffered and was
+   * drained into the FIRST turn of the NEXT session.
+   */
+  private resetFileUploads(): void {
+    this.fileUploadQueue.reset();
+  }
+
+  /**
+   * Subscribe the ONE steering observer for this start (unsubscribed in stop).
+   * Gated on isRunning() inside the observer: web-input-provider's
+   * terminal-fallback paths call getSteeringManager().clear() AFTER the hub
+   * began shutting down, and emitting onto a dead hub there would be the
+   * 停止-button race the manager was created to kill.
+   */
+  private subscribeSteering(): void {
     this.unsubscribeSteering = getSteeringManager().onChange((snapshot) => {
       if (!this.isRunning()) return;
       this.clients.broadcastBespoke('steer-state', {
@@ -384,431 +428,108 @@ export class ServeHub implements HubHandler, ServeHubLike {
         notes: snapshot.notes
       });
     });
+  }
 
-    try {
-      this.expressApp = express();
-      this.httpServer = http.createServer(this.expressApp);
+  private unsubscribeSteeringObserver(): void {
+    this.unsubscribeSteering?.();
+    this.unsubscribeSteering = null;
+  }
 
-      // Public dir for static assets served at `/` during dev (vite publicDir).
-      // Lives under the project's .mycc/ tree (process.cwd()) so per-project
-      // static files are co-located with sessions/mindmap/skills. Created here
-      // so Vite never sees a missing directory at startup; recursive mkdir is a
-      // no-op if it already exists. See the built-in skill
-      // `serve-public-dir` for how the agent should reference these files in
-      // replies (markdown image / download-link syntax).
-      const publicDir = path.join(process.cwd(), '.mycc', 'public');
-      fs.mkdirSync(publicDir, { recursive: true });
+  private rewireOutputMirroringCallback(): void {
+    wireOutputMirroring(this, this.displayWriter);
+  }
 
-      // The AGENT public dir (.mycc/public) is served by OUR OWN Express static
-      // middleware below, NOT by Vite. Vite keeps its DEFAULT publicDir (the
-      // bundled `src/web/public`, i.e. `<root>/public`) so mycc can still ship
-      // its own static assets there — we only keep the RUNTIME `.mycc` tree out
-      // of Vite's watcher/HMR below:
-      //
-      //   - Serving the agent dir ourselves (express.static, registered BEFORE
-      //     viteServer.middlewares) means a file created AFTER boot is served
-      //     immediately — Vite's own public-file serving is gated on a
-      //     `publicFiles` Set mutated only by watcher 'add' events, but we no
-      //     longer route `.mycc/public` through Vite at all. That kills the "new
-      //     mini-game 404s, restart required" bug at the source.
-      //
-      //   - Keeping `.mycc/public` OUT of Vite's module graph also keeps public
-      //     HTML out of Vite's HMR path entirely, which is the ONLY correct way
-      //     to silence the "WebUI flickers when the agent drops a public .html"
-      //     bug. A `hotUpdate` hook CANNOT express "suppress this reload": its
-      //     return value replaces `options.modules`, and every downstream stage
-      //     (hmr() → updateModules() → propagateUpdate()) dereferences real
-      //     ModuleNode fields. hmr() full-reloads when the list is EMPTY and the
-      //     path ends in `.html`, so returning `[]` still reloads; returning a
-      //     placeholder `[{}]` (an earlier attempt) crashes inside
-      //     propagateUpdate at `!node.importers.size` — `Cannot read properties
-      //     of undefined (reading 'size')` — surfacing as the Vite error
-      //     overlay. Ignoring `.mycc` (below) means the reload branch is never
-      //     even reached for agent public files, so no hook is needed.
-      //
-      // The rest of the `.mycc` tree (sessions / transcripts / skills) stays
-      // ignored as pure HMR noise. The key MUST be `ignored` (the chokidar
-      // option; `exclude` is only forwarded under experimental.bundledDev, off
-      // by default in vite@8.3.0, so `exclude` would be a silent no-op).
+  private printRestored(): void {
+    agentIO.setOutputCallback(null);
+    setResultCallback(null);
+    this.notifyParentInactive();
+    console.log(chalk.yellow('\nWeb UI stopped. Terminal input restored.'));
+  }
 
-      // Vite in middleware mode — HMR shares the same http server (single port).
-      this.viteServer = await createViteServer({
-        root: WEB_ROOT,
-        // publicDir: left at Vite's default (<root>/public = src/web/public) so
-        // the app's OWN bundled static assets are still served. The agent's
-        // runtime dir (.mycc/public) is served separately below.
-        plugins: [vue()],
-        server: {
-          middlewareMode: true,
-          hmr: { server: this.httpServer },
-          watch: { ignored: ['**/.mycc/**'] }
-        },
-        appType: 'custom',
-        configFile: false // inline config only — avoid parent vite.config
-      });
+  private log(msg: string): void {
+    agentIO.verbose('serve', msg);
+  }
 
-      // Serve the agent runtime dir <cwd>/.mycc/public at the root path `/`,
-      // BEFORE Vite's middlewares so it wins for agent-produced assets (the
-      // skill `serve-public-dir` contract). Registered after the Vite server
-      // exists only because start() builds it first; ordering vs. the server is
-      // what matters, and this runs before `app.use(vite.middlewares)` below.
-      // `fallthrough: true` lets a miss fall through to Vite (its own publicDir
-      // and HTML entry transform) rather than 404ing here.
-      //
-      // SECURITY — this dir is served to any WebUI client, which may be on the
-      // LAN when bound to 0.0.0.0 (`--host`), so the static mount is a trust
-      // boundary, not an internal detail:
-      //   - Path traversal: `serve-static`→`send` normalizes the URL and rejects
-      //     any `..` segment with 403 (UP_PATH_REGEXP), and an absolute path
-      //     cannot escape `root`. `../` style escapes are blocked by the library.
-      //   - Dotfiles: `dotfiles: 'deny'` makes hidden entries (`.env`, dot-dirs)
-      //     a hard 403 rather than relying on `send`'s implicit `ignore`→404 —
-      //     explicit intent, and it also blocks dotfile access if a future
-      //     `send` default changes. `index: false` disables directory index
-      //     files; there is no directory listing, so a bare directory URL 404s.
-      //   - Symlinks: `send` uses `fs.stat` (follows links) with NO realpath
-      //     containment, so a symlink placed INSIDE this dir could point outside
-      //     it. Accepted by design: the agent already has full write access to
-      //     `.mycc/public` and the whole workdir, so a symlink escapes nothing it
-      //     could not write directly — a realpath guard would only break
-      //     legitimate symlinked artifacts. Do NOT treat this mount as a sandbox.
-      this.expressApp.use(
-        express.static(publicDir, {
-          fallthrough: true,
-          index: false,
-          dotfiles: 'deny'
-        })
-      );
+  /** The ServeLifecycleState's read-only view of this hub. */
+  private get lifecycleHost(): LifecycleHost {
+    return {
+      startStack: (port, host) => this.startStack(port, host),
+      disposeStack: () => this.disposeStack(),
+      publishWebUiDown: () => this.publishWebUiDown(),
+      notifyParentInactive: () => this.notifyParentInactive(),
+      abortInput: () => this.abortInput(),
+      cancelDisconnectTimer: () => this.cancelDisconnectTimer(),
+      closeAllClients: () => this.closeAllClients(),
+      clearSteering: () => this.clearSteering(),
+      resetMessageLog: () => this.resetMessageLog(),
+      resetFileUploads: () => this.resetFileUploads(),
+      subscribeSteering: () => this.subscribeSteering(),
+      unsubscribeSteering: () => this.unsubscribeSteeringObserver(),
+      rewireOutputMirroring: () => this.rewireOutputMirroringCallback(),
+      publishWebUiUp: () => this.publishWebUiUp(),
+      log: (msg) => this.log(msg),
+      printRestored: () => this.printRestored()
+    };
+  }
 
-      // GET /health — registered BEFORE viteServer.middlewares so it answers
-      // while Vite is still compiling (a watchdog polling every 30 s must never
-      // mistake "still warming up" for "dead"). Deliberately cheap: no
-      // provider/embedding probe (those hit Ollama on every poll). A deep check
-      // (?deep=1) can be added later if wanted.
-      this.expressApp.get('/health', (_req, res) => {
-        res
-          .status(200)
-          .set({ 'Content-Type': 'application/json' })
-          .end(
-            JSON.stringify({
-              status: this.running ? 'ok' : 'stopping',
-              pid: process.pid,
-              uptimeMs: Math.round(process.uptime() * 1000),
-              version: pkg.version,
-              serve: {
-                port: this.port,
-                host: this.host,
-                clients: this.clients.size,
-                persistent: shouldDaemon(),
-                agentRunning: this.agentRunning,
-                auto: this.getAutoState()
-              },
-              peer: (() => {
-                // Remote peer wire identity (docs/peers/remote-peer-protocol.md §2 step 1):
-                // the dialer probes /health BEFORE dialing — the peer block tells it
-                // who answers (sid) and whether the webui is daemon-backed (so the
-                // dialer can refuse/flag an interactive instance whose webui will
-                // auto-shutdown in 30s). Values come from the wire hooks (G3); a
-                // null hooks means the agent context never started (unreachable in
-                // practice — serve starts from the lead loop).
-                const wireHooks = getWireHooks();
-                return {
-                  sessionId: wireHooks?.getSessionId() ?? null,
-                  daemon: wireHooks?.getDaemon() ?? false
-                };
-              })(),
-              provider: getApiProvider()
-            })
-          );
-      });
+  // ===========================================================================
+  // WebSocket events (handlers live in serve-ws-events.ts)
+  // ===========================================================================
 
-      // GET /dump → the SERVER half of `window.$webui.dump()` (see serve-diag.ts).
-      //
-      // Read-only, and the only consumer is a human-triggered capture from the
-      // browser console. It must be registered BEFORE `app.use(vite.middlewares)`
-      // below, like `/health`: Vite's HTML/SPA fallback would otherwise answer a
-      // dev-server route of this name and hide the handler.
-      //
-      // It exposes full user text (by design: a redacted dump cannot explain a
-      // lost query). That is not a new exposure — the same text is already in the
-      // transcript under .mycc/sessions/ — but it does mean this endpoint answers
-      // anyone who can reach the WebUI, exactly like /history.
-      this.expressApp.get('/dump', (_req, res) => {
-        res
-          .status(200)
-          .set({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
-          .end(JSON.stringify(this.dumpSnapshot(Date.now())));
-      });
-
-      this.expressApp.use(this.viteServer.middlewares);
-
-      // GET / → serve index.html via Vite HTML transforms (injects HMR client).
-      this.expressApp.get('/', async (_req, res) => {
-        try {
-          const template = fs.readFileSync(path.resolve(WEB_ROOT, 'index.html'), 'utf-8');
-          const html = await this.viteServer!.transformIndexHtml('/', template);
-          res.status(200).set({ 'Content-Type': 'text/html' }).end(html);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          res.status(500).end(`Vite transform error: ${msg}`);
-        }
-      });
-
-      // GET /history → chat history as JSON (fetched at load BEFORE the WS, so
-      // live updates layer on top with no race). Merges transcript + messageLog
-      // by timestamp (see serve-history.ts). The transcript holds BOTH the
-      // assistant/tool turns AND the genuine user-input journal, so it is the
-      // single durable source of user bubbles.
-      //
-      // Caching: a content-derived weak ETag (computeHistoryVersion) is sent on
-      // every response, alongside `Cache-Control: no-cache`. `no-cache` does NOT
-      // mean "never cache" — it means the client MUST revalidate with the server
-      // (via If-None-Match) before using a stored copy. When the revalidation
-      // ETag matches, the server returns a 0-byte 304 and the client keeps its
-      // hydrated copy — the lock-screen wake path. The ETag folds in transient
-      // fields (steering REVISION, isRunning) so a state flip is never masked
-      // by a 304. The revision, not the queue length: a drain that removes one
-      // note while another is queued keeps the length constant but changes the
-      // set, and length cannot see id churn.
-      this.expressApp.get('/history', (req, res) => {
-        const steering = getSteeringManager().snapshot();
-        // ONE read of the transcript per GET, shared by the ETag and the body.
-        //
-        // Before this, a single /history request read and parsed the whole file
-        // FOUR times: countTranscriptRecords (here), lastSeqInFile (inside
-        // computeHistoryVersion), countTranscriptRecords AGAIN inside readHistory,
-        // and projectDisplay. Reading once here and threading the derived numbers
-        // through makes the ETag provably consistent with the body it accompanies
-        // (they cannot disagree about which source is live) and removes three of
-        // the four passes.
-        const records = this.transcriptPath ? readTranscriptRecords(this.transcriptPath) : [];
-        const etag = computeHistoryVersion(
-          this.transcriptPath,
-          steering.revision,
-          this.agentRunning,
-          this.messageLog,
-          records.length > 0,
-          maxSeqOfRecords(records)
-        );
-        res.set('ETag', etag);
-        res.set('Cache-Control', 'no-cache');
-        // If-None-Match match → 304 Not Modified, empty body. The client's
-        // hydrated copy stays on screen (lock-screen instant wake). The match
-        // uses RFC 7232 §3.2 conditional semantics (weak comparison) via
-        // etagMatchesIfNoneMatch: it handles a comma-separated list of
-        // entity-tags and the `*` wildcard, and compares the opaque tags
-        // ignoring the weak/strong distinction (correct for If-None-Match).
-        // The prior `inm === etag` equality only handled the single-tag
-        // exact-string case and silently failed on multi-tag or
-        // strong/weak-equivalent headers.
-        const inm = req.headers['if-none-match'];
-        if (etagMatchesIfNoneMatch(typeof inm === 'string' ? inm : undefined, etag)) {
-          res.status(304).end();
-          return;
-        }
-        const history = records.length > 0 ? projectDisplayRecords(records) : this.messageLog;
-        const payload = JSON.stringify({
-          messages: history,
-          // Revisioned snapshot (see steering-manager.ts header): the client
-          // adopts it only when `steeringRevision` is newer than what it holds,
-          // so an in-flight snapshot can never re-insert a note the user just
-          // resolved. `steeringBuffer` keeps its name/shape {id,text}[] for the
-          // buffer bar; the ids are what per-note discard/send acts on.
-          steeringRevision: steering.revision,
-          steeringBuffer: steering.notes,
-          isRunning: this.agentRunning
-        });
-        res.status(200).set({ 'Content-Type': 'application/json' }).end(payload);
-      });
-
-      // GET /config → client-facing runtime config (per-file upload cap +
-      // persistent flag so the Web UI renders 重启 vs 退出 correctly).
-      //
-      // `sessionId` is the wire session id (null when no wire session, e.g.
-      // serve started before the agent context). The client uses it as the
-      // per-session key for its IndexedDB chatlog cache: a new sessionId must
-      // never show a foreign session's cached log, so the cache is keyed by
-      // this value and pruned of other sessions on every write.
-      this.expressApp.get('/config', (_req, res) => {
-        const wireHooks = getWireHooks();
-        res
-          .status(200)
-          .set({ 'Content-Type': 'application/json' })
-          .end(
-            JSON.stringify({
-              maxUploadMb: getMaxUploadMb(),
-              persistent: shouldDaemon(),
-              // Verbose mode of THIS process (`-v` / MYCC_VERBOSE). The browser
-              // uses it for exactly one decision: whether the 详细日志 toggle is
-              // offered at all. Without `-v` the backend produces no unlabelled
-              // verbose rows, so the toggle would be a button that can never
-              // reveal anything. It is a CAPABILITY flag — it never turns the
-              // toggle on; `verboseLogs` stays false until the user clicks.
-              verbose: isVerbose(),
-              sessionId: wireHooks?.getSessionId() ?? null,
-              // Plan/normal mode (row obs-002): the browser must be able to see
-              // that edits are refused because the lead is in plan mode.
-              mode: this.getMode()
-            })
-          );
-      });
-
-      // Chat WebSocket on /ws (noServer; route upgrades by URL so Vite HMR at /
-      // is left untouched). maxPayload caps a single inbound ws frame to the same
-      // byte limit the application enforces for file uploads (getMaxUploadMb).
-      // Without it, the `ws` library default is 100 MB — decoupled from
-      // MYCC_MAX_UPLOAD_MB — so a client could send a near-100 MB single frame
-      // that bypasses the app-level size guard in pushFileUpload.
-      const maxPayloadBytes = getMaxUploadMb() * 1024 * 1024;
-      this.wsServer = new WebSocketServer({ noServer: true, maxPayload: maxPayloadBytes });
-      this.wsServer.on('connection', (ws) => this.onWsConnection(ws));
-      // Remote peer wire on /peer/ws (docs/peers/remote-peer-protocol.md). Dedicated
-      // WebSocketServer with its OWN maxPayload (4 MB, decoupled from the webui
-      // upload cap); the acceptor NEVER touches this.clients or the
-      // disconnectTimer (G1: peer wires must not sustain the webui lifetime).
-      try {
-        getPeerWireAcceptor().createServer();
-      } catch {
-        /* start() is re-entrant via restartServe */
-      }
-      this.upgradeHandler = (req, socket, head) => {
-        if (req.url && req.url.split('?')[0] === '/peer/ws') {
-          getPeerWireAcceptor().handleUpgrade(req, socket, head);
-          return;
-        }
-        if (req.url === '/ws') {
-          this.wsServer!.handleUpgrade(req, socket, head, (ws) => {
-            this.wsServer!.emit('connection', ws, req);
-          });
-        }
-      };
-      this.httpServer.on('upgrade', this.upgradeHandler);
-
-      await new Promise<void>((resolve, reject) => {
-        if (this.host) {
-          this.httpServer!.listen(port, this.host, () => resolve());
-        } else {
-          this.httpServer!.listen(port, () => resolve());
-        }
-        this.httpServer!.once('error', reject);
-      });
-
-      this.messageLog = [];
-      this.running = true;
-    } catch (err) {
-      // STARTUP-FAILURE cleanup (review finding P2): a start() that throws
-      // mid-initialization (e.g. httpServer.listen EADDRINUSE after Vite/WS/
-      // peer-wire have already been created) has partially-initialized this
-      // hub. Release those resources now so a later retry does not overwrite
-      // live handles and leak them (Vite watchers/esbuild, the HTTP server,
-      // the peer-wire acceptor). Must NOT run the full stop() state transitions
-      // (the down-publish / abortInput / steering clear) — restartServe()'s
-      // own catch owns those; here we only free the stack. Then rethrow.
-      this.running = false;
-      await this.disposeStack();
-      this.messageLog = [];
-      throw err;
-    }
+  /**
+   * The narrow surface the extracted WS event handlers may touch (see
+   * serve-ws-events.ts). A getter rather than a field so it always reflects the
+   * CURRENT state — `inputResolver`, `clients` and `disconnectTimer` all mutate
+   * over a connection's lifetime, and a snapshot would hand the handlers stale
+   * ones.
+   */
+  private get wsEventHost(): WsEventHost {
+    return {
+      clients: this.clients,
+      disconnectTimer: this.disconnectTimer,
+      isRunning: () => this.running,
+      replayConnectionState: (ws) => this.replayConnectionState(ws),
+      recordInboundFrame: (rawText) => this.recordInboundFrame(rawText),
+      clearPendingDiagFrame: () => this.diagnostics.clearPending(),
+      dispatch: (ws, rawText) => handleWsMessage(this, ws, rawText)
+    };
   }
 
   /**
-   * Release the HTTP/Vite/WS/peer-wire resources the serve stack may hold,
-   * WITHOUT touching any lifecycle state (no setWebUiUp, no abortInput, no
-   * steering clear, no disconnect-timer cancel). Used by BOTH stop() (the
-   * full teardown, which layers the state transitions on top) and start()'s
-   * failure path (a partially-initialized startup must release what it
-   * allocated — see start()'s catch). Idempotent and null-safe at every step.
+   * Re-send the transient state a fresh socket needs and /history does not
+   * carry: a blocked PROMPT wait, auto, running and plan/normal mode.
    */
-  private async disposeStack(): Promise<void> {
-    if (this.httpServer && this.upgradeHandler) {
-      this.httpServer.removeListener('upgrade', this.upgradeHandler);
-      this.upgradeHandler = null;
-    }
-    if (this.wsServer) {
+  private replayConnectionState(ws: WebSocket): void {
+    if (this.inputResolver) {
       try {
-        this.wsServer.close();
+        ws.send(JSON.stringify({ type: 'prompt', content: '' }));
       } catch {
         /* ignore */
       }
-      this.wsServer = null;
     }
-    // Peer wire acceptor teardown (docs/peers/remote-peer-protocol.md §2
-    // disconnect): abnormal close so the DIALER side fails fast / redials
-    // per its loop policy. Idempotent (stop() is safe when no server exists).
+    // A late-joining/reconnecting client picks up the flags without waiting
+    // for the next flip.
+    if (this.autoStateProvider) {
+      try {
+        if (this.autoStateProvider()) {
+          ws.send(JSON.stringify({ type: 'auto', content: 'on' }));
+        }
+      } catch {
+        /* ignore */
+      }
+    }
     try {
-      getPeerWireAcceptor().stop();
+      ws.send(JSON.stringify({ type: 'running', content: this.agentRunning ? 'on' : 'off' }));
     } catch {
       /* ignore */
     }
-    if (this.viteServer) {
-      try {
-        await this.viteServer.close();
-      } catch {
-        /* ignore */
-      }
-      this.viteServer = null;
-    }
-    if (this.httpServer) {
-      await new Promise<void>((resolve) => {
-        this.httpServer!.close(() => resolve());
-      });
-      this.httpServer = null;
-    }
-    this.expressApp = null;
-  }
-
-  /**
-   * Tear down the serve stack. skipAbortInput=true (gracefulShutdown) defers
-   * abortInput() to the caller so the restore message prints first — calling
-   * it here would let WebInputProvider draw `agent >>` before the message,
-   * clobbering the prompt (the "ESC quit serve" bug).
-   */
-  async stop(skipAbortInput = false): Promise<void> {
-    if (this.stopping) return; // re-entrancy guard
-    this.stopping = true;
+    // A browser joining mid-plan must be told that edits are prohibited instead
+    // of guessing why a request was refused. getMode() is provider-first, so a
+    // flip that happened BEFORE the hub existed (plan_on → /serve) is reported.
     try {
-      this.running = false; // isRunning() immediately returns false
-      this.agentRunning = false;
-      // Record the WebUI as down for every loop/context consumer. This is the
-      // serve layer's STOP seam — the counterpart of activateServe()'s
-      // setWebUiUp(true) (see the holder in src/loop/loop-events.ts).
-      // restartServe() calls stop() too, but re-sets the flag to true
-      // afterwards, so a recycle never reads as "down" to the loop.
-      //
-      // GATED on !this.restarting (mirrors the getSteeringManager().clear()
-      // gate below): stop() is the INTERNAL phase of a restartServe() recycle,
-      // and publishing `false` there would expose a spurious WebUI-down
-      // transition across the async stop→start window — a recycle must be
-      // INVISIBLE. Only a genuine shutdown publishes the down state; on the
-      // restart path the flag stays true throughout (restartServe() still
-      // re-asserts it after start() for defence in depth).
-      if (!this.restarting) setWebUiUp(false);
-      sendToParent({ type: 'serve_mode', active: false }); // restore stdin filtering
-      if (!skipAbortInput) {
-        this.abortInput();
-      }
-      this.disconnectTimer.cancel();
-      this.clients.closeAll();
-      await this.disposeStack();
-      this.messageLog = [];
-      // Lifecycle wipe (A2, docs/archived/steering-manager-plan.md §5): notes are wiped
-      // ONLY on terminal teardown. restartServe() sets `restarting` BEFORE
-      // calling stop(true) so this clear is skipped mid-recycle — notes
-      // survive a 重启 exactly like the pending input-resolver does. Wiping
-      // unconditionally here was the root cause of the 停止-button race (a
-      // note sent in the stop window was vacuumed before wrap-up could
-      // deliver it).
-      if (!this.restarting) {
-        getSteeringManager().clear();
-      }
-      this.fileUploadQueue = [];
-      // Steering observer teardown (paired with the start() subscription). A
-      // restartServe() recycle re-subscribes in start(), so this must happen on
-      // BOTH paths or the recycled hub would emit twice per mutation.
-      this.unsubscribeSteering?.();
-      this.unsubscribeSteering = null;
-    } finally {
-      this.stopping = false;
+      ws.send(JSON.stringify({ type: 'mode', content: this.getMode(), detail: null }));
+    } catch {
+      /* ignore */
     }
   }
 
@@ -832,11 +553,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
       // Arm-point delivery (plan §5, seam B instant 2 of 3): a note that was
       // HELD because no PROMPT wait was armed yet (or the wrap-up window was
       // still open) must ride the wait the moment it arms — a parked PROMPT
-      // cannot poll, so this is the only delivery event between the
-      // pushSteer write-point and the next inbound event. Re-runs the same
-      // pure takeForDelivery check: a no-op when the queue is empty, nothing
-      // is parked, or the wrap-up window is still open (the wake seam
-      // delivers at settle time instead).
+      // cannot poll. Re-runs the same pure takeForDelivery check.
       this.flushSteeringAtSeam();
     });
   }
@@ -848,16 +565,13 @@ export class ServeHub implements HubHandler, ServeHubLike {
    *   freshly typed query). The notes' ids are recorded as delivered, together
    *   with whether each note's own `'steer'` row is durable, so PROMPT can
    *   journal the query without minting a second user bubble. Recorded ONLY in
-   *   the branch that really invokes the resolver: a delivery that lands nowhere
-   *   must not arm provenance for a turn that will never run — an armed mark
-   *   would then be consumed by a later, genuinely typed query and suppress IT.
+   *   the branch that really invokes the resolver: a delivery that lands
+   *   nowhere must not arm provenance for a turn that will never run.
    */
   submitInput(text: string, opts?: { fromSteering?: boolean; notes?: readonly SteeringNote[] }): void {
     // Diagnostics: attribute the outcome to the frame that carried this text
-    // BEFORE the branches below consume the state they are judged by. See
-    // serve-diag.ts inputStatus — the silent `else` is the reason a lost query
-    // used to leave no trace at all.
-    this.attributeInputStatus();
+    // BEFORE the branches below consume the state they are judged by.
+    this.diagnostics.attribute(this.inputResolver !== null, this.cardResolvers.size > 0);
     if (this.inputResolver) {
       const fromSteering = opts?.fromSteering === true;
       if (fromSteering && opts.notes && opts.notes.length > 0) {
@@ -901,15 +615,15 @@ export class ServeHub implements HubHandler, ServeHubLike {
     }
   }
 
-  /** Whether a PROMPT wait (waitForInput) is currently blocked.
+  /**
+   * Whether a PROMPT wait (waitForInput) is currently blocked.
    *
-   *  Judged by the RESOLVER, not by inputRejecter: the resolver is the single
-   *  source of truth for "a wait is parked". In production both were assigned
-   *  together, but the rejecter is nulled by `rejectInput`/the resolver tail, so
-   *  reading it here made the steering seams unable to see a parked wait when a
-   *  caller (or a test, or a restarted hub) armed only the resolve half —
-   *  takeForDelivery then HELD every note and no delivery provenance could ever
-   *  be recorded. */
+   * Judged by the RESOLVER, not by inputRejecter: the resolver is the single
+   * source of truth for "a wait is parked". In production both were assigned
+   * together, but the rejecter is nulled by `rejectInput`/the resolver tail, so
+   * reading it here made the steering seams unable to see a parked wait when a
+   * caller (or a test, or a restarted hub) armed only the resolve half.
+   */
   isInputBlocked(): boolean {
     return this.inputResolver !== null;
   }
@@ -939,29 +653,17 @@ export class ServeHub implements HubHandler, ServeHubLike {
     if (this.messageLog.length > ServeHub.MAX_LOG_SIZE) {
       this.messageLog.shift();
     }
-    // JOURNAL the card as a note carrying its payload.
-    //
-    // The messageLog push above is a serve-lifetime copy that /history no longer
-    // reads, so without this a pending card had a live frame and NO replay: the
-    // page refreshed, the widget disappeared, and waitForCardResponse stayed
-    // blocked on a question the browser could no longer show. Journaling it
-    // gives the card the same durability as chat text — one record, one row,
-    // restored by projectDisplayRecord's card branch.
+    // JOURNAL the card as a note carrying its payload: without it a pending
+    // card had a live frame and NO replay — the page refreshed, the widget
+    // disappeared, and waitForCardResponse stayed blocked on a question the
+    // browser could no longer show.
     this.journalCard(cleanCard);
-    // SEND the flat payload — ONLY as the no-journal fallback.
-    //
-    // The card reaches the client by EXACTLY ONE of two channels, chosen here:
-    //   - journal bound  → journalCard() above writes the note, whose display
-    //                      observer fans out the projected row (nested `card`,
-    //                      carrying `seq`). That row is the one copy, and the
-    //                      client reads it through msg.card?.cardId — one reader,
-    //                      both shapes (message-dispatch.ts).
-    //   - journal absent → nothing is observed (a serve started before the writer,
-    //                      or a teammate worker), so this flat send is the only copy.
-    // Sending unconditionally produced two widgets per question (round-2 blocker);
+    // SEND the flat payload — ONLY as the no-journal fallback. The card reaches
+    // the client by EXACTLY ONE of two channels: the journaled row (carrying
+    // `seq`, read through msg.card?.cardId) or this flat send. Sending
+    // unconditionally produced two widgets per question (round-2 blocker);
     // skipping BOTH produced none. The pair is pinned by
-    // card-journal-roundtrip.test.ts, which subscribes the observer exactly as
-    // wireOutputMirroring does in production.
+    // card-journal-roundtrip.test.ts.
     if (!this.cardJournal) {
       const payload = JSON.stringify(cleanCard);
       this.clients.forEachOpen((ws) => ws.send(payload));
@@ -969,16 +671,16 @@ export class ServeHub implements HubHandler, ServeHubLike {
   }
 
   /**
-   * Journal a card as a durable display note. Wired by agent-repl (which owns
-   * the writer) via setCardJournal; a no-op when no writer is bound (teammate
-   * workers, tests), because the messageLog copy still serves that path.
+   * Journal a card as a durable display note. A no-op when no writer is bound
+   * (teammate workers, tests), because the messageLog copy still serves that
+   * path — and a journal failure must never stop the card reaching the client.
    */
   private journalCard(card: CardMessage): void {
     if (!this.cardJournal) return;
     try {
       this.cardJournal(card);
     } catch {
-      // A journal failure must never stop the card from reaching the client.
+      /* the live send below still delivers it */
     }
   }
 
@@ -1003,10 +705,9 @@ export class ServeHub implements HubHandler, ServeHubLike {
   // ===========================================================================
   // Steering (webui-only — user mid-task direction while LLM runs)
   //
-  // The hub is the sole WRITER of the shared manager; loop states are
-  // READERS (docs/archived/steering-manager-plan.md §2). Queue state, the
-  // monotonic id counter and the queue REVISION live in
-  // src/loop/steering-manager.ts.
+  // The hub is the sole WRITER of the shared manager; loop states are READERS
+  // (docs/archived/steering-manager-plan.md §2). Queue state, the monotonic id
+  // counter and the queue REVISION live in src/loop/steering-manager.ts.
   //
   // No broadcast calls remain in this section: every mutation (addNote /
   // drainNotes / resolveBoomerang / clear) emits through the observer
@@ -1027,25 +728,18 @@ export class ServeHub implements HubHandler, ServeHubLike {
    *  after a successful write. */
   pushSteer(text: string): boolean {
     const note = getSteeringManager().addNote(text);
-    // Journal the note as user input so it survives a page refresh and
-    // re-renders as a right-side bubble (the transcript is the single source
-    // of truth for user bubbles). Journaled at SUBMISSION time: the text is a
-    // genuine user submission the moment it is typed, whether COLLECT later
-    // injects it as a [REMINDER] note or PROMPT folds it into a synthesised
-    // query. A no-op when the loop has not registered the provider yet.
+    // Journaled at SUBMISSION time: the text is a genuine user submission the
+    // moment it is typed, whether COLLECT later injects it as a [REMINDER] note
+    // or PROMPT folds it into a synthesised query.
     const before = this.journaledRecords;
     this.journalUserSubmission(text, 'steer');
     const journaled = this.journaledRecords > before;
     // Stamp BEFORE any seam can run: the flush below may deliver this note
-    // synchronously, and the delivery reads `note.journaled` to decide whether
-    // its own display row is redundant.
+    // synchronously, and the delivery reads `note.journaled`.
     getSteeringManager().markJournaled(note.id, journaled);
-    // Write-point delivery (plan §5, seam B instant 1 of 3): when a PROMPT
-    // wait is already parked and the wrap-up window is closed, the note can
-    // ride the wait immediately; takeForDelivery otherwise HOLDS it for the
-    // arm-point/wake seams (or for a later turn drain). submitInput with no
-    // armed resolver is the pre-existing stale-client no-op, so this is safe
-    // to run unconditionally.
+    // Write-point delivery (plan §5, seam B instant 1 of 3): when a PROMPT wait
+    // is already parked and the wrap-up window is closed, the note can ride the
+    // wait immediately; takeForDelivery otherwise HOLDS it.
     this.flushSteeringAtSeam();
     return journaled;
   }
@@ -1054,35 +748,26 @@ export class ServeHub implements HubHandler, ServeHubLike {
    * The shared delivery check, re-run at each of the three plan §5 instants:
    * WRITE (pushSteer), ARM (waitForInput armed), WAKE (onWrapUpSettled).
    * takeForDelivery is pure w.r.t. the hub — it drains the manager only when
-   * the queue is non-empty AND a PROMPT wait is parked AND the wrap-up
-   * window is closed; otherwise it is a stateless null and nothing happens.
-   * A parked PROMPT cannot poll, so whichever event lands last delivers;
-   * three instants re-running one pure check cannot collapse into a missed
-   * window (docs/archived/steering-manager-plan.md §3-§5).
+   * the queue is non-empty AND a PROMPT wait is parked AND the wrap-up window
+   * is closed; otherwise it is a stateless null and nothing happens. Three
+   * instants re-running one pure check cannot collapse into a missed window.
    */
   private flushSteeringAtSeam(): void {
     const deliverable = getSteeringManager().takeForDelivery(this.isInputBlocked(), isWrapUpInFlight());
     if (deliverable) {
       // No broadcast: takeForDelivery drained the manager, whose onChange
-      // observer reports the new (empty) snapshot as 'steer-state'.
-      //
-      // `notes` carries the drained notes so submitInput records, at the moment
-      // it really resolves the parked wait, that they were DELIVERED and whether
-      // each one's own 'steer' row is durable.
+      // observer reports the new (empty) snapshot as 'steer-state'. `notes`
+      // carries the drained notes so submitInput records, at the moment it
+      // really resolves the parked wait, that they were DELIVERED.
       this.submitInput(joinSteeringNotes(deliverable), { fromSteering: true, notes: deliverable });
     }
   }
 
   /**
-   * Wrap-up settle wake seam (A1, plan §5 instant 3 of 3): esc-wrap-up.ts
-   * calls this DIRECTLY (no callback registration — binding user constraint)
-   * the moment the background wrap-up promise settles. A note that arrived
-   * DURING the wrap-up window was held by takeForDelivery
-   * (wrapUpInFlight=true); with the window now closed, the same pure check
-   * delivers it to the already-armed waitForInput(). Gated on isRunning():
-   * a settle racing a terminal stop() must not ride a dead hub (the terminal
-   * fallback wipe in WebInputProvider owns the queue then). Safe to double-
-   * call: takeForDelivery drains, so the second call sees an empty queue.
+   * Wrap-up settle wake seam (A1, plan §5 instant 3 of 3): esc-wrap-up.ts calls
+   * this DIRECTLY the moment the background wrap-up promise settles. Gated on
+   * isRunning(): a settle racing a terminal stop() must not ride a dead hub.
+   * Safe to double-call: takeForDelivery drains, so the second call is a no-op.
    */
   onWrapUpSettled(): void {
     if (!this.isRunning()) return;
@@ -1093,19 +778,13 @@ export class ServeHub implements HubHandler, ServeHubLike {
    * Atomically resolve the queue: sendIds declares which notes to SEND; the
    * rest are discarded. The whole queue drains in one step so PROMPT never
    * re-synthesizes. The drain is reported to clients by the manager's
-   * onChange observer as a 'steer-state' snapshot — including when the queue
-   * was already empty and nothing is drained (see the ack note below).
+   * onChange observer as a 'steer-state' snapshot.
    */
   resolveSteering(sendIds: number[] = []): string[] {
     if (!getSteeringManager().isNonEmpty()) {
-      // ACK the resolve even though there is nothing to drain. The client no
-      // longer guesses delivery (the old steer-flush/guard dance is gone): it
-      // clears its card locally and waits for the snapshot to reconcile. A
-      // silent return here would leave a client that resolved a
-      // already-consumed note staring at a card the server will never
-      // re-report. clear() re-emits the (already empty) snapshot, which is a
-      // no-op for a client whose adopted revision is current and a full
-      // re-sync for one that is out of order (e.g. it outlived a restart).
+      // ACK the resolve even though there is nothing to drain: a silent return
+      // would leave a client that resolved an already-consumed note staring at
+      // a card the server will never re-report.
       getSteeringManager().clear();
       return [];
     }
@@ -1113,11 +792,8 @@ export class ServeHub implements HubHandler, ServeHubLike {
     // submit) + discarded (for observability only). Filter-by-id semantics —
     // duplicate sendIds entries select BOTH notes (A4, no dedupe).
     const { selected, discarded } = getSteeringManager().resolveBoomerang(sendIds);
-    // Source-side observability for the implicitly-discarded notes (dir-9
-    // 发现3). The manager's boomerang silently drops everything not in
-    // sendIds; logging the discarded ids/count here (after the atomic drain)
-    // makes "which steering notes vanished" diagnosable under -v. The
-    // steering-manager stays framework-free/pure, so the log lives in the hub.
+    // Source-side observability for the implicitly-discarded notes: makes
+    // "which steering notes vanished" diagnosable under -v.
     if (discarded.length > 0) {
       agentIO.verbose(
         'serve',
@@ -1125,76 +801,30 @@ export class ServeHub implements HubHandler, ServeHubLike {
       );
     }
     if (selected.length > 0) {
-      // `notes` carries the drained notes so submitInput can record — at the
-      // moment it really resolves a parked wait — that they were DELIVERED and
-      // whether each one's own 'steer' row is durable.
       this.submitInput(joinSteeringNotes(selected), { fromSteering: true, notes: selected });
     }
     return selected.map((n) => n.text);
   }
 
-  // NOTE: no getSteeringNotes()/drainSteering() facades here anymore — loop
-  // consumers read getSteeringManager() directly (peek/drain/isNonEmpty) per
-  // plan §6 / pitfall Δ3, and the hub-peek/hub-drain facades had zero
-  // production callers after the re-point (review finding, change-set #10).
-  // The hub keeps only its WRITER/RESOLVER surface: pushSteer, resolveSteering
-  // (also enforced by the steering-boundary test's allowlist).
+  // NOTE: no getSteeringNotes()/drainSteering() facades here — loop consumers
+  // read getSteeringManager() directly (peek/drain/isNonEmpty) per plan §6 /
+  // pitfall Δ3. The hub keeps only its WRITER/RESOLVER surface: pushSteer,
+  // resolveSteering (also enforced by the steering-boundary test's allowlist).
 
-  // ===========================================================================
-  // Diagnostics — the server half of `window.$webui.dump()` (serve-diag.ts)
-  // ===========================================================================
+  // ── Diagnostics (ring lives in serve-queues.ts) ──
 
-  /**
-   * Record one inbound WS frame, sampling the input bridge at ARRIVAL.
-   *
-   * Called from the socket's message handler BEFORE dispatch. The sample must
-   * precede the handler because `submitInput` CONSUMES the resolver it is about
-   * to be judged by — sampling afterwards would report "nothing armed" for every
-   * delivered submission and make the dump lie about the one case it exists to
-   * explain.
-   *
-   * A frame that never reaches `submitInput` (steer, exit, interrupt, malformed
-   * JSON) keeps no `status`: its absence is the honest answer, and the slot is
-   * cleared by the caller so it cannot leak onto the next frame.
-   */
   private recordInboundFrame(rawText: string): void {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(rawText);
-    } catch {
-      parsed = { type: '(malformed JSON)' };
-    }
-    const frame = recordInbound(
-      (parsed && typeof parsed === 'object' ? parsed : {}) as { type?: unknown; text?: unknown; files?: unknown },
-      { armed: this.inputResolver !== null, cardPending: this.cardResolvers.size > 0 }
-    );
-    this.diagRing.push(frame);
-    this.pendingDiagFrame = frame;
-  }
-
-  /**
-   * Attribute `submitInput`'s decision to the frame that carried the text.
-   *
-   * Re-reads the bridge state HERE rather than trusting the arrival snapshot:
-   * between arrival and this call nothing else runs (the dispatch is
-   * synchronous), so the two agree — but the status rule must be evaluated where
-   * the decision is MADE, which is this method's whole point (serve-diag's
-   * `inputStatus` is the single statement of it).
-   */
-  private attributeInputStatus(): void {
-    const frame = this.pendingDiagFrame;
-    if (!frame) return;
-    frame.status = inputStatus(this.inputResolver !== null, this.cardResolvers.size > 0);
+    this.diagnostics.record(rawText, this.inputResolver !== null, this.cardResolvers.size > 0);
   }
 
   /** The server slice of a dump — pure reads, no side effects. */
   dumpSnapshot(capturedAt: number): { capturedAt: number; diagnostics: ServerDiagnostics; frames: unknown[] } {
     const records = this.transcriptPath ? readTranscriptRecords(this.transcriptPath) : [];
     const steering = getSteeringManager().snapshot();
-    const diagnostics: ServerDiagnostics = {
+    return this.diagnostics.snapshot(capturedAt, () => ({
       running: this.running,
-      port: this.port,
-      host: this.host,
+      port: this.lifecycleState.port,
+      host: this.lifecycleState.host,
       agentRunning: this.agentRunning,
       auto: this.getAutoState(),
       mode: this.getMode(),
@@ -1203,45 +833,28 @@ export class ServeHub implements HubHandler, ServeHubLike {
       cardResolvers: this.cardResolvers.size,
       steeringRevision: steering.revision,
       steeringNotes: steering.notes.map((n) => ({ id: n.id, text: n.text })),
-      fileUploads: this.fileUploadQueue.length,
+      fileUploads: this.fileUploadQueue.size,
       messageLogLength: this.messageLog.length,
       historyRows: records.length > 0 ? projectDisplayRecords(records).length : this.messageLog.length,
       historyMaxSeq: maxSeqOfRecords(records)
-    };
-    return {
-      capturedAt,
-      ...buildServerDumpSlice(diagnostics, this.diagRing.snapshot())
-    };
+    }));
   }
 
   // ===========================================================================
-  // File upload queue (webui-only)
+  // File upload queue (webui-only) — the buffer lives in serve-queues.ts
   // ===========================================================================
 
   /** Buffer a file upload (defense-in-depth size guard; reject oversized). */
   pushFileUpload(entry: FileUploadEntry): void {
-    const maxBytes = getMaxUploadMb() * 1024 * 1024;
-    const b64 = entry.data ?? '';
-    const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
-    const approxBytes = Math.floor((b64.length * 3) / 4) - padding;
-    if (approxBytes > maxBytes) {
-      this.broadcast('error', `上传被拒绝：「${entry.filename}」超过 ${getMaxUploadMb()}MB 限制`, 'serve');
-      return;
-    }
     this.fileUploadQueue.push(entry);
-    this.broadcast('file-upload', entry.filename);
   }
 
   drainFileUploads(): FileUploadEntry[] {
-    if (this.fileUploadQueue.length === 0) return [];
-    const files = this.fileUploadQueue;
-    this.fileUploadQueue = [];
-    this.broadcast('file-flush', '');
-    return files;
+    return this.fileUploadQueue.drain();
   }
 
   getFileUploads(): FileUploadEntry[] {
-    return [...this.fileUploadQueue];
+    return this.fileUploadQueue.list();
   }
 
   // ===========================================================================
@@ -1250,20 +863,13 @@ export class ServeHub implements HubHandler, ServeHubLike {
 
   /** Broadcast auto-mode state to all clients (keeps chat box enabled in AWAIT). */
   broadcastAuto(value: boolean): void {
-    const payload = JSON.stringify({ type: 'auto', content: value ? 'on' : 'off' });
-    this.clients.forEachOpen((ws) => ws.send(payload));
+    this.signals.broadcastAuto(value);
   }
 
-  /**
-   * Broadcast plan/normal mode to all clients (row obs-002): the browser user
-   * must be able to see that edits are being refused because the lead is in
-   * plan mode. `content` is 'plan' | 'normal'; the optional allowed file rides
-   * in `detail` (the one file editable in plan mode).
-   */
+  /** Broadcast plan/normal mode to all clients (row obs-002). */
   broadcastMode(mode: 'plan' | 'normal', allowedFile?: string): void {
     this.modeState = mode;
-    const payload = JSON.stringify({ type: 'mode', content: mode, detail: allowedFile ?? null });
-    this.clients.forEachOpen((ws) => ws.send(payload));
+    this.signals.broadcastMode(mode, allowedFile);
   }
 
   /** Current plan/normal mode — provider-first (live), cache as fallback. */
@@ -1283,14 +889,14 @@ export class ServeHub implements HubHandler, ServeHubLike {
   /** Broadcast agent running state (idle PROMPT/AWAIT → off; processing → on). */
   setAgentRunning(value: boolean): void {
     if (value === this.agentRunning) return;
-    this.agentRunning = value;
-    const payload = JSON.stringify({ type: 'running', content: value ? 'on' : 'off' });
-    this.clients.forEachOpen((ws) => ws.send(payload));
+    this.lifecycleState.agentRunning = value;
+    this.signals.broadcastRunning(value);
   }
 
   setAutoStateProvider(provider: (() => boolean) | null): void {
     this.autoStateProvider = provider;
   }
+
   setEnterAutoProvider(provider: (() => boolean) | null): void {
     this.enterAutoProvider = provider;
   }
@@ -1310,6 +916,40 @@ export class ServeHub implements HubHandler, ServeHubLike {
   }
 
   /**
+   * Install the LOOP-side `/clear` routine (agent-repl's `clearConversation`).
+   *
+   * The hub cannot clear anything itself: the transcript marker, the fresh-
+   * session reset and the live `clear-history` broadcast all live in the agent
+   * loop's scope. It therefore only FORWARDS. Passing `null` uninstalls it (a
+   * serve teardown), after which {@link clearConversation} throws.
+   */
+  setClearConversationProvider(provider: (() => void) | null): void {
+    this.clearConversationProvider = provider;
+  }
+
+  /**
+   * Run the browser's `/clear`.
+   *
+   * Called from serve-ws-handler's `clear-conversation` case — the WebUI's only
+   * route into the clear. There is deliberately NO second copy of the clear
+   * body here: the ordered sequence (`triologue.clear()` → the transcript
+   * marker → `clearDisplayedHistory()` → the fresh-session reset) lives in
+   * ONE function in agent-repl.ts, and both the terminal (double Ctrl+L) and
+   * the browser call it. Two entry points with two bodies is how the browser
+   * clear ended up unreachable in the first place.
+   *
+   * Throws when no provider is installed — a hub with no agent loop behind it
+   * cannot honour a clear, and the WS handler reports that via agentIO.verbose
+   * rather than pretending it worked.
+   */
+  clearConversation(): void {
+    if (!this.clearConversationProvider) {
+      throw new Error('clearConversation: no provider installed (serve without the agent loop)');
+    }
+    this.clearConversationProvider();
+  }
+
+  /**
    * `null` means "no provider installed" — NOT an empty allow-list. The two
    * must stay distinguishable on the wire: `[]` is a real deny-all the user
    * can act on, `null` is "this hub has no agent loop behind it".
@@ -1318,17 +958,9 @@ export class ServeHub implements HubHandler, ServeHubLike {
     return this.autoCommitBranchesProvider ? this.autoCommitBranchesProvider.get() : null;
   }
 
-  /**
-   * Broadcast the auto-commit allow-list (after a successful write).
-   *
-   * `requestId` is always present and always null: a broadcast reports a write
-   * that already happened. Sending the field explicitly keeps every
-   * `auto-commit` frame the same shape, so a client can test
-   * `requestId === null` rather than relying on it being undefined.
-   */
+  /** Broadcast the auto-commit allow-list (after a successful write). */
   broadcastAutoCommit(branches: string[]): void {
-    const payload = JSON.stringify({ type: 'auto-commit', branches, requestId: null });
-    this.clients.forEachOpen((ws) => ws.send(payload));
+    this.signals.broadcastAutoCommit(branches);
   }
 
   // ===========================================================================
@@ -1349,9 +981,9 @@ export class ServeHub implements HubHandler, ServeHubLike {
   /**
    * Live display fan-out: one journaled transcript record → one WS frame.
    *
-   * Subscribed by {@link wireOutputMirroring} to the triologue writer's
-   * display observer, so the socket renders the SAME record /history projects
-   * from the file — not a second copy pushed by the printer. The row rule is
+   * Subscribed by {@link wireOutputMirroring} to the triologue writer's display
+   * observer, so the socket renders the SAME record /history projects from the
+   * file — not a second copy pushed by the printer. The row rule is
    * `projectDisplayRecord`, shared with the history endpoint, so a live row and
    * a replayed row can never disagree and a record can never arrive twice.
    *
@@ -1374,6 +1006,44 @@ export class ServeHub implements HubHandler, ServeHubLike {
     this.clients.broadcastRow(row);
   }
 
+  /**
+   * Drop every in-memory display source at a `/clear` boundary and tell the
+   * open browsers to do the same.
+   *
+   * THREE holders must be reset together, or the clear is only half effective:
+   *   1. `messageLog` — the serve-lifetime fallback that /history serves while
+   *      the transcript holds no records. Left intact, the next reload would
+   *      resurrect pre-clear lines from it.
+   *   2. `lastDisplayTimestamp` — the live emission-order cursor; carrying it
+   *      across the boundary would let a pre-clear time label a post-clear row.
+   *   3. every connected client's chat array — the visible log the user wants
+   *      gone. `clear-history` carries NO `seq`, so the client's display cursor
+   *      gate cannot drop it, and it cannot be mistaken for a chat row.
+   *
+   * AND THE PENDING CARD: an unresolved card is a question the user can no
+   * longer see once its row is cut, so its resolver is drained here too
+   * (`abortInput` resolves them with null, the same "stop waiting" answer a
+   * serve stop gives). Without this the agent sits in waitForCardResponse()
+   * forever behind a widget that no longer exists.
+   *
+   * NOT truncated: the transcript. It is append-only and the /clear marker is
+   * the durability record; serve-history cuts the projection at the LAST marker
+   * (lastClearIndex), so a reload re-derives exactly this emptied view.
+   *
+   * WHO CALLS THIS: the `/clear` path itself — `Triologue.clear()` emits the
+   * boundary through `onMessage` → the writer, but the writer deliberately does
+   * NOT forward boundary records to the display observer (see
+   * display-record-seam.test.ts:56), so this hub cannot learn about a clear by
+   * sniffing the display stream. It is a direct call from agent-repl's
+   * double-Ctrl+L callback instead.
+   */
+  clearDisplayedHistory(): void {
+    this.messageLog = [];
+    this.lastDisplayTimestamp = undefined;
+    this.abortInput();
+    this.clients.broadcastState('clear-history');
+  }
+
   /** Broadcast to all clients EXCEPT the sender (multi-browser user-bubble sync). */
   broadcastExcept(sender: WebSocket, type: string, content: string, label?: string, detail?: string): void {
     this.clients.broadcastExcept(sender, type, content, label, detail);
@@ -1391,173 +1061,6 @@ export class ServeHub implements HubHandler, ServeHubLike {
     }
     return false;
   }
-
-  // ===========================================================================
-  // WebSocket events
-  // ===========================================================================
-
-  private onWsConnection(ws: WebSocket): void {
-    this.clients.add(ws);
-    this.disconnectTimer.cancel(); // reconnect cancels 30s timer
-    // History is NOT replayed over the socket — the client fetches /history at
-    // load before connecting; WS carries only live updates from here on.
-    if (this.inputResolver) {
-      try {
-        ws.send(JSON.stringify({ type: 'prompt', content: '' }));
-      } catch {
-        /* ignore */
-      }
-    }
-    // Send current auto + running state so late-joining/reconnecting clients
-    // pick up the flags without waiting for the next flip.
-    if (this.autoStateProvider) {
-      try {
-        if (this.autoStateProvider()) {
-          ws.send(JSON.stringify({ type: 'auto', content: 'on' }));
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-    try {
-      ws.send(JSON.stringify({ type: 'running', content: this.agentRunning ? 'on' : 'off' }));
-    } catch {
-      /* ignore */
-    }
-    // Same for plan/normal mode: a browser joining mid-plan must be told that
-    // edits are prohibited instead of guessing why a request was refused.
-    // getMode() is provider-first, so a mode flip that happened BEFORE the
-    // hub existed (plan_on → /serve) is still reported correctly here.
-    try {
-      ws.send(JSON.stringify({ type: 'mode', content: this.getMode(), detail: null }));
-    } catch {
-      /* ignore */
-    }
-    ws.on('message', (data) => {
-      const text = wsDataToText(data);
-      // Record BEFORE dispatch, sampling the input bridge at ARRIVAL — see
-      // recordInboundFrame for why the sample must precede the handler
-      // (submitInput consumes the resolver it is about to be judged by).
-      this.recordInboundFrame(text);
-      // Close the slot: a frame that never reached submitInput (steer, exit,
-      // interrupt, malformed) must not leave a status pending for the NEXT one.
-      this.pendingDiagFrame = null;
-      handleWsMessage(this, ws, text);
-      this.pendingDiagFrame = null;
-    });
-    ws.on('close', () => this.onWsClose(ws));
-    ws.on('error', (err) => this.onWsError(ws, err));
-  }
-
-  private onWsClose(ws: WebSocket): void {
-    // During stop(), running=false is set FIRST, then clients.closeAll() closes
-    // every client, each firing onWsClose. Without this guard each close would
-    // re-arm disconnectTimer.start() AFTER stop() already cancelled it, leaving
-    // a stray reconnect timer running against a stopped server. A closed
-    // connection during shutdown is expected — skip the reconnect path.
-    if (!this.running) return;
-    this.clients.delete(ws);
-    if (this.clients.size === 0) {
-      this.disconnectTimer.start();
-    }
-  }
-
-  private onWsError(_ws: WebSocket, err: Error): void {
-    agentIO.verbose('serve', `WebSocket error: ${err.message}`);
-  }
-
-  // ===========================================================================
-  // Graceful shutdown (warm — no neglection, no LLM abort)
-  // ===========================================================================
-
-  /** Called by: exit button, disconnect timeout, ESC neglection handler. */
-  async gracefulShutdown(): Promise<void> {
-    this.disconnectTimer.cancel();
-    // stop(skipAbortInput=true): tear down servers + set running=false, but
-    // defer abortInput() to the tail so the restore message prints BEFORE the
-    // fallback `agent >>` prompt (the "ESC quit serve" race).
-    await this.stop(true);
-    agentIO.setOutputCallback(null);
-    setResultCallback(null);
-    sendToParent({ type: 'serve_mode', active: false });
-    console.log(chalk.yellow('\nWeb UI stopped. Terminal input restored.'));
-    // The serve-state flag was already cleared by stop() above (the STOP seam).
-    // Restart is NOT a stop: restartServe() re-sets the flag to true and never
-    // reaches gracefulShutdown, so a recycle stays invisible to the LLM.
-    this.abortInput(); // now unblock the fallback terminal prompt
-  }
-
-  /**
-   * Recycle the HTTP/Vite/WS stack in-process on the same port (the 重启
-   * button in persistent mode). Distinct from gracefulShutdown(): this does
-   * NOT unblock the input resolver (stop(true) skips abortInput), does NOT
-   * clear the output/result callbacks until re-wired, and does NOT print the
-   * "Terminal input restored" message — the terminal is never touched.
-   *
-   * Build-order contract: `isRestarting()` is read at arm time by
-   * WebInputProvider's three-way guard, so a blocked waitForInput() across
-   * the stop→start window treats the gap as "still mine, keep waiting" rather
-   * than "serve is gone → headless exit" (which would kill a daemon on a
-   * Restart click). `restarting` is set BEFORE stop() (which flips running
-   * to false) and cleared in a finally AFTER start() flips it back to true.
-   */
-  async restartServe(): Promise<void> {
-    if (this.restarting) return; // re-entrancy guard
-    const port = this.getPort();
-    const host = this.getHost();
-    this.restarting = true;
-    try {
-      // stop(skipAbortInput=true): tear down the stack and set running=false
-      // WITHOUT resolving a blocked waitForInput() with null — a null would
-      // send WebInputProvider down its terminal-fallback / headless-exit path
-      // mid-restart. The pending input resolver survives the cycle (start()
-      // does not clear inputResolver) and is resubmitted against the fresh hub.
-      await this.stop(true);
-      await this.start(port, host);
-      // Re-wire output + result mirroring (stop() does not clear the callbacks,
-      // but a fresh start means the hub is a clean slate — re-wire explicitly
-      // so the Web UI keeps receiving live updates after the recycle).
-      wireOutputMirroring(this, this.displayWriter);
-      // A recycle ends with the WebUI reachable again on the same port, so the
-      // serve-state flag must read "up" — stop() inside this method cleared it.
-      setWebUiUp(true);
-      agentIO.verbose('serve', `Web UI restarted on port ${port}`);
-    } catch (err) {
-      // A FAILED restart must NOT leave the holder reading "up": stop(true)
-      // skips the down-publish (gated on !this.restarting) so the recycle stays
-      // invisible, and start() throwing skips the setWebUiUp(true) above. But
-      // the flag was already `true` from the pre-restart active serve, so the
-      // server is now DOWN while the holder still reads "up" — collect.ts's
-      // edge-triggered lifecycle report and Core's interaction presentation
-      // would keep treating the WebUI as available. Publish the down state here
-      // (the failure path), then rethrow so the caller observes the failure.
-      setWebUiUp(false);
-      // Also wake the outstanding input wait: stop(true) deliberately skipped
-      // abortInput() so the pending waitForInput() survived the recycle, but a
-      // FAILED recycle can never deliver on it (the server is down). Resolving
-      // with null lets WebInputProvider observe `!isRunning() && !isRestarting()`
-      // and apply its existing daemon-exit / terminal-fallback handling instead
-      // of blocking a headless daemon forever on input that cannot arrive. The
-      // await continuation is a microtask that runs AFTER this finally clears
-      // `restarting`, so the three-way guard reads the post-failure state.
-      this.abortInput();
-      throw err;
-    } finally {
-      this.restarting = false;
-    }
-  }
 }
 
-/**
- * Decode a ws message payload to text.
- *
- * ws types message data as RawData (Buffer | ArrayBuffer | Buffer[]),
- * which has no default string conversion worth trusting — String(rawData)
- * can yield "[object Object]" for a Buffer[]. Decode through Buffer instead.
- */
-function wsDataToText(data: RawData): string {
-  if (typeof data === 'string') return data;
-  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
-  if (data instanceof ArrayBuffer) return Buffer.from(data).toString('utf8');
-  return data.toString('utf8');
-}
+export type { RawData };

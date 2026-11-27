@@ -142,7 +142,7 @@ describe('mergeDump — the summary answers "twice?" and "lost?" at a glance', (
       steeringBuffer: [],
       pendingSteeringReview: []
     },
-    cursor: { lastRenderedSeq: 12, historyDirty: false, lastHistoryEtag: 'abc', sessionId: 's1' },
+    cursor: { lastRenderedSeq: 12, clearBoundarySeq: 0, historyDirty: false, lastHistoryEtag: 'abc', sessionId: 's1' },
     messages: [
       msg({ type: 'user', seq: 3 }),
       // An orphan echo: user text with no journal seq — the "shown twice" row.
@@ -227,7 +227,7 @@ describe('dumpFilename / serializeDump', () => {
           steeringBuffer: [],
           pendingSteeringReview: []
         },
-        cursor: { lastRenderedSeq: 0, historyDirty: false, lastHistoryEtag: null, sessionId: null },
+        cursor: { lastRenderedSeq: 0, clearBoundarySeq: 0, historyDirty: false, lastHistoryEtag: null, sessionId: null },
         messages: [],
         teammateMessages: [],
         frames: []

@@ -56,6 +56,16 @@ export interface HubHandler {
    * `[]`, which is a real deny-all.
    */
   getAutoCommitBranches(): string[] | null;
+  /**
+   * Run the browser's `/clear` request (the `clear-conversation` frame).
+   *
+   * A narrow forwarder, deliberately: the hub holds no conversation state, so
+   * the clear body (transcript marker → live `clear-history` broadcast →
+   * fresh-session reset) lives once in agent-repl and both the terminal's
+   * double-Ctrl+L and this call reach it. Throws when no loop-side provider is
+   * installed, which the `clear-conversation` case reports via agentIO.verbose.
+   */
+  clearConversation(): void;
 }
 
 /**
@@ -145,6 +155,29 @@ export function handleWsMessage(hub: HubHandler, ws: WebSocket, data: string): v
       // triggerNeglection() runs the same neglection logic the Coordinator
       // IPC 'neglection' message would (see agent-io.ts Step 6c).
       agentIO.triggerNeglection();
+      break;
+    case 'clear-conversation':
+      // THE BROWSER'S /clear. The WebUI's 魔法查询 `/clear` row sends this frame,
+      // which is the ONLY route a browser has into the clear: serve mode builds
+      // no LineEditor (web-input-provider.ts:133), so AgentIO.handleKeyEvent
+      // returns early (agent-io.ts:768-771) and the double-Ctrl+L callback can
+      // never fire in the one configuration this feature exists for — a WebUI
+      // attached.
+      //
+      // ORDER: NOT this handler's business, and deliberately so. The ordered body
+      // (`triologue.clear()` → the transcript marker → `clearDisplayedHistory()`
+      // → the fresh-session reset) lives ONCE in agent-repl's
+      // `clearConversation()`, shared with the terminal path, so neither entry
+      // point can get the ordering wrong.
+      //
+      // Synchronous by design: the clear marks the transcript first, so a reload
+      // that races this frame still honours the boundary. The catch only fires
+      // on a hub with no loop-side provider (serve without the agent loop).
+      try {
+        hub.clearConversation();
+      } catch (err) {
+        agentIO.verbose('serve', `clear-conversation error: ${String(err)}`);
+      }
       break;
     case 'card-response':
       if (msg.cardId !== undefined && msg.value !== undefined) {

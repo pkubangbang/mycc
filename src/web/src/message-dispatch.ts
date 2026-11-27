@@ -217,6 +217,34 @@ export function applyServerMessage(state: DispatchState, msg: ChatMessage, ctx: 
     return;
   }
 
+  if (msg.type === 'clear-history') {
+    // THE /clear BOUNDARY, client side: the server journaled a `{kind:'clear'}`
+    // marker and asks every open browser to drop what the user just cleared.
+    //
+    // MUST return here — this is a state signal, not chat content: falling
+    // through to the chat-log branch would render a stray bubble. It carries no
+    // `seq` on purpose, so the display-cursor gate in main.ts cannot swallow it
+    // (see isAlreadyRendered), and the cursor itself is left alone: post-clear
+    // records carry strictly higher seqs, so keeping the watermark still drops
+    // nothing and prevents a replayed pre-clear frame from reappearing.
+    //
+    // BOTH logs, not just the main one. `/clear` cuts EVERY record at the
+    // boundary in the server projection (projectDisplayRecords → lastClearIndex),
+    // so the accordion's @-labelled teammate rows are cleared on reload too. A
+    // clear that emptied `messages` only left the live page and the reloaded
+    // page disagreeing, and persistChatlog() then wrote the survivors into the
+    // IndexedDB cache — so a lock-screen wake re-showed them as well.
+    //
+    // `showRetry` is a property of a prompt that no longer exists: a "Retry?
+    // [Y/n]" button over an emptied log could only retry nothing. `phase` is
+    // NOT touched — the clear runs from PROMPT and the prompt broadcast that
+    // follows corrects any stale 'card' phase on its own.
+    state.messages.splice(0);
+    state.teammateMessages.splice(0);
+    state.showRetry = false;
+    return;
+  }
+
   if (msg.type === 'steer-state') {
     // THE steering wire event (replaces 'steer-echo' + 'steer-flush'): the
     // server's full queue plus its revision. The store's adoption rule decides

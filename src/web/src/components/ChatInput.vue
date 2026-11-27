@@ -168,6 +168,31 @@ function closeMagicQuery(): void {
   magicQueryOpen.value = false;
 }
 
+/**
+ * Run one 魔法查询 row.
+ *
+ * `/clear` is the ONE row that is not a slash-text submission. In serve mode the
+ * text pipeline would route `/clear` to the backend's SLASH state, whose
+ * clearCommand clears the TRIOLOGUE but never calls `clearDisplayedHistory()` —
+ * so the hub would keep serving the pre-clear rows and the open page would keep
+ * showing them. The browser therefore asks the hub directly with a
+ * `clear-conversation` frame, which runs the same ordered routine the terminal's
+ * double Ctrl+L runs (transcript marker → `clear-history` broadcast → fresh
+ * session reset).
+ *
+ * Every other row stays a plain submission, so `/compact`, `/reload` and
+ * `/auto-commit` behave exactly as before. The frame is sent unconditionally:
+ * a terminal session has no socket, so it never leaves — there is no mode branch
+ * that could go untested.
+ */
+function runMagicQuery(query: string): void {
+  if (query === '/clear') {
+    chatApi.sendClearConversation();
+    return;
+  }
+  chatApi.sendInput(query);
+}
+
 // ── Send gate + warning banner (single source of truth) ──
 //
 // The textarea is NEVER disabled — not on disconnect, not on a pending card,
@@ -497,7 +522,7 @@ function fmtTime(at: number): string {
       :runnable="canSlash"
       :auto-commit-branches="props.state.autoCommitBranches"
       :load-auto-commit="chatApi.requestAutoCommitList"
-      :run-query="chatApi.sendInput"
+      :run-query="runMagicQuery"
       @close="closeMagicQuery"
     />
     <AttachmentManager

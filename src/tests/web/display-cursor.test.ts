@@ -23,7 +23,9 @@ import {
   isAlreadyRendered,
   mergeSnapshot,
   reconcileOptimisticUserRow,
-  wasRenderedBefore
+  wasRenderedBefore,
+  isClearedByBoundary,
+  withoutClearedRows
 } from '../../web/src/display-cursor.js';
 
 const row = (seq?: number) => ({ type: 'log' as const, content: 'x', ...(seq === undefined ? {} : { seq }) });
@@ -236,3 +238,71 @@ describe('wasRenderedBefore — "already on screen" needs the row set, not the c
     expect(wasRenderedBefore({}, 3, already)).toBe(true);
   });
 });
+
+/**
+ * The `/clear` boundary as a property of the ROW, not of the page.
+ *
+ * `isClearedByBoundary` / `withoutClearedRows` replaced the old page-local
+ * `snapshotPredatesClear(snapshotMax, clearedAtSeq)` guard. That guard needed the
+ * page to have OBSERVED the clear, so a second tab / sleeping tab / reload had
+ * `clearedAtSeq === null` and re-adopted (and re-persisted) the cleared
+ * conversation. The boundary now arrives with every /history payload, so these
+ * functions take it as an argument and no page state can be out of step.
+ */
+describe('isClearedByBoundary — "did the last /clear remove this row?"', () => {
+  it('clears a row at or below the boundary (INCLUSIVE of the marker)', () => {
+    // The marker consumed a seq, so everything up to and including it was cut.
+    expect(isClearedByBoundary(5, 5)).toBe(true);
+    expect(isClearedByBoundary(4, 5)).toBe(true);
+    expect(isClearedByBoundary(1, 5)).toBe(true);
+  });
+
+  it('keeps a row strictly above the boundary (post-clear rows are higher)', () => {
+    expect(isClearedByBoundary(6, 5)).toBe(false);
+    expect(isClearedByBoundary(99, 5)).toBe(false);
+  });
+
+  it('states nothing when the boundary is 0 (no clear / older server) — nothing is cut', () => {
+    expect(isClearedByBoundary(1, 0)).toBe(false);
+    expect(isClearedByBoundary(0, 0)).toBe(false);
+    expect(isClearedByBoundary(1000, 0)).toBe(false);
+  });
+
+  it('never cuts a row with no journal position (a state frame is not a chat row)', () => {
+    expect(isClearedByBoundary(undefined, 5)).toBe(false);
+    expect(isClearedByBoundary(NaN, 5)).toBe(false);
+  });
+});
+
+describe('withoutClearedRows — the boundary filter applied to a row set', () => {
+  it('drops exactly the rows at or below the boundary', () => {
+    const rows = [2, 3, 5, 6, 8].map((s) => row(s));
+    expect(withoutClearedRows(rows, 5).map((r) => r.seq)).toEqual([6, 8]);
+  });
+
+  it('keeps every row when the boundary is 0 (the pre-clear behaviour, unchanged)', () => {
+    const rows = [2, 3, 5].map((s) => row(s));
+    expect(withoutClearedRows(rows, 0)).toHaveLength(3);
+  });
+
+  it('keeps seq-less rows — the boundary says nothing about a row with no position', () => {
+    const rows = [row(2), row(undefined), row(9)];
+    expect(withoutClearedRows(rows, 5).map((r) => r.seq)).toEqual([undefined, 9]);
+  });
+
+  it('returns a NEW array (never mutates the caller\u2019s store array)', () => {
+    const rows = [row(2), row(9)];
+    const out = withoutClearedRows(rows, 5);
+    expect(out).not.toBe(rows);
+    expect(rows).toHaveLength(2);
+  });
+});
+
+/**
+ * The hydration BLOCKER's own cases live in
+ * src/tests/serve/serve-clear-boundary-seq.test.ts, which drives
+ * `adoptSnapshot` — the function main.ts actually calls — so a "lookalike" test
+ * cannot keep passing while production drifts.
+ */
+
+

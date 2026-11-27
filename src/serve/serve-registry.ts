@@ -99,6 +99,31 @@ export interface ServeHubLike {
   setUserJournalProvider(cb: ((text: string, source: 'prompt' | 'steer') => void) | null): void;
   journalUserSubmission(text: string, source: 'prompt' | 'steer'): void;
 
+  /**
+   * Install the LOOP-side `/clear` routine (agent-repl's `clearConversation`).
+   *
+   * The hub reaches the clear through this seam so the browser's
+   * `clear-conversation` WS frame runs the SAME ordered body as the terminal's
+   * double-Ctrl+L: transcript marker first, then the live `clear-history`
+   * broadcast, then the fresh-session reset.
+   */
+  setClearConversationProvider(provider: (() => void) | null): void;
+  /** Run the browser's `/clear` (throws when no provider is installed). */
+  clearConversation(): void;
+
+  /**
+   * THE /clear BOUNDARY, live side. Called by the loop's clear path
+   * (agent-repl's double-Ctrl+L callback, right after `Triologue.clear()`), NOT
+   * by the display observer: the transcript writer deliberately does not forward
+   * boundary records, so a hub that waited to OBSERVE the clear marker would
+   * never see one (that sniffing branch was dead code and has been removed).
+   *
+   * Empties the serve-lifetime display log, resets the live timestamp cursor,
+   * drains pending card resolvers and broadcasts the content-less
+   * `clear-history` state frame so every open browser drops its chat log.
+   */
+  clearDisplayedHistory(): void;
+
   // ── input bridge ──
   waitForInput(): Promise<SteeringDeliveredInput>;
   submitInput(text: string, opts?: { fromSteering?: boolean; notes?: readonly SteeringNote[] }): void;

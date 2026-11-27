@@ -102,6 +102,12 @@ export interface ClientDumpSlice {
   };
   cursor: {
     lastRenderedSeq: number;
+    /**
+     * The last SERVER-STATED `/clear` boundary this page adopted (0 = none).
+     * Here because it is the one number that explains why rows vanished from a
+     * hydrated store: `seq <= this` was cut by the server, not lost locally.
+     */
+    clearBoundarySeq: number;
     historyDirty: boolean;
     lastHistoryEtag: string | null;
     sessionId: string | null;

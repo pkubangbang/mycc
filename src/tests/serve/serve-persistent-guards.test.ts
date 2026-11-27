@@ -68,7 +68,11 @@ function makeStubHub(): HubHandler & {
     getAutoState: vi.fn(() => false),
     getDisplayWriter: vi.fn(() => undefined),
     enterAuto: vi.fn(() => true),
-    getAutoCommitBranches: vi.fn(() => [] as string[] | null)
+    getAutoCommitBranches: vi.fn(() => [] as string[] | null),
+    // The browser's /clear. This stub has no agent loop behind it, so the real
+    // ServeHub would throw "no provider installed"; the lifecycle tests below
+    // only care that the frame is ROUTED, so record the call instead.
+    clearConversation: vi.fn()
   };
 }
 

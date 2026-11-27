@@ -295,15 +295,54 @@ export async function main(): Promise<void> {
   onServeHubReady((hub) => hub.setUserJournalProvider((text, source) => triologue.submitUser(text, source)));
 
   // Restore session if available
+  // ── THE /clear BOUNDARY, live side ──
+  //
+  // `Triologue.clear()` journals a `{kind:'clear'}` marker, but the writer
+  // deliberately does NOT forward boundary records to its display observer
+  // (they are journal marks, not chat rows — pinned by
+  // display-record-seam.test.ts). So ServeHub can never LEARN about a clear
+  // by sniffing the record stream: the `record.kind === 'clear'` branch this
+  // code used to rely on was unreachable, and no browser ever received
+  // `clear-history`. The clear is therefore signalled DIRECTLY, from the one
+  // place the user asks for it.
+  //
+  // A LET (not a const) assigned through onServeHubReady: this runs during boot,
+  // before the serve layer is loaded, so the real hub method can only be bound
+  // once the hub exists. Until then it is a no-op — a terminal-only session has
+  // no browser log to clear.
+  let clearDisplayedHistory: () => void = () => {};
+  onServeHubReady((hub) => {
+    clearDisplayedHistory = () => hub.clearDisplayedHistory();
+  });
+
   if (restoredPair !== null) {
     triologue.loadRestoration(restoredPair);
   }
 
-  // Set up double Ctrl+L callback for clearing conversation history
-  agentIO.setDoubleCtrlLCallback(() => {
+  // ── THE /clear ROUTINE: ONE body, TWO entry points ──
+  //
+  // Both surfaces call THIS function: the terminal's double-Ctrl+L callback
+  // (below) and the browser's `clear-conversation` WS frame, which reaches the
+  // loop through ServeHub.clearConversation() → the provider registered further
+  // down. Two copies of this body is exactly how the browser clear became
+  // unreachable: the WS surface had no way in at all, so an open page kept
+  // showing the cleared conversation until a manual refresh.
+  //
+  // ORDER IS LOAD-BEARING: `triologue.clear()` journals the `{kind:'clear'}`
+  // marker FIRST — that marker is the durability record a RELOAD honors
+  // (projectDisplayRecords cuts at the last one) — and only THEN does
+  // `clearDisplayedHistory()` make the OPEN page agree. Keeping both inside one
+  // function means neither entry point can get the order wrong.
+  function clearConversation(): void {
     triologue.clear();
+    // THE /clear BOUNDARY, browser side. The transcript marker above is what a
+    // RELOAD honors (projectDisplayRecords cuts at the last one); this call is
+    // what makes the OPEN page agree. It must run here — the display stream
+    // cannot carry the news (the writer filters control kinds), so an unhooked
+    // clear leaves the cleared conversation on screen until a manual refresh.
+    clearDisplayedHistory();
     // fullClear() resets EVERYTHING including turn.events[] and totalTurns —
-    // double-Ctrl+L starts a completely fresh session.
+    // both entry points start a completely fresh session.
     sequence.fullClear();
     clearWrapUp();
     ctx.todo.clear();
@@ -326,7 +365,18 @@ export async function main(): Promise<void> {
     // fresh conversation would never re-learn whether a WebUI is running
     // (PR #28 review P3 F4 — this is the SECOND triologue-clearing path).
     reconcileServeStateAfterClear();
-  });
+  }
+
+  // ENTRY POINT 1 — the terminal. Double Ctrl+L. Behaviour is unchanged: it now
+  // just calls the shared routine instead of inlining the body.
+  agentIO.setDoubleCtrlLCallback(() => clearConversation());
+
+  // ENTRY POINT 2 — the browser. The WebUI's `/clear` sends a
+  // `clear-conversation` WS frame; serve-ws-handler routes it to
+  // ServeHub.clearConversation(), which calls THIS provider. Registered through
+  // `onServeHubReady` for the same reason as the display hook above: boot runs
+  // before the serve layer exists.
+  onServeHubReady((hub) => hub.setClearConversationProvider(clearConversation));
 
   // ── Register project-context populators ──
   // Each populator is a () => Message[] closure registered ONCE here. The
