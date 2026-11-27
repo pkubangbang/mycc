@@ -431,17 +431,36 @@ const drawerStyle = computed(() => (drawerWidth.value > 0 ? { width: `${drawerWi
   color: var(--text-primary);
 }
 /* The list is a vertical flex column that fills the drawer's remaining
-   height (after the header). It does NOT scroll itself — the expanded
-   accordion bodies scroll individually within their flex allotment, and
-   the whole stack is capped at the drawer height so expanded accordions
-   together never exceed it. */
+   height (after the header). Smart height policy:
+   - When the drawer is TALL enough, expanded accordions flex-grow to share
+     the spare space (flex: 1 1 0) — the expanded windows enlarge.
+   - When the stack of headers + expanded minima exceeds the list height,
+     the list itself scrolls (overflow-y: auto): each expanded accordion is
+     floored at ACC_MIN (≈ header bar + one minimum expanded window), so
+     headers never collapse and an expanded window is always at least
+     usable while its accordion is on screen. */
 .accordion-list {
   flex: 1;
   min-height: 0; /* allow children to shrink within the flex column */
   display: flex;
   flex-direction: column;
   padding: 4px 0;
-  overflow: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-color) transparent;
+}
+.accordion-list::-webkit-scrollbar {
+  width: 6px;
+}
+.accordion-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.accordion-list::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 999px;
+}
+.accordion-list::-webkit-scrollbar-button {
+  display: none;
 }
 .accordion {
   display: flex;
@@ -453,9 +472,14 @@ const drawerStyle = computed(() => (drawerWidth.value > 0 ? { width: `${drawerWi
 }
 /* Expanded: grow to share the remaining drawer height equally with other
    expanded accordions. Multiple expanded accordions split the space evenly
-   (flex:1 each); the bodies scroll inside their allotment. */
+   (flex:1 each); the bodies scroll inside their allotment. The min-height
+   floors the accordion at one header (~38px) plus one minimum expanded
+   window (~200px): when the list must scroll, an expanded window never
+   collapses below a usable reading height, and the LIST scrolls instead of
+   squeezing the accordions. */
 .accordion.expanded {
   flex: 1 1 0;
+  min-height: 238px;
 }
 .accordion-header {
   display: flex;
@@ -474,6 +498,10 @@ const drawerStyle = computed(() => (drawerWidth.value > 0 ? { width: `${drawerWi
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   text-align: left;
   transition: background 0.12s;
+  /* Never shrink: the header is the accordion's structural anchor — when
+     the list scrolls and space is tight, the header keeps its natural
+     height instead of being squeezed into its body. */
+  flex-shrink: 0;
 }
 .accordion-header:hover {
   background: var(--bg-acc-header-hover);

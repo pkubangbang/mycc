@@ -250,6 +250,14 @@ function onNarrowClick(): void {
      while visible. Single source of truth: the clearance var is the one
      number both this cap and MessageItem's bubble padding derive from. */
   max-width: calc(var(--team-card-clearance, 196px) - 16px);
+  /* Cap the card to the chat area so a long teammate list scrolls inside the
+     card instead of spilling past the viewport. top inset (8px) + a matching
+     bottom gap. The card itself is the scroll container; rows are fixed 44px
+     so scrolling stays stable as messages arrive. */
+  max-height: calc(100% - 16px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-color) transparent;
   box-shadow: var(--scroll-shadow);
   font-size: 13px;
   display: flex;
@@ -277,8 +285,11 @@ function onNarrowClick(): void {
   align-items: center;
   /* Fixed height so every teammate row occupies the same vertical space
      regardless of whether the time cell is present — keeps the card a
-     stable anchor and avoids jitter as messages arrive. */
+     stable anchor and avoids jitter as messages arrive. flex-shrink: 0 is
+     REQUIRED: the card is a flex column capped by max-height, and without
+     it the rows compress and overlap instead of overflowing to scroll. */
   height: 44px;
+  flex-shrink: 0;
   box-sizing: border-box;
   background: transparent;
   color: var(--text-status);
@@ -294,6 +305,22 @@ function onNarrowClick(): void {
 }
 .teammate-row:hover {
   background: var(--bg-status-btn-hover);
+}
+/* WebKit scrollbar styling for the card's overflow-y scroll — paired with
+   the standard scrollbar-width/scrollbar-color on .teammate-card above so
+   both engines render the same minimal pill thumb. */
+.teammate-card::-webkit-scrollbar {
+  width: 6px;
+}
+.teammate-card::-webkit-scrollbar-track {
+  background: transparent;
+}
+.teammate-card::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 999px;
+}
+.teammate-card::-webkit-scrollbar-button {
+  display: none;
 }
 /* Top-left: teammate name. Occupies grid cell (1,1) naturally by source order. */
 .row-name {
