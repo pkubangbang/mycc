@@ -26,8 +26,10 @@ export interface ToolCall extends ProviderToolCall {
 /**
  * Categories for system-generated notes added to the conversation.
  * These are injected by the agent system (not from the actual user) via
- * `triologue.note(category, message, hookName?)`, which stores them as
+ * `triologue.note(category, message, hookName?, topic?)`, which stores them as
  * role:'user' messages with a `[CATEGORY]` prefix baked into the content.
+ * Retention is NOT decided by the category: it is decided by `meta.topic` and
+ * the COLLECT-owned registry (docs/loop/reminder-retention.md §3).
  *
  * NOTE — Hardcoded content prefixes (NOT NoteCategory values):
  * Several `[UPPERCASE]` prefixes appear in the conversation as string literals
@@ -67,6 +69,14 @@ export type NoteCategory =
    * of the category, so keep them here deliberately.
    */
   | 'REMINDER'
+  /**
+   * DEPRECATED — still in the union only so historical sessions, journals and
+   * fixtures that contain a literal `[TODO_STATE]` row keep type-checking.
+   * Nothing emits it any more: the live list is a `NUDGE` note with
+   * `meta.topic === 'todo'`, retained by the COLLECT-owned sweep
+   * (docs/loop/reminder-retention.md).
+   */
+  | 'TODO_STATE'
   /** Problem analysis hints generated during confusion */
   | 'HINT'
   /** Critical notifications requiring immediate attention (ESC interrupts) */
@@ -104,6 +114,21 @@ export interface Message extends ProviderMessage {
    * marked — it is genuine context and must stay readable.
    */
   synthetic?: boolean;
+  /**
+   * Retention identity of a system note, set ONLY by `triologue.note()`'s
+   * `topic` argument. A `[CATEGORY] ` prefix says what a note IS; a topic says
+   * what a note is ABOUT, which is what decides how long it may live —
+   * `[NUDGE]` alone carries the todo list, the peer routing block, the brief
+   * reminder, the worktree reminder and the team snapshot, and those five
+   * lifetimes differ. See docs/loop/reminder-retention.md.
+   *
+   * IN-MEMORY ONLY. It is dropped on provider egress (PROVIDER_MESSAGE_KEYS is
+   * an allow-list) and stripped at both persistence boundaries
+   * (transcript writer, compaction snapshot), so a restored session carries no
+   * topic and its rows are never swept. A note with no topic is `keep` by
+   * construction.
+   */
+  meta?: { topic?: string };
 }
 
 // ============================================================================

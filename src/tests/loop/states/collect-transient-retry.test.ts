@@ -79,6 +79,8 @@ vi.mock('../../../loop/triologue.js', () => {
     compact = vi.fn(async () => {});
     getTokenCount = vi.fn(() => 100);
     getTokenThreshold = vi.fn(() => 50000);
+    blankNotesByTopic = vi.fn(() => 0);
+    recomputeTokenCount = vi.fn();
     getLastRole = vi.fn(() => null);
   }
   return { Triologue: TriologueStub };

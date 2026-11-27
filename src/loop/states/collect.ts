@@ -24,6 +24,117 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { loopEvents } from '../loop-events.js';
 import { describeSender, replyHint } from '../../peer/mail-identity.js';
+import type { NoteCategory } from '../../types.js';
+
+/**
+ * Max cadence N for any reminder: a reminder may not fire less often than
+ * every 5 COLLECT rounds. Clamped here, in ONE place, so every counter reads
+ * the same number and no caller can exceed it.
+ */
+export const MAX_NUDGE_EVERY = 5;
+
+/** How many copies of a reminder survive the sweep. */
+export type Retention = 'zero' | 'once' | 'keep';
+
+/**
+ * One row of the reminder policy table (docs/loop/reminder-retention.md §3).
+ *
+ * `topic` is the IDENTITY: it is what `triologue.note()` stamps on the message
+ * (`meta.topic`) and what the sweep matches on. `category` is DERIVED — it
+ * only supplies the `[CATEGORY] ` prefix, so a producer can never invent a
+ * category/topic mismatch. `every` applies to the imperative producers only
+ * (event producers have no cadence); `retention` applies to all.
+ */
+export interface ReminderPolicy {
+  category: NoteCategory;
+  /** Fire every N COLLECT rounds, clamped to MAX_NUDGE_EVERY. */
+  every?: number;
+  retention: Retention;
+}
+
+/**
+ * THE registry. This is the only place `every` or `retention` is written.
+ *
+ * Producers call `noteTopic(env, 'todo', …)` and supply text only. Two
+ * constraints are load-bearing:
+ *
+ *   - `hook` MUST stay `keep`: hook/sequence.ts hasSkillInConversation() scans
+ *     message CONTENT for `[Hook: <name>]`/`[Skill: <name>]` to prevent a
+ *     duplicate injection, so blanking one defeats the duplicate check. No
+ *     content-probed topic may ever be downgraded.
+ *   - `todo` and `peer` are separate topics on purpose: they share the NUDGE
+ *     category but the peer routing block must not be blanked when the todo
+ *     list is superseded (and vice versa).
+ *
+ * A topic absent here is not swept at all — that is the compatibility rule for
+ * notes produced by loops this registry does not own (teammate worker, lite
+ * triologue), which call `note()` with no topic.
+ */
+export const REMINDER_POLICY: Readonly<Record<string, ReminderPolicy>> = {
+  // --- imperatives: a later COLLECT re-emits an equivalent note ------------
+  todo: { category: 'NUDGE', every: 5, retention: 'once' },
+  peer: { category: 'NUDGE', every: 5, retention: 'once' },
+  brief: { category: 'NUDGE', every: 5, retention: 'zero' },
+  worktree: { category: 'NUDGE', every: 5, retention: 'zero' },
+  team: { category: 'NUDGE', every: 5, retention: 'zero' },
+  // --- events: no later COLLECT reproduces the content ---------------------
+  steering: { category: 'REMINDER', retention: 'keep' },
+  upload: { category: 'REMINDER', retention: 'keep' },
+  handover: { category: 'REMINDER', retention: 'keep' },
+  hook: { category: 'REMINDER', retention: 'keep' },
+  mail: { category: 'MAIL', retention: 'keep' },
+  urgent: { category: 'URGENT', retention: 'keep' },
+  system: { category: 'SYSTEM', retention: 'keep' },
+  hint: { category: 'HINT', retention: 'keep' }
+};
+
+/** The registry's cadence for a topic, clamped. Undefined ⇒ not a cadenced producer. */
+export function nudgeEvery(topic: string): number | undefined {
+  const every = REMINDER_POLICY[topic]?.every;
+  return every === undefined ? undefined : Math.min(every, MAX_NUDGE_EVERY);
+}
+
+/**
+ * Emit a note whose category and retention come from the registry.
+ *
+ * Producers pass the TOPIC, never the category: one registry row yields both,
+ * so the prefix and the lifetime can never drift apart. An unregistered topic
+ * is a programming error (a typo would otherwise silently mean "keep forever").
+ */
+export function noteTopic(env: MachineEnv, topic: string, message: string, hookName?: string): void {
+  const policy = REMINDER_POLICY[topic];
+  if (!policy) throw new Error(`noteTopic: unregistered reminder topic "${topic}"`);
+  env.triologue.note(policy.category, message, hookName, topic);
+}
+
+/**
+ * The retention sweep (docs/loop/reminder-retention.md §4).
+ *
+ * Runs ONCE per COLLECT, before the LLM call, over `store.messages` only —
+ * never over `getFullMessages()`, whose provider view aliases the
+ * cache-stable project-context rows.
+ *
+ * `once` is scanned only in a round that REPLACED the note (a fresh copy of a
+ * state-triggered producer is authoritative, so older copies go); `zero` is
+ * scanned every round, including the round that replaced it, because a `zero`
+ * note is allowed to be visible to exactly ONE LLM call. `keep` is never
+ * scanned.
+ */
+export function sweepReminders(env: MachineEnv, replaced: ReadonlySet<string>): void {
+  let blanked = 0;
+  for (const [topic, policy] of Object.entries(REMINDER_POLICY)) {
+    const keepNewest = policy.retention === 'zero' ? 0 : policy.retention === 'once' && replaced.has(topic) ? 1 : -1;
+    if (keepNewest < 0) continue;
+    blanked += env.triologue.blankNotesByTopic(topic, keepNewest);
+  }
+  if (blanked > 0) {
+    // Reclaimed budget must show up in tokenCount, or compaction keeps
+    // tripping on text the provider no longer sees. consumers all read LATER
+    // (llm.ts needsCompact), so this genuinely defers this round's compact.
+    env.triologue.recomputeTokenCount();
+    agentIO.verbose('collect', `Retention sweep blanked ${blanked} stale reminder row(s)`);
+  }
+}
 
 /**
  * Max consecutive transient COLLECT errors retried within one turn before the
@@ -107,7 +218,9 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
         ? `Web UI started — this session is now reachable from a browser. A ` +
             `user may submit prompts and mid-task steering notes from the WebUI, ` +
             `so expect direction to arrive asynchronously while you work. ${startDetail}`
-        : `Web UI stopped — browser input is no longer available. ${stopDetail}`
+        : `Web UI stopped — browser input is no longer available. ${stopDetail}`,
+      undefined,
+      'system'
     );
   }
 
@@ -145,11 +258,12 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
       triologue.note(
         'URGENT',
         'User interrupted (ESC). Finish the current step and stop; do NOT start new work.',
-        'esc'
+        'esc',
+        'urgent'
       );
-      triologue.note('MAIL', mailContent);
+      triologue.note('MAIL', mailContent, undefined, 'mail');
     } else {
-      triologue.note('MAIL', mailContent);
+      triologue.note('MAIL', mailContent, undefined, 'mail');
     }
   }
 
@@ -163,8 +277,9 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
   //     summarizes an earlier instance away. See "#18 A-only".
   const teamStatus = await ctx.team.printTeam();
   if (teamStatus !== 'No teammates.') {
-    triologue.note(
-      'NUDGE',
+    noteTopic(
+      env,
+      'team',
       `[team status — snapshot, informational]\n${teamStatus}\n\ntm_print for a fresh read; elapsed ETAs are not actionable.`
     );
   }
@@ -192,7 +307,12 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
     if (drainedNotes.length > 0) {
       const steerNotes = drainedNotes.map((n) => n.text);
       const steerContent = steerNotes.map((n, i) => `(${i + 1}) ${n}`).join('\n');
-      triologue.note('REMINDER', `Steering notes from the user (mid-task direction):\n${steerContent}`);
+      triologue.note(
+        'REMINDER',
+        `Steering notes from the user (mid-task direction):\n${steerContent}`,
+        undefined,
+        'steering'
+      );
       agentIO.verbose('steer', `Drained ${steerNotes.length} steering note(s) at COLLECT`);
       // Mid-task user direction is a user intervention — reset the autofly
       // streak so the LLM stages that follow aren't counted as "consecutive
@@ -247,7 +367,7 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
           `- ${file.filename} → ${relPath} (${file.mimeType})${file.text ? `\n  Text: "${file.text.slice(0, 200)}${file.text.length > 200 ? '...' : ''}"` : ''}`
         );
       }
-      triologue.note('REMINDER', `User uploaded file(s):\n${fileInfos.join('\n')}`);
+      triologue.note('REMINDER', `User uploaded file(s):\n${fileInfos.join('\n')}`, undefined, 'upload');
       agentIO.verbose('serve', `Saved ${files.length} uploaded file(s) to ${uploadDir}`);
     }
   }
@@ -266,8 +386,13 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
  * Side effects on `turn`: `nextTodoNudge` (decremented / reset) and
  * `lastTodoState` (dedup cursor for the nudge).
  */
-async function runTodoNudge(env: MachineEnv, turn: TurnVars): Promise<void> {
-  const { triologue, ctx } = env;
+async function runTodoNudge(
+  env: MachineEnv,
+  turn: TurnVars,
+  replaceTopic: (topic: string, text: string) => void
+): Promise<void> {
+  const { ctx } = env;
+  const every = nudgeEvery('todo')!;
   const activeChannels = ctx.peer
     .listChannels()
     .filter((ch) => ch.joined && ch.peerSessionId && ctx.peer.isFresh(ch.peerSessionId));
@@ -293,35 +418,32 @@ async function runTodoNudge(env: MachineEnv, turn: TurnVars): Promise<void> {
       `  use mail_to(name="${peerSid}/lead", title="${ch.title ?? ''}:<subject>") to communicate`
     );
   };
-  if (ctx.todo.hasOpenTodo() || activeChannels.length > 0) {
-    const currentTodoState = ctx.todo.printTodoList();
-    const channelState =
-      activeChannels.length > 0
-        ? activeChannels
-            .map(
-              (ch) =>
-                `  [channel ${ch.channelId}] peer=${ch.peerSessionId} fresh=${ctx.peer.isFresh(ch.peerSessionId!)} title="${ch.title}"`
-            )
-            .join('\n')
-        : '';
-    const compositeState = `${currentTodoState}\n${channelState}`;
-    if (compositeState !== turn.lastTodoState) {
-      turn.nextTodoNudge = 3;
-      turn.lastTodoState = compositeState;
-    }
-    turn.nextTodoNudge--;
-    if (turn.nextTodoNudge === 0) {
-      // The nudge prints the current list (incl. any [preventStop: …] guards).
-      const nudgeParts = [`Update your todos. ${ctx.todo.printTodoList()}`];
-      if (activeChannels.length > 0) {
-        nudgeParts.push(
-          `Active channels:\n${activeChannels.map(channelLine).join('\n\n')}`,
-          'peer_list for a fresh read; mail a peer with mail_to(name="<session-id>/lead").'
-        );
-      }
-      triologue.note('NUDGE', nudgeParts.join('\n'));
-      turn.nextTodoNudge = 3;
-    }
+  const todoList = ctx.todo.hasOpenTodo() ? ctx.todo.printTodoList() : '';
+  const peerBlock =
+    activeChannels.length > 0
+      ? `Active channels:\n${activeChannels.map(channelLine).join('\n\n')}\npeer_list for a fresh read; mail a peer with mail_to(name="<session-id>/lead").`
+      : '';
+  // Counters, reset and emit are deliberately OUTSIDE the "is there anything to
+  // say" guard. Completing the last open todo makes `hasOpenTodo()` false, and
+  // that is exactly the moment the countdown must keep running and the `once`
+  // todo row must be replaced by a list showing it done — gating on the guard
+  // froze the counter and left the model reading a stale checklist.
+  const state = `${todoList}\n${peerBlock}`;
+  if (state !== turn.lastTodoState) {
+    turn.lastTodoState = state;
+    // Any rendered change re-arms the countdown, so a write on round 3 of a
+    // 5-round window defers the next nudge to round 8 (docs/loop/reminder-
+    // retention.md §5). A write that renders identically changes nothing that
+    // needs saying, so it must not postpone the reminder.
+    turn.nextTodoNudge = every;
+  }
+  if (todoList) replaceTopic('todo', `Update your todos. ${todoList}`);
+  if (peerBlock) replaceTopic('peer', peerBlock);
+  turn.nextTodoNudge--;
+  if (turn.nextTodoNudge <= 0) {
+    if (todoList) replaceTopic('todo', `Update your todos. ${todoList}`);
+    if (peerBlock) replaceTopic('peer', peerBlock);
+    turn.nextTodoNudge = every;
   }
 }
 
@@ -331,34 +453,37 @@ async function runTodoNudge(env: MachineEnv, turn: TurnVars): Promise<void> {
  * Side effects on `turn`: `nextBriefNudge` (decremented / reset to 5).
  * Side effects on `env`: `nextWtNudge` (the worktree check sentinel).
  */
-async function runBriefAndWorktreeNudges(env: MachineEnv, turn: TurnVars): Promise<void> {
-  const { triologue } = env;
-
-  // 5. Brief nudging - remind agent to use brief tool
+async function runBriefAndWorktreeNudges(
+  env: MachineEnv,
+  turn: TurnVars,
+  replaceTopic: (topic: string, text: string) => void
+): Promise<void> {
+  // 5. Brief nudging - remind agent to use brief tool.
+  //    `nextBriefNudge` is re-armed to its registry cadence by the brief TOOL
+  //    call (states/tool.ts); COLLECT only counts down and fires.
   turn.nextBriefNudge--;
   if (turn.nextBriefNudge <= 0) {
-    triologue.note(
-      'NUDGE',
+    replaceTopic(
+      'brief',
       'Provide a brief status update using the brief tool: brief("<what you are doing now>", <confidence 0-10>).'
     );
-    turn.nextBriefNudge = 5;
+    turn.nextBriefNudge = nudgeEvery('brief')!;
   }
 
   // 5b. Worktree cleanup nudge.
   //     nextWtNudge == 0 is the "check now" sentinel: cheaply call
-  //     listWorktrees() (async git query) each chat. If worktrees exist,
-  //     inject a REMINDER and arm the counter to N so we don't nag every
-  //     turn. If none, leave the counter at 0 (re-checkes next pass).
-  //     When the counter is nonzero, just decrement it.
+  //     listWorktrees() (async git query) each chat. If worktrees exist, emit
+  //     the reminder and arm the counter to the registry cadence so we don't
+  //     nag every turn. If none, leave the counter at 0 (re-checked next pass).
   if (env.nextWtNudge === 0) {
     const worktrees = await listWorktrees(process.cwd());
     if (worktrees.length > 0) {
       const lines = worktrees.map((w) => `- ${w.name} at ${w.path} (branch: ${w.branch})`);
-      triologue.note(
-        'NUDGE',
+      replaceTopic(
+        'worktree',
         `Worktrees present. Remove one with bash (git worktree remove <path>) only if you are sure its branch is merged and no teammate is still working in it:\n${lines.join('\n')}`
       );
-      env.nextWtNudge = 5;
+      env.nextWtNudge = nudgeEvery('worktree')!;
     }
   } else {
     env.nextWtNudge--;
@@ -380,6 +505,17 @@ function logVerboseStats(env: MachineEnv, messageCount: number): void {
 export async function handleCollect(env: MachineEnv, turn: TurnVars, _chat: ChatData): Promise<HandlerResult> {
   const { triologue, ctx } = env;
 
+  /**
+   * Topics a producer REPLACED during this pass (see sweepReminders): a
+   * fresh copy of a state-triggered note supersedes the older ones, so `once`
+   * topics swept only on replacement keep exactly the newest.
+   */
+  const replaced = new Set<string>();
+  const replaceTopic = (topic: string, text: string, hookName?: string): void => {
+    noteTopic(env, topic, text, hookName);
+    replaced.add(topic);
+  };
+
   try {
     // Observability: emit confusion_score at COLLECT entry (silent when no listeners)
     const confusionScoreEntry = ctx.core.getConfusionIndex();
@@ -397,13 +533,17 @@ export async function handleCollect(env: MachineEnv, turn: TurnVars, _chat: Chat
     if (hintSignal === 'stop') return AgentState.STOP;
 
     // 4. Todo + peer-channel nudging.
-    await runTodoNudge(env, turn);
+    await runTodoNudge(env, turn, replaceTopic);
 
     // 5. Brief + worktree cleanup nudges.
-    await runBriefAndWorktreeNudges(env, turn);
+    await runBriefAndWorktreeNudges(env, turn, replaceTopic);
 
     // 6. Composite keyword extraction for proactive skill discovery.
     await skillSuggester.suggestSkill(env, turn, firstSteerNote);
+
+    // 6b. Retention sweep — AFTER every producer of this pass has emitted, so
+    //     a note written now is the newest copy and survives its own sweep.
+    sweepReminders(env, replaced);
 
     // 7. Verbose token/message logging.
     const messageCount = triologue.getMessagesRaw().length;

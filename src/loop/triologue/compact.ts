@@ -124,7 +124,11 @@ export function saveTranscript(messages: Message[]): string {
 
   const writeStream = fs.createWriteStream(transcriptPath);
   for (const msg of messages) {
-    writeStream.write(`${JSON.stringify(msg)}\n`);
+    // `meta` (retention topic) is memory-only — never persist it. This is the
+    // SECOND persistence boundary (the transcript writer above is the first).
+    const { meta: _meta, ...persisted } = msg;
+    void _meta;
+    writeStream.write(`${JSON.stringify(persisted)}\n`);
   }
   writeStream.end();
 

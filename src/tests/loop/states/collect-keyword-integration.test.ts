@@ -135,6 +135,8 @@ vi.mock('../../../loop/triologue.js', () => {
     compact = vi.fn(async () => {});
     getTokenCount = vi.fn(() => 100);
     getTokenThreshold = vi.fn(() => 50000);
+    blankNotesByTopic = vi.fn(() => 0);
+    recomputeTokenCount = vi.fn();
     getLastRole = vi.fn(() => null);
   }
   return { Triologue: TriologueStub };
@@ -606,7 +608,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     // Next COLLECT: the edge re-armed → the CURRENT state is re-reported.
     vi.mocked(triologue.note).mockClear();
     await handleCollect(env, turn, createChatData());
-    expect(vi.mocked(triologue.note)).toHaveBeenCalledWith('SYSTEM', expect.stringContaining('Web UI started'));
+    expect(vi.mocked(triologue.note)).toHaveBeenCalledWith('SYSTEM', expect.stringContaining('Web UI started'), undefined, 'system');
   });
 
   it('fail-fast: an empty freeformQuery grants ONE same-query retry (budget=1, cooldown=1), injects no HINT', async () => {

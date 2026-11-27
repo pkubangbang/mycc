@@ -1,6 +1,6 @@
 # Note Taxonomy & Stale Folding
 
-**Status:** implemented (§9 steps 1-6 landed; verified by src/tests/fold-notes.test.ts and src/tests/fold-notes-integration.test.ts). This document records the design AND the corrections made during its line-by-line review — see §11.
+**Status:** SUPERSEDED. The read-time fold described here (`fold-notes.ts`, `foldStaleNudges`) has been **deleted**; staleness is now decided by a retention policy owned by COLLECT and applied by an in-place sweep — see **`docs/loop/reminder-retention.md`**. This document is kept for the reasoning that still holds (why tokens are not the point, why a merge/delete projection was rejected, why the lead and teammate paths differ) and as a record of the design that preceded it; read §4, §6 and §11 with that substitution in mind.
 
 ## 1. Purpose
 
@@ -24,7 +24,7 @@ possible from `category + staleness` alone.
 
 ## 2. The single invariant
 
-> **Write by appending only; fold at read time by `category + staleness`.**
+> **Write by appending only; supersede older copies at COLLECT time by `topic + retention`.** (Superseded rule, kept for its reasoning: *write by appending only; fold at read time by `category + staleness`*. The category no longer decides lifetime — `[NUDGE]` alone carries five different topics with five different lifetimes; see `reminder-retention.md` §2–§3.)
 
 Folding is an **outbound projection**, not a mutation of history. The message
 array, its length, its role sequence, the journal, and `tokenCount` are all

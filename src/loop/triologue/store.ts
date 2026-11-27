@@ -14,7 +14,6 @@ import type { Message, ToolCall } from '../../types.js';
 import type { Role } from './types.js';
 import { estimateTokens, estimateTokensForMessages } from '../../utils/token.js';
 import { agentIO } from '../agent-io.js';
-import { foldStaleNudges } from './fold-notes.js';
 
 /**
  * Message storage layer.
@@ -346,7 +345,52 @@ export class MessageStore {
   }
 
   recomputeTokenCount(): void {
-    this.tokens = estimateTokensForMessages(this.messages);
+    // Measure the HOLE-FILTERED view: `messages` can hold `undefined` entries
+    // after a wrap-up rollback (see the sparse-hole note above), and
+    // estimateTokens dereferences `message.content`.
+    this.tokens = estimateTokensForMessages(this.getRaw());
+  }
+
+  /**
+   * Blank the CONTENT of every note whose `meta.topic` is `topic`, keeping the
+   * newest `keepNewest` rows (0 = blank them all). Called by the COLLECT-owned
+   * retention sweep (docs/loop/reminder-retention.md §4).
+   *
+   * Two hard rules, both enforced by construction here:
+   *
+   * 1. MUTATE `content` IN PLACE — never replace a row. The segment archiver
+   *    fingerprints the boundary MESSAGE OBJECT and aborts an archive when
+   *    `messageAt(anchorEnd) !== fingerprint.msg`, so a fresh object per
+   *    blanked row would silently turn the next queued archive into "store
+   *    changed during summarization".
+   * 2. Walk the TRUE array (`this.messages`) and this array ONLY. The provider
+   *    view aliases project-context rows when no extra keys are present, so
+   *    sweeping `getFullMessages()` would rewrite the cache-stable prefix.
+   *
+   * The placeholder keeps the original `[CATEGORY] ` prefix: hint-round's
+   * analyzer filters on it, and a blanked row must never look like model text.
+   *
+   * @returns the number of rows blanked (0 = no-op, caller may skip recompute).
+   */
+  blankNotesByTopic(topic: string, keepNewest: number): number {
+    const candidates: Message[] = [];
+    for (const m of this.messages) {
+      if (m && typeof m === 'object' && m.role === 'user' && m.meta?.topic === topic) candidates.push(m);
+    }
+    // `keepNewest` newest survive; everything older is blanked. For a
+    // state-triggered producer this is exactly "the newest copy is current".
+    const toBlank = keepNewest > 0 ? candidates.slice(0, Math.max(0, candidates.length - keepNewest)) : candidates;
+    let blanked = 0;
+    for (const m of toBlank) {
+      const content = typeof m.content === 'string' ? m.content : '';
+      const prefix =
+        content.startsWith('[') && content.indexOf('] ') > 0 ? content.slice(0, content.indexOf('] ') + 2) : '';
+      const placeholder = `${prefix}(earlier note — retained copy dropped by the ${topic} retention policy)`;
+      if (m.content === placeholder) continue;
+      m.content = placeholder;
+      blanked++;
+    }
+    return blanked;
   }
 
   resetTokenCount(): void {
@@ -409,21 +453,18 @@ export class MessageStore {
   }
 
   /**
-   * The OUTBOUND conversation: the conversation segment exactly as it will be
-   * sent — hole-filtered, then passed through {@link foldStaleNudges}.
+   * The OUTBOUND conversation segment: what the provider sees of the
+   * conversation, minus system prompt and project context.
    *
-   * Exists so token-budget accounting can measure the conversation without
-   * re-deriving the fold rule: /token must report what the LLM actually sees,
-   * and getRaw() (true text) overstates it by the size of every folded NUDGE.
-   * getFullMessages() = system + projectContext + THIS, so the two stay
-   * consistent by construction.
-   *
-   * NOT for the journal, livelog, compaction summarizer (which persists true
-   * text) or tokenCount — those keep reading getRaw() by design
-   * (docs/loop/note-taxonomy.md §2).
+   * It is now plain `getRaw()`: stale notes are no longer projected away at
+   * read time — the COLLECT-owned retention sweep blanks their content in
+   * place, so the true text IS what the provider sees
+   * (docs/loop/reminder-retention.md). The method is kept because /token
+   * accounts through it and because it names the distinction in one place if
+   * a read-time projection ever returns.
    */
   getConversationForProvider(): Message[] {
-    return foldStaleNudges(this.getRaw());
+    return this.getRaw();
   }
 
   /**
@@ -466,12 +507,10 @@ export class MessageStore {
       if (m && typeof m === 'object' && m.role) result.push(toProviderMessage(m));
     }
 
-    // Conversation history — with stale NUDGE notes folded out of the model's
-    // view (docs/loop/note-taxonomy.md). Read-time-only projection: same
-    // length, same role sequence, no mutation, so TP, the journal and
-    // tokenCount (incremental, above) are all unaffected.
-    const conversation = foldStaleNudges(this.messages);
-    for (const m of conversation) {
+    // Conversation history. No read-time projection here: the retention sweep
+    // already blanked stale notes in place, so this is a straight allow-list
+    // pass (docs/loop/reminder-retention.md §4.1).
+    for (const m of this.messages) {
       if (m && typeof m === 'object' && m.role) result.push(toProviderMessage(m));
     }
 

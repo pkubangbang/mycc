@@ -40,7 +40,7 @@ import { abortWrapUpCapsule } from './wrap-up-state.js';
  */
 type DeferredInput =
   | { kind: 'user'; text: string; steerDelivery?: boolean }
-  | { kind: 'note'; category: NoteCategory; hookName?: string; text: string };
+  | { kind: 'note'; category: NoteCategory; hookName?: string; text: string; topic?: string };
 
 export class Triologue {
   private store: MessageStore = new MessageStore();
@@ -170,6 +170,12 @@ export class Triologue {
       (copy as { steer_delivery?: true }).steer_delivery = true;
     }
     (copy as { kind?: PieceKind }).kind = kind;
+    // `meta` is MEMORY-ONLY: the sweep needs the topic, the journal must never
+    // see it. Stripped here (the journal/onMessage copy) AND at the compaction
+    // snapshot (triologue/compact.ts) — the two persistence boundaries. It also
+    // never reaches a provider: PROVIDER_MESSAGE_KEYS is an allow-list, so an
+    // unknown field is dropped on egress.
+    if (copy.meta) delete copy.meta;
     this.options.onMessage(copy, () => this.store.getRaw());
   }
 
@@ -396,7 +402,7 @@ export class Triologue {
       if (item.kind === 'user') {
         this.user(item.text, { steerDelivery: item.steerDelivery });
       } else {
-        this.note(item.category, item.text, item.hookName);
+        this.note(item.category, item.text, item.hookName, item.topic);
       }
     }
   }
@@ -463,15 +469,24 @@ export class Triologue {
    *   note is stored as a SEPARATE message (never combined with the last user
    *   message) and tagged with `hook_name` so the minifier can emit `ux[hookName]|`.
    *   This preserves per-hook attribution when multiple hooks fire in one move.
+   * @param topic - Optional RETENTION identity (see Message.meta). The category
+   *   says what the note IS; the topic says what it is ABOUT, and only a topic
+   *   makes the note eligible for the COLLECT-owned sweep
+   *   (docs/loop/reminder-retention.md). Omitting it means "keep forever",
+   *   which is why the ~20 out-of-scope call sites (teammate loop, lite
+   *   triologue) need no change at all. It is optional and TRAILING on purpose:
+   *   renaming the first parameter would have silently unregistered every
+   *   caller this design does not own.
    */
-  note(category: NoteCategory, message: string, hookName?: string): void {
+  note(category: NoteCategory, message: string, hookName?: string, topic?: string): void {
+    const meta = topic ? { meta: { topic } } : {};
     // Guard 1 — tool_calls outstanding: DEFER (same invariant as user(); the
     // note must not be interposed between the assistant's tool_calls and their
     // results). Deferring here ALSO prevents the cascade: because nothing is
     // appended, tool() still sees lastRole==='assistant' and tool_no_assistant
     // never fires a second synthetic assistant.
     if (this.ledger.size > 0) {
-      this.deferInput({ kind: 'note', category, text: message, hookName });
+      this.deferInput({ kind: 'note', category, text: message, hookName, topic });
       return;
     }
     const lastRole = this.getLastRole();
@@ -482,7 +497,8 @@ export class Triologue {
         this.addMessage({
           role: 'user',
           content: `[${category}] ${message}`,
-          ...(hookName ? { hook_name: hookName } : {})
+          ...(hookName ? { hook_name: hookName } : {}),
+          ...meta
         });
         return;
       }
@@ -495,7 +511,7 @@ export class Triologue {
     // Legality: a note lands only after an assistant with no outstanding
     // tool_calls (the ledger guard + the tool()/skipPendingTools flushes
     // guarantee it); tpFix recovers for any provider that objects.
-    this.addMessage({ role: 'user', content: noteContent, ...(hookName ? { hook_name: hookName } : {}) });
+    this.addMessage({ role: 'user', content: noteContent, ...(hookName ? { hook_name: hookName } : {}), ...meta });
   }
 
   /**
@@ -1037,6 +1053,20 @@ export class Triologue {
   }
 
   /**
+   * Blank stale reminder copies by retention topic, in place, over the store's
+   * TRUE array (never the provider view — see MessageStore.blankNotesByTopic).
+   * Called by the COLLECT-owned retention sweep.
+   */
+  blankNotesByTopic(topic: string, keepNewest: number): number {
+    return this.store.blankNotesByTopic(topic, keepNewest);
+  }
+
+  /** Re-measure tokenCount from the hole-filtered live snapshot. */
+  recomputeTokenCount(): void {
+    this.store.recomputeTokenCount();
+  }
+
+  /**
    * TRUE-array index of the assistant message carrying tool call `callId`, or
    * -1. Scanned backwards (the answer is virtually always the most recent
    * assistant message) against store.at()/length, NOT getRaw()/getMessages():
@@ -1131,9 +1161,10 @@ export class Triologue {
       : this.store.getSystemMessages();
     const system = estimateTokensForMessages(systemMessages);
     const projectContext = estimateTokensForMessages(this.store.getProjectContextMessages());
-    // Measure the FOLDED projection, not the raw array: stale NUDGE notes are
-    // elided on the outbound path (getFullMessages → foldStaleNudges), so the
-    // raw text would overstate what the next LLM call carries.
+    // Measure what the next LLM call actually carries. Stale notes are no
+    // longer projected away at read time — the retention sweep blanks their
+    // content in the store, so this is the true outbound text
+    // (docs/loop/reminder-retention.md §4).
     const conversation = estimateTokensForMessages(this.store.getConversationForProvider());
 
     // Tools schema — serialize each entry and estimate like a message body.

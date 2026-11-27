@@ -758,8 +758,12 @@ export class JsonlTranscriptWriter {
    */
   append(message: AppendablePiece | ControlPiece | NotePiece): boolean {
     const piece = message as Record<string, unknown>;
-    const { kind, user_origin, ...messageFields } = piece;
+    // `meta` (retention topic) is MEMORY-ONLY: it is stripped here — the journal
+    // boundary — alongside kind/user_origin, so a restored session carries no
+    // topic and its rows are never swept. See docs/loop/reminder-retention.md §2.2.
+    const { kind, user_origin, meta: _meta, ...messageFields } = piece;
     void user_origin;
+    void _meta;
     const record: TranscriptRecord = {
       ...messageFields,
       kind: (kind ?? 'new') as PieceKind,
