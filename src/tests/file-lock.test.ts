@@ -98,10 +98,14 @@ describe.skipIf(mutedSlowSuite(import.meta.url))('withFileLock', () => {
     // out the acquire timeout then runs fn anyway so the guarded write lands.
     fs.writeFileSync(lockDir, 'not a dir');
     let ran = false;
-    const ret = withFileLock(target, () => {
-      ran = true;
-      return 'ok';
-    });
+    const ret = withFileLock(
+      target,
+      () => {
+        ran = true;
+        return 'ok';
+      },
+      { timeoutMs: 200, pollMs: 10 }
+    );
     expect(ran).toBe(true);
     expect(ret).toBe('ok');
   });
@@ -124,6 +128,60 @@ describe.skipIf(mutedSlowSuite(import.meta.url))('withFileLock', () => {
     expect(ran, 'fn must NOT run when a strict lock cannot be acquired').toBe(false);
   });
 
+  it('reports the EFFECTIVE timeout in FileLockTimeoutError (short timeoutMs)', () => {
+    // The message must quote the timeout that was actually waited, not a module
+    // constant — otherwise a short-timeout caller gets a misleading "5000ms".
+    fs.writeFileSync(lockDir, 'not a dir');
+    try {
+      withFileLock(target, () => {}, { strict: true, timeoutMs: 120, pollMs: 10 });
+      throw new Error('expected FileLockTimeoutError');
+    } catch (err) {
+      expect(err).toBeInstanceOf(FileLockTimeoutError);
+      expect((err as Error).message).toContain('within 120ms');
+    }
+  });
+
+  it('reclaims a lock older than the hard ceiling EVEN IF its pid looks alive (PID recycling)', () => {
+    // A SIGKILLed holder left the lock; its pid was later recycled by an
+    // unrelated live process. The pid probe therefore says "alive", but the lock
+    // is ancient — without the ceiling it would wedge every future launch.
+    fs.mkdirSync(lockDir);
+    const staleTime = Date.now() - 5 * 60_000; // 5 min > HARD_STALE_MS (2 min)
+    fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({ pid: process.pid, time: staleTime }));
+    const old = staleTime / 1000;
+    fs.utimesSync(lockDir, old, old);
+    fs.utimesSync(path.join(lockDir, 'owner.json'), old, old);
+
+    let ran = false;
+    withFileLock(
+      target,
+      () => {
+        ran = true;
+      },
+      { timeoutMs: 500, pollMs: 10 }
+    );
+    expect(ran).toBe(true);
+    expect(fs.existsSync(lockDir)).toBe(false);
+  });
+
+  it('a robbed holder does NOT delete the usurper lock on release (ownership-checked)', () => {
+    // Simulate: this caller acquired, then its lock was taken over past the hard
+    // ceiling and re-created by another holder with a DIFFERENT owner id. When
+    // the original section returns, its release must leave the new lock intact —
+    // otherwise two processes would sit in the critical section at once.
+    let lockSurvived = false;
+    withFileLock(target, () => {
+      // Another holder reclaims the dir and publishes ITS owner id.
+      fs.rmSync(lockDir, { recursive: true, force: true });
+      fs.mkdirSync(lockDir);
+      fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({ pid: 2 ** 30, time: Date.now(), id: 'usurper' }));
+      lockSurvived = fs.existsSync(path.join(lockDir, 'owner.json'));
+    });
+    expect(lockSurvived, 'the usurper lock existed during the section').toBe(true);
+    const owner = JSON.parse(fs.readFileSync(path.join(lockDir, 'owner.json'), 'utf-8')) as { id?: string };
+    expect(owner.id, 'the usurper owner file must still be there').toBe('usurper');
+  });
+
   it('never reclaims a lock held by a LIVE pid merely because it is old', () => {
     // A lock owned by THIS (live) process, backdated far past the stale window.
     // The old age-only reclaim would steal it, re-opening the lost-update race.
@@ -134,14 +192,15 @@ describe.skipIf(mutedSlowSuite(import.meta.url))('withFileLock', () => {
     fs.utimesSync(path.join(lockDir, 'owner.json'), old, old);
 
     // Strict mode: a live holder that never releases must make the acquirer
-    // TIME OUT (not steal).
+    // TIME OUT (not steal). A short timeout keeps the suite fast; the rule under
+    // test (a merely-old lock held by a live pid is not stolen) is unchanged.
     expect(() =>
       withFileLock(
         target,
         () => {
           /* should never run */
         },
-        { strict: true }
+        { strict: true, timeoutMs: 200, pollMs: 10 }
       )
     ).toThrow(FileLockTimeoutError);
     // The live holder's lock dir is intact — not stolen.

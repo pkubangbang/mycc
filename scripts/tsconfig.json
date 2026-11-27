@@ -1,0 +1,21 @@
+{
+  // Per-directory project for the scripts under scripts/ (mycc-compose, tp-
+  // violation, ...). The ROOT tsconfig only includes src/**, so a file here had
+  // no tsconfig covering it — and a type-aware check run on ONE file (which is
+  // exactly what the pre-commit hook does: `vp check --fix <staged files>`)
+  // then resolved no Node types and failed with TS2591 "Cannot find name 'fs'"
+  // for fs/path/os/process. The whole-repo check never showed it because it
+  // walks the root tsconfig's src/** include instead.
+  //
+  // Mirrors src/tests/tsconfig.json: extend the root project for its compiler
+  // options, then declare that this directory is type-checkable on its own.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "rootDir": "..",
+    "types": ["node"]
+  },
+  "include": ["./**/*.ts"],
+  "exclude": ["node_modules", "dist", "tp-violation/**"]
+}

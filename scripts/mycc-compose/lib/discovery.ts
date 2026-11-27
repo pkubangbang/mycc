@@ -28,6 +28,8 @@ import {
   didPidStartAfter,
   isOriginalHolderAlive
 } from '../../../src/utils/process-liveness.js';
+// CPU-free synchronous sleep — shared with file-lock.ts / atomic-write.ts.
+import { sleepSync } from '../../../src/utils/sleep.js';
 
 export { isPidAlive, getProcessStartTime, didPidStartAfter, isOriginalHolderAlive };
 
@@ -46,18 +48,12 @@ export { isPidAlive, getProcessStartTime, didPidStartAfter, isOriginalHolderAliv
 export function waitForPidDeath(pid: number, timeoutMs = 1_000): boolean {
   if (typeof pid !== 'number') return false;
   const deadline = Date.now() + timeoutMs;
-  // Busy-wait is acceptable here: this runs once per successfully-stopped peer
-  // in a teardown CLI, and a synchronous sleep would block the event loop the
-  // same way. Sleep in ~10ms slices to stay gentle on the CPU.
-  const sleepSlice = (ms: number): void => {
-    const end = Date.now() + ms;
-    while (Date.now() < end) {
-      /* spin */
-    }
-  };
+  // The wait must be SYNCHRONOUS (this runs inside a synchronous teardown CLI),
+  // but it need not burn a core: sleepSync parks the thread for each ~10 ms
+  // slice at zero CPU cost (see src/utils/sleep.ts).
   while (Date.now() <= deadline) {
     if (!isPidAlive(pid)) return true;
-    sleepSlice(10);
+    sleepSync(10);
   }
   return !isPidAlive(pid);
 }

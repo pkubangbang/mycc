@@ -26,6 +26,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vite-plus/test';
 import { execSync } from 'child_process';
+import { sleepSync as sleepSyncMs } from '../../utils/sleep.js';
 
 const PORT = 3191; // dedicated to this test suite; unlikely to collide
 const SESSION = 'serve-health-test';
@@ -35,14 +36,14 @@ function sh(cmd: string, timeoutMs = 10000): string {
 }
 
 /**
- * Cross-platform blocking sleep. The original used
- * `powershell -Command "Start-Sleep -Seconds N"`, which only exists on
- * Windows and silently breaks the suite on Linux/macOS (`powershell: not
- * found`). Spawn node with a busy-wait loop instead — node is a hard
- * prerequisite for this repo, so it is always on PATH on every platform.
+ * Blocking sleep, in SECONDS, for the shell-command helper below. The original
+ * spawned `node -e "...while(Date.now()<d){}"` — a separate process that burned
+ * a whole core for the whole wait. It now parks THIS thread via the shared
+ * CPU-free sleepSync (src/utils/sleep.ts); no child process, no CPU. Keeping
+ * the seconds-based signature leaves the call sites unchanged.
  */
 function sleepSync(seconds: number): void {
-  sh(`node -e "var d=Date.now()+${Math.floor(seconds * 1000)};while(Date.now()<d){}"`, 10000);
+  sleepSyncMs(Math.floor(seconds * 1000));
 }
 
 /** The null-redirection token for the current platform. `2>nul` is

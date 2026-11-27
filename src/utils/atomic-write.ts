@@ -26,6 +26,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { sleepSync } from './sleep.js';
 
 /**
  * Transient fs errors on Windows that warrant a retry. See file header for
@@ -70,10 +71,8 @@ export function atomicWrite(filePath: string, data: string): void {
           // Brief backoff before retrying — the lock is typically gone by the
           // next event-loop tick, but a small sleep smooths antivirus scans.
           const delay = RENAME_RETRY_DELAY_MS * (attempt + 1);
-          const end = Date.now() + delay;
-          while (Date.now() < end) {
-            /* busy-wait: synchronous context */
-          }
+          // Parks the thread for `delay` ms at zero CPU cost (see utils/sleep.ts).
+          sleepSync(delay);
           continue;
         }
         throw err;
