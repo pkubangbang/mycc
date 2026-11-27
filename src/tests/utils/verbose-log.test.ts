@@ -42,13 +42,38 @@ async function freshInstall(cwd: string) {
   }
 }
 
-/** Size of the real log file, or null when it is not a regular file. */
+/**
+ * Size of the real log file, or null when it is not a regular file.
+ */
 function logSize(logPath: string): number | null {
   try {
     return fs.statSync(logPath).size;
   } catch {
     return null;
   }
+}
+
+/**
+ * Induce a REAL, permanent write failure for the tee: pre-create the log path
+ * as a symlink to `/dev/full`, which accepts `open()` (so installVerboseLog
+ * succeeds) but fails every `write(2)` with ENOSPC.
+ *
+ * Windows has no device nodes, so the symlink cannot be created there. That is
+ * NOT a licence to mock the failure: a mocked `fs.writeSync` proves only that
+ * the mock threw. The latch is a property of the real error path, so on a
+ * platform without `/dev/full` the affected cases are SKIPPED explicitly
+ * (and the skip reason says why) rather than turned into a green assertion
+ * that tests nothing. The healthy-log and one-tee-per-process cases still run
+ * everywhere.
+ */
+const FULL_DEVICE = '/dev/full';
+
+function induceWriteFailure(logPath: string): { unsupported: string } | null {
+  if (process.platform === 'win32' || !fs.existsSync(FULL_DEVICE)) {
+    return { unsupported: `${FULL_DEVICE} does not exist on ${process.platform} — real ENOSPC not inducible` };
+  }
+  fs.symlinkSync(FULL_DEVICE, logPath);
+  return null;
 }
 
 describe('installVerboseLog — failure latch (no sync write spin)', () => {
@@ -73,12 +98,9 @@ describe('installVerboseLog — failure latch (no sync write spin)', () => {
     }
   });
 
-  it('latches on the first failed write and never retries (no sync spin)', async () => {
-    // A real, permanent write failure: open() succeeds, every write ENOSPCs.
-    fs.symlinkSync('/dev/full', logPath);
-
-    const { logPath: installed } = await freshInstall(tmpDir);
-    expect(installed).toBe(logPath);
+  it('latches on the first failed write and never retries (no sync spin)', async (ctx) => {
+    const unsupported = induceWriteFailure(logPath);
+    if (unsupported) ctx.skip(unsupported.unsupported);
     // Nothing can land: /dev/full discards nothing and accepts no bytes.
     expect(logSize(logPath)).not.toBeNull();
 
@@ -94,8 +116,9 @@ describe('installVerboseLog — failure latch (no sync write spin)', () => {
     expect(elapsedMs).toBeLessThan(500);
   });
 
-  it('emits the failure warning exactly once', async () => {
-    fs.symlinkSync('/dev/full', logPath);
+  it('emits the failure warning exactly once', async (ctx) => {
+    const unsupported = induceWriteFailure(logPath);
+    if (unsupported) ctx.skip(unsupported.unsupported);
     const messages: string[] = [];
     vi.spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => {
       messages.push(String(chunk));
@@ -112,8 +135,9 @@ describe('installVerboseLog — failure latch (no sync write spin)', () => {
     expect(warnings[0]).toContain('logging disabled');
   });
 
-  it('still forwards the chunk to the real stream when logging fails', async () => {
-    fs.symlinkSync('/dev/full', logPath);
+  it('still forwards the chunk to the real stream when logging fails', async (ctx) => {
+    const unsupported = induceWriteFailure(logPath);
+    if (unsupported) ctx.skip(unsupported.unsupported);
     const { logPath: installed } = await freshInstall(tmpDir);
     expect(installed).toBe(logPath);
 

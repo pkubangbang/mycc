@@ -40,6 +40,25 @@ function seedTask(bg: BackgroundTasks, pid: number, status: BgTaskStatus, output
   return task;
 }
 
+/**
+ * A pid that is guaranteed NOT to be alive, for reap tests.
+ *
+ * A hard-coded small pid is not portable: on Windows pid 4 is System and many
+ * low pids are live, so "fake pid 2" may well be a real process. Scanning from
+ * a high base gives a number nobody on a normal machine holds.
+ */
+function findDeadPid(start = 999_000): number {
+  for (let pid = start; pid < start + 1_000; pid++) {
+    try {
+      process.kill(pid, 0);
+    } catch (err) {
+      // EPERM ⇒ the pid EXISTS but belongs to another user — not dead.
+      if ((err as NodeJS.ErrnoException)?.code === 'ESRCH') return pid;
+    }
+  }
+  throw new Error('no dead pid found in scan window');
+}
+
 describe('BackgroundTasks.printBgTasks — Fix 1 (output view)', () => {
   it('returns a not-found message for an unknown pid', async () => {
     const { bg } = makeBg();
@@ -148,8 +167,25 @@ describe('BackgroundTasks.hasRunningBgTasks / getTask', () => {
     const { bg } = makeBg();
     seedTask(bg, 1, 'completed');
     expect(await bg.hasRunningBgTasks()).toBe(false);
-    seedTask(bg, 2, 'running');
+    // The running task MUST carry a pid that is actually alive: since the
+    // stale-task reap, hasRunningBgTasks() calls reapDeadTasks() first, and a
+    // seeded fake pid (e.g. 2) reports ESRCH → reaped → 'killed' → false forever.
+    // process.pid is guaranteed alive for the life of this test.
+    seedTask(bg, process.pid, 'running');
     expect(await bg.hasRunningBgTasks()).toBe(true);
+  });
+
+  it('hasRunningBgTasks reaps a running task whose pid is dead (never "running" forever)', async () => {
+    const { bg } = makeBg();
+    // A pid with no live process: the Lead was SIGKILLed mid-flight, or the
+    // task was seeded and never wired to a real child. Reported by
+    // hasRunningBgTasks() it would keep a dead stdio pipe attached forever.
+    const deadPid = findDeadPid();
+    seedTask(bg, deadPid, 'running');
+    expect(bg.reapDeadTasks()).toEqual([deadPid]);
+    expect(bg.getTask(deadPid)?.status).toBe('killed');
+    expect(bg.getTask(deadPid)?.outputFinalized).toBe(true);
+    expect(await bg.hasRunningBgTasks()).toBe(false);
   });
 
   it('getTask returns the task or undefined', () => {
