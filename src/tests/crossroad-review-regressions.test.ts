@@ -18,9 +18,9 @@ import {
   segmentsOf,
   resolveTurningPoint,
   extractWordsBeforeTurn,
-  stripAndValidate,
-  MIN_PREFIX_LENGTH
+  stripAndValidate
 } from '../loop/crossroad.js';
+import stringWidth from 'string-width';
 import { segmentsOf as pkgSegmentsOf } from '@pkubangbang/crossroad-detector';
 
 beforeAll(() => {
@@ -156,17 +156,22 @@ describe('grid edges — the review regressions', () => {
 // ============================================================================
 
 describe('guards — the review regressions', () => {
-  it('MIN_PREFIX_LENGTH counts CHARACTERS: an emoji prefix is not double-counted', () => {
+  it('an emoji anchor is measured in effective length, not UTF-16 units', () => {
     // BEFORE: the guard compared UTF-16 offsets, so 16 emoji (16 characters,
     // 32 units) passed a 30-CHARACTER guard — astral text halved the threshold.
-    const prefix = '🚀'.repeat(16); // 16 characters, 32 UTF-16 units
-    expect(prefix.length).toBeGreaterThanOrEqual(MIN_PREFIX_LENGTH);
-    expect(Array.from(prefix).length).toBeLessThan(MIN_PREFIX_LENGTH);
+    // NOW: the unit is effective length over the anchor SENTENCE, so neither a
+    // UTF-16 double-count nor a Latin character count decides for CJK text.
+    const prefix = '🚀'.repeat(16); // 16 characters, 32 UTF-16 units, 32 effective
+    expect(prefix.length).toBeGreaterThanOrEqual(30);
+    expect(Array.from(prefix).length).toBe(16);
+    expect(stringWidth(prefix)).toBe(32);
 
     const content = `${prefix}\n\nHowever, the plan is wrong and I should say so plainly.`;
-    // The prefix has fewer than 30 CHARACTERS, so no usable cut can start after it.
     const point = resolveTurningPoint(content, matchFor(content, 'However'));
-    expect(point).toBeNull();
+    // The anchor is a full sentence by effective length, so the cut is usable —
+    // the astral characters are NOT double-counted into a false refusal.
+    expect(point).not.toBeNull();
+    expect(point!.cutStart).toBe(prefix.length + 2);
   });
 });
 

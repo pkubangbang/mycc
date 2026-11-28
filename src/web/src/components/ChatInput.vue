@@ -25,6 +25,7 @@
 import { ref, watch, computed } from 'vue';
 import type { ChatState } from '../types';
 import { chatApi } from '../main';
+import { resolveUnavailable } from '../magic-query-rules';
 import { beginDrag, anchoredHeight } from '../composer-height';
 import type { DragAnchor } from '../composer-height';
 import { useAttachmentQueue } from '../composables/useAttachmentQueue';
@@ -128,6 +129,25 @@ function onMagicQueryClick(): void {
 }
 
 /**
+ * Whether the backend has told us WHICH instance serves this page, i.e. whether
+ * `/config` has answered at least once.
+ *
+ * Until it does, `state.persistent` is only the store's default (false — the
+ * safe 退出 fallback), and a gate keyed on it would advertise a `/reload` that a
+ * daemon page cannot run. The app-level `/config` fetch (main.ts fetchConfig)
+ * is the only writer of `state.persistent`; this flag records that it landed.
+ */
+const configFetched = ref(false);
+const persistentKnown = computed(() => configFetched.value);
+watch(
+  () => props.state.persistent,
+  () => {
+    configFetched.value = true;
+  },
+  { immediate: true }
+);
+
+/**
  * The 魔法查询 list. Order matters: entries escalate in destruction.
  *
  *   • `/compact` — summarizes the conversation and replaces it with a short
@@ -164,6 +184,27 @@ const MAGIC_QUERIES: MagicQuery[] = [
   }
 ];
 
+/**
+ * The row list with each row's availability resolved for THIS backend.
+ *
+ * A computed, not the static MAGIC_QUERIES: `state.persistent` arrives
+ * asynchronously after boot, so the dialog must re-render the moment it does.
+ * `/reload` needs the Coordinator to respawn the Lead, and a headless daemon has
+ * none — the backend refuses it (src/slashes/reload.ts), so the row is greyed
+ * with that reason instead of appearing to work. One decision, shared with the
+ * dialog's `:disabled`, its click handler and runMagicQuery below.
+ */
+const magicQueries = computed<MagicQuery[]>(() =>
+  MAGIC_QUERIES.map((q) => ({
+    ...q,
+    unavailable: resolveUnavailable({
+      query: q.query,
+      persistent: props.state.persistent,
+      persistentKnown: persistentKnown.value
+    })
+  }))
+);
+
 function closeMagicQuery(): void {
   magicQueryOpen.value = false;
 }
@@ -190,6 +231,11 @@ function runMagicQuery(query: string): void {
     chatApi.sendClearConversation();
     return;
   }
+  // The row list can outlive the backend identity (a stale dialog kept open
+  // across a reconnect to a different instance), so the gate is re-checked at
+  // the ONE execution point instead of trusting the button that called us.
+  const row = magicQueries.value.find((q) => q.query === query);
+  if (row && row.unavailable) return;
   chatApi.sendInput(query);
 }
 
@@ -518,8 +564,10 @@ function fmtTime(at: number): string {
     <!-- Teleported to <body> by ModalShell; sits here only for prop wiring. -->
     <MagicQueryDialog
       :open="magicQueryOpen"
-      :queries="MAGIC_QUERIES"
+      :queries="magicQueries"
       :runnable="canSlash"
+      :persistent="props.state.persistent"
+      :persistent-known="persistentKnown"
       :auto-commit-branches="props.state.autoCommitBranches"
       :load-auto-commit="chatApi.requestAutoCommitList"
       :run-query="runMagicQuery"

@@ -216,9 +216,9 @@ async function handlePlanScopeBrief(
   // The model's PROSE comes first, in the same order every other path uses
   // (normal HOOK path and crossroad branch both call
   // briefAssistantContent before printing the tool's own line). This branch
-  // used to print ONLY the brief message, so the sentence that explains WHY
-  // the agent is briefing — already registered into the triologue above —
-  // never reached the terminal: the user saw a bare "confidence: x%" line
+  // prints the brief message AND the sentence explaining WHY the agent is
+  // briefing (already registered into the triologue above), so the user sees
+  // more than a bare "confidence: x%" line.
   // attached to nothing. Ordering matters as much as presence: the brief line
   // must follow the prose it belongs to.
   briefAssistantContent(ctx, chat.assistantContent, true);
@@ -421,14 +421,11 @@ export async function handleHook(env: MachineEnv, turn: TurnVars, chat: ChatData
       //      the handler).
       //   2. cutpoint — the turning segment itself (the word that reverses the
       //      direction), shown on its own so the reader sees WHERE the response
-      //      turned. Previously it was invisible: the prefix and continuation
-      //      were joined with a bare space, so the join could not be located.
+      //      turned: the prefix and continuation are joined by the marker,
+      //      never by a bare space.
       //   3. best-of-three briefs — the candidate list (generation order, NOT
       //      reordered), with the selected one marked.
       //   4. outcome — the resolved continuation (the new direction).
-      // The brief was previously emitted inside handleCrossroad's finally
-      // (LLM stage), which put part 3 BEFORE part 1; building it here restores
-      // the intended order.
       briefAssistantContent(ctx, chat.assistantContent, true);
       briefCrossroadCutpoint(ctx, chat.crossroadCutpoint);
       if (chat.crossroadCandidates && chat.crossroadCandidates.length > 1) {

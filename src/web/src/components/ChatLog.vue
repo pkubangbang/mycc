@@ -145,8 +145,9 @@ function isAtBottom(): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < 50;
 }
 
-// Near the TOP of the scroll container — used to trigger infinite-scroll-up
-// loading. A small threshold (px) so the next batch loads just before the
+// Near the TOP of the scroll container the next batch loads. A small
+// threshold (px) loads it just before the user hits the very top, avoiding
+// a visible "blank then pop" gap.
 // user hits the very top, avoiding a visible "blank then pop" gap.
 const TOP_LOAD_THRESHOLD = 60;
 
@@ -400,8 +401,9 @@ function jumpToPrevAwait(fromIndex: number): void {
   const findTarget = (): HTMLElement | null => el.querySelector<HTMLElement>('.is-prev-await-target');
 
   // Clear the marker + flash ONLY after the jump has finished with it. A fixed
-  // timeout used to race the scroll: the class could disappear before
-  // scrollIntoView ran (or the flash could be added to a node about to be
+  // The timeout must not race the scroll: the class can disappear before
+  // scrollIntoView runs (or the flash can be added to a node about to be
+  // reset — which is why "marked" is sometimes observed as 0.
   // reset), which is why "marked" was sometimes observed as 0.
   let finishTimer: ReturnType<typeof setTimeout> | null = null;
   const finish = (): void => {

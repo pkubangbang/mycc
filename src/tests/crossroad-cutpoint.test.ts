@@ -46,8 +46,9 @@ import {
   segmentStartAfter,
   segmentEndAfter,
   segmentsOf,
-  MIN_PREFIX_LENGTH,
-  MIN_REMAINDER_LENGTH,
+  resolveTurningPointDetailed,
+  MIN_ANCHOR_EFFECTIVE_LENGTH,
+  MIN_REMAINDER_EFFECTIVE_LENGTH,
   type TurningPoint
 } from '../loop/crossroad.js';
 import { segmentsOf as pkgSegmentsOf } from '@pkubangbang/crossroad-detector';
@@ -227,7 +228,16 @@ describe('resolveTurningPoint — rejects unusable cuts (I8)', () => {
   it('rejects a turn too close to the start', () => {
     const content = 'However, this is a fresh idea and it deserves a careful examination today.';
     expect(resolveTurningPoint(content, matchFor(content, 'However'))).toBeNull();
-    expect(content.indexOf('However')).toBeLessThan(MIN_PREFIX_LENGTH);
+    expect(content.indexOf('However')).toBeLessThan(MIN_ANCHOR_EFFECTIVE_LENGTH);
+  });
+
+  it('rejects a turn whose anchor sentence is only a fragment', () => {
+    // The whole reply is one sentence, so the "prefix" is `OK.` — present, but
+    // far below an anchor worth asking a continuation to repeat.
+    const content = 'OK. However, this is a fresh idea and it deserves a careful examination today.';
+    const outcome = resolveTurningPointDetailed(content, matchFor(content, 'However'));
+    expect(outcome.point).toBeUndefined();
+    expect(outcome.reason).toBe('prefix-too-narrow');
   });
 
   it('rejects a turn in a non-final unit that leaves too little after it', () => {
@@ -248,10 +258,10 @@ describe('resolveTurningPoint — rejects unusable cuts (I8)', () => {
   });
 
   it('accepts a turn with a paragraph break on both sides (I8 boundary)', () => {
-    const content = `${'x'.repeat(MIN_PREFIX_LENGTH)}\n\nBut ${'y'.repeat(MIN_REMAINDER_LENGTH)}\n\n${'z'.repeat(MIN_REMAINDER_LENGTH)}`;
+    const content = `${'x'.repeat(MIN_ANCHOR_EFFECTIVE_LENGTH)}\n\nBut ${'y'.repeat(MIN_REMAINDER_EFFECTIVE_LENGTH)}\n\n${'z'.repeat(MIN_REMAINDER_EFFECTIVE_LENGTH)}`;
     const point = resolveTurningPoint(content, matchFor(content, 'But'))!;
     expectInvariants(content, point, 'But');
-    expect(point.remainder.trim()).toBe('z'.repeat(MIN_REMAINDER_LENGTH));
+    expect(point.remainder.trim()).toBe('z'.repeat(MIN_REMAINDER_EFFECTIVE_LENGTH));
   });
 
   it('rejects an answer that carries neither an anchor nor an offset', () => {
@@ -281,6 +291,52 @@ describe('resolveTurningPoint — rejects unusable cuts (I8)', () => {
  * THE BLIND SPOTS. Cases that a naive segmenter corrupts: every one below was
  * reachable, so each test names the defect it pins and fails with a diagnosis.
  */
+describe('resolveTurningPoint — script-neutral guards (effective length)', () => {
+  // The guard is stated in effective length: `我先看一下配置。` is 8 characters
+  // but 16 effective length, and it is a complete sentence, not a fragment. A
+  // Latin character count judged it at 8 and refused every ordinary Chinese
+  // reply before crossroad could fire.
+  it('accepts a one-sentence Chinese prefix that a character count would refuse', () => {
+    const content = '我先看一下配置。但是，真正的问题在另一边，需要立即修复。';
+    const point = resolveTurningPoint(content, matchFor(content, '但'))!;
+    expectInvariants(content, point);
+    expect(Array.from(point.prefix).length).toBeLessThan(30);
+    expect(point.cutStart).toBe(8);
+    expect(point.cutpoint.startsWith('但是')).toBe(true);
+  });
+
+  it('splits a Chinese reply into kept sentence + replaced turn', () => {
+    const content = '我先看一下配置。但是，真正的问题在另一边，需要立即修复。';
+    const point = resolveTurningPoint(content, matchFor(content, '但'))!;
+    expect(point.prefix).toBe('我先看一下配置。');
+    expect(point.cutpoint).toBe('但是，真正的问题在另一边，需要立即修复。');
+    expect(point.remainder).toBe('');
+  });
+
+  it('accepts a Latin turn that opens the second sentence', () => {
+    const content = 'The build passed. Wait, that output came from a stale cache and does not prove anything.';
+    const point = resolveTurningPoint(content, matchFor(content, 'Wait'))!;
+    expectInvariants(content, point);
+    expect(point.cutpoint.startsWith('Wait')).toBe(true);
+  });
+
+  it('still rejects a reply with no sentence before the turn', () => {
+    const content = 'However, this is a fresh idea and it deserves a careful examination today.';
+    const outcome = resolveTurningPointDetailed(content, matchFor(content, 'However'));
+    expect(outcome.reason).toBe('no-cuttable-unit');
+  });
+
+  it('does not take a lone ellipsis unit as the anchor sentence', () => {
+    // The trainer lattice splits every terminator: "failed..." is
+    // `failed.` | `.` | `.`, so the unit before the turn is a single dot.
+    const content =
+      'A long committed opening paragraph that sets the direction clearly.\n\nThe plan failed... However, that is wrong and the whole direction must flip now.';
+    const point = resolveTurningPoint(content, matchFor(content, 'However,'))!;
+    expectInvariants(content, point, 'However,');
+    expect(point.remainder).not.toContain('However');
+  });
+});
+
 describe('segmentation blind spots', () => {
   it('CRLF paragraph breaks are boundaries too (a CRLF reply must not collapse to one unit)', () => {
     const lf =

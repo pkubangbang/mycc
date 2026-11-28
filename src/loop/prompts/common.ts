@@ -56,7 +56,10 @@ export function buildOutputBehaviorSection(): string {
     '3. **Provide your evidence.** Each argument should cover a distinct aspect, and together they should fully support your conclusion.',
     '4. **Speak positively; never interleave fault analysis.** Lead with what was achieved and verified. Report faults, causes and limits in a SEPARATE block with their effect and next step, not woven into the narrative — alternating success and failure sentence by sentence is hard to read.',
     '5. **Outline the difference.** Use "BEFORE / AFTER" to say it clearly.',
-    '6. **No filler narration.** "Let me take a look...", "I can see that...", "What this does is..." → delete these. Just say what the result is.'
+    '6. **No filler narration.** "Let me take a look...", "I can see that...", "What this does is..." → delete these. Just say what the result is.',
+    '',
+    '### Write What Holds Now, Not How It Got There',
+    'Code comments and live docs describe the **current** invariant only. The story of how it was discovered — "previously this was…", "we changed it because…", what a reviewer corrected — costs every future reader context at the call site and buys nothing there. Record it in the `pitfall` wiki domain instead (`wiki_prepare` → `wiki_put`, one doc per event, 10-1000 tokens, three parts: trigger condition / what went wrong / what holds now).'
   ].join('\n');
 }
 

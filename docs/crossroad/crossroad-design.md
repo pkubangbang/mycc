@@ -5,6 +5,7 @@
 > own `build_segments`); mycc owns no turning-word heuristic, and its only
 > segmentation work is the four consumer normalisations N1–N4 described below.
 > Cooldown: see `docs/crossroad/crossroad-cooldown.md`.
+> The window geometry the classifier is fed from: `docs/crossroad/caterpillar-algorithm.md`.
 
 ## Overview
 
@@ -239,9 +240,16 @@ Placement:
 - `segmentStartAfter` is the explicit "the turn is what gets said next" rule: it
   skips a unit the cut cannot start in.
 
-Two guards keep the cut worth taking — `MIN_PREFIX_LENGTH = 30` and
-`MIN_REMAINDER_LENGTH = 15`, both in **original-text offsets**. A turn inside the
-FINAL unit has no remainder: that unit is replaced **whole** (`cutEnd` is its end,
+Two guards keep the cut worth taking — `MIN_ANCHOR_EFFECTIVE_LENGTH = 10` and
+`MIN_REMAINDER_EFFECTIVE_LENGTH = 8`, both in **effective length** (display
+columns, leading/trailing whitespace excluded — see
+`caterpillar-algorithm.md`, "Effective length"). The prefix guard is measured on
+the **anchor sentence** — the last grid unit of the prefix, the same string
+`extractWordsBeforeTurn` hands to the continuation prompts — so what it asserts
+is "the sentence the continuation must repeat is substantial enough to anchor
+on", not "the prefix happens to be N Latin characters long". A turn inside the
+FINAL unit has no remainder: that unit is replaced **whole** (`cutEnd` is its
+end,
 trailing whitespace excluded), so the mid-text remainder guard does not apply
 there — there is no after-it to protect.
 
@@ -250,14 +258,20 @@ Measured recall on 70 real assistant answers from a live session (hint swept eve
 
 ```
 usable                     46  (65.7%)
-non-empty prefix < 30      19  (27.1%)   every one starts at offset 0 behind a long first sentence
+non-empty prefix < 30      19  (27.1%)   every one starts at offset 0 behind a
+                                        long first sentence
 no cuttable unit (forced)   5  ( 7.1%)   unpunctuated runs
 empty prefix < 30           0
 mid-text remainder < 15     0
 ```
 
-The remaining loss is the prefix guard on documents whose first sentence is long —
-a property of "the turn is in the first sentence", not of the grid.
+The remaining loss is the prefix guard on documents whose first sentence is
+long — a property of "the turn is in the first sentence", not of the grid. The
+numbers above were taken with the former character-counted constants and an
+English corpus: a Chinese reply of one ordinary sentence carries an effective
+length of 16 and was rejected by the old `MIN_PREFIX_LENGTH = 30`, which is why
+the guard is now stated in effective length.
+
 ## Rejected approaches (kept so they are not re-invented)
 
 - **A local turning-word regex.** Deleted — it disagreed with the trained model

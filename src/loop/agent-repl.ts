@@ -301,10 +301,8 @@ export async function main(): Promise<void> {
   // deliberately does NOT forward boundary records to its display observer
   // (they are journal marks, not chat rows — pinned by
   // display-record-seam.test.ts). So ServeHub can never LEARN about a clear
-  // by sniffing the record stream: the `record.kind === 'clear'` branch this
-  // code used to rely on was unreachable, and no browser ever received
-  // `clear-history`. The clear is therefore signalled DIRECTLY, from the one
-  // place the user asks for it.
+  // by sniffing the record stream: the clear is signalled DIRECTLY, from the
+  // one place the user asks for it.
   //
   // A LET (not a const) assigned through onServeHubReady: this runs during boot,
   // before the serve layer is loaded, so the real hub method can only be bound
@@ -460,8 +458,8 @@ export async function main(): Promise<void> {
   //                  buildProjectDocMessages), because half a rulebook is
   //                  worse than none. It is the SINGLE agent rulebook: the
   //                  toolchain invariants plus the output-behavior rules
-  //                  ("how to speak") that used to be a hard-coded
-  //                  system-prompt section. Project-owned so a project can
+  //                  ("how to speak") injected here instead of from a
+  //                  hard-coded system-prompt section. Project-owned so a project can
   //                  retune the wording without editing src/, and so the
   //                  leading prompt-cache prefix stays byte-stable.
   //

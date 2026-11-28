@@ -767,8 +767,15 @@ export class WikiManager implements WikiModule {
       // Phase 2: submerge — flip the row to state 2. It becomes invisible to
       // reads and is swept by the next GC/rebuild (never physically deleted
       // here, keeping the DB write-once-read-many).
+      //
+      // The predicate pins BOTH the hash and the LIVE state: two rows can share
+      // a hash legally (`put()` stores a sibling when references differ, and
+      // `generateHash` excludes references), and only the LIVE row was copied
+      // into the tombstone record above. A hash-only predicate would submerge
+      // the sibling too, and the next GC would delete a body the WAL never
+      // recorded — an unrecoverable loss of the only copy.
       await this.table.update({
-        where: `hash = '${escapeSqlLiteral(hash)}'`,
+        where: `hash = '${escapeSqlLiteral(hash)}' AND ${STATE_COLUMN} = ${WIKI_STATE_LIVE}`,
         values: { [STATE_COLUMN]: WIKI_STATE_SUBMERGED }
       });
 

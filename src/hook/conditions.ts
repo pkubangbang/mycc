@@ -781,7 +781,7 @@ Output a JSON object with trigger, condition, and action.`;
         this.set(skillName, condition);
 
         // A successful recompile clears any prior runtime-eval failure record
-        // for this hook, so a previously-broken condition drops out of the
+        // for this hook, so a condition that failed at runtime drops out of the
         // "[Hooks Erroring]" list on the next project-context rebuild.
         this.clearEvalFailure(skillName);
 

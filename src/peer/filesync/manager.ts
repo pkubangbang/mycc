@@ -192,8 +192,8 @@ export class FilesyncManager {
     if (!e) return; // not our share — drop (membership = possession)
     // R1 (architect review): the engine's switch owns ALL 5 verbs, so every
     // handler — including onPieceList — runs behind this one crash-guard.
-    // (A pre-branch here used to reach onPieceList OUTSIDE the guard: a
-    // hostile sync-pieces frame could throw and kill the process.)
+    // The pre-branch stays INSIDE the guard: an unguarded hostile sync-pieces
+    // frame would throw into onPieceList and kill the process.
     try {
       const msg = controlToMessage(frame);
       if (msg) e.onMessage(peer, msg);

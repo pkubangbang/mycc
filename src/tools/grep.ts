@@ -85,8 +85,7 @@ export const grepTool: ToolDefinition = {
     // If the search path is outside the workspace, request a session-scoped
     // grant from the user (same flow as read_file/edit_file/write_file). grep
     // is read-only, so readonly grants (e.g. from a prior read_file) also
-    // cover it. Previously this hard-blocked with "escapes workspace", leaving
-    // no way to search external directories.
+    // cover it, and the resolved dir is validated before access is requested.
     if (!isInsideWorkspace(resolvedDir, workDir)) {
       const access = await ctx.core.requestExternalPathAccess('grep', resolvedDir);
       if (!access.approved) {
@@ -104,9 +103,8 @@ export const grepTool: ToolDefinition = {
     }
 
     // Visible status line on every successful search (mirrors bash tool),
-    // so the user/agent can observe that grep ran. Previously this only
-    // logged via verbose() which is hidden unless -v, making grep appear
-    // "unusable" because no [grep] line ever showed in the terminal.
+    // so the user/agent can observe that grep ran rather than seeing an
+    // apparently "unusable" tool with no [grep] line.
     const matchCount = output && output !== 'No matches found' ? output.split('\n').filter(Boolean).length : 0;
     ctx.core.brief('info', 'grep', `Searched for "${pattern}" in ${searchPath}`, `${method}, ${matchCount} match(es)`);
     ctx.core.verbose('grep', `Searched with ${method}`, { pattern, searchPath, resultsLen: output.length });

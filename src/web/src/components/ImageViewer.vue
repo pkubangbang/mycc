@@ -45,8 +45,8 @@ function onOpen(e: Event): void {
   alt.value = ce.detail.alt ?? '';
   naturalMode.value = false; // start in fit mode
   loadError.value = false;
-  // Reset dimensions from any previously-viewed image so the
-  // "click to view full size" hint doesn't leak into this one before the
+  // Reset dimensions for the incoming image so the
+  // "click to view full size" hint doesn't leak into it before the
   // new image's `load` event fires and repopulates naturalSize.
   naturalSize.value = { w: 0, h: 0 };
   open.value = true;
@@ -83,7 +83,7 @@ function onKeydown(e: KeyboardEvent): void {
 }
 
 function onImageLoad(e: Event): void {
-  // Discard late load events from a previously-opened image that arrive
+  // Discard late load events from an image opened earlier that arrive
   // after close() — otherwise a slow prior image could overwrite naturalSize
   // for whatever is (or isn't) currently shown.
   if (!open.value) return;

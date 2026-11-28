@@ -106,7 +106,7 @@ function detectFileType(filePath: string, buffer: Buffer): { isText: boolean; mi
 
 export const readTool: ToolDefinition = {
   name: 'read_file',
-  description: `Read file contents from the workspace or external paths. Paths use forward slashes and may be relative to workspace root, absolute, or use ~ for home. Reads the first 1000 lines or ~1/8 of context window, whichever is smaller. Reading outside the workspace requires a user grant (session-scoped).`,
+  description: `Read file contents from the workspace or external paths. Paths use forward slashes and may be relative to workspace root, absolute, or use ~ for home. Reads the first 1000 lines or ~1/8 of context window, whichever is smaller. Reading outside the workspace requires a user grant (session-scoped). Use THIS tool to read files, not \`bash\` (\`cat\`/\`Get-Content\`): bash reads bypass the tool layer, so downstream features cannot tell which files you read (e.g. the pitfall-wiki injection is keyed on the files read in the previous round).`,
   input_schema: {
     type: 'object',
     properties: {

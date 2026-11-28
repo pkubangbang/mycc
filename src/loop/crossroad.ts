@@ -21,6 +21,7 @@ import { startSpinner, stopSpinner, sleep } from '../engine/chat-helpers.js';
 import { agentIO } from './agent-io.js';
 import { stripInternalMarkup } from '../utils/letter-box.js';
 import { buildCrossroadCard, formatCrossroadCard } from './crossroad-card.js';
+import stringWidth from 'string-width';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -125,14 +126,19 @@ export interface TurningPoint {
  * anchor on nor meaningfully keep; treat it as "no usable turn".
  * (Matches the detector's own "must have committed to a direction" spirit.)
  *
- * Stated in CHARACTERS OF TEXT, which is why adopting the package's cut grid
- * left it unchanged: a character count does not move when the units it is
- * counted over do.
+ * Stated in EFFECTIVE LENGTH — the number of display columns the anchor
+ * sentence occupies (docs/crossroad/caterpillar-algorithm.md, "Effective
+ * length"). The guard is measured on the anchor sentence, the grid's last unit
+ * of the prefix, because that is the string the continuation is asked to repeat
+ * verbatim. A Latin character and a CJK ideograph carry different amounts of
+ * meaning but the same effective length unit, so one threshold serves both:
+ * `我先看一下配置。` is 8 characters — 16 effective length — and is a complete
+ * sentence, not a fragment.
  */
-export const MIN_PREFIX_LENGTH = 30;
+export const MIN_ANCHOR_EFFECTIVE_LENGTH = 10;
 
 /** A cut this close to the end would leave nothing for the continuation to replace. */
-export const MIN_REMAINDER_LENGTH = 15;
+export const MIN_REMAINDER_EFFECTIVE_LENGTH = 8;
 
 // ============================================================================
 // Segmentation — the cut grid
@@ -479,11 +485,37 @@ function codePointIndexToUtf16(content: string, codePointIndex: number): number 
 
 // ---------------------------------------------------------------------------
 
-export function resolveTurningPoint(content: string, match: DetectorMatch): TurningPoint | null {
-  const anchor = (match.word ?? '').trim();
+/**
+ * Why a detected turn produced no usable cut. Every distinct reason is a
+ * distinct repair: a caller that only sees `null` cannot tell "the detector
+ * never flagged anything" from "it did, and the cut was refused".
+ */
+export type CutRejection =
+  | 'bad-offset'
+  | 'no-cuttable-unit'
+  | 'forced-boundary'
+  | 'prefix-too-narrow'
+  | 'remainder-too-narrow';
+
+/** Either a usable cut, or the reason there is none. */
+export type TurningPointOutcome =
+  | { point: TurningPoint; reason?: undefined }
+  | { point?: undefined; reason: CutRejection; actual?: number; required?: number };
+
+/**
+ * Locate the cut and say why when there is none — the detail form of
+ * {@link resolveTurningPoint}, identical in behaviour and offsets.
+ */
+export function resolveTurningPointDetailed(content: string, match: DetectorMatch): TurningPointOutcome {
+  const reject = (reason: CutRejection, actual?: number, required?: number): TurningPointOutcome => ({
+    reason,
+    actual,
+    required
+  });
+  const anchorHint = (match.word ?? '').trim();
   const index = match.index;
 
-  if (!Number.isFinite(index) || index < 0) return null;
+  if (!Number.isFinite(index) || index < 0) return reject('bad-offset');
   // UNITS: the detector reports `index` as a CODE-POINT offset (its server
   // windows text over code points — see crossroad-detector's server.ts —
   // precisely so astral characters cannot misalign a window). mycc slices with
@@ -491,18 +523,18 @@ export function resolveTurningPoint(content: string, match: DetectorMatch): Turn
   // while the text is pure BMP. Convert once, here, and everything downstream
   // stays in UTF-16 offsets.
   const position = codePointIndexToUtf16(content, index);
-  if (position === null || position >= content.length) return null;
+  if (position === null || position >= content.length) return reject('bad-offset');
   // The hint's offset is a supplement to a model answer rather than always a
   // verbatim anchor; trust the anchor when it resolves at or after the offset,
   // else use the reported offset itself as the point inside a segment.
-  const anchorAt = anchor ? content.indexOf(anchor, position) : -1;
+  const anchorAt = anchorHint ? content.indexOf(anchorHint, position) : -1;
   const hint = anchorAt >= 0 ? anchorAt : position;
 
   const segs = segmentsOf(content);
   const cutStart = cutStartFor(segs, hint, content);
-  if (cutStart === null) return null;
+  if (cutStart === null) return reject('no-cuttable-unit');
   const seg = segs[segAt(segs, cutStart)];
-  if (!seg) return null;
+  if (!seg) return reject('no-cuttable-unit');
   // I7: the FINAL segment runs to the end of the response, so there is no
   // remainder after it. Replacing the segment's first sentence makes the rest
   // of that sentence-set the remainder in the common case; when the turn IS the
@@ -518,7 +550,7 @@ export function resolveTurningPoint(content: string, match: DetectorMatch): Turn
   // size cap and can land mid-word; `canCutAt` refuses it as a START, and taking
   // it as the END would splice the continuation into the middle of a word. A unit
   // that ends there is therefore not a replacement unit at all.
-  if (seg.cutKind === 'forced') return null;
+  if (seg.cutKind === 'forced') return reject('forced-boundary');
   const cutEnd = seg.end;
   // N3: the 0.2.1 lattice has no blank-line units and N1's fill absorbs trailing
   // whitespace, so a unit can END on the paragraph mark before the next one (or on
@@ -529,34 +561,64 @@ export function resolveTurningPoint(content: string, match: DetectorMatch): Turn
   const trimmedEnd = cutStart + unit.replace(/\s+$/, '').length;
   const cut = trimmedEnd > cutStart ? trimmedEnd : cutEnd;
 
-  // GUARDS ARE COUNTED IN CHARACTERS, not UTF-16 units. The offsets are UTF-16
-  // (that is what `slice` takes) but the constants are statements about how much
-  // TEXT the reader gets, so the comparison is made on code points: a prefix of
-  // 16 emoji is 16 characters, not 32, and must not pass a 30-character guard.
-  if (charLength(content.slice(0, cutStart)) < MIN_PREFIX_LENGTH) return null;
+  // GUARDS ARE COUNTED IN EFFECTIVE LENGTH, not characters and not UTF-16
+  // units. The offsets are UTF-16 (that is what `slice` takes) but the
+  // constants are statements about how much TEXT the reader gets, so the
+  // comparison is made in display columns: a prefix of 16 emoji is 32 columns,
+  // and a complete Chinese sentence of 8 characters is 16 columns. A Latin
+  // character count would judge 我先看一下配置。 at 8 and reject a perfectly good
+  // anchor. The prefix guard is measured on the ANCHOR SENTENCE — the string the
+  // continuation is asked to repeat verbatim — not on the whole prefix.
+  const prefix = content.slice(0, cutStart);
+  const anchorLength = effectiveLength(extractWordsBeforeTurn(prefix));
+  if (anchorLength < MIN_ANCHOR_EFFECTIVE_LENGTH) {
+    return reject('prefix-too-narrow', anchorLength, MIN_ANCHOR_EFFECTIVE_LENGTH);
+  }
   // MID-TEXT ONLY: a cut that leaves a sliver after it is refused — the
   // continuation would replace almost everything and keep a stub. The final unit
   // has no after-it, so a short tail is the cut's own last words, not a sliver.
-  if (charLength(content.slice(cut)) < MIN_REMAINDER_LENGTH && !isFinalSegment) return null;
+  const remainder = content.slice(cut);
+  const remainderLength = effectiveLength(remainder);
+  if (remainderLength < MIN_REMAINDER_EFFECTIVE_LENGTH && !isFinalSegment) {
+    return reject('remainder-too-narrow', remainderLength, MIN_REMAINDER_EFFECTIVE_LENGTH);
+  }
 
   return {
-    prefix: content.slice(0, cutStart),
-    cutpoint: content.slice(cutStart, cut),
-    remainder: content.slice(cut),
-    cutStart,
-    cutEnd: cut
+    point: {
+      prefix,
+      cutpoint: content.slice(cutStart, cut),
+      remainder,
+      cutStart,
+      cutEnd: cut
+    }
   };
 }
 
+export function resolveTurningPoint(content: string, match: DetectorMatch): TurningPoint | null {
+  return resolveTurningPointDetailed(content, match).point ?? null;
+}
+
 /**
- * Length of `text` in CHARACTERS (code points), which is the unit the two guards
- * are stated in. `text.length` counts UTF-16 units and would double every astral
- * character (emoji, rare CJK), halving the effective threshold.
+ * Effective length of `text` — the display columns it occupies, with leading
+ * and trailing whitespace ignored. This is the unit both cut guards are stated
+ * in: a CJK ideograph is twice the effective length of a Latin character
+ * because each counts as one unit of MEANING, not one unit of storage.
+ * `text.length` would count UTF-16 units and double every astral character,
+ * halving the effective threshold.
  */
-function charLength(text: string): number {
-  // Fast path: no surrogate can be present, so the counts coincide.
-  if (!/[\uD800-\uDFFF]/.test(text)) return text.length;
-  return Array.from(text).length;
+function effectiveLength(text: string): number {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return 0;
+  // Fast path: no surrogate and no CJK/full-width code point can be present, so
+  // every character is one column and the counts coincide.
+  if (
+    !/[\uD800-\uDFFF\u1100-\u115F\u2E80-\uA4CF\uA960-\uA97F\uAC00-\uD7A3\uF900-\uFAFF\uFE10-\uFE19\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]/.test(
+      trimmed
+    )
+  ) {
+    return trimmed.length;
+  }
+  return stringWidth(trimmed);
 }
 
 /**
@@ -587,14 +649,23 @@ export async function detectTurningPoint(content: string): Promise<TurningPoint 
   }
   if (!match) return null;
 
-  const point = resolveTurningPoint(content, match);
-  if (!point) {
+  const outcome = resolveTurningPointDetailed(content, match);
+  if (!outcome.point) {
+    // Observable refusal: "the detector flagged a turn and the cut was refused
+    // (<reason>)" must never look like "the detector found nothing". The
+    // effective-length numbers are included so a too-strict guard is visible
+    // without re-running the detection by hand.
+    const measured =
+      outcome.actual === undefined || outcome.required === undefined
+        ? ''
+        : `: ${outcome.actual} < ${outcome.required} effective length`;
     agentIO.verbose(
       'crossroad',
-      `detector reported "${match.word}" at ${match.index} but the cut is not usable — crossroad skipped`
+      `detector reported "${match.word}" at ${match.index} but the cut is not usable (${outcome.reason}${measured}) — crossroad skipped`
     );
     return null;
   }
+  const point = outcome.point;
   agentIO.verbose(
     'crossroad',
     `Detected turning point "${point.cutpoint.trim()}" at ${point.cutStart}[${point.cutEnd}] (score ${match.score})`
@@ -748,11 +819,22 @@ export function extractWordsBeforeTurn(prefix: string): string {
   // trailing whitespace run (a paragraph mark) is not an anchor, and
   // `stripAndValidate` compares against the TRIMMED anchor, so a unit ending in
   // `\n\n` must be trimmed to match what the model is asked to repeat.
+  //
+  // The trainer lattice splits every terminator, so "failed..." arrives as
+  // `failed.` | `.` | `.` — single-character units. An anchor must be a SENTENCE:
+  // a lone '.' is not something a continuation can repeat, and taking one made
+  // the whole cut unusable. Keep walking left over any unit whose effective
+  // length is below MIN_ANCHOR_EFFECTIVE_LENGTH and return the first one that
+  // qualifies, falling back to the longest text seen so a prefix made only of
+  // tiny units still yields its last non-empty one.
+  let fallback = '';
   for (let i = segs.length - 1; i >= 0; i--) {
     const text = prefix.slice(segs[i].start, segs[i].end).trim();
-    if (text.length > 0) return text;
+    if (text.length === 0) continue;
+    if (effectiveLength(text) >= MIN_ANCHOR_EFFECTIVE_LENGTH) return text;
+    if (fallback === '') fallback = text;
   }
-  return '';
+  return fallback;
 }
 
 /**
@@ -1039,7 +1121,7 @@ export async function handleCrossroad(
 
     // Step 4: Select the best one — text ALREADY PAIRED with its index, so the
     // card can never disagree with the merged outcome (see the selector's
-    // docstring: a paraphrased answer used to yield index -1 and an unmarked card).
+    // docstring: a paraphrased answer would yield index -1 and an unmarked card).
     const best = await selectBestContinuation(messages, tools, prefix, continuations, signal);
     if (!best.text) {
       agentIO.verbose('crossroad', 'Best continuation is empty, aborting crossroad');

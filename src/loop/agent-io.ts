@@ -643,11 +643,9 @@ class AgentIO {
     const timestamp = new Date().toISOString();
     const prefix = chalk.gray(`[${timestamp}]`) + chalk.magenta(`[verbose][${tool}]`);
 
-    // Terminal-only by construction: log() no longer journals anything, so a
-    // `-v` line cannot drift into the durable chat log. (The guard that used to
-    // hold a suppression flag across these calls went away with console
-    // journaling itself — the cheaper invariant is that there is nothing to
-    // suppress.)
+    // Terminal-only by construction: log() journals nothing, so a `-v` line
+    // cannot drift into the durable chat log and no suppression flag has to be
+    // held across these calls.
     if (data !== undefined) {
       this.log(`${prefix} ${message}`);
       this.log(chalk.gray(JSON.stringify(data, null, 2)));

@@ -30,6 +30,14 @@ const EXPLORATION_TOOLS = new Set([
 ]);
 
 /**
+ * Upper bound on paths TOOL remembers per round. COLLECT only consumes the
+ * newest `PITFALL_MAX_FILES` (3), but the extra headroom is deliberate: the
+ * list is a ring of "recently read", and a round that reads many files should
+ * not lose the ordering that decides which three win.
+ */
+const MAX_READ_FILES_TRACKED = 10;
+
+/**
  * Check if a tool result indicates an error
  */
 function isErrorResult(result: string): boolean {
@@ -176,6 +184,30 @@ export async function handleTool(env: MachineEnv, turn: TurnVars, chat: ChatData
       // Check for error results
       if (isErrorResult(output)) {
         ctx.core.increaseConfusionIndex(2);
+      }
+
+      // Step 3: "ball" for the pitfall-wiki injection — remember which files
+      // `read_file` touched in this round. COLLECT drains and clears the list.
+      // No content-based success test here: `read_file` reports failure by
+      // THROWING, so reaching this block already means the read succeeded.
+      // `isErrorResult(output)` is a text heuristic ("not found", "ENOENT", …)
+      // and would drop a perfectly good read of any file that merely mentions
+      // an error string — i.e. exactly the error-handling code that carries the
+      // pitfalls worth recalling.
+      if (toolName === 'read_file') {
+        try {
+          const readArgs =
+            typeof toolCall.function.arguments === 'string'
+              ? JSON.parse(toolCall.function.arguments)
+              : (toolCall.function.arguments as Record<string, unknown>);
+          const readPath = readArgs?.path;
+          if (readPath && typeof readPath === 'string') {
+            const list = (turn.lastReadFiles ??= []);
+            if (!list.includes(readPath) && list.length < MAX_READ_FILES_TRACKED) list.push(readPath);
+          }
+        } catch {
+          // Swallow — read-path capture is best-effort.
+        }
       }
 
       // Reset brief nudge only when brief tool is used

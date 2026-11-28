@@ -1,6 +1,11 @@
 # Note Taxonomy & Stale Folding
 
-**Status:** SUPERSEDED. The read-time fold described here (`fold-notes.ts`, `foldStaleNudges`) has been **deleted**; staleness is now decided by a retention policy owned by COLLECT and applied by an in-place sweep — see **`docs/loop/reminder-retention.md`**. This document is kept for the reasoning that still holds (why tokens are not the point, why a merge/delete projection was rejected, why the lead and teammate paths differ) and as a record of the design that preceded it; read §4, §6 and §11 with that substitution in mind.
+**Status:** SUPERSEDED. See **`docs/loop/reminder-retention.md`** for the current
+rule: retention is decided per TOPIC by the COLLECT registry and applied by an
+in-place sweep. The design reasoning that led here (why token savings are not
+the point, why a merge/delete projection was rejected, why the lead and
+teammate paths differ) is recorded in the `pitfall` wiki domain under
+`rationale: …` titles.
 
 ## 1. Purpose
 

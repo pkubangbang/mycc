@@ -198,7 +198,7 @@ export class ParentContext implements AgentContext {
       },
       // A refused upgrade caused by a WIRE-TOKEN mismatch is an operator
       // misconfiguration, so it must be visible from the ACCEPTING side too
-      // (row peer-004: previously only the dialer logged anything, and the
+      // (row peer-004: the acceptor reports its own refusal, not just the dialer).
       // acceptor's only trace was a verbose line). The dialer sees the 401;
       // this line tells the operator which end refused and why.
       briefPeerWireRefusal: (reason) => {

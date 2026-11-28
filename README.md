@@ -47,7 +47,7 @@ key to local/custom hosts. Generate a key at
 
 - **team collaboration**: mycc starts with a single `lead`; teammates can be spawned by you or the `lead` to enable collaboration.
 
-- **cross-machine peers**: connect mycc instances running on **different machines** over a peer wire so they can exchange mail via the same `mail_to` interface used for same-machine peers. Use `peer_connect` to add a remote instance by its serve URL, `peer_list` to see all reachable peers (local and remote) with a liveness indicator, and `peer_disconnect` to hang up. See [Cross-machine peer wire](QUICKSTART.md#6-cross-machine-peer-wire-optional) in QUICKSTART.md.
+- **cross-machine peers**: connect mycc instances running on **different machines** over a peer wire so they can exchange mail via the same `mail_to` interface used for same-machine peers. Use `peer_connect` to add a remote instance by its serve URL, `peer_list` to see all reachable peers (local and remote) with a liveness indicator, and `peer_disconnect` to hang up. See [Cross-machine peer wire](QUICKSTART.md#7-cross-machine-peer-wire-optional) in QUICKSTART.md.
 
 - **skill use**: describe the specialist knowledge using markdown, and LLM will learn it when needed.
 
@@ -78,11 +78,12 @@ All environment variables can be overridden via CLI flags. These take highest pr
 | `--editor` | `EDITOR` | Text editor for file editing |
 | `--skill-match-threshold` | `SKILL_MATCH_THRESHOLD` | Skill similarity threshold 0-1 (default: 0.5) |
 | `--max-upload-mb` | `MYCC_MAX_UPLOAD_MB` | Max single-file upload size (MB) for the `/serve` Web UI (default: 50) |
+| `--host <addr>` | — | Bind address for the `/serve` Web UI. **Omitted = `127.0.0.1` only** (the Web UI has no auth on `/ws`, `/dump`, `/history`). `--host` alone or `--host 0.0.0.0` (or `::`) = every interface, announced with a security warning. `--host <specific-ip>` = that address only |
 | `--auto` | — | Start in autonomous mode (no user prompts) |
 | `--daemon [skill]` | — | Detached headless daemon (forces auto mode); optionally auto-load a service skill and start its cron |
 | `--allow-plan-off` | `MYCC_ALLOW_PLAN_OFF` | In auto mode, auto-approve `plan_off` to exit plan mode without confirmation |
 | `--allow-auto-commit <branches>` | `MYCC_ALLOW_AUTO_COMMIT` | SEED for the live auto-commit branch allow-list (exact names, no globs). Seeded branches also bypass the commit prompt outside auto mode. Edit the live list at runtime with `/auto-commit on <b>` / `off <b>` / `off --all`; `/reload` re-seeds from this flag (the original value), so session edits are discarded. Auto-approved commits carry an `Auto-Committed-By` trailer. Pair with CI on protected branches — the flag is a narrow operator grant, not a security boundary |
-| `--wire-token` | `MYCC_WIRE_TOKEN` | Optional shared secret for the `/peer/ws` peer-wire upgrade (set the same value on both instances to enable the in-app auth gate; unset on both to run the wire open — see [Cross-machine peer wire](QUICKSTART.md#6-cross-machine-peer-wire-optional) in QUICKSTART.md) |
+| `--wire-token` | `MYCC_WIRE_TOKEN` | Optional shared secret for the `/peer/ws` peer-wire upgrade (set the same value on both instances to enable the in-app auth gate; unset on both to run the wire open — see [Cross-machine peer wire](QUICKSTART.md#7-cross-machine-peer-wire-optional) in QUICKSTART.md) |
 
 Example usage:
 ```bash

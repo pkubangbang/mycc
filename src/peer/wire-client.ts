@@ -432,7 +432,7 @@ function dialSocket(endpoint: string, dialBase: string, epoch0: number, cb: Dial
     // cannot say WHY (the `ws` client reports 1006 for every unaccepted
     // handshake). Capture the status line here — the only place the dialer
     // learns "the remote enforced a different wire token" (row peer-004:
-    // a token mismatch used to look like a network drop).
+    // A token mismatch surfaces as an auth failure, not as a network drop.
     //
     // terminate() is MANDATORY, not hygiene: attaching this listener makes `ws`
     // treat the response as handled and skip its internal `abortHandshake`,

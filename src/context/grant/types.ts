@@ -43,7 +43,7 @@ export interface DangerousCommand {
 /**
  * Grant request types
  */
-export type GrantTool = 'write_file' | 'edit_file' | 'bash';
+export type GrantTool = 'write_file' | 'edit_file' | 'bash' | 'wiki_put' | 'wiki_prepare';
 
 /**
  * Grant request payload

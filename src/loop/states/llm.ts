@@ -52,8 +52,7 @@ export async function handleLlm(env: MachineEnv, turn: TurnVars, chat: ChatData)
   // Two sources trigger compaction, both handled HERE (not in TOOL/HOOK):
   //
   // 1. Proactive — triologue.needsCompact(): a prior tool result pushed the
-  //    token count over the threshold. Previously this fired mid-tool-execution
-  //    (tool.ts), where no tool list was available; now it fires here, where
+  //    token count over the threshold. This fires in the LLM stage, where
   //    loader.getToolsForScope(scope) is in scope and triologue.getMessages()
   //    is the EXACT cache prefix the next retryChat will use — so the forkChat
   //    inside compact() is a guaranteed cache hit.
@@ -238,11 +237,9 @@ export async function handleLlm(env: MachineEnv, turn: TurnVars, chat: ChatData)
             // Replace content with truncated prefix + continuation will be injected in hook.ts
             chat.assistantContent = crossroadResult.truncated;
             chat.crossroadContinuation = crossroadResult.continuation;
-            // Carry the candidate list + selected index so hook.ts can render
-            // the best-of-three brief in the correct 3-part order (prefix →
-            // candidates → outcome). Previously the brief was emitted here in
-            // the LLM stage, which placed it BEFORE the prefix displayed later
-            // in HOOK — the summary appeared above the content it summarized.
+            // The three parts render in order (prefix → candidates → outcome):
+            // the best-of-three brief is built in HOOK, after the prefix, so the
+            // summary never appears above the content it summarizes.
             chat.crossroadCandidates = crossroadResult.candidates;
             chat.crossroadSelectedIndex = crossroadResult.selectedIndex;
             // The turning segment itself, so HOOK can show prefix → cutpoint →
@@ -297,9 +294,8 @@ export async function handleLlm(env: MachineEnv, turn: TurnVars, chat: ChatData)
             }
 
             // Every crossroad fire counts towards the hint round (confusion threshold).
-            // Previously this was conditional on crossroadOccurred (consecutive-only),
-            // but cooldown makes consecutive fires impossible — so the +2 is now
-            // unconditional to keep the hint escape valve functional.
+            // This is unconditional: the crossroad cooldown makes consecutive fires
+            // impossible, so the +2 keeps the hint escape valve functional.
             ctx.core.increaseConfusionIndex(2);
             env.crossroadOccurred = true; // arm cooldown for next pass
             loopEvents.emit('crossroad_fired', {
@@ -332,12 +328,10 @@ export async function handleLlm(env: MachineEnv, turn: TurnVars, chat: ChatData)
 
       // Handle edge case where LLM returns empty content AND no tool calls.
       //
-      // Previously this only injected a synthetic brief() when the last triologue
-      // role was NOT 'tool' (i.e. the guard `getLastRole() !== 'tool'`). After a
-      // tool result — e.g. screen/img_describe returns a long description — the
-      // last role IS 'tool', so the injection was SKIPPED and the loop `continue`d
-      // calling retryChat with the IDENTICAL message array. Near the context
-      // boundary the LLM keeps returning empty, producing a TIGHT INFINITE LOOP:
+      // The synthetic brief is injected whenever no tool result carries the
+      // last role: after e.g. a long screen/img_describe description the
+      // loop would `continue` and call retryChat with the IDENTICAL message
+      // array. Near the context boundary the LLM keeps returning empty, producing a TIGHT INFINITE LOOP:
       // the process stays alive (spinner spinning, no output) and only ESC
       // (which aborts retryChat via escAware and returns PROMPT) recovers it.
       //

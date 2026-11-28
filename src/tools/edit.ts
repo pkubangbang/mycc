@@ -167,8 +167,7 @@ export const editTool: ToolDefinition = {
       // "change B to D" on lines A,B,C often sends new_text="A\nD" or "D\nC"
       // (re-including a neighbour) or "B\nD" (keeping the anchor), leaving
       // AADC / ADCC / ABDC. Those results pass every check above, so the tool
-      // used to answer with a bare "OK". Detect the shapes on the on-disk
-      // result and WARN — never roll back, because duplication is sometimes
+      // reports a WARN and never rolls back — duplication is sometimes
       // intended (see src/utils/edit-sanity.ts).
       const sanityFindings: SanityFinding[] = checkEditSanity({
         before: normalizedContent,

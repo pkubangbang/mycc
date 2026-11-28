@@ -70,6 +70,27 @@ describe('retention sweep', () => {
     expect(rows[rows.length - 1].content).toBe('[NUDGE] Update your todos. - [x] a');
   });
 
+  /**
+   * NOT TEST-COVERED ON PURPOSE — the "survives its own pass" half of `zero`.
+   *
+   * The contract is: a `zero` row emitted in pass N is the one the LLM reads
+   * after pass N, and it is blanked in pass N+1. The sweep expresses that as
+   * `keepNewest = replaced.has(topic) ? 1 : 0`, and `replaced` is filled ONLY
+   * by the caller-local `replaceTopic` closure inside `handleCollect` — never
+   * by `noteTopic`, which is the registry's public emitter.
+   *
+   * That closure is unreachable from a unit test: `envFor()` here is a bare
+   * `{ triologue }` cast to `MachineEnv`, so driving the real COLLECT path
+   * would drag in team/mail/wiki/steering. Adding a `countFreshByTopic`-style
+   * API to the store just to make the pass testable was tried and rejected —
+   * it re-couples the sweep to a second source of truth for "this round".
+   *
+   * The invariant is instead enforced by construction and audited by hand:
+   * every `zero` producer must route through `replaceTopic` (see the `team`
+   * bug: it used `noteTopic` and its snapshot was blanked in the pass that
+   * wrote it, so the roster never reached the model). When adding a `zero`
+   * topic, check its emit site calls `replaceTopic`, not `noteTopic`.
+   */
   it('zero leaves no row at the next COLLECT, whether or not it was replaced', () => {
     triologue.note('NUDGE', 'brief now', undefined, 'brief');
     const [row] = triologue.getMessagesRaw();

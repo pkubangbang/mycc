@@ -38,6 +38,7 @@
  */
 import { ref, watch } from 'vue';
 import ModalShell from '../common/ModalShell.vue';
+import { isMagicQueryRunnable } from '../../magic-query-rules';
 
 /** A row in the magic-query dialog. */
 export interface MagicQuery {
@@ -51,6 +52,12 @@ export interface MagicQuery {
    * a second argument-taking command does not need a boolean of its own.
    */
   editor?: 'auto-commit';
+  /**
+   * Present when the command cannot run on EVERY backend this dialog is served
+   * from: the reason it is unavailable on the current one. Resolved by the shell
+   * from capability props (see magic-query-rules.ts); `null`/absent ⇒ runnable.
+   */
+  unavailable?: string | null;
 }
 
 /** Separator + suffix of an allow-list entry, mirroring auto-state.ts. */
@@ -58,6 +65,7 @@ const AUTO_ADD_SEPARATOR = ':';
 const AUTO_ADD_SUFFIX = 'autoAdd';
 
 const props = defineProps<{
+  /** Whether the modal is open. */
   open: boolean;
   /** Queries to list, in display order. */
   queries: MagicQuery[];
@@ -65,6 +73,17 @@ const props = defineProps<{
    *  under the same condition, but the dialog can outlive a state change
    *  (e.g. auto mode engages while it is open), so the gate is repeated here. */
   runnable: boolean;
+  /**
+   * WHICH backend this page is served from, as the server reports it:
+   *   • `persistent` — a headless `--daemon` Lead (no Coordinator to reuse, so
+   *     the backend refuses `/reload`: src/slashes/reload.ts).
+   *   • `persistentKnown` — whether the server's answer has arrived. Before it
+   *     does, `persistent` is only a default and must not gate a row.
+   * The reason string on a row is resolved by the shell from these props; see
+   * magic-query-rules.ts.
+   */
+  persistent: boolean;
+  persistentKnown: boolean;
   /** The LIVE auto-commit allow-list (encoded), mirrored from the backend.
    *  `null` = not known yet, or the backend has no provider — rendered as
    *  "unknown", never as an empty (deny-all) list. */
@@ -111,6 +130,10 @@ watch(
 
 function expand(q: MagicQuery): void {
   if (!props.runnable) return;
+  // A row the BACKEND cannot serve never fires, whatever its button state says
+  // (re-checked here for the same reason as `runnable`: an open dialog can
+  // outlive a backend change).
+  if (!rowRunnable(q)) return;
   if (!q.editor) {
     // Close BEFORE running: the dialog marks #app inert while open, and the
     // slash this sends flips the phase to 'submitted' — so staying open would
@@ -137,6 +160,18 @@ function collapse(): void {
   expanded.value = null;
   addText.value = '';
   addHint.value = '';
+}
+
+/**
+ * Whether one row may run: the page-level slash window AND the backend's own
+ * verdict on that command (magic-query-rules.ts — one decision, shared with the
+ * template's `:disabled` and with expand() below).
+ */
+function rowRunnable(q: MagicQuery): boolean {
+  return (
+    props.runnable &&
+    isMagicQueryRunnable({ query: q.query, persistent: props.persistent, persistentKnown: props.persistentKnown })
+  );
 }
 
 /** Split an encoded entry into its branch and autoAdd flag. */
@@ -250,9 +285,20 @@ watch(
   <ModalShell :open="props.open" title="魔法查询" :max-width="560" @close="closeAll">
     <ul class="mq-list">
       <li v-for="q in props.queries" :key="q.query" class="mq-item" @keydown.esc.stop="onRowEscape(q)">
-        <button v-if="expanded !== q.query" class="mq-row" :disabled="!props.runnable" @click="expand(q)">
+        <button
+          v-if="expanded !== q.query"
+          class="mq-row"
+          :class="{ 'mq-row-blocked': !!q.unavailable }"
+          :disabled="!rowRunnable(q)"
+          :title="q.unavailable ?? undefined"
+          :aria-disabled="q.unavailable ? true : undefined"
+          @click="expand(q)"
+        >
           <span class="mq-query">{{ q.query }}</span>
           <span class="mq-desc">{{ q.description }}</span>
+          <!-- A row the current backend refuses says WHY in place, instead of
+               relying on a hover tooltip that touch devices never show. -->
+          <span v-if="q.unavailable" class="mq-blocked">{{ q.unavailable }}</span>
           <span v-if="q.editor" class="mq-chevron" aria-hidden="true">›</span>
         </button>
 
@@ -378,6 +424,22 @@ watch(
 .mq-row:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+/* A row the BACKEND refuses (not merely one gated by the current phase): the
+   whole row greys out and states the reason, so it reads as "not on this
+   server" rather than "not right now". */
+.mq-row-blocked {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: color-mix(in srgb, var(--text-muted) 6%, var(--bg-input-field));
+}
+.mq-row-blocked .mq-query {
+  color: var(--text-muted);
+}
+.mq-blocked {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #c98a2b;
 }
 .mq-query {
   font-size: 13px;

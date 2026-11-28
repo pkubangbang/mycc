@@ -7,6 +7,7 @@
  */
 
 import { ensureServeHub } from './serve-registry.js';
+import { bindExposureWarning } from './serve-host-guard.js';
 import { agentIO } from '../loop/agent-io.js';
 import { setWebUiUp } from '../loop/loop-events.js';
 import { setResultCallback } from '../utils/letter-box.js';
@@ -116,6 +117,13 @@ export async function activateServe(port: number, host?: string | null): Promise
   // should continue so the user can fix the issue and retry /serve.
   try {
     await hub.start(port, host);
+
+    // Binding is the ONLY access control on /serve (no auth on /ws, /dump or
+    // Listen on loopback by default; an explicit off-box bind is announced
+    // rather than discovered (the Web UI has no auth on /ws, /dump, /history).
+    // announced rather than discovered.
+    const exposureWarning = bindExposureWarning(host ?? null, port);
+    if (exposureWarning) console.log(chalk.yellow.bold(`\n${exposureWarning}\n`));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.log(chalk.red(`\nFailed to start Web UI: ${msg}`));

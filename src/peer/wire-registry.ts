@@ -254,8 +254,8 @@ function ensurePair(endpoint: string, dialed: boolean): RemotePairEntry {
     entry = { endpoint, dialed, sid: '', sockets: [], epoch: bumpEpoch(endpoint) };
     pairs.set(endpoint, entry);
   }
-  // A pair we previously only accepted can later be dialed by us too (or
-  // vice versa during a mutual dial); keep the dialer flag honest.
+  // A pair we accept can later be dialed by us too (or vice versa during a
+  // mutual dial); keep the dialer flag honest.
   if (dialed) entry.dialed = true;
   return entry;
 }

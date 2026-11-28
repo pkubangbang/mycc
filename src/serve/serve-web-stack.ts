@@ -36,6 +36,7 @@ import {
   readTranscriptRecords
 } from './serve-history.js';
 import { ClientRegistry } from './serve-clients.js';
+import { listeningAddress } from './serve-host-guard.js';
 import { onWsConnection, type WsEventHost } from './serve-ws-events.js';
 import type { HubHandler } from './serve-ws-handler.js';
 import { getPeerWireAcceptor } from './peer-wire.js';
@@ -56,7 +57,7 @@ export interface WebStackHost {
   readonly agentRunning: () => boolean;
   /** The current port binding (0 before the first start). */
   readonly port: () => number;
-  /** The explicit `--host` binding (null = localhost-only). */
+  /** The explicit `--host` binding (null = localhost-only: 127.0.0.1). */
   readonly host: () => string | null;
   /** The serve-lifetime fallback log served by /history before the first record. */
   readonly messageLog: () => readonly LogEntry[];
@@ -234,7 +235,7 @@ export async function mountWebStack(host: WebStackHost, port: number, bindHost: 
     // GET /history → chat history as JSON (fetched at load BEFORE the WS, so
     // live updates layer on top with no race). ONE read of the transcript per
     // GET, shared by the ETag and the body, so they cannot disagree about which
-    // source is live (it used to parse the file four times).
+    // source is live.
     app.get('/history', (req, res) => {
       const steering = getSteeringManager().snapshot();
       const transcriptPath = host.transcriptPath();
@@ -338,12 +339,15 @@ export async function mountWebStack(host: WebStackHost, port: number, bindHost: 
     httpServer.on('upgrade', upgradeHandler);
 
     const server = httpServer;
+    // A bare `listen(port)` binds EVERY interface (0.0.0.0 / ::), i.e. the
+    // whole LAN + any VPN/tunnel peer. `null` means "no --host given" and the
+    // documented contract (WebStackHost.host, serve-banner, getServeHost) is
+    // LOCALHOST-ONLY, so the loopback address is passed EXPLICITLY here.
+    // Exposing the unauthenticated /ws + /dump + /history surface therefore
+    // requires an explicit --host (announced by bindExposureWarning()).
+    const listenHost = listeningAddress(bindHost);
     await new Promise<void>((resolve, reject) => {
-      if (bindHost) {
-        server.listen(port, bindHost, () => resolve());
-      } else {
-        server.listen(port, () => resolve());
-      }
+      server.listen(port, listenHost, () => resolve());
       server.once('error', reject);
     });
 

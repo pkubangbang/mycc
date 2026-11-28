@@ -185,7 +185,21 @@ mycc --daemon            # passive daemon, waits for external mail
 mycc --daemon <skill>    # daemon that auto-loads a service skill and starts its cron
 ```
 
-### 6. Cross-machine peer wire (Optional)
+### 6. Serve the Web UI (Optional): localhost by default
+
+`mycc --serve <port>` (or `/serve` inside the prompt) starts the Vue Web UI on the **same port** as the chat WebSocket.
+
+**Binding contract — the Web UI is loopback-only unless you say otherwise:**
+
+| How you start it | Bound address | Reachable from |
+|---|---|---|
+| `mycc --serve 3173` | `127.0.0.1:3173` | this machine only (default) |
+| `mycc --serve 3173 --host` / `--host 0.0.0.0` | every interface (`0.0.0.0`/`::`) | LAN, VPN/WireGuard peers, virtual adapters |
+| `mycc --serve 3173 --host 10.0.1.4` | that single address | anything that can route to it |
+
+**Why the default is loopback:** `/serve` has **no authentication** — `/ws` accepts agent input, `/dump` exposes diagnostics, and `/history` exposes the transcript. The bind address is therefore the only access control on the surface. An explicit off-box bind prints a `SECURITY:` warning at startup; do not dismiss it unless you really mean to publish the port.
+
+### 7. Cross-machine peer wire (Optional)
 
 mycc instances on **different machines** can be wired together so they exchange mail exactly like same-machine peers — `mail_to(name="<sessionId>/lead", ...)` works unchanged whether the peer is local or remote. The remote plane is a single dialed WebSocket per peer pair (one outbound connection gives a bidirectional pipe, so a NAT'd/firewalled instance can dial out even with no inbound port).
 

@@ -41,7 +41,7 @@ const DIFF_PROMPT_SUFFIX =
  */
 export interface GrantDenial {
   /** Which tool was refused. */
-  tool: 'write_file' | 'edit_file' | 'bash';
+  tool: 'write_file' | 'edit_file' | 'bash' | 'wiki_put' | 'wiki_prepare';
   /** The refused target: a path, or the command for bash. */
   target: string;
   /** Verdict reason (already user-facing prose from the gate). */
@@ -709,7 +709,7 @@ export class Core extends BaseCore implements CoreModule {
    * @returns Grant result with approval status and optional reason
    */
   async requestGrant(
-    tool: 'write_file' | 'edit_file' | 'bash',
+    tool: 'write_file' | 'edit_file' | 'bash' | 'wiki_put' | 'wiki_prepare',
     args: {
       path?: string;
       command?: string;
@@ -728,7 +728,7 @@ export class Core extends BaseCore implements CoreModule {
 
   /** The verdict computation, split out so requestGrant can record refusals. */
   private async evaluateGrantForLead(
-    tool: 'write_file' | 'edit_file' | 'bash',
+    tool: 'write_file' | 'edit_file' | 'bash' | 'wiki_put' | 'wiki_prepare',
     args: {
       path?: string;
       command?: string;
@@ -742,6 +742,14 @@ export class Core extends BaseCore implements CoreModule {
 
     // For files: existing logic
     if (this.modeState === 'plan') {
+      // Knowledge capture is NOT a code change: `wiki_put` / `wiki_prepare`
+      // only write the user-level knowledge base, never the project tree, so
+      // plan mode allows them. They are listed here EXPLICITLY rather than
+      // left to "the gate only knows about write_file/edit_file/bash", so a
+      // future widening of the gate cannot silently start blocking them.
+      if (tool === 'wiki_put' || tool === 'wiki_prepare') {
+        return { approved: true };
+      }
       // Check if the requested file matches the allowed file
       if (args.path && this.allowedFile) {
         const resolvedRequested = path.isAbsolute(args.path) ? args.path : path.resolve(this.workDir, args.path);
@@ -780,7 +788,7 @@ export class Core extends BaseCore implements CoreModule {
    */
   recordChildDenial(
     sender: string,
-    tool: 'write_file' | 'edit_file' | 'bash',
+    tool: 'write_file' | 'edit_file' | 'bash' | 'wiki_put' | 'wiki_prepare',
     args: { path?: string; command?: string; intent?: string },
     reason: string | undefined
   ): void {
@@ -795,7 +803,7 @@ export class Core extends BaseCore implements CoreModule {
    * consumer can say exactly WHAT was refused rather than "a write failed".
    */
   private recordDenial(
-    tool: 'write_file' | 'edit_file' | 'bash',
+    tool: 'write_file' | 'edit_file' | 'bash' | 'wiki_put' | 'wiki_prepare',
     args: { path?: string; command?: string; intent?: string },
     reason: string | undefined
   ): void {
@@ -992,9 +1000,9 @@ export class Core extends BaseCore implements CoreModule {
     // Create abort controller for this operation and register it on agentIO's
     // global slot so triggerNeglection()'s getLlmAbortController()?.abort()
     // can reach it. This revives the dead-code abort path in triggerNeglection()
-    // — previously the slot was never populated because escAware used a purely
-    // local controller. The onNeglected callback below still fires too (it also
-    // aborts + runs onCleanUp + resolves escPromise); both paths abort the same
+    // The slot is populated on entry so a neglected run aborts the same
+    // The slot holds the same controller the caller's escAware resolves, so a
+    // neglected run aborts it; the onNeglected callback below still fires too
     // controller, so they compose harmlessly. Belt-and-suspenders: the global
     // slot is a redundant backup that makes triggerNeglection()'s existing
     // abort call actually do something.

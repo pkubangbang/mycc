@@ -304,9 +304,8 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
   // === Empty-turn guard ===
   // An assistant turn with NEITHER content NOR tool calls is not "task done" —
   // it is the LLM having emitted nothing (typically right after a failed tool
-  // call, e.g. a malformed mail_to). Previously that empty turn was treated as
-  // "no open todos → likely done": the worker auto-mailed an EMPTY-content
-  // "Teammate phase completed" to the lead and went idle, silently dropping the
+  // call, e.g. a malformed mail_to). An empty turn must still produce the
+  // phase-complete mail: auto-idling here silently drops the
   // undelivered deliverable (observed: sim-b's 7 empty turns and its lost ROOT C
   // report). Now an empty turn re-prompts via the existing REMINDER, bounded by
   // emptyTurnRetries so it can never spin forever; only a CONTENTFUL text-only

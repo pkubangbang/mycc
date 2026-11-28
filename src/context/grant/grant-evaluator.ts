@@ -88,6 +88,13 @@ export async function evaluateGrant(
 
   // Handle file operations (write_file, edit_file)
   if (mode === 'plan') {
+    // Knowledge capture only writes the user-level knowledge base, never the
+    // project tree, so plan mode allows it. `wiki_put` REQUIRES `wiki_prepare`
+    // (put demands the hash prepare returned), so allowing put alone would
+    // leave the model unable to complete the operation.
+    if (request.tool === 'wiki_put' || request.tool === 'wiki_prepare') {
+      return { approved: true };
+    }
     // Check allowed file for plan mode
     const allowedFile = core.getAllowedFile();
 

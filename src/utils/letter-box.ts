@@ -57,8 +57,7 @@ export function stripInternalMarkup(content: string): string {
 
   // Fast-path gate: both forms share the literal "DSML" tag name. Gating on
   // that (NOT on the fullwidth vline) is what lets the ASCII-pipe form enter
-  // the regexes below — previously the gate missed it entirely and the raw
-  // markup leaked through to both the mid-loop briefs and the letter-box.
+  // the strip below.
   if (result.includes('DSML')) {
     // Strip full DSML paired tags: <||DSML||tagname>...</||DSML||tagname>
     // (opening tag may carry attributes, e.g. <||DSML||parameter name="m">)

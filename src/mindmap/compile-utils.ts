@@ -517,9 +517,7 @@ export class ProgressTracker {
 export function beginProgressDisplay(): void {
   if (isPlainOutput()) return;
   // THE reserve write: four newlines create the vertical space the tracker
-  // overwrites in place. Callers must NOT emit this themselves — the raw
-  // `\n\n\n\n` used to be duplicated around these helpers, which bypassed
-  // the plain-mode gate and added four stray blank lines to piped output.
+  // overwrites in place. Callers must NOT emit this themselves.
   process.stdout.write('\n\n\n\n');
 }
 
@@ -533,8 +531,7 @@ export function beginProgressDisplay(): void {
 export function endProgressDisplay(): void {
   if (isPlainOutput()) return;
   // THE erase write (see {@link beginProgressDisplay}): callers must not
-  // duplicate this raw escape, which previously leaked cursor-control bytes
-  // into piped output.
+  // duplicate this raw escape.
   process.stdout.write('\x1b[4A\x1b[J');
 }
 

@@ -539,7 +539,10 @@ export function getServePort(): number {
 /**
  * Get the serve host (--host flag). When --host is passed (even without a
  * value), the server binds to 0.0.0.0 (all interfaces). When --host is not
- * passed, returns null — the server binds to localhost only.
+ * passed, returns null — meaning LOCALHOST-ONLY; `mountWebStack` resolves that
+ * `null` to 127.0.0.1 via `listeningAddress()` (src/serve/serve-host-guard.ts).
+ * Do NOT rely on a bare `server.listen(port)`: that binds every interface, and
+ * doing so with this `null` was the v0.9.7–v0.11.12 exposure bug.
  * If --host is given a specific value (e.g. --host 192.168.1.5), that value
  * is used instead of 0.0.0.0.
  */
@@ -1020,8 +1023,8 @@ export function getIdentityFile(): string {
 // sanitizeId() now lives in the shared module src/utils/id-guard.ts so the
 // compose CLI (a thin .js shim that registers the tsx loader then imports the
 // .ts lib modules) can apply the SAME guard to the channel labels it
-// materializes. Previously this was a private function here, so the guard
-// existed but never reached the compose path — which is how a `label` like
+// The guard is shared with the compose path (a private copy here would let a
+// malformed `label` such as `x/../../identity` overwrite identity.json).
 // `x/../../identity` was able to overwrite the machine-wide identity.json.
 // Imported at the top of this file.
 

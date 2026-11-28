@@ -91,7 +91,7 @@ export const writeTool: ToolDefinition = {
     // and parse correctly under PowerShell 5.1.
     const style: 'lf' | 'crlf' = newline === 'auto' ? (process.platform === 'win32' ? 'crlf' : 'lf') : newline;
 
-    // Strip any BOM the LLM may have copied from a previously-read file, then
+    // Strip any BOM the content carries, then
     // (optionally) re-add one only when the caller explicitly requested it.
     const withoutBom = stripBom(content);
     const withBom = wantBom ? `\uFEFF${withoutBom}` : withoutBom;

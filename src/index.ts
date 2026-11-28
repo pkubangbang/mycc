@@ -107,9 +107,8 @@ if (process.stdout.isTTY && process.env.MYCC_PLAIN !== '1') {
 
 // Parsed upfront so it's available to all functions, including the daemon
 // early-return path (startDaemonLead) that runs before runCoordinator()'s
-// nested state declarations. Previously startDaemonLead worked around the
-// temporal dead zone with a redundant `skipHealthCheckLocal` re-derivation;
-// hoisting the const here makes that unnecessary.
+// nested state declarations — hoisting it here avoids a temporal-dead-zone
+// workaround in startDaemonLead.
 const skipHealthCheck = process.argv.includes('--skip-healthcheck');
 
 // ---------------------------------------------------------------------------
@@ -493,9 +492,9 @@ function runCoordinator(): void {
     //   - The old Lead's ORIGINAL argv is REPLAYED, so every other launch
     //     flag survives the respawn (--auto, --daemon, --allow-auto-commit,
     //     --token-threshold, --model/--provider, --editor, --autofly,
-    //     --session-id, …). Previously reloadLead rebuilt the argv from ONLY
-    //     serve state, silently dropping every other flag — a reloaded
-    //     auto-mode peer lost its --allow-auto-commit pre-authorization, etc.
+    //     --session-id, …). reloadLead rebuilds the argv from BOTH the
+    //     serve state and the launch args, so a reloaded auto-mode peer keeps
+    //     its --allow-auto-commit pre-authorization.
     //     Replaying argv also honours arg-canonical.ts's documented intent
     //     that --session-id/--debug-ansi "survive the restart/reload spawns".
     //   - Serve state is MERGED on top, replacing any stale --serve/--port

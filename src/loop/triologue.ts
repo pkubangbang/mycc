@@ -954,9 +954,7 @@ export class Triologue {
     // open one — exactly the interposition DeepSeek 400s on. beginWrapUp()
     // flushes pending calls before marking, so the ledger is empty on the
     // normal path; this guard makes the producer itself enforce the invariant
-    // (previously this pushed to the store DIRECTLY, bypassing addMessage and
-    // every check — a second entry point that could slip an assistant mid-block
-    // if beginWrapUp's flush was ever bypassed or a call arrived between the
+    // (if beginWrapUp's flush was ever bypassed or a call arrived between the
     // two). If anything is somehow still pending, flush it first so the turn
     // completes legally rather than emit an illegal shape.
     if (this.ledger.size > 0) {

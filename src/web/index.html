@@ -3,6 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- No favicon asset exists and none is needed. Without a declared icon the
+         browser still requests /favicon.ico on its own, which the server answers
+         with a 404 — a permanent red line in every console capture. An empty
+         data: URL declares "the icon is deliberately blank", so the request is
+         never made and console audits stay clean. -->
+    <link rel="icon" href="data:," />
     <title>mycc chat</title>
   </head>
   <body>

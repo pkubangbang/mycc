@@ -563,7 +563,7 @@ export interface CoreModule {
    * @returns Grant result with approval status and optional reason
    */
   requestGrant(
-    tool: 'write_file' | 'edit_file' | 'bash',
+    tool: 'write_file' | 'edit_file' | 'bash' | 'wiki_put' | 'wiki_prepare',
     args: {
       path?: string;
       command?: string;

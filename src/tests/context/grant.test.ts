@@ -283,6 +283,26 @@ describe('evaluateGrant', () => {
     });
   });
 
+  describe('Plan mode — knowledge capture is allowed', () => {
+    it('should allow wiki_put in plan mode (knowledge is not a code change)', async () => {
+      const core = makeCore('/tmp/proj', 'plan');
+      const result = await evaluateGrant('lead', { tool: 'wiki_put' } as GrantRequest, core);
+      expect(result.approved).toBe(true);
+    });
+
+    it('should allow wiki_prepare in plan mode', async () => {
+      const core = makeCore('/tmp/proj', 'plan');
+      const result = await evaluateGrant('lead', { tool: 'wiki_prepare' } as GrantRequest, core);
+      expect(result.approved).toBe(true);
+    });
+
+    it('should STILL block write_file in plan mode', async () => {
+      const core = makeCore('/tmp/proj', 'plan');
+      const result = await evaluateGrant('lead', { tool: 'write_file', path: '/tmp/proj/a.ts' } as GrantRequest, core);
+      expect(result.approved).toBe(false);
+    });
+  });
+
   describe('Normal Mode - Auto-grant for owned worktree', () => {
     it('should auto-grant bash commands for child with owned worktree', async () => {
       mockJudgeBash.mockResolvedValue({ decision: 'allow' });

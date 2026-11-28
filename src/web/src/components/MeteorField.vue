@@ -56,8 +56,8 @@ function randomizeMeteors(): void {
   for (const m of meteors) {
     // Horizontal: spread across the FULL width (0%..100%) so meteors are
     // born everywhere — including the left edge — and streaks cross the
-    // whole frame, covering the button's left semicircle. (Previously this
-    // was biased to 35%..95%, which left the left edge with no streaks.)
+    // whole frame, covering the button's left semicircle. x spans 0%..100% so
+    // the left edge carries streaks too.
     const mx = Math.random() * 100; // 0%..100%
     // Vertical: spread across the full height; bias slightly up (the
     // "incoming" top edge for top-right→bottom-left travel).

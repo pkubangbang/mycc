@@ -189,7 +189,10 @@ export function reconcileServeStateAfterClear(): void {
  *          skillSuggester.suggestSkill (step 6) — steering notes take
  *          priority over lastUserQuery as the freshest mid-task direction.
  */
-async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: string | null }> {
+async function collectMailsAndInput(
+  env: MachineEnv,
+  replaceTopic: (topic: string, text: string) => void
+): Promise<{ firstSteerNote: string | null }> {
   const { triologue, ctx } = env;
 
   // 0. Serve-state watch — report a WebUI start/stop to the LLM, edge-triggered.
@@ -277,8 +280,10 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
   //     summarizes an earlier instance away. See "#18 A-only".
   const teamStatus = await ctx.team.printTeam();
   if (teamStatus !== 'No teammates.') {
-    noteTopic(
-      env,
+    // `replaceTopic`, not `noteTopic`: `team` is a `zero` topic, so the sweep
+    // keeps a row only when this pass registered it. A bare `noteTopic` here
+    // would let the sweep blank the snapshot in the very pass that wrote it.
+    replaceTopic(
       'team',
       `[team status — snapshot, informational]\n${teamStatus}\n\ntm_print for a fresh read; elapsed ETAs are not actionable.`
     );
@@ -526,7 +531,7 @@ export async function handleCollect(env: MachineEnv, turn: TurnVars, _chat: Chat
     // 1–2. Drain all external inputs (child questions, mail, team status,
     //      steering notes, headless first-query marker, file uploads).
     //      Returns the freshest steering note (the query source for step 6).
-    const { firstSteerNote } = await collectMailsAndInput(env);
+    const { firstSteerNote } = await collectMailsAndInput(env, replaceTopic);
 
     // 3. Hint round. May short-circuit the pass (STOP on ESC).
     const hintSignal = await hintRound.run(turn);

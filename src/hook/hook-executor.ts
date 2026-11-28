@@ -185,9 +185,9 @@ export class HookExecutor {
     skillContent: string,
     cond?: Condition
   ): Promise<HookResult> {
-    // Per-chat dedupe is for INJECTIONS only. It used to run before the
-    // switch, so a `block` hook fired on just the first tool call of a
-    // multi-call response and calls 2..N ran unblocked.
+    // Per-chat dedupe is for INJECTIONS only. It runs after the switch, so a
+    // `block` hook fires on every call of a multi-call response, not just the
+    // first one.
     if (action.type !== 'block' && this.injectedThisChat.has(skillName)) {
       return {
         action: 'proceed',

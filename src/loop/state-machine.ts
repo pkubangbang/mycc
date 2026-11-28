@@ -91,6 +91,14 @@ export interface TurnVars {
   /** Last hint round focus_on (hint source) — recovery guidance, captured in COLLECT */
   lastHintFocus: string;
   /**
+   * Files read via `read_file` during the PREVIOUS LLM round of this turn.
+   * Written by TOOL, consumed and cleared by COLLECT, which uses them as the
+   * query source for the pitfall-wiki injection. Scoped to one reasoning round
+   * (not the whole user turn) so a batch of files is never re-injected on every
+   * later round; `read_file` (not bash cat) is what lands here.
+   */
+  lastReadFiles?: string[];
+  /**
    * Consecutive transient COLLECT errors within the current turn (circuit
    * breaker). When a transient error (e.g. a TLS handshake timeout during
    * hint-round generation) aborts the in-flight turn, handleCollect retries
@@ -262,6 +270,7 @@ export class AgentStateMachine {
       lastUserQuery: '',
       lastBriefMessage: '',
       lastHintFocus: '',
+      lastReadFiles: [],
       collectTransientRetries: 0
     };
     this.currentTurn = turn;
@@ -298,12 +307,13 @@ export class AgentStateMachine {
           lastUserQuery: '',
           lastBriefMessage: '',
           lastHintFocus: '',
+          lastReadFiles: [],
           collectTransientRetries: 0
         };
         this.currentTurn = turn;
         // Reset the skill-discovery singleton's throttle state at the turn
         // boundary — the same lifecycle point where lastSkillY /
-        // skillDiscoveryCooldown were previously re-initialized on TurnVars.
+        // skill-discovery state is not re-initialized on TurnVars.
         skillSuggester.reset();
         // The crossroad cooldown is a PER-TURN fact: it exists to give the LLM
         // one clear pass after a resolution, inside the turn that resolved it.

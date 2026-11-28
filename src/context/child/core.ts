@@ -141,18 +141,14 @@ export class ChildCore extends BaseCore implements CoreModule {
    * @returns Grant result with approval status and optional reason
    */
   async requestGrant(
-    tool: 'write_file' | 'edit_file' | 'bash',
+    tool: 'write_file' | 'edit_file' | 'bash' | 'wiki_put' | 'wiki_prepare',
     args: {
       path?: string;
       command?: string;
       intent?: string;
     }
   ): Promise<{ approved: boolean; reason?: string }> {
-    // NO TIMEOUT. The parent's grant path can block on a human [y/N] prompt
-    // (dangerous/batch confirmations) or on a slow LLM safeguard — both are
-    // unbounded by design. A 5 s timeout here used to turn a still-pending
-    // verdict into "denied" in the child, after which the user's "y" was
-    // discarded against a deleted pendingRequests slot. Waiting is correct:
+    // NO TIMEOUT. The parent's grant path can block on a human [y/N] prompt:
     // the parent always answers, and a dead parent is caught by IPC disconnect.
     const response = await ipc.sendRequest<{ approved: boolean; reason?: string }>(
       'grant_request',

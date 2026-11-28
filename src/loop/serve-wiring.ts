@@ -34,8 +34,8 @@ import type { AgentContext } from '../types.js';
  */
 export function wireServeCallbacks(ctx: AgentContext): void {
   // ── onAutoChange / auto providers: mirror auto-state flips to the webui ──
-  // Previously agentIO.setAuto() called getServeHub().broadcastAuto directly;
-  // now the singleton owns the flag and fires this callback on a real flip,
+  // agentIO.setAuto() does not call getServeHub().broadcastAuto directly:
+  // the webui chat input stays enabled for steering and the 停止 button
   // so the webui chat input box stays enabled for steering and the 停止 button
   // stays visible+spinning while the lead is in AWAIT. Best-effort: a plain
   // terminal session has no hub → null → no-op.
@@ -56,17 +56,17 @@ export function wireServeCallbacks(ctx: AgentContext): void {
     hub.setAutoStateProvider(() => autoState.getAuto());
     // Plan/normal mode: same mirroring pattern as auto — the hub pulls the
     // lead's CURRENT mode at display time. Fixes the stale-NORMAL bug: a
-    // mode flip BEFORE the hub existed (plan_on → /serve) used to be
-    // swallowed as a no-hub broadcast, and the hub then replayed its own
+    // A mode flip BEFORE the hub existed (plan_on → /serve) must not be
+    // WS client instead of its own cached 'normal'.
     // cached 'normal' to every WS client. core.getMode() already exists on
     // the same ctx.core instance the reporter closure captured.
     hub.setModeStateProvider(() => (ctx.core as { getMode?: () => 'plan' | 'normal' }).getMode?.() ?? 'normal');
   });
 
   // ── plan-mode changes: one reporter, installed once, at boot ──
-  // Core.setMode() used to reach into the serve layer itself
-  // (`tryGetServeHub()?.broadcastMode`), coupling the context layer to serve
-  // and making the injected reporter dead API. The reporter is installed here
+  // Core.setMode() does NOT reach into the serve layer itself
+  // (`tryGetServeHub()?.broadcastMode`), which keeps the context layer free
+  // of a serve dependency; the reporter is installed here instead.
   // — before any mode change can happen — so the constructor default can be
   // removed and the seam is the only path. Best-effort: no hub → no-op, and a
   // non-serving session simply has nothing to broadcast to.

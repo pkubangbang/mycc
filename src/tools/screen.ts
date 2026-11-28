@@ -502,8 +502,8 @@ export const screenTool: ToolDefinition = {
 
       // Describe via imgDescribe (handles resizing). Thread the handler's
       // signal so ESC / the escAware abortController can interrupt a slow
-      // cloud vision model — retryChat honors it via the POST-race +
-      // collectStream watchdog (previously this hung indefinitely).
+      // cloud vision model — retryChat honors it via the POST-race + collect
+      // stream watchdog.
       const description = await ctx.core.imgDescribe(screenshotPath, customPrompt, signal, secondImage);
       if (pendingBaseline) setScreenBaseline(pendingBaseline);
       // Report the frame geometry alongside the description so the agent can
